@@ -33,4 +33,4 @@ jobs:
         run: pip install -r requirements-docs.txt
 
       - name: Build and deploy documentation
-        run: mkdocs gh-deploy --force --message "docs: deploy documentation [skip ci]"
+        run: 'mkdocs gh-deploy --force --message "docs: deploy documentation [skip ci]"'
