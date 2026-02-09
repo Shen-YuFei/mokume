@@ -1,0 +1,2 @@
+metric,n_proteins,n_samples,pearson_r,spearman_r
+overall,5954,11,0.7924137053599063,0.7922632409282845

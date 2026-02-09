@@ -81,6 +81,58 @@ Both methods accurately detect fold changes. TMT performs slightly better for sm
 
 ---
 
+## Running the Benchmark
+
+The benchmark includes comprehensive analysis scripts that answer three core scientific questions.
+
+> **IMPORTANT: DirectLFQ Dependency**
+>
+> When using DirectLFQ quantification in benchmarks, **always use the external directlfq package** directly rather than any fallback implementation. This ensures reproducibility and uses the official Mann Lab algorithm.
+>
+> ```bash
+> pip install mokume[directlfq]
+> ```
+
+### Quick Start
+
+```bash
+cd benchmarks/quant-pxd007683-tmt-vs-lfq/scripts
+
+# Download data first
+python 00_download_data.py
+
+# Run complete benchmark
+python run_benchmark.py
+
+# Or run individual analyses
+python 01_grid_search_methods.py      # Grid search over methods
+python 02_variance_decomposition.py   # PCA and variance analysis
+python 03_fold_change_accuracy.py     # Fold-change accuracy
+python 04_stability_metrics.py        # CV analysis
+python 05_cross_technology_correlation.py  # LFQ vs TMT correlation
+python 06_generate_report.py          # Generate summary report
+```
+
+### Scientific Questions Addressed
+
+| Question | Script | Metrics |
+|----------|--------|---------|
+| Q1: Absolute expression stability | `04_stability_metrics.py` | CV within conditions |
+| Q2: Technical vs biological variance | `02_variance_decomposition.py` | PCA, silhouette score |
+| Q3: Fold-change accuracy | `03_fold_change_accuracy.py` | RMSE, compression ratio, FPR |
+| Cross-technology agreement | `05_cross_technology_correlation.py` | Pearson/Spearman r |
+
+### Output
+
+Results are saved to:
+- `results/` - CSV files with metrics
+- `figures/` - PNG plots
+- `results/BENCHMARK_REPORT.md` - Comprehensive summary
+
+See [ROADMAP-SCIENTIFIC-BENCHMARKING.md](ROADMAP-SCIENTIFIC-BENCHMARKING.md) for the full scientific framework.
+
+---
+
 <details>
 <summary><strong>mokume vs MaxQuant Comparison</strong></summary>
 
@@ -180,8 +232,8 @@ The `median` method uses batch processing (20 samples at a time), reducing memor
 
 Datasets searched with SAGE, COMET, MSGF+, combined with ConsensusID, filtered at 1% protein and PSM FDR.
 
-### Notebook
+### Batch Correction Example
 
-See `notebooks/mokume-batch-correction-example.ipynb` for interactive analysis.
+For batch correction examples, see `../batch-quartet-multilab/notebooks/mokume-batch-correction-example.ipynb`.
 
 </details>

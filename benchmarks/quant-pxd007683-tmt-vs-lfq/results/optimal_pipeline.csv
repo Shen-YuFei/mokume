@@ -1,0 +1,11 @@
+technology,pipeline,quant_method,sample_norm,min_unique_peptides,min_length,max_missed_cleavages,imputation,description,n_peptides_filtered,filters_applied,n_proteins,n_yeast,within_cv,fc_rmse,pct_good_cv
+tmt,default,sum,none,2,7,2,none,Default baseline,864468.0,True,7984,1092,0.047230749207298056,0.27709790670345835,99.60754843019372
+tmt,best_cv,sum,globalmedian,3,7,2,none,Optimized for CV,838642.0,True,6808,832,0.02741677419022883,0.26967282207713317,99.77967097532316
+tmt,best_rmse,ibaq,tmm,3,9,0,none,Optimized for fold-change accuracy,,False,9493,1485,0.04673357478267389,0.3207597654218272,98.91498999262615
+tmt,balanced,sum,globalmedian,2,7,1,none,Balanced CV/coverage,863093.0,True,7981,1090,0.029860905399074614,0.3207578911487249,99.66169652925699
+tmt,maxlfq_test,maxlfq,none,2,7,2,none,MaxLFQ (for comparison),,False,8055,1113,0.02848307833415872,0.2528404484839992,99.72273949927582
+lfq,default,directlfq,none,2,7,2,none,DirectLFQ baseline,,False,5354,402,0.07550286709784088,0.4757046997059014,85.42522724442783
+lfq,best_cv,maxlfq,none,3,9,1,none,Optimized for CV,,False,4094,267,0.0635077159442291,0.2754270927672776,92.4116593388699
+lfq,best_rmse,maxlfq,hierarchical,3,9,0,none,Optimized for fold-change accuracy,,False,4094,267,0.06503890040637651,0.2814839321122715,92.3383813711122
+lfq,balanced,directlfq,none,2,8,1,none,Balanced CV/coverage,,False,5354,402,0.07550286709784088,0.4757046997059014,85.42522724442783
+lfq,high_coverage,directlfq,globalmedian,1,7,2,knn,Maximum coverage (with imputation),,False,7849,1008,0.11145203520045524,1.086357136763283,69.93247547458274
