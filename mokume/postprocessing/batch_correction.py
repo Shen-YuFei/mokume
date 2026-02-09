@@ -124,8 +124,22 @@ def detect_batches(
         method = BatchDetectionMethod.from_str(method)
 
     if method == BatchDetectionMethod.SAMPLE_PREFIX:
-        # PXD001-S1, PXD001-S2, PXD002-S1 → [0, 0, 1]
-        prefixes = [s.split("-")[0] if "-" in s else s for s in sample_ids]
+        # Extract batch prefix from sample names.
+        # Supports multiple conventions:
+        #   PXD001-S1  → PXD001  (hyphen-separated)
+        #   p1_1       → p1      (quantms TMT plex prefix: letters + digits before _digit)
+        import re
+        prefixes = []
+        for s in sample_ids:
+            if "-" in s:
+                prefixes.append(s.split("-")[0])
+            else:
+                # Match leading non-numeric + optional digits as prefix (e.g. p1_1 → p1)
+                m = re.match(r"^([a-zA-Z]+\d+)_", s)
+                if m:
+                    prefixes.append(m.group(1))
+                else:
+                    prefixes.append(s)
         indices, _ = pd.factorize(pd.array(prefixes))
         return indices.tolist()
 

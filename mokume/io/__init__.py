@@ -2,7 +2,8 @@
 Input/Output utilities for the mokume package.
 
 This module provides utilities for reading and writing various file formats
-including Parquet, TSV/CSV, and FASTA files.
+including Parquet, TSV/CSV, and FASTA files, as well as DuckDB-based
+feature data access.
 """
 
 from mokume.io.parquet import (
@@ -15,6 +16,10 @@ from mokume.io.fasta import (
     extract_fasta,
     get_protein_molecular_weights,
 )
+from mokume.io.feature import (
+    Feature,
+    SQLFilterBuilder,
+)
 
 __all__ = [
     "create_anndata",
@@ -23,4 +28,6 @@ __all__ = [
     "digest_protein",
     "extract_fasta",
     "get_protein_molecular_weights",
+    "Feature",
+    "SQLFilterBuilder",
 ]

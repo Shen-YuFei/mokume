@@ -222,7 +222,7 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
             id_vars=['protein'],
             value_vars=sample_cols,
             var_name=sample_column,
-            value_name='DirectLFQIntensity'
+            value_name='Intensity'
         )
 
         # Rename protein column
@@ -230,8 +230,8 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
 
         # Remove rows with NaN or zero intensity
         result_long = result_long[
-            result_long['DirectLFQIntensity'].notna() &
-            (result_long['DirectLFQIntensity'] > 0)
+            result_long['Intensity'].notna() &
+            (result_long['Intensity'] > 0)
         ]
 
         return result_long
@@ -264,7 +264,7 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
         Returns
         -------
         pd.DataFrame
-            DataFrame with columns: protein_column, sample_column, 'DirectLFQIntensity'.
+            DataFrame with columns: protein_column, sample_column, 'Intensity'.
         """
         lfq_manager = _import_directlfq()
 

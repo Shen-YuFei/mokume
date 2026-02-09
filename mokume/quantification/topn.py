@@ -73,7 +73,7 @@ class TopNQuantification(ProteinQuantificationMethod):
         -------
         pd.DataFrame
             DataFrame with columns: protein_column, sample_column,
-            (run_column if provided), 'TopNIntensity'.
+            (run_column if provided), 'Intensity'.
         """
         # Determine grouping columns based on aggregation level
         if run_column is not None and run_column in peptide_df.columns:
@@ -92,5 +92,5 @@ class TopNQuantification(ProteinQuantificationMethod):
         )
 
         # Rename intensity column
-        result = result.rename(columns={intensity_column: f"Top{self.n}Intensity"})
+        result = result.rename(columns={intensity_column: "Intensity"})
         return result

@@ -66,6 +66,24 @@ def __getattr__(name):
             "plot_tsne": plot_tsne,
         }[name]
 
+    if name in (
+        "plot_volcano",
+        "plot_heatmap",
+        "plot_pca_conditions",
+    ):
+        _require_plotting()
+        from mokume.plotting.differential_expression import (
+            plot_volcano,
+            plot_heatmap,
+            plot_pca_conditions,
+        )
+
+        return {
+            "plot_volcano": plot_volcano,
+            "plot_heatmap": plot_heatmap,
+            "plot_pca_conditions": plot_pca_conditions,
+        }[name]
+
     if name == "PdfPages":
         _require_plotting()
         from matplotlib.backends.backend_pdf import PdfPages
@@ -79,6 +97,11 @@ def __getattr__(name):
 if TYPE_CHECKING:
     from mokume.plotting.distributions import plot_distributions, plot_box_plot
     from mokume.plotting.pca import plot_pca, compute_pca_with_plot, plot_tsne
+    from mokume.plotting.differential_expression import (
+        plot_volcano,
+        plot_heatmap,
+        plot_pca_conditions,
+    )
     from matplotlib.backends.backend_pdf import PdfPages
 
 
@@ -89,5 +112,8 @@ __all__ = [
     "plot_pca",
     "compute_pca_with_plot",
     "plot_tsne",
+    "plot_volcano",
+    "plot_heatmap",
+    "plot_pca_conditions",
     "PdfPages",
 ]

@@ -39,9 +39,9 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--quant-method",
     "quant_method",
-    help="Quantification method: directlfq, ibaq, maxlfq, topn, sum, median",
+    help="Quantification method: directlfq, ibaq, maxlfq, topn, sum, median, ratio",
     type=click.Choice(
-        ["directlfq", "ibaq", "maxlfq", "topn", "sum", "median"],
+        ["directlfq", "ibaq", "maxlfq", "topn", "sum", "median", "ratio"],
         case_sensitive=False,
     ),
     default="maxlfq",
@@ -150,6 +150,166 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     type=click.Path(),
     default=None,
 )
+# IRS normalization options
+@click.option(
+    "--irs",
+    "irs",
+    help="Enable IRS (Internal Reference Scaling) normalization for multi-plex TMT data",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--irs-reference-samples",
+    "irs_reference_samples",
+    help="Comma-separated list of reference sample names (source names)",
+    default=None,
+)
+@click.option(
+    "--irs-sdrf-column",
+    "irs_sdrf_column",
+    help="SDRF column to select reference samples from (e.g., 'factor value[disease]')",
+    default=None,
+)
+@click.option(
+    "--irs-sdrf-values",
+    "irs_sdrf_values",
+    help="Comma-separated values in SDRF column that indicate reference samples",
+    default=None,
+)
+@click.option(
+    "--irs-reference-regex",
+    "irs_reference_regex",
+    help="Regex to auto-detect reference samples across SDRF columns",
+    default="pool|powder|ref|reference|bridge",
+    show_default=True,
+)
+@click.option(
+    "--irs-stat",
+    "irs_stat",
+    help="Statistic for computing reference intensity per plex",
+    type=click.Choice(["median", "mean"], case_sensitive=False),
+    default="median",
+    show_default=True,
+)
+@click.option(
+    "--irs-remove-reference",
+    "irs_remove_reference",
+    help="Remove reference samples from the final output",
+    is_flag=True,
+    default=False,
+)
+# Coverage filter
+@click.option(
+    "--coverage-threshold",
+    "coverage_threshold",
+    help="Minimum fraction of non-missing values per condition to keep a protein (e.g., 0.65)",
+    type=float,
+    default=None,
+)
+# Ratio quantification options
+@click.option(
+    "--ratio-fraction-merge",
+    "ratio_fraction_merge",
+    help="How to merge fractions in ratio quantification: mean (PS protocol) or max",
+    type=click.Choice(["mean", "max"], case_sensitive=False),
+    default="mean",
+    show_default=True,
+)
+# Differential expression options
+@click.option(
+    "--de",
+    "differential_expression",
+    help="Enable differential expression analysis",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--de-contrasts",
+    "de_contrasts",
+    help="Comma-separated contrasts (e.g., 'NASH-HL,GroupA-GroupB')",
+    default=None,
+)
+@click.option(
+    "--de-method",
+    "de_method",
+    help="DE statistical method",
+    type=click.Choice(["ttest", "limma"], case_sensitive=False),
+    default="ttest",
+    show_default=True,
+)
+@click.option(
+    "--de-log2fc",
+    "de_log2fc_threshold",
+    help="Minimum absolute log2 fold change for significance",
+    type=float,
+    default=0.5,
+    show_default=True,
+)
+@click.option(
+    "--de-fdr",
+    "de_fdr_threshold",
+    help="Maximum adjusted p-value (FDR) for significance",
+    type=float,
+    default=0.05,
+    show_default=True,
+)
+@click.option(
+    "--de-output",
+    "de_output",
+    help="Output file for DE results",
+    type=click.Path(),
+    default=None,
+)
+# Plotting options
+@click.option(
+    "--plot-dir",
+    "plot_output_dir",
+    help="Output directory for plots",
+    type=click.Path(),
+    default=None,
+)
+@click.option(
+    "--plot-volcano",
+    "plot_volcano",
+    help="Generate volcano plot from DE results",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--plot-heatmap",
+    "plot_heatmap",
+    help="Generate heatmap of top variable proteins",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--plot-pca",
+    "plot_pca",
+    help="Generate PCA plot colored by condition",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--highlight-genes",
+    "highlight_genes",
+    help="Comma-separated gene names to highlight on volcano plot",
+    default=None,
+)
+# Interactive report options
+@click.option(
+    "--interactive-report",
+    "interactive_report",
+    help="Generate interactive HTML report with plotly (requires mokume[reports])",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--report-output",
+    "report_output",
+    help="Output path for interactive HTML report (default: <plot-dir>/report_<contrast>.html)",
+    type=click.Path(),
+    default=None,
+)
 @click.pass_context
 def features2proteins(
     ctx,
@@ -170,6 +330,34 @@ def features2proteins(
     directlfq_min_nonan: int,
     export_peptides: str,
     export_ions: str,
+    # IRS
+    irs: bool,
+    irs_reference_samples: str,
+    irs_sdrf_column: str,
+    irs_sdrf_values: str,
+    irs_reference_regex: str,
+    irs_stat: str,
+    irs_remove_reference: bool,
+    # Coverage filter
+    coverage_threshold: float,
+    # Ratio
+    ratio_fraction_merge: str,
+    # DE
+    differential_expression: bool,
+    de_contrasts: str,
+    de_method: str,
+    de_log2fc_threshold: float,
+    de_fdr_threshold: float,
+    de_output: str,
+    # Plots
+    plot_output_dir: str,
+    plot_volcano: bool,
+    plot_heatmap: bool,
+    plot_pca: bool,
+    highlight_genes: str,
+    # Interactive report
+    interactive_report: bool,
+    report_output: str,
 ) -> None:
     """
     Quantify proteins directly from feature parquet file.
@@ -185,6 +373,7 @@ def features2proteins(
       topn       - Top N peptides per protein (use --topn to set N, default 3)
       sum        - Sum of all peptides
       median     - Median of peptides
+      ratio      - PS protocol: log2(sample/reference) per plex (requires --sdrf)
 
     \b
     NORMALIZATION:
@@ -196,28 +385,46 @@ def features2proteins(
         combined with other quantification methods (e.g., iBAQ).
 
     \b
+    IRS NORMALIZATION (multi-plex TMT):
+      Use --irs to enable Internal Reference Scaling. Reference channels
+      are auto-detected from SDRF 'characteristics[pooled sample]' column,
+      or specified via --irs-reference-samples, --irs-sdrf-column/values,
+      or --irs-reference-regex.
+
+    \b
+    DIFFERENTIAL EXPRESSION:
+      Use --de to enable DE analysis. Contrasts are auto-detected or
+      specified via --de-contrasts (e.g., 'NASH-HL').
+
+    \b
     EXAMPLES:
+      # TMT with IRS normalization + DE + volcano plot
+      mokume features2proteins -p data.parquet -o proteins.csv -s sdrf.tsv \\
+        --quant-method median --irs --irs-remove-reference \\
+        --de --de-contrasts NASH-HL --de-output de_results.csv \\
+        --plot-dir plots/ --plot-volcano --plot-pca
+
       # DirectLFQ quantification (uses directlfq package)
       mokume features2proteins -p data.parquet -o proteins.csv --quant-method directlfq
 
-      # iBAQ with hierarchical normalization (best of both worlds)
+      # iBAQ with hierarchical normalization
       mokume features2proteins -p data.parquet -o proteins.csv \\
         --quant-method ibaq --sample-normalization hierarchical --fasta uniprot.fasta
 
-      # MaxLFQ with default normalization
-      mokume features2proteins -p data.parquet -o proteins.csv --quant-method maxlfq
-
-      # TopN quantification (default top3)
-      mokume features2proteins -p data.parquet -o proteins.csv --quant-method topn
-
-      # Top5 quantification
-      mokume features2proteins -p data.parquet -o proteins.csv --quant-method topn --topn 5
+      # Ratio quantification (PS protocol) with coverage filter + DE
+      mokume features2proteins -p data.parquet -o proteins.csv -s sdrf.tsv \\
+        --quant-method ratio --coverage-threshold 0.65 \\
+        --de --de-method limma --de-contrasts NASH-HL
     """
     from mokume.pipeline import features_to_proteins as run_pipeline
 
     # Validate iBAQ requires fasta
     if quant_method.lower() == "ibaq" and not fasta_file:
         raise click.UsageError("iBAQ quantification requires --fasta option")
+
+    # Validate ratio requires sdrf
+    if quant_method.lower() == "ratio" and not sdrf:
+        raise click.UsageError("Ratio quantification requires --sdrf option")
 
     # Info about DirectLFQ ignoring normalization settings
     if quant_method.lower() == "directlfq":
@@ -228,11 +435,38 @@ def features2proteins(
                 err=True,
             )
 
+    # Info about ratio ignoring normalization/IRS settings
+    if quant_method.lower() == "ratio":
+        click.echo(
+            "Note: Ratio quantification handles cross-plex normalization via "
+            "per-plex reference division. --run-normalization, "
+            "--sample-normalization, and --irs are ignored.",
+            err=True,
+        )
+
     # Handle topn method - construct the method name with N
     effective_quant_method = quant_method
     if quant_method.lower() == "topn":
         effective_quant_method = f"top{topn_peptides}"
         click.echo(f"Using Top{topn_peptides} quantification method")
+
+    # Parse comma-separated CLI values
+    parsed_irs_ref_samples = (
+        [s.strip() for s in irs_reference_samples.split(",")]
+        if irs_reference_samples else None
+    )
+    parsed_irs_sdrf_values = (
+        [s.strip() for s in irs_sdrf_values.split(",")]
+        if irs_sdrf_values else None
+    )
+    parsed_de_contrasts = (
+        [s.strip() for s in de_contrasts.split(",")]
+        if de_contrasts else None
+    )
+    parsed_highlight_genes = (
+        [s.strip() for s in highlight_genes.split(",")]
+        if highlight_genes else None
+    )
 
     # Run the pipeline
     run_pipeline(
@@ -251,6 +485,34 @@ def features2proteins(
         directlfq_num_cores=directlfq_cores,
         export_peptides=export_peptides,
         export_ions=export_ions,
+        # IRS
+        irs=irs,
+        irs_reference_samples=parsed_irs_ref_samples,
+        irs_sdrf_column=irs_sdrf_column,
+        irs_sdrf_values=parsed_irs_sdrf_values,
+        irs_reference_regex=irs_reference_regex,
+        irs_stat=irs_stat,
+        irs_remove_reference=irs_remove_reference,
+        # DE
+        differential_expression=differential_expression,
+        de_contrasts=parsed_de_contrasts,
+        de_method=de_method,
+        de_log2fc_threshold=de_log2fc_threshold,
+        de_fdr_threshold=de_fdr_threshold,
+        de_output=de_output,
+        # Coverage filter
+        coverage_threshold=coverage_threshold,
+        # Ratio
+        ratio_fraction_merge=ratio_fraction_merge,
+        # Plots
+        plot_output_dir=plot_output_dir,
+        plot_volcano=plot_volcano,
+        plot_heatmap=plot_heatmap,
+        plot_pca=plot_pca,
+        highlight_genes=parsed_highlight_genes,
+        # Interactive report
+        interactive_report=interactive_report,
+        report_output=report_output,
     )
 
     click.echo(f"Protein intensities saved to: {output}")

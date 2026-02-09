@@ -1,0 +1,362 @@
+# Python API
+
+## Quantification
+
+### Factory Function
+
+```python
+from mokume.quantification import get_quantification_method, list_quantification_methods
+
+# Create method by name
+method = get_quantification_method("top3")        # TopNQuantification(n=3)
+method = get_quantification_method("top10")       # TopNQuantification(n=10)
+method = get_quantification_method("maxlfq", min_peptides=2, threads=4)
+
+# List available methods
+available = list_quantification_methods()
+# {'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
+```
+
+### TopNQuantification
+
+```python
+from mokume.quantification import TopNQuantification
+
+quant = TopNQuantification(n=3)  # or n=5, n=10, etc.
+result = quant.quantify(
+    peptides,
+    protein_column="ProteinName",
+    peptide_column="PeptideSequence",
+    intensity_column="NormIntensity",
+    sample_column="SampleID",
+)
+```
+
+### MaxLFQQuantification
+
+```python
+from mokume.quantification import MaxLFQQuantification
+
+quant = MaxLFQQuantification(
+    min_peptides=2,      # Min peptides for MaxLFQ (uses median for fewer)
+    threads=4,           # Parallel cores (-1 for all)
+    force_builtin=False, # Force built-in implementation
+)
+result = quant.quantify(peptides, protein_column="ProteinName", ...)
+
+# Check backend
+quant.using_directlfq  # True/False
+quant.name             # "MaxLFQ (DirectLFQ)" or "MaxLFQ (built-in)"
+```
+
+### DirectLFQQuantification
+
+```python
+from mokume.quantification import is_directlfq_available
+
+if is_directlfq_available():
+    from mokume.quantification import DirectLFQQuantification
+    quant = DirectLFQQuantification(min_nonan=2)
+    result = quant.quantify(peptides, protein_column="ProteinName", ...)
+```
+
+### AllPeptidesQuantification (Sum)
+
+```python
+from mokume.quantification import AllPeptidesQuantification
+
+quant = AllPeptidesQuantification()
+result = quant.quantify(peptides, protein_column="ProteinName", ...)
+```
+
+### peptides_to_protein (iBAQ)
+
+```python
+from mokume.quantification import peptides_to_protein
+
+peptides_to_protein(
+    fasta="proteome.fasta",
+    peptides="peptides.csv",
+    enzyme="Trypsin",
+    normalize=True,
+    tpa=True,
+    ruler=True,
+    ploidy=2,
+    cpc=200,
+    organism="human",
+    output="proteins-ibaq.tsv",
+    min_aa=7,
+    max_aa=30,
+    verbose=True,
+    qc_report="QC.pdf",
+)
+```
+
+---
+
+## Pipeline
+
+### PipelineConfig
+
+```python
+from mokume.pipeline import QuantificationPipeline, PipelineConfig
+from mokume.pipeline.config import (
+    InputConfig,
+    FilterConfig,
+    NormalizationConfig,
+    QuantificationConfig,
+    IRSConfig,
+    BatchCorrectionConfig,
+    DEConfig,
+    OutputConfig,
+)
+
+config = PipelineConfig(
+    input=InputConfig(
+        parquet="data.parquet",
+        sdrf="experiment.sdrf.tsv",
+        fasta_file="proteome.fasta",
+    ),
+    filtering=FilterConfig(
+        min_aa=7,
+        min_unique_peptides=2,
+        remove_contaminants=True,
+    ),
+    normalization=NormalizationConfig(
+        run_method="median",
+        sample_method="globalMedian",
+    ),
+    quantification=QuantificationConfig(
+        method="maxlfq",
+    ),
+)
+
+pipeline = QuantificationPipeline(config)
+proteins = pipeline.run()
+```
+
+### features_to_proteins (functional)
+
+```python
+from mokume.pipeline import features_to_proteins
+
+proteins = features_to_proteins(
+    parquet="data.parquet",
+    output="proteins.csv",
+    sdrf="experiment.sdrf.tsv",
+    quant_method="maxlfq",
+    run_normalization="median",
+    sample_normalization="globalMedian",
+    batch_correction=True,
+    batch_method="sample_prefix",
+    batch_covariates=["characteristics[sex]"],
+)
+```
+
+---
+
+## Normalization
+
+### Peptide Normalization Pipeline
+
+```python
+from mokume.normalization.peptide import peptide_normalization
+
+peptide_normalization(
+    parquet="features.parquet",
+    sdrf="experiment.sdrf.tsv",
+    min_aa=7,
+    min_unique=2,
+    remove_ids=None,
+    remove_decoy_contaminants=True,
+    remove_low_frequency_peptides=True,
+    output="peptides.csv",
+    skip_normalization=False,
+    nmethod="median",          # Feature-level: mean, median, iqr, none
+    pnmethod="globalMedian",   # Sample-level: globalMedian, conditionMedian, hierarchical, none
+    log2=True,
+    save_parquet=False,
+)
+```
+
+### IRS Normalization
+
+```python
+from mokume.normalization.irs import (
+    IRSNormalizer,
+    detect_pooled_from_sdrf,
+    detect_plexes_from_sdrf,
+)
+
+ref_samples = detect_pooled_from_sdrf("experiment.sdrf.tsv")
+sample_to_plex = detect_plexes_from_sdrf("experiment.sdrf.tsv")
+
+normalizer = IRSNormalizer(reference_samples=ref_samples, stat="median")
+protein_df = normalizer.fit_transform(protein_df, sample_to_plex)
+```
+
+---
+
+## Preprocessing Filters
+
+```python
+from mokume.preprocessing.filters import (
+    load_filter_config,
+    save_filter_config,
+    generate_example_config,
+    get_filter_pipeline,
+)
+from mokume.model.filters import PreprocessingFilterConfig
+
+# Generate example
+generate_example_config("filters.yaml")
+
+# Load from file
+config = load_filter_config("filters.yaml")
+
+# Create programmatically
+config = PreprocessingFilterConfig(name="custom", enabled=True)
+config.intensity.min_intensity = 1000.0
+config.peptide.allowed_charge_states = [2, 3, 4]
+config.protein.min_unique_peptides = 2
+config.run_qc.max_missing_rate = 0.5
+
+# Apply CLI-style overrides
+config.apply_overrides({
+    "min_intensity": 500,
+    "charge_states": [2, 3],
+    "max_missing_rate": 0.3,
+})
+
+# Save
+save_filter_config(config, "my_filters.yaml")
+
+# Apply
+pipeline = get_filter_pipeline(config)
+filtered_df, results = pipeline.apply(df)
+
+for result in results:
+    print(f"{result.filter_name}: removed {result.removed_count} ({result.removal_rate:.1%})")
+
+summary = pipeline.summary(results)
+print(f"Total removed: {summary['total_removed']} / {summary['total_input']}")
+```
+
+---
+
+## Postprocessing
+
+### Batch Correction
+
+```python
+from mokume.postprocessing import (
+    apply_batch_correction,
+    detect_batches,
+    extract_covariates_from_sdrf,
+)
+
+batch_indices = detect_batches(
+    sample_ids=df_wide.columns.tolist(),
+    method="sample_prefix",  # "sample_prefix", "run", or "column"
+)
+
+covariates = extract_covariates_from_sdrf(
+    "experiment.sdrf.tsv",
+    sample_ids=df_wide.columns.tolist(),
+    covariate_columns=["characteristics[sex]"],
+)
+
+df_corrected = apply_batch_correction(
+    df=df_wide, batch=batch_indices, covs=covariates,
+)
+```
+
+### Data Reshaping
+
+```python
+from mokume.postprocessing.reshape import (
+    pivot_wider,
+    pivot_longer,
+    remove_samples_low_protein_number,
+    remove_missing_values,
+    describe_expression_metrics,
+)
+
+# Long to wide
+df_wide = pivot_wider(df, row_name="ProteinName", col_name="SampleID", values="Ibaq")
+
+# Wide to long
+df_long = pivot_longer(df_wide, row_name="ProteinName", col_name="SampleID", values="Ibaq")
+
+# Quality filtering
+df = remove_samples_low_protein_number(df, min_protein_num=100)
+df = remove_missing_values(df, missingness_percentage=20, expression_column="Ibaq")
+
+# Statistics
+metrics = describe_expression_metrics(df)
+```
+
+---
+
+## IO
+
+### AnnData
+
+```python
+from mokume.io.parquet import create_anndata
+
+adata = create_anndata(
+    df,
+    obs_col="SampleID",
+    var_col="ProteinName",
+    value_col="Ibaq",
+    layer_cols=["IbaqNorm", "IbaqLog"],
+    obs_metadata_cols=["Condition"],
+    var_metadata_cols=["GeneName"],
+)
+adata.write("proteins.h5ad")
+```
+
+### FASTA
+
+```python
+from mokume.io.fasta import (
+    load_fasta,
+    digest_protein,
+    extract_fasta,
+    get_protein_molecular_weights,
+)
+
+proteins = load_fasta("proteome.fasta")
+
+peptides = digest_protein(
+    sequence="MKWVTFISLLFLFSSAYS...",
+    enzyme="Trypsin",
+    min_aa=7, max_aa=30,
+)
+
+unique_peptide_counts, mw_dict, found_proteins = extract_fasta(
+    fasta="proteome.fasta",
+    enzyme="Trypsin",
+    proteins=["P12345", "P67890"],
+    min_aa=7, max_aa=30,
+    tpa=True,
+)
+
+mw_dict = get_protein_molecular_weights("proteome.fasta", ["P12345", "P67890"])
+```
+
+---
+
+## Organism Metadata
+
+```python
+from mokume.model.organism import OrganismDescription
+
+organisms = OrganismDescription.registered_organisms()
+# ['human', 'mouse', 'yeast', 'drome', 'caeel', 'schpo']
+
+human = OrganismDescription.get("human")
+print(human.genome_size)
+print(human.histone_entries)
+```

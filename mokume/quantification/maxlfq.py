@@ -26,6 +26,7 @@ References:
     unlimited numbers of proteomes. Mol Cell Proteomics. 2023.
 """
 
+
 import warnings
 from typing import Optional
 
@@ -97,7 +98,7 @@ def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
 
     # Log-transform for ratio calculations
     with np.errstate(divide='ignore', invalid='ignore'):
-        log_matrix = np.log2(peptide_matrix.copy())
+        log_matrix = np.log2(peptide_matrix)
 
     # Step 1: Align peptide traces
     # Use peptide with most valid values as reference
@@ -200,24 +201,16 @@ def _process_protein(
                 })
         return results
 
-    # Create peptide x sample matrix
-    n_peptides = len(peptides)
-    n_samples = len(samples)
-    peptide_matrix = np.full((n_peptides, n_samples), np.nan)
-    peptide_to_idx = {p: i for i, p in enumerate(peptides)}
-    sample_to_idx = {s: i for i, s in enumerate(samples)}
-
-    for _, row in protein_data.iterrows():
-        pep_idx = peptide_to_idx[row[peptide_column]]
-        sample_idx = sample_to_idx[row[sample_column]]
-        # Handle multiple measurements per peptide/sample
-        current = peptide_matrix[pep_idx, sample_idx]
-        new_val = row[intensity_column]
-        if np.isnan(current):
-            peptide_matrix[pep_idx, sample_idx] = new_val
-        else:
-            # Sum multiple measurements
-            peptide_matrix[pep_idx, sample_idx] = current + new_val
+    # Create peptide x sample matrix via pivot_table (vectorized, sums duplicates)
+    pivot = protein_data.pivot_table(
+        index=peptide_column,
+        columns=sample_column,
+        values=intensity_column,
+        aggfunc="sum",
+    )
+    # Reindex to ensure consistent ordering
+    pivot = pivot.reindex(index=peptides, columns=samples)
+    peptide_matrix = pivot.values
 
     # Run MaxLFQ algorithm
     intensities = _maxlfq_solve_protein(peptide_matrix)
@@ -306,9 +299,6 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         threads: int = -1,
         verbose: int = 0,
         force_builtin: bool = False,
-        # Legacy parameter support
-        n_jobs: Optional[int] = None,
-        use_variance_guided: Optional[bool] = None,
     ):
         """
         Initialize MaxLFQ quantification.
@@ -323,34 +313,11 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
             Verbosity level for parallel processing.
         force_builtin : bool
             If True, use built-in implementation even if DirectLFQ is available.
-        n_jobs : int, optional
-            Deprecated. Use 'threads' instead.
-        use_variance_guided : bool, optional
-            Deprecated. No longer used.
         """
         self.min_peptides = min_peptides
         self.force_builtin = force_builtin
-
-        # Handle legacy n_jobs parameter
-        if n_jobs is not None:
-            warnings.warn(
-                "Parameter 'n_jobs' is deprecated, use 'threads' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.threads = n_jobs
-        else:
-            self.threads = threads
-
+        self.threads = threads
         self.verbose = verbose
-
-        # Warn if use_variance_guided is explicitly set
-        if use_variance_guided is not None:
-            warnings.warn(
-                "Parameter 'use_variance_guided' is deprecated and no longer used.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         # Determine which implementation to use
         self._directlfq_available = _is_directlfq_available()
@@ -397,9 +364,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
             sample_column=sample_column,
         )
 
-        # Rename intensity column to MaxLFQ format
-        if 'DirectLFQIntensity' in result_df.columns:
-            result_df = result_df.rename(columns={'DirectLFQIntensity': 'MaxLFQIntensity'})
+        # DirectLFQ already outputs 'Intensity' column - no rename needed
 
         return result_df
 
@@ -448,7 +413,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
             result_df = result_df.rename(columns={
                 'protein': protein_column,
                 'sample': sample_column,
-                'intensity': 'MaxLFQIntensity',
+                'intensity': 'Intensity',
             })
 
         return result_df
@@ -491,7 +456,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         -------
         pd.DataFrame
             DataFrame with columns: protein_column, sample_column,
-            (run_column if provided), 'MaxLFQIntensity'.
+            (run_column if provided), 'Intensity'.
         """
         logger.info(f"Running MaxLFQ quantification ({self.name})")
 
@@ -592,7 +557,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
             result_df = result_df.drop(columns=['sample'])
             result_df = result_df.rename(columns={
                 'protein': protein_column,
-                'intensity': 'MaxLFQIntensity',
+                'intensity': 'Intensity',
             })
 
         return result_df

@@ -217,15 +217,7 @@ uniprotkb_Human_AND_reviewed_true_AND_m_2026_01_26.fasta.gz
 uniprotkb_Human_AND_reviewed_true_AND_m_2026_01_26.fasta
 
 # Benchmark data files (large, downloadable - not committed to git)
-benchmarks/*/data/
-benchmarks/**/*.parquet
-benchmarks/**/*_feature.csv
-benchmarks/**/*_feature.tsv
-benchmarks/**/*_peptides_raw.tsv
-benchmarks/**/qpx.zip
-benchmarks/**/directlfq_repo/
-benchmarks/**/proteomics-batch-effect-correction-benchmarking/
-benchmarks/**/__pycache__/
+benchmarks/
 
 # Large benchmark images (>5MB, stored externally)
 benchmarks/quant-pxd007683-tmt-vs-lfq/figures/PXD007683-LFQ-11samples-*.png

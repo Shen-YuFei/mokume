@@ -261,7 +261,7 @@ def run_all_quantification_methods(peptide_df: pd.DataFrame, diann_maxlfq: pd.Da
         intensity_column="NormIntensity",
         sample_column="SampleID",
     )
-    intensity_cols["Mokume MaxLFQ"] = "MaxLFQIntensity"
+    intensity_cols["Mokume MaxLFQ"] = "Intensity"
 
     # Top3
     top3 = Top3Quantification()
@@ -272,7 +272,7 @@ def run_all_quantification_methods(peptide_df: pd.DataFrame, diann_maxlfq: pd.Da
         intensity_column="NormIntensity",
         sample_column="SampleID",
     )
-    intensity_cols["Top3"] = "Top3Intensity"
+    intensity_cols["Top3"] = "Intensity"
 
     # Sum
     sum_quant = AllPeptidesQuantification()
@@ -283,7 +283,7 @@ def run_all_quantification_methods(peptide_df: pd.DataFrame, diann_maxlfq: pd.Da
         intensity_column="NormIntensity",
         sample_column="SampleID",
     )
-    intensity_cols["Sum"] = "SumIntensity"
+    intensity_cols["Sum"] = "Intensity"
 
     # DirectLFQ standalone (for comparison when available)
     if is_directlfq_available():
@@ -297,7 +297,7 @@ def run_all_quantification_methods(peptide_df: pd.DataFrame, diann_maxlfq: pd.Da
                 intensity_column="NormIntensity",
                 sample_column="SampleID",
             )
-            intensity_cols["DirectLFQ"] = "DirectLFQIntensity"
+            intensity_cols["DirectLFQ"] = "Intensity"
         except Exception as e:
             print(f"DirectLFQ failed: {e}")
 
@@ -345,13 +345,13 @@ class TestSmallDiannSubset:
         )
 
         assert len(result) > 0, "MaxLFQ should produce results"
-        assert "MaxLFQIntensity" in result.columns
-        assert result["MaxLFQIntensity"].notna().sum() > 0, "Should have non-NaN intensities"
-        assert (result["MaxLFQIntensity"] > 0).all(), "All intensities should be positive"
+        assert "Intensity" in result.columns
+        assert result["Intensity"].notna().sum() > 0, "Should have non-NaN intensities"
+        assert (result["Intensity"] > 0).all(), "All intensities should be positive"
 
         print(f"\n[Small DIA-NN Subset] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
-        print(f"  Intensity range: {result['MaxLFQIntensity'].min():.2f} - {result['MaxLFQIntensity'].max():.2f}")
+        print(f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}")
 
     def test_small_diann_maxlfq_parallelization(self):
         """Test that parallel MaxLFQ produces same results as single-threaded."""
@@ -377,7 +377,7 @@ class TestSmallDiannSubset:
 
         corr = compute_correlation(
             result_single, result_parallel,
-            "MaxLFQIntensity", "MaxLFQIntensity"
+            "Intensity", "Intensity"
         )
 
         print(f"\n[Small DIA-NN Subset] Single-threaded vs Parallel MaxLFQ:")
@@ -453,7 +453,7 @@ class TestSmallDiannSubset:
 
         corr = compute_correlation(
             result_directlfq, result_maxlfq,
-            "DirectLFQIntensity", "MaxLFQIntensity"
+            "Intensity", "Intensity"
         )
 
         print(f"\n[Small DIA-NN Subset] DirectLFQ vs Mokume MaxLFQ:")
@@ -482,11 +482,11 @@ class TestSmallDiannSubset:
         )
 
         assert len(result_builtin) > 0, "Built-in MaxLFQ should produce results"
-        assert "MaxLFQIntensity" in result_builtin.columns
+        assert "Intensity" in result_builtin.columns
 
         print(f"\n[Small DIA-NN Subset] Built-in MaxLFQ fallback:")
         print(f"  Protein-sample combinations: {len(result_builtin):,}")
-        print(f"  Intensity range: {result_builtin['MaxLFQIntensity'].min():.2f} - {result_builtin['MaxLFQIntensity'].max():.2f}")
+        print(f"  Intensity range: {result_builtin['Intensity'].min():.2f} - {result_builtin['Intensity'].max():.2f}")
 
 
 class TestDiannWithSdrf:
@@ -535,12 +535,12 @@ class TestDiannWithSdrf:
         )
 
         assert len(result) > 0, "MaxLFQ should produce results"
-        assert "MaxLFQIntensity" in result.columns
-        assert result["MaxLFQIntensity"].notna().sum() > 0, "Should have non-NaN intensities"
+        assert "Intensity" in result.columns
+        assert result["Intensity"].notna().sum() > 0, "Should have non-NaN intensities"
 
         print(f"\n[PRIDE PXD063291] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
-        print(f"  Intensity range: {result['MaxLFQIntensity'].min():.2f} - {result['MaxLFQIntensity'].max():.2f}")
+        print(f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}")
 
     def test_pride_full_comparison(self):
         """
@@ -661,7 +661,7 @@ def run_quantification_at_level(peptide_df: pd.DataFrame, run_column: str = None
         sample_column="SampleID",
         run_column=run_column,
     )
-    intensity_cols[f"MaxLFQ ({level_suffix})"] = "MaxLFQIntensity"
+    intensity_cols[f"MaxLFQ ({level_suffix})"] = "Intensity"
 
     # DirectLFQ (if available, only at sample level - doesn't support run_column)
     if is_directlfq_available() and run_column is None:
@@ -675,7 +675,7 @@ def run_quantification_at_level(peptide_df: pd.DataFrame, run_column: str = None
                 intensity_column="NormIntensity",
                 sample_column="SampleID",
             )
-            intensity_cols[f"DirectLFQ ({level_suffix})"] = "DirectLFQIntensity"
+            intensity_cols[f"DirectLFQ ({level_suffix})"] = "Intensity"
         except Exception as e:
             print(f"DirectLFQ failed: {e}")
 
@@ -689,7 +689,7 @@ def run_quantification_at_level(peptide_df: pd.DataFrame, run_column: str = None
         sample_column="SampleID",
         run_column=run_column,
     )
-    intensity_cols[f"Top3 ({level_suffix})"] = "Top3Intensity"
+    intensity_cols[f"Top3 ({level_suffix})"] = "Intensity"
 
     # TopN (n=5)
     topn = TopNQuantification(n=5)
@@ -701,7 +701,7 @@ def run_quantification_at_level(peptide_df: pd.DataFrame, run_column: str = None
         sample_column="SampleID",
         run_column=run_column,
     )
-    intensity_cols[f"Top5 ({level_suffix})"] = "Top5Intensity"
+    intensity_cols[f"Top5 ({level_suffix})"] = "Intensity"
 
     # Sum (AllPeptides)
     sum_quant = AllPeptidesQuantification()
@@ -713,7 +713,7 @@ def run_quantification_at_level(peptide_df: pd.DataFrame, run_column: str = None
         sample_column="SampleID",
         run_column=run_column,
     )
-    intensity_cols[f"Sum ({level_suffix})"] = "SumIntensity"
+    intensity_cols[f"Sum ({level_suffix})"] = "Intensity"
 
     return results, intensity_cols
 
@@ -1029,19 +1029,19 @@ class TestAggregationLevels:
 
         result_run_aggregated = result_run_with_sample.groupby(
             ["ProteinName", "SampleID"]
-        )["MaxLFQIntensity"].mean().reset_index()
+        )["Intensity"].mean().reset_index()
 
         # Compute correlation
         merged = pd.merge(
-            result_sample[["ProteinName", "SampleID", "MaxLFQIntensity"]],
+            result_sample[["ProteinName", "SampleID", "Intensity"]],
             result_run_aggregated,
             on=["ProteinName", "SampleID"],
             suffixes=("_sample", "_run_agg")
         )
 
         if len(merged) > 0:
-            x = np.log2(merged["MaxLFQIntensity_sample"].values + 1)
-            y = np.log2(merged["MaxLFQIntensity_run_agg"].values + 1)
+            x = np.log2(merged["Intensity_sample"].values + 1)
+            y = np.log2(merged["Intensity_run_agg"].values + 1)
 
             valid = np.isfinite(x) & np.isfinite(y)
             x, y = x[valid], y[valid]

@@ -12,15 +12,29 @@ from mokume.normalization.feature import (
 )
 from mokume.normalization.peptide import (
     peptide_normalization,
-    analyse_sdrf,
+)
+from mokume.preprocessing.sdrf import analyse_sdrf
+from mokume.preprocessing.aggregation import (
     remove_contaminants_entrapments_decoys,
     remove_protein_by_ids,
-    Feature,
 )
+from mokume.io.feature import Feature
 from mokume.normalization.hierarchical import (
     HierarchicalSampleNormalizer,
     HierarchicalIonAligner,
     DistanceMetric,
+)
+from mokume.normalization.tmm import (
+    TMMNormalizer,
+    tmm_normalize,
+)
+from mokume.normalization.irs import (
+    IRSNormalizer,
+    detect_pooled_from_sdrf,
+    detect_reference_by_column,
+    detect_reference_by_regex,
+    detect_plexes_from_sdrf,
+    detect_condition_from_sdrf,
 )
 
 __all__ = [
@@ -38,4 +52,14 @@ __all__ = [
     "HierarchicalSampleNormalizer",
     "HierarchicalIonAligner",
     "DistanceMetric",
+    # TMM normalization
+    "TMMNormalizer",
+    "tmm_normalize",
+    # IRS normalization (multi-plex TMT)
+    "IRSNormalizer",
+    "detect_pooled_from_sdrf",
+    "detect_reference_by_column",
+    "detect_reference_by_regex",
+    "detect_plexes_from_sdrf",
+    "detect_condition_from_sdrf",
 ]

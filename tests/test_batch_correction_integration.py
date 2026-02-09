@@ -26,6 +26,11 @@ from mokume.postprocessing import (
 )
 from mokume.model import BatchDetectionMethod, BatchCorrectionConfig
 from mokume.pipeline import PipelineConfig
+from mokume.pipeline.config import (
+    InputConfig,
+    QuantificationConfig,
+    BatchCorrectionConfig as PipelineBatchConfig,
+)
 
 
 class TestBatchDetection:
@@ -175,27 +180,29 @@ class TestPipelineConfigBatchCorrection:
     def test_pipeline_config_with_batch_correction(self):
         """Test PipelineConfig accepts batch correction parameters."""
         config = PipelineConfig(
-            parquet="test.parquet",
-            quant_method="maxlfq",
-            batch_correction=True,
-            batch_method="sample_prefix",
-            batch_covariates=["characteristics[sex]"],
-            batch_parametric=True,
+            input=InputConfig(parquet="test.parquet"),
+            quantification=QuantificationConfig(method="maxlfq"),
+            batch=PipelineBatchConfig(
+                enabled=True,
+                method="sample_prefix",
+                covariates=["characteristics[sex]"],
+                parametric=True,
+            ),
         )
 
-        assert config.batch_correction is True
-        assert config.batch_method == "sample_prefix"
-        assert config.batch_covariates == ["characteristics[sex]"]
-        assert config.batch_parametric is True
+        assert config.batch.enabled is True
+        assert config.batch.method == "sample_prefix"
+        assert config.batch.covariates == ["characteristics[sex]"]
+        assert config.batch.parametric is True
 
     def test_pipeline_config_defaults_no_batch(self):
         """Test that batch correction is disabled by default."""
         config = PipelineConfig(
-            parquet="test.parquet",
-            quant_method="maxlfq",
+            input=InputConfig(parquet="test.parquet"),
+            quantification=QuantificationConfig(method="maxlfq"),
         )
 
-        assert config.batch_correction is False
+        assert config.batch.enabled is False
 
 
 class TestSDRFCovariatExtraction:

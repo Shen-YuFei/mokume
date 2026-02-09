@@ -259,6 +259,10 @@ class PeptideNormalizationMethod(Enum):
     Hierarchical : auto
         DirectLFQ-style hierarchical clustering-based normalization.
         Uses HierarchicalSampleNormalizer from mokume.normalization.hierarchical.
+    TMM : auto
+        Trimmed Mean of M-values normalization.
+        Robust to composition bias from highly abundant proteins.
+        Uses TMMNormalizer from mokume.normalization.tmm.
     """
 
     NONE = auto()
@@ -266,6 +270,7 @@ class PeptideNormalizationMethod(Enum):
     GlobalMedian = auto()
     ConditionMedian = auto()
     Hierarchical = auto()  # DirectLFQ-style, native mokume implementation
+    TMM = auto()  # Trimmed Mean of M-values (Robinson & Oshlack, 2010)
 
     @classmethod
     def from_str(cls, name: str) -> "PeptideNormalizationMethod":
@@ -333,6 +338,19 @@ class PeptideNormalizationMethod(Enum):
         fn = _peptide_method_registry[self]
         return fn(dataset_df, sample, med_map)
 
+    @property
+    def is_dataset_level(self) -> bool:
+        """Whether this method operates on the full dataset rather than per-sample.
+
+        Hierarchical and TMM normalization require the complete dataset and are
+        applied after all samples are loaded, unlike GlobalMedian/ConditionMedian
+        which operate per-sample during loading.
+        """
+        return self in (
+            PeptideNormalizationMethod.Hierarchical,
+            PeptideNormalizationMethod.TMM,
+        )
+
     def __call__(self, dataset_df: pd.DataFrame, sample: str, med_map: dict):
         """Invoke the normalize_sample method."""
         return self.normalize_sample(dataset_df, sample, med_map)
@@ -350,6 +368,7 @@ def condition_median(dataset_df, sample: str, med_map: dict):
     """Condition median normalization of the data."""
     con = dataset_df[CONDITION].unique()[0]
     dataset_df.loc[:, NORM_INTENSITY] = dataset_df[NORM_INTENSITY] / med_map[con][sample]
+    return dataset_df
 
 
 @PeptideNormalizationMethod.NONE.register_replicate_fn
@@ -360,16 +379,13 @@ def peptide_no_normalization(dataset_df, sample, med_map):
 
 @PeptideNormalizationMethod.Hierarchical.register_replicate_fn
 def hierarchical_normalization(dataset_df, sample, med_map):
-    """
-    Hierarchical normalization placeholder.
+    """Placeholder: Hierarchical normalization is applied at dataset level."""
+    return dataset_df
 
-    Note: This is a placeholder. Hierarchical normalization should be applied
-    using HierarchicalSampleNormalizer from mokume.normalization.hierarchical
-    at the dataset level, not per-sample. This registration is for API consistency.
-    """
-    # Hierarchical normalization is applied at the dataset level,
-    # not per-sample. This function returns the data unchanged.
-    # The actual normalization happens in the pipeline before this point.
+
+@PeptideNormalizationMethod.TMM.register_replicate_fn
+def tmm_normalization(dataset_df, sample, med_map):
+    """Placeholder: TMM normalization is applied at dataset level."""
     return dataset_df
 
 

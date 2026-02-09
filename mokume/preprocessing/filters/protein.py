@@ -2,6 +2,7 @@
 Protein-level preprocessing filters.
 """
 
+import re
 from typing import Optional, Tuple, List
 
 import pandas as pd
@@ -59,13 +60,10 @@ class ContaminantFilter(BaseFilter):
             )
             return df, self._create_result(input_count, input_count)
 
-        def is_contaminant(protein_id):
-            if pd.isna(protein_id):
-                return False
-            protein_str = str(protein_id).upper()
-            return any(pattern.upper() in protein_str for pattern in self.patterns)
-
-        mask = ~df[self.protein_column].apply(is_contaminant)
+        # Vectorized contaminant matching using regex OR pattern
+        upper_col = df[self.protein_column].fillna("").astype(str).str.upper()
+        pattern_regex = "|".join(re.escape(p.upper()) for p in self.patterns)
+        mask = ~upper_col.str.contains(pattern_regex, regex=True)
         filtered_df = df[mask].copy()
 
         output_count = len(filtered_df)
