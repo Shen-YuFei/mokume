@@ -197,6 +197,9 @@ class ModificationFilter(BaseFilter):
             return df, self._create_result(input_count, input_count)
 
         # Build pattern for modifications to exclude
+        if not self.exclude_modifications:
+            return df, self._create_result(input_count, input_count)
+
         patterns = "|".join(re.escape(mod) for mod in self.exclude_modifications)
 
         mask = ~df[self.sequence_column].fillna("").astype(str).str.contains(
@@ -412,6 +415,9 @@ class SequencePatternFilter(BaseFilter):
             return df, self._create_result(input_count, input_count)
 
         # Combine compiled patterns into single regex for vectorized matching
+        if not self._compiled_patterns:
+            return df, self._create_result(input_count, input_count)
+
         combined_pattern = "|".join(p.pattern for p in self._compiled_patterns)
         mask = ~df[col].fillna("").astype(str).str.contains(combined_pattern, regex=True)
         filtered_df = df[mask].copy()

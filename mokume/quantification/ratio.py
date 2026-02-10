@@ -324,7 +324,7 @@ def load_psm_data(
     try:
         # Create raw view from parquet
         conn.execute(
-            f"CREATE VIEW parquet_raw AS SELECT * FROM parquet_scan('{parquet_path}')"
+            f"CREATE VIEW parquet_raw AS SELECT * FROM parquet_scan('{parquet_path.replace(chr(39), chr(39)*2)}')"
         )
 
         # Unnest intensities and apply filters

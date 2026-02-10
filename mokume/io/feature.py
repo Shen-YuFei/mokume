@@ -120,9 +120,10 @@ class Feature:
             self.parquet_db = duckdb.connect()
 
             # Create raw view from parquet
+            safe_path = database_path.replace("'", "''")
             self.parquet_db.execute(
                 "CREATE VIEW parquet_db_raw AS SELECT * FROM parquet_scan('{}')".format(
-                    database_path
+                    safe_path
                 )
             )
 
@@ -144,7 +145,8 @@ class Feature:
                     reference_file_name as run,
                     unnest.sample_accession as condition,
                     1 as biological_replicate,
-                    '1' as fraction
+                    '1' as fraction,
+                    split_part(unnest.sample_accession, '_', 1) as mixture
                 FROM parquet_db_raw, UNNEST(intensities) as unnest
                 WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
             """)
@@ -225,7 +227,8 @@ class Feature:
                 p.run,
                 COALESCE(s.sdrf_condition, p.sample_accession) as condition,
                 COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,
-                COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction
+                COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,
+                split_part(p.sample_accession, '_', 1) as mixture
             FROM parquet_db_unnested p
             LEFT JOIN sdrf_mapping s ON p.sample_accession = s.sdrf_sample_accession
         """)

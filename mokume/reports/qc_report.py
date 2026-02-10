@@ -12,6 +12,7 @@ Generates interactive HTML reports with sample-level and DE-level QC metrics:
 - Variance decomposition (condition vs plex)
 """
 
+import html as html_module
 from typing import Optional
 
 import numpy as np
@@ -576,7 +577,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{title}</title>
+    <title>{html_module.escape(title)}</title>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -623,7 +624,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
 <body>
 
 <div class="header">
-    <h1>{title}</h1>
+    <h1>{html_module.escape(title)}</h1>
     <div class="header-stats">
         <div class="header-stat">
             <div class="number">{summary['n_proteins']}</div>
@@ -762,7 +763,7 @@ const symbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
 
 // PCA Plot
 (function() {{
-    const pca = {json.dumps(pca)};
+    const pca = {json.dumps(pca).replace('</', '<\\/')};
     const conditions = [...new Set(pca.conditions)].sort();
     const plexes = [...new Set(pca.plexes)].sort();
 
@@ -805,7 +806,7 @@ const symbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
 
 // t-SNE Plot
 (function() {{
-    const tsne = {json.dumps(tsne)};
+    const tsne = {json.dumps(tsne).replace('</', '<\\/')};
     if (!tsne) {{
         document.getElementById('tsne-plot').innerHTML = '<p style="padding:20px;color:#999">t-SNE requires scikit-learn</p>';
         return;
@@ -861,7 +862,7 @@ Plotly.newPlot('pvca-plot', [{{
 
 // Correlation heatmap
 (function() {{
-    const corr = {json.dumps(corr)};
+    const corr = {json.dumps(corr).replace('</', '<\\/')};
     Plotly.newPlot('corr-plot', [{{
         type: 'heatmap',
         z: corr.matrix,

@@ -227,6 +227,12 @@ class LoadingStage:
             detect_plexes_from_sdrf,
         )
 
+        if not self.config.input.sdrf:
+            raise ValueError(
+                "Ratio quantification requires an SDRF file for reference "
+                "sample detection. Use --sdrf to provide one."
+            )
+
         # Detect reference samples (reuse IRS detection logic)
         ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
 
@@ -523,6 +529,12 @@ class QuantificationStage:
         """Quantify using iBAQ method."""
         from mokume.quantification.ibaq import extract_fasta
 
+        if not self.config.input.fasta_file:
+            raise ValueError(
+                "iBAQ quantification requires a FASTA file. "
+                "Use --fasta to provide one."
+            )
+
         proteins = peptide_df[PROTEIN_NAME].unique().tolist()
 
         logger.info(f"Computing iBAQ for {len(proteins)} proteins using FASTA...")
@@ -729,11 +741,15 @@ class PostprocessingStage:
         contrasts = []
         if self.config.de.contrasts:
             for c in self.config.de.contrasts:
-                parts = c.split("-")
-                if len(parts) == 2:
+                # Prefer " vs " delimiter to support hyphenated condition names
+                if " vs " in c:
+                    parts = c.split(" vs ", 1)
+                    contrasts.append((parts[0].strip(), parts[1].strip()))
+                elif "-" in c:
+                    parts = c.split("-", 1)
                     contrasts.append((parts[0].strip(), parts[1].strip()))
                 else:
-                    logger.warning(f"Invalid contrast format '{c}', expected 'A-B'")
+                    logger.warning(f"Invalid contrast format '{c}', expected 'A vs B' or 'A-B'")
         else:
             # Auto-detect: compare all conditions pairwise
             conditions = sorted(set(sample_to_condition.values()))

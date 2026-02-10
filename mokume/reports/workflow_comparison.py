@@ -11,6 +11,8 @@ Compares quantification workflows side-by-side using:
 Designed to answer: "Which workflow preserves biology better?"
 """
 
+import html
+import json
 from typing import Optional
 
 import numpy as np
@@ -223,8 +225,6 @@ def _compute_marker_results(workflow_metrics, marker_genes):
 
 def _build_comparison_html(title, workflow_metrics, concordance, marker_results, marker_genes):
     """Build the comparison report HTML."""
-    import json
-
     n_workflows = len(workflow_metrics)
 
     # Build summary table rows
@@ -288,7 +288,7 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{title}</title>
+    <title>{html.escape(title)}</title>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -327,7 +327,7 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
 <body>
 
 <div class="header">
-    <h1>{title}</h1>
+    <h1>{html.escape(title)}</h1>
     <p>Comparing {n_workflows} quantification workflows. Higher silhouette, higher condition variance,
        lower plex variance, and lower CV indicate better performance.</p>
 </div>
@@ -414,10 +414,10 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
 </div>
 
 <script>
-const summaryRows = {json.dumps(summary_rows)};
-const pcaData = {json.dumps(pca_data)};
-const concordanceData = {json.dumps(concordance_json)};
-const fcScatterData = {json.dumps(fc_scatter_data)};
+const summaryRows = {json.dumps(summary_rows).replace('</', '<\\/')};
+const pcaData = {json.dumps(pca_data).replace('</', '<\\/')};
+const concordanceData = {json.dumps(concordance_json).replace('</', '<\\/')};
+const fcScatterData = {json.dumps(fc_scatter_data).replace('</', '<\\/')};
 
 const palette = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b'];
 const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];

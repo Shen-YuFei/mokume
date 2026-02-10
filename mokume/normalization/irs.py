@@ -96,7 +96,7 @@ class IRSNormalizer:
         # Compute global reference intensity (geometric mean across plexes)
         ref_df = pd.DataFrame(plex_ref_intensity)
         # Replace 0 and negatives with NaN for geometric mean
-        ref_df = ref_df.replace(0, np.nan)
+        ref_df[ref_df <= 0] = np.nan
         log_refs = np.log(ref_df)
         global_ref = np.exp(log_refs.mean(axis=1))
 

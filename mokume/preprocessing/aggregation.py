@@ -122,7 +122,9 @@ def remove_protein_by_ids(
     with open(protein_file, "r") as contaminants_reader:
         contaminants = contaminants_reader.read().split("\n")
     contaminants = [cont for cont in contaminants if cont.strip()]
-    cregex = "|".join(contaminants)
+    if not contaminants:
+        return dataset
+    cregex = "|".join(re.escape(cont) for cont in contaminants)
     return dataset[~dataset[protein_field].str.contains(cregex, regex=True)]
 
 
@@ -255,7 +257,7 @@ def merge_fractions(dataset: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         A DataFrame with merged fractions and maximum normalized intensity.
     """
-    dataset.dropna(subset=[NORM_INTENSITY], inplace=True)
+    dataset = dataset.dropna(subset=[NORM_INTENSITY])
     dataset = dataset.groupby(
         [
             PROTEIN_NAME,
@@ -269,7 +271,7 @@ def merge_fractions(dataset: pd.DataFrame) -> pd.DataFrame:
         ],
         observed=True,
     ).agg({NORM_INTENSITY: "max"})
-    dataset.reset_index(inplace=True)
+    dataset = dataset.reset_index()
     return dataset
 
 
@@ -291,7 +293,7 @@ def get_peptidoform_normalize_intensities(
     pd.DataFrame
         A DataFrame with normalized intensities.
     """
-    dataset.dropna(subset=[NORM_INTENSITY], inplace=True)
+    dataset = dataset.dropna(subset=[NORM_INTENSITY])
     if higher_intensity:
         dataset = dataset.loc[
             dataset.groupby(
@@ -299,7 +301,7 @@ def get_peptidoform_normalize_intensities(
                 observed=True,
             )[NORM_INTENSITY].idxmax()
         ]
-    dataset.reset_index(drop=True, inplace=True)
+    dataset = dataset.reset_index(drop=True)
     return dataset
 
 
@@ -324,7 +326,7 @@ def sum_peptidoform_intensities(
     pd.DataFrame
         A DataFrame with summed normalized intensities for each unique peptidoform entry.
     """
-    dataset.dropna(subset=[NORM_INTENSITY], inplace=True)
+    dataset = dataset.dropna(subset=[NORM_INTENSITY])
 
     # Define columns based on aggregation level
     base_columns = [

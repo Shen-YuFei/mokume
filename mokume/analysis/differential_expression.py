@@ -100,7 +100,8 @@ class DifferentialExpression:
         intensity_matrix = protein_df.set_index(protein_col)[sample_cols]
 
         # Log2 transform (handle zeros/negatives) — skip if data is already log2
-        intensity_matrix = intensity_matrix.replace(0, np.nan)
+        if not self.skip_log2:
+            intensity_matrix = intensity_matrix.replace(0, np.nan)
         log2_matrix = intensity_matrix if self.skip_log2 else np.log2(intensity_matrix)
 
         if self.method == "limma":
