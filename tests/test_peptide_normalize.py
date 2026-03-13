@@ -182,6 +182,62 @@ class TestFeatureWideFormat:
         assert count > 0
 
 
+class TestFeatureNewQPXFormat:
+    """Tests for Feature class with new QPX format parquet (charge, run_file_name, {label, intensity})."""
+
+    @pytest.fixture
+    def feature_path(self):
+        return str(TESTS_DIR / "example/feature_wide_new_qpx.parquet")
+
+    @pytest.fixture
+    def sdrf_path(self):
+        return str(TESTS_DIR / "example/sdrf_new_qpx.tsv")
+
+    def test_loads_new_qpx_format(self, feature_path):
+        """Test that Feature detects and loads new QPX schema."""
+        feature = Feature(feature_path)
+        assert feature._is_new_qpx is True
+        assert feature._charge_col == "charge"
+        assert feature._run_col == "run_file_name"
+
+        samples = feature.get_unique_samples()
+        assert len(samples) > 0
+
+    def test_unnested_columns_present(self, feature_path):
+        """Test that unnested view has expected column names."""
+        feature = Feature(feature_path)
+        df = feature.parquet_db.sql("SELECT * FROM parquet_db LIMIT 1").df()
+        for col in ["charge", "run_file_name", "sample_accession", "channel", "intensity", "condition"]:
+            assert col in df.columns, f"Missing column: {col}"
+
+    def test_enrich_with_sdrf_maps_sample_accession(self, feature_path, sdrf_path):
+        """Test that enrich_with_sdrf correctly maps (run_file_name, label) -> source name."""
+        feature = Feature(feature_path)
+        feature.enrich_with_sdrf(sdrf_path)
+
+        samples = feature.get_unique_samples()
+        # After SDRF enrichment, samples should be SDRF source names
+        assert "Sample_A_126" in samples
+        assert "Sample_A_127N" in samples
+
+    def test_enrich_with_sdrf_maps_condition(self, feature_path, sdrf_path):
+        """Test that enrich_with_sdrf maps conditions from SDRF factor values."""
+        feature = Feature(feature_path)
+        feature.enrich_with_sdrf(sdrf_path)
+
+        conditions = feature.get_unique_conditions()
+        assert "normal" in conditions
+        assert "disease" in conditions
+
+    def test_get_median_map(self, feature_path):
+        """Test get_median_map works with new QPX format."""
+        feature = Feature(feature_path)
+        med_map = feature.get_median_map()
+        assert len(med_map) > 0
+        for factor in med_map.values():
+            assert factor > 0
+
+
 class TestPeptideNormalizationWideFormat:
     """Tests for peptide_normalization with wide format parquet."""
 
