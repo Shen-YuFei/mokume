@@ -162,9 +162,7 @@ class RatioQuantification:
 
         return ref_intensity
 
-    def _compute_log2_ratios(
-        self, df: pd.DataFrame, ref_df: pd.DataFrame
-    ) -> pd.DataFrame:
+    def _compute_log2_ratios(self, df: pd.DataFrame, ref_df: pd.DataFrame) -> pd.DataFrame:
         """Compute log2(sample_intensity / reference_intensity) per PSM per plex."""
         df["_plex"] = df[SAMPLE_ID].map(self.sample_to_plex)
 
@@ -327,15 +325,32 @@ def load_psm_data(
             f"CREATE VIEW parquet_raw AS SELECT * FROM parquet_scan('{parquet_path.replace(chr(39), chr(39)*2)}')"
         )
 
+        # Detect QPX format
+        cols = [
+            r[0] for r in conn.execute(
+                "SELECT column_name FROM (DESCRIBE parquet_raw)"
+            ).fetchall()
+        ]
+        is_new_qpx = "charge" in cols or "run_file_name" in cols
+
+        if is_new_qpx:
+            charge_col = "charge"
+            run_col = "run_file_name"
+            sa_sql = "run_file_name as sample_accession"
+        else:
+            charge_col = "precursor_charge"
+            run_col = "reference_file_name"
+            sa_sql = "unnest.sample_accession as sample_accession"
+
         # Unnest intensities and apply filters
         query = f"""
             SELECT
                 pg_accessions,
                 sequence,
-                precursor_charge,
-                unnest.sample_accession as sample_accession,
+                {charge_col} as precursor_charge,
+                {sa_sql},
                 unnest.intensity as intensity,
-                reference_file_name
+                {run_col} as reference_file_name
             FROM parquet_raw, UNNEST(intensities) as unnest
             WHERE unnest.intensity IS NOT NULL
               AND {where_clause}

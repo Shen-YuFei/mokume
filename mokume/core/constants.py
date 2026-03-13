@@ -9,7 +9,6 @@ import os
 
 import pandas as pd
 
-
 # Column name constants
 PROTEIN_NAME = "ProteinName"
 PEPTIDE_SEQUENCE = "PeptideSequence"
@@ -51,14 +50,14 @@ PARQUET_COLUMNS = [
     "pg_accessions",
     "peptidoform",
     "sequence",
-    "precursor_charge",
+    "charge",
     "channel",
     "condition",
     "biological_replicate",
     "run",
     "fraction",
     "intensity",
-    "reference_file_name",
+    "run_file_name",
     "sample_accession",
 ]
 
@@ -68,14 +67,14 @@ parquet_map = {
     "pg_accessions": PROTEIN_NAME,
     "peptidoform": PEPTIDE_SEQUENCE,
     "sequence": PEPTIDE_CANONICAL,
-    "precursor_charge": PEPTIDE_CHARGE,
+    "charge": PEPTIDE_CHARGE,
     "channel": CHANNEL,
     "condition": CONDITION,
     "biological_replicate": BIOREPLICATE,
     "run": RUN,
     "fraction": FRACTION,
     "intensity": INTENSITY,
-    "reference_file_name": REFERENCE,
+    "run_file_name": REFERENCE,
     "sample_accession": SAMPLE_ID,
 }
 
