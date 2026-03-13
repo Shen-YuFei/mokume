@@ -112,76 +112,74 @@ class Feature:
     technical_repetitions: Optional[int]
     filter_builder: Optional[SQLFilterBuilder]
 
-    def __init__(self, database_path: str, filter_builder: Optional[SQLFilterBuilder] = None):
-        if os.path.exists(database_path):
-            self.parquet_db = duckdb.connect()
-
-            # Create raw view from parquet
-            safe_path = database_path.replace("'", "''")
-            self.parquet_db.execute(
-                "CREATE VIEW parquet_db_raw AS SELECT * FROM parquet_scan('{}')".format(safe_path)
-            )
-
-            # Detect QPX format: new uses {label, intensity}, old uses
-            # {sample_accession, channel, intensity}
-            cols = [
-                r[0]
-                for r in self.parquet_db.execute(
-                    "SELECT column_name FROM (DESCRIBE parquet_db_raw)"
-                ).fetchall()
-            ]
-            self._is_new_qpx = "charge" in cols or "run_file_name" in cols
-
-            # UNNEST intensities array to create long format view
-            # This converts the wide format (nested intensities) to long format
-            if self._is_new_qpx:
-                # New QPX: intensity struct {label, intensity}
-                charge_col = "charge"
-                run_col = "run_file_name"
-                unnest_sql = (
-                    "run_file_name as sample_accession,\n"
-                    "                    unnest.label as channel,\n"
-                    "                    unnest.intensity"
-                )
-                sa_default = "run_file_name"
-            else:
-                # Legacy QPX: intensity struct {sample_accession, channel, intensity}
-                charge_col = "precursor_charge"
-                run_col = "reference_file_name"
-                unnest_sql = (
-                    "unnest.sample_accession,\n"
-                    "                    unnest.channel,\n"
-                    "                    unnest.intensity"
-                )
-                sa_default = "unnest.sample_accession"
-
-            self._charge_col = charge_col
-            self._run_col = run_col
-
-            self.parquet_db.execute(f"""
-                CREATE VIEW parquet_db AS
-                SELECT
-                    sequence,
-                    peptidoform,
-                    pg_accessions,
-                    {charge_col} as charge,
-                    {run_col} as run_file_name,
-                    "unique",
-                    {unnest_sql},
-                    -- Defaults (can be enriched with SDRF later)
-                    {run_col} as run,
-                    {sa_default} as condition,
-                    1 as biological_replicate,
-                    '1' as fraction,
-                    split_part({sa_default}, '_', 1) as mixture
-                FROM parquet_db_raw, UNNEST(intensities) as unnest
-                WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
-            """)
-
-            self.samples = self.get_unique_samples()
-            self.filter_builder = filter_builder
-        else:
+    def __init__(
+        self, database_path: str, filter_builder: Optional[SQLFilterBuilder] = None
+    ):
+        if not os.path.exists(database_path):
             raise FileNotFoundError(f"the file {database_path} does not exist.")
+
+        self.parquet_db = duckdb.connect()
+
+        safe_path = database_path.replace("'", "''")
+        self.parquet_db.execute(
+            "CREATE VIEW parquet_db_raw AS SELECT * FROM parquet_scan('{}')".format(safe_path)
+        )
+
+        self._detect_qpx_format()
+        self._create_unnest_view()
+
+        self.samples = self.get_unique_samples()
+        self.filter_builder = filter_builder
+
+    def _detect_qpx_format(self) -> None:
+        """Detect whether the parquet uses new or legacy QPX schema."""
+        cols = [
+            r[0]
+            for r in self.parquet_db.execute(
+                "SELECT column_name FROM (DESCRIBE parquet_db_raw)"
+            ).fetchall()
+        ]
+        self._is_new_qpx = "charge" in cols or "run_file_name" in cols
+        self._charge_col = "charge" if self._is_new_qpx else "precursor_charge"
+        self._run_col = "run_file_name" if self._is_new_qpx else "reference_file_name"
+
+    def _create_unnest_view(self) -> None:
+        """Create the long-format DuckDB view by unnesting intensities."""
+        if self._is_new_qpx:
+            unnest_sql = (
+                "run_file_name as sample_accession,\n"
+                "                    unnest.label as channel,\n"
+                "                    unnest.intensity"
+            )
+            sa_default = "run_file_name"
+        else:
+            unnest_sql = (
+                "unnest.sample_accession,\n"
+                "                    unnest.channel,\n"
+                "                    unnest.intensity"
+            )
+            sa_default = "unnest.sample_accession"
+
+        charge_col, run_col = self._charge_col, self._run_col
+        self.parquet_db.execute(f"""
+            CREATE VIEW parquet_db AS
+            SELECT
+                sequence,
+                peptidoform,
+                pg_accessions,
+                {charge_col} as charge,
+                {run_col} as run_file_name,
+                "unique",
+                {unnest_sql},
+                -- Defaults (can be enriched with SDRF later)
+                {run_col} as run,
+                {sa_default} as condition,
+                1 as biological_replicate,
+                '1' as fraction,
+                split_part({sa_default}, '_', 1) as mixture
+            FROM parquet_db_raw, UNNEST(intensities) as unnest
+            WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
+        """)
 
     def enrich_with_sdrf(self, sdrf_path: str) -> None:
         """Enrich parquet data with SDRF metadata (condition, biological_replicate, etc.).
