@@ -162,9 +162,7 @@ class RatioQuantification:
 
         return ref_intensity
 
-    def _compute_log2_ratios(
-        self, df: pd.DataFrame, ref_df: pd.DataFrame
-    ) -> pd.DataFrame:
+    def _compute_log2_ratios(self, df: pd.DataFrame, ref_df: pd.DataFrame) -> pd.DataFrame:
         """Compute log2(sample_intensity / reference_intensity) per PSM per plex."""
         df["_plex"] = df[SAMPLE_ID].map(self.sample_to_plex)
 
@@ -320,6 +318,14 @@ def load_psm_data(
     # Build fraction mapping if available
     has_fraction = "comment[fraction identifier]" in sdrf_df.columns
 
+    import re as _re
+
+    def _strip_raw_ext(name: str) -> str:
+        return _re.sub(
+            r'\.(raw|mzML|mzml|d|wiff|RAW)$',
+            '', str(name).replace('\\', '/').split('/')[-1],
+        )
+
     conn = duckdb.connect()
     try:
         # Create raw view from parquet
@@ -327,15 +333,40 @@ def load_psm_data(
             f"CREATE VIEW parquet_raw AS SELECT * FROM parquet_scan('{parquet_path.replace(chr(39), chr(39)*2)}')"
         )
 
+        # Detect QPX format
+        cols = [
+            r[0] for r in conn.execute(
+                "SELECT column_name FROM (DESCRIBE parquet_raw)"
+            ).fetchall()
+        ]
+        is_new_qpx = "charge" in cols or "run_file_name" in cols
+
+        if is_new_qpx:
+            charge_col = "charge"
+            run_col = "run_file_name"
+            # New QPX: extract label for TMT channel mapping
+            unnest_sql = (
+                f"{run_col} as run_file_name,\n"
+                "                unnest.label as label,\n"
+                "                unnest.intensity as intensity"
+            )
+        else:
+            charge_col = "precursor_charge"
+            run_col = "reference_file_name"
+            unnest_sql = (
+                "unnest.sample_accession as sample_accession,\n"
+                f"                {run_col} as run_file_name,\n"
+                "                unnest.channel as label,\n"
+                "                unnest.intensity as intensity"
+            )
+
         # Unnest intensities and apply filters
         query = f"""
             SELECT
                 pg_accessions,
                 sequence,
-                precursor_charge,
-                unnest.sample_accession as sample_accession,
-                unnest.intensity as intensity,
-                reference_file_name
+                {charge_col} as precursor_charge,
+                {unnest_sql}
             FROM parquet_raw, UNNEST(intensities) as unnest
             WHERE unnest.intensity IS NOT NULL
               AND {where_clause}
@@ -347,6 +378,38 @@ def load_psm_data(
 
     if len(df) == 0:
         raise ValueError("No PSM data after filtering. Check parquet file and filters.")
+
+    # Build SDRF mapping: (run_file, label) -> source name, fraction
+    sdrf_run_file = sdrf_df['comment[data file]'].apply(_strip_raw_ext) if 'comment[data file]' in sdrf_df.columns else sdrf_df.get('source name', pd.Series())
+    sdrf_label = sdrf_df.get('comment[label]', pd.Series(dtype=str))
+    sdrf_source = sdrf_df['source name']
+    sdrf_fraction = sdrf_df.get('comment[fraction identifier]', pd.Series('1', index=sdrf_df.index))
+
+    if is_new_qpx:
+        # Map (run_file_name, label) -> source name via SDRF
+        sdrf_map = pd.DataFrame({
+            'run_file_name': sdrf_run_file.values,
+            'label': sdrf_label.values if len(sdrf_label) > 0 else '',
+            'source_name': sdrf_source.values,
+            'fraction': sdrf_fraction.values,
+        })
+        df = df.merge(
+            sdrf_map, on=['run_file_name', 'label'], how='left',
+        )
+        df['sample_accession'] = df['source_name'].fillna(df['run_file_name'])
+        df['Fraction'] = df['fraction'].fillna('1')
+    else:
+        # Legacy: sample_accession already extracted from unnest
+        if has_fraction:
+            sdrf_fraction_map = {}
+            for _, row in sdrf_df.iterrows():
+                for col in ["comment[data file]", "comment[spectrum file]"]:
+                    if col in sdrf_df.columns and pd.notna(row.get(col)):
+                        sdrf_fraction_map[row[col]] = str(row["comment[fraction identifier]"])
+                        break
+            df["Fraction"] = df["run_file_name"].map(sdrf_fraction_map).fillna("1")
+        else:
+            df["Fraction"] = "1"
 
     # Parse protein accessions (take first accession, extract UniProt ID)
     first_acc = df["pg_accessions"].str[0].fillna("")
@@ -361,20 +424,6 @@ def load_psm_data(
     df[PEPTIDE_CHARGE] = df["precursor_charge"]
     df[SAMPLE_ID] = df["sample_accession"]
     df["Intensity"] = df["intensity"]
-
-    # Add fraction info from SDRF if available
-    if has_fraction:
-        # Map reference_file_name -> fraction
-        sdrf_fraction_map = {}
-        for _, row in sdrf_df.iterrows():
-            # Use the comment[data file] or reference_file_name column
-            for col in ["comment[data file]", "comment[spectrum file]"]:
-                if col in sdrf_df.columns and pd.notna(row.get(col)):
-                    sdrf_fraction_map[row[col]] = str(row["comment[fraction identifier]"])
-                    break
-        df["Fraction"] = df["reference_file_name"].map(sdrf_fraction_map).fillna("1")
-    else:
-        df["Fraction"] = "1"
 
     # Keep only needed columns
     df = df[[PROTEIN_NAME, PEPTIDE_CANONICAL, PEPTIDE_CHARGE, SAMPLE_ID, "Fraction", "Intensity"]]

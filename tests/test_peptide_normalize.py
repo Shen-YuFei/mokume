@@ -182,6 +182,73 @@ class TestFeatureWideFormat:
         assert count > 0
 
 
+class TestFeatureNewQPXFormat:
+    """Tests for Feature class with new QPX format parquet (charge, run_file_name, {label, intensity})."""
+
+    @pytest.fixture
+    def feature_path(self):
+        return str(TESTS_DIR / "example/feature_wide_new_qpx.parquet")
+
+    @pytest.fixture
+    def sdrf_path(self):
+        return str(TESTS_DIR / "example/sdrf_new_qpx.tsv")
+
+    def test_loads_new_qpx_format(self, feature_path):
+        """Test that Feature detects and loads new QPX schema."""
+        feature = Feature(feature_path)
+        if feature._is_new_qpx is not True:
+            raise AssertionError("Expected _is_new_qpx to be True")
+        if feature._charge_col != "charge":
+            raise AssertionError(f"Expected _charge_col='charge', got '{feature._charge_col}'")
+        if feature._run_col != "run_file_name":
+            raise AssertionError(f"Expected _run_col='run_file_name', got '{feature._run_col}'")
+
+        samples = feature.get_unique_samples()
+        if len(samples) == 0:
+            raise AssertionError("Expected at least one sample")
+
+    def test_unnested_columns_present(self, feature_path):
+        """Test that unnested view has expected column names."""
+        feature = Feature(feature_path)
+        df = feature.parquet_db.sql("SELECT * FROM parquet_db LIMIT 1").df()
+        for col in ["charge", "run_file_name", "sample_accession", "channel", "intensity", "condition"]:
+            if col not in df.columns:
+                raise AssertionError(f"Missing column: {col}")
+
+    def test_enrich_with_sdrf_maps_sample_accession(self, feature_path, sdrf_path):
+        """Test that enrich_with_sdrf correctly maps (run_file_name, label) -> source name."""
+        feature = Feature(feature_path)
+        feature.enrich_with_sdrf(sdrf_path)
+
+        samples = feature.get_unique_samples()
+        # After SDRF enrichment, samples should be SDRF source names
+        if "Sample_A_126" not in samples:
+            raise AssertionError(f"'Sample_A_126' not found in samples: {samples}")
+        if "Sample_A_127N" not in samples:
+            raise AssertionError(f"'Sample_A_127N' not found in samples: {samples}")
+
+    def test_enrich_with_sdrf_maps_condition(self, feature_path, sdrf_path):
+        """Test that enrich_with_sdrf maps conditions from SDRF factor values."""
+        feature = Feature(feature_path)
+        feature.enrich_with_sdrf(sdrf_path)
+
+        conditions = feature.get_unique_conditions()
+        if "normal" not in conditions:
+            raise AssertionError(f"'normal' not found in conditions: {conditions}")
+        if "disease" not in conditions:
+            raise AssertionError(f"'disease' not found in conditions: {conditions}")
+
+    def test_get_median_map(self, feature_path):
+        """Test get_median_map works with new QPX format."""
+        feature = Feature(feature_path)
+        med_map = feature.get_median_map()
+        if len(med_map) == 0:
+            raise AssertionError("Expected non-empty median map")
+        for sample, factor in med_map.items():
+            if factor <= 0:
+                raise AssertionError(f"Expected positive factor for {sample}, got {factor}")
+
+
 class TestPeptideNormalizationWideFormat:
     """Tests for peptide_normalization with wide format parquet."""
 

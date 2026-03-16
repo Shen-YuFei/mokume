@@ -83,9 +83,7 @@ class SQLFilterBuilder:
             for pattern in self.contaminant_patterns:
                 # Escape any SQL special characters in the pattern
                 safe_pattern = pattern.replace("'", "''")
-                pattern_conditions.append(
-                    f"pg_accessions::text NOT LIKE '%{safe_pattern}%'"
-                )
+                pattern_conditions.append(f"pg_accessions::text NOT LIKE '%{safe_pattern}%'")
             conditions.append(f"({' AND '.join(pattern_conditions)})")
 
         return " AND ".join(conditions) if conditions else "1=1"
@@ -97,7 +95,8 @@ class Feature:
     and analysis using a DuckDB database connection to a Parquet file.
 
     This class expects the quantms.io/qpx wide format where intensities are stored
-    in a nested array: intensities[{sample_accession, channel, intensity}, ...]
+    in a nested array. Supports both new QPX format intensities[{label, intensity}, ...]
+    and legacy format intensities[{sample_accession, channel, intensity}, ...]
 
     Attributes
     ----------
@@ -116,45 +115,71 @@ class Feature:
     def __init__(
         self, database_path: str, filter_builder: Optional[SQLFilterBuilder] = None
     ):
-        if os.path.exists(database_path):
-            self.parquet_db = duckdb.connect()
-
-            # Create raw view from parquet
-            safe_path = database_path.replace("'", "''")
-            self.parquet_db.execute(
-                "CREATE VIEW parquet_db_raw AS SELECT * FROM parquet_scan('{}')".format(
-                    safe_path
-                )
-            )
-
-            # UNNEST intensities array to create long format view
-            # This converts the wide format (nested intensities) to long format
-            self.parquet_db.execute("""
-                CREATE VIEW parquet_db AS
-                SELECT
-                    sequence,
-                    peptidoform,
-                    pg_accessions,
-                    precursor_charge,
-                    reference_file_name,
-                    "unique",
-                    unnest.sample_accession,
-                    unnest.channel,
-                    unnest.intensity,
-                    -- Defaults (can be enriched with SDRF later)
-                    reference_file_name as run,
-                    unnest.sample_accession as condition,
-                    1 as biological_replicate,
-                    '1' as fraction,
-                    split_part(unnest.sample_accession, '_', 1) as mixture
-                FROM parquet_db_raw, UNNEST(intensities) as unnest
-                WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
-            """)
-
-            self.samples = self.get_unique_samples()
-            self.filter_builder = filter_builder
-        else:
+        if not os.path.exists(database_path):
             raise FileNotFoundError(f"the file {database_path} does not exist.")
+
+        self.parquet_db = duckdb.connect()
+
+        safe_path = database_path.replace("'", "''")
+        self.parquet_db.execute(
+            "CREATE VIEW parquet_db_raw AS SELECT * FROM parquet_scan('{}')".format(safe_path)
+        )
+
+        self._detect_qpx_format()
+        self._create_unnest_view()
+
+        self.samples = self.get_unique_samples()
+        self.filter_builder = filter_builder
+
+    def _detect_qpx_format(self) -> None:
+        """Detect whether the parquet uses new or legacy QPX schema."""
+        cols = [
+            r[0]
+            for r in self.parquet_db.execute(
+                "SELECT column_name FROM (DESCRIBE parquet_db_raw)"
+            ).fetchall()
+        ]
+        self._is_new_qpx = "charge" in cols or "run_file_name" in cols
+        self._charge_col = "charge" if self._is_new_qpx else "precursor_charge"
+        self._run_col = "run_file_name" if self._is_new_qpx else "reference_file_name"
+
+    def _create_unnest_view(self) -> None:
+        """Create the long-format DuckDB view by unnesting intensities."""
+        if self._is_new_qpx:
+            unnest_sql = (
+                "run_file_name as sample_accession,\n"
+                "                    unnest.label as channel,\n"
+                "                    unnest.intensity"
+            )
+            sa_default = "run_file_name"
+        else:
+            unnest_sql = (
+                "unnest.sample_accession,\n"
+                "                    unnest.channel,\n"
+                "                    unnest.intensity"
+            )
+            sa_default = "unnest.sample_accession"
+
+        charge_col, run_col = self._charge_col, self._run_col
+        self.parquet_db.execute(f"""
+            CREATE VIEW parquet_db AS
+            SELECT
+                sequence,
+                peptidoform,
+                pg_accessions,
+                {charge_col} as charge,
+                {run_col} as run_file_name,
+                "unique",
+                {unnest_sql},
+                -- Defaults (can be enriched with SDRF later)
+                {run_col} as run,
+                {sa_default} as condition,
+                1 as biological_replicate,
+                '1' as fraction,
+                split_part({sa_default}, '_', 1) as mixture
+            FROM parquet_db_raw, UNNEST(intensities) as unnest
+            WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
+        """)
 
     def enrich_with_sdrf(self, sdrf_path: str) -> None:
         """Enrich parquet data with SDRF metadata (condition, biological_replicate, etc.).
@@ -164,73 +189,106 @@ class Feature:
         sdrf_path : str
             Path to the SDRF file containing sample metadata.
         """
+        import re as _re
+
         sdrf_df = load_sdrf(sdrf_path)
 
         # Find the condition column (try factor value first, then characteristics)
         condition_col = None
         for col in sdrf_df.columns:
-            if 'factor value' in col:
+            if "factor value" in col:
                 condition_col = col
                 break
         if condition_col is None:
             for col in sdrf_df.columns:
-                if 'organism part' in col and 'characteristics' in col:
+                if "organism part" in col and "characteristics" in col:
                     condition_col = col
                     break
 
-        # Prepare SDRF mapping
-        sdrf_mapping = pd.DataFrame({
-            'sdrf_sample_accession': sdrf_df['source name'],
-            'sdrf_condition': (
-                sdrf_df[condition_col] if condition_col else sdrf_df['source name']
-            ),
-            'sdrf_biological_replicate': sdrf_df.get(
-                'characteristics[biological replicate]', 1
-            ),
-            'sdrf_fraction': sdrf_df.get('comment[fraction identifier]', '1'),
-        })
+        # Strip common raw-file extensions so names match QPX run_file_name
+        def _strip_raw_ext(name: str) -> str:
+            return _re.sub(
+                r"\.(raw|mzML|mzml|d|wiff|RAW)$",
+                "",
+                str(name).replace("\\", "/").split("/")[-1],
+            )
 
-        self.parquet_db.register('sdrf_mapping', sdrf_mapping)
+        # Prepare SDRF mapping with both join keys
+        sdrf_mapping = pd.DataFrame(
+            {
+                "sdrf_run_file": sdrf_df["comment[data file]"].apply(_strip_raw_ext),
+                "sdrf_label": sdrf_df.get("comment[label]", ""),
+                "sdrf_sample_accession": sdrf_df["source name"],
+                "sdrf_condition": (
+                    sdrf_df[condition_col] if condition_col else sdrf_df["source name"]
+                ),
+                "sdrf_biological_replicate": sdrf_df.get(
+                    "characteristics[biological replicate]", 1
+                ),
+                "sdrf_fraction": sdrf_df.get("comment[fraction identifier]", "1"),
+            }
+        )
+
+        self.parquet_db.register("sdrf_mapping", sdrf_mapping)
+
+        # Build format-aware UNNEST SQL
+        charge_col = self._charge_col
+        run_col = self._run_col
+
+        if self._is_new_qpx:
+            unnest_cols = "unnest.label as channel,\n                unnest.intensity"
+            extra_cols = ""
+            join_clause = (
+                "ON p.run_file_name = s.sdrf_run_file\n"
+                "                AND (p.channel = s.sdrf_label\n"
+                "                     OR s.sdrf_label IS NULL\n"
+                "                     OR s.sdrf_label = '')"
+            )
+            sa_fallback = "p.run_file_name"
+        else:
+            unnest_cols = "unnest.channel,\n                unnest.intensity"
+            extra_cols = ",\n                unnest.sample_accession as _legacy_sa"
+            join_clause = "ON p._legacy_sa = s.sdrf_sample_accession"
+            sa_fallback = "p._legacy_sa"
 
         # Create intermediate view for unnested data
-        self.parquet_db.execute("""
+        self.parquet_db.execute(f"""
             CREATE OR REPLACE VIEW parquet_db_unnested AS
             SELECT
                 sequence,
                 peptidoform,
                 pg_accessions,
-                precursor_charge,
-                reference_file_name,
+                {charge_col} as charge,
+                {run_col} as run_file_name,
                 "unique",
-                unnest.sample_accession,
-                unnest.channel,
-                unnest.intensity,
-                reference_file_name as run
+                {unnest_cols},
+                {run_col} as run{extra_cols}
             FROM parquet_db_raw, UNNEST(intensities) as unnest
             WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
         """)
 
         # Recreate main view with SDRF data joined
         self.parquet_db.execute("DROP VIEW IF EXISTS parquet_db")
-        self.parquet_db.execute("""
+        self.parquet_db.execute(f"""
             CREATE VIEW parquet_db AS
             SELECT
                 p.sequence,
                 p.peptidoform,
                 p.pg_accessions,
-                p.precursor_charge,
-                p.reference_file_name,
+                p.charge,
+                p.run_file_name,
                 p."unique",
-                p.sample_accession,
+                COALESCE(s.sdrf_sample_accession, {sa_fallback}) as sample_accession,
                 p.channel,
                 p.intensity,
                 p.run,
-                COALESCE(s.sdrf_condition, p.sample_accession) as condition,
+                COALESCE(s.sdrf_condition, {sa_fallback}) as condition,
                 COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,
                 COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,
-                split_part(p.sample_accession, '_', 1) as mixture
+                split_part(COALESCE(s.sdrf_sample_accession, {sa_fallback}), '_', 1) as mixture
             FROM parquet_db_unnested p
-            LEFT JOIN sdrf_mapping s ON p.sample_accession = s.sdrf_sample_accession
+            LEFT JOIN sdrf_mapping s
+                {join_clause}
         """)
 
         logger.info("Enriched parquet data with SDRF metadata from %s", sdrf_path)
@@ -238,9 +296,7 @@ class Feature:
     @staticmethod
     def standardize_df(df: pd.DataFrame) -> pd.DataFrame:
         """Standardizes column names in the given DataFrame."""
-        return df.rename(
-            {"protein_accessions": "pg_accessions", "charge": "precursor_charge"}, axis=1
-        )
+        return df.rename({"protein_accessions": "pg_accessions"}, axis=1)
 
     @property
     def experimental_inference(
@@ -270,20 +326,14 @@ class Feature:
         tuple
             A tuple of (protein_accession, sequence) pairs for low frequency peptides.
         """
-        where_clause = (
-            self.filter_builder.build_where_clause()
-            if self.filter_builder
-            else "1=1"
-        )
+        where_clause = self.filter_builder.build_where_clause() if self.filter_builder else "1=1"
 
-        f_table = self.parquet_db.sql(
-            f"""
+        f_table = self.parquet_db.sql(f"""
             SELECT "sequence", "pg_accessions", COUNT(DISTINCT sample_accession) as "count"
             FROM parquet_db
             WHERE {where_clause}
             GROUP BY "sequence", "pg_accessions"
-            """
-        ).df()
+            """).df()
         f_table.dropna(subset=["pg_accessions"], inplace=True)
         try:
             f_table["pg_accessions"] = f_table["pg_accessions"].apply(lambda x: x[0].split("|")[1])
@@ -377,21 +427,15 @@ class Feature:
             A dictionary mapping sample accessions to their normalization factors
             (sample median / global median).
         """
-        where_clause = (
-            self.filter_builder.build_where_clause()
-            if self.filter_builder
-            else "1=1"
-        )
+        where_clause = self.filter_builder.build_where_clause() if self.filter_builder else "1=1"
 
         # Use SQL aggregation with filtering for efficiency
-        result = self.parquet_db.sql(
-            f"""
+        result = self.parquet_db.sql(f"""
             SELECT sample_accession, MEDIAN(intensity) as median_intensity
             FROM parquet_db
             WHERE {where_clause}
             GROUP BY sample_accession
-            """
-        ).df()
+            """).df()
 
         med_map = dict(zip(result["sample_accession"], result["median_intensity"]))
         global_med = np.median(list(med_map.values()))
@@ -440,21 +484,15 @@ class Feature:
             A nested dictionary mapping conditions to sample normalization factors.
             For each condition, samples are normalized to the condition mean.
         """
-        where_clause = (
-            self.filter_builder.build_where_clause()
-            if self.filter_builder
-            else "1=1"
-        )
+        where_clause = self.filter_builder.build_where_clause() if self.filter_builder else "1=1"
 
         # Use SQL aggregation with filtering for efficiency
-        result = self.parquet_db.sql(
-            f"""
+        result = self.parquet_db.sql(f"""
             SELECT condition, sample_accession, MEDIAN(intensity) as median_intensity
             FROM parquet_db
             WHERE {where_clause}
             GROUP BY condition, sample_accession
-            """
-        ).df()
+            """).df()
 
         med_map = {}
         for condition in result["condition"].unique():
@@ -502,21 +540,16 @@ class Feature:
         if self.filter_builder and self.filter_builder.remove_contaminants:
             for pattern in self.filter_builder.contaminant_patterns:
                 safe_pattern = pattern.replace("'", "''")
-                filter_conditions.append(
-                    f"pg_accessions::text NOT LIKE '%{safe_pattern}%'"
-                )
+                filter_conditions.append(f"pg_accessions::text NOT LIKE '%{safe_pattern}%'")
 
         if self.filter_builder and self.filter_builder.min_intensity > 0:
-            filter_conditions.append(
-                f"intensity >= {self.filter_builder.min_intensity}"
-            )
+            filter_conditions.append(f"intensity >= {self.filter_builder.min_intensity}")
 
         # Add channel filter
         filter_conditions.append(f"channel = '{irs_channel}'")
         where_clause = " AND ".join(filter_conditions)
 
-        irs_df = self.parquet_db.sql(
-            f"""
+        irs_df = self.parquet_db.sql(f"""
             SELECT run, {stat_fn}(intensity) as irs_value, mixture, techreplicate as techrep_guess
             FROM (
                 SELECT *,
@@ -526,8 +559,7 @@ class Feature:
                 WHERE {where_clause}
             )
             GROUP BY run, mixture, techrep_guess
-            """
-        ).df()
+            """).df()
 
         irs_scale_by_techrep: dict[int, float] = {}
 
@@ -536,18 +568,16 @@ class Feature:
 
             if irs_scope.lower() == "by_mixture":
                 transform_fn = "median" if stat_fn == "median" else "mean"
-                irs_df["mixture_center"] = irs_df.groupby("mixture")[
-                    "irs_value"
-                ].transform(transform_fn)
+                irs_df["mixture_center"] = irs_df.groupby("mixture")["irs_value"].transform(
+                    transform_fn
+                )
                 irs_df["scale"] = irs_df["mixture_center"] / irs_df["irs_value"]
             elif irs_scope.lower() == "two_stage":
                 transform_fn = "median" if stat_fn == "median" else "mean"
-                irs_df["mixture_center"] = irs_df.groupby("mixture")[
-                    "irs_value"
-                ].transform(transform_fn)
-                irs_df["scale_stage1"] = (
-                    irs_df["mixture_center"] / irs_df["irs_value"]
+                irs_df["mixture_center"] = irs_df.groupby("mixture")["irs_value"].transform(
+                    transform_fn
                 )
+                irs_df["scale_stage1"] = irs_df["mixture_center"] / irs_df["irs_value"]
                 mixture_center_df = irs_df[["mixture", "mixture_center"]].drop_duplicates()
                 if stat_fn == "median":
                     global_center = mixture_center_df["mixture_center"].median()
