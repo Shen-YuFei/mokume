@@ -18,7 +18,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from mokume.reports.qc_report import compute_qc_metrics
+from mokume.reports.qc_report import compute_qc_metrics, _safe_json
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.reports.comparison")
@@ -414,10 +414,10 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
 </div>
 
 <script>
-const summaryRows = {json.dumps(summary_rows).replace('</', '<\\/')};
-const pcaData = {json.dumps(pca_data).replace('</', '<\\/')};
-const concordanceData = {json.dumps(concordance_json).replace('</', '<\\/')};
-const fcScatterData = {json.dumps(fc_scatter_data).replace('</', '<\\/')};
+const summaryRows = {_safe_json(summary_rows)};
+const pcaData = {_safe_json(pca_data)};
+const concordanceData = {_safe_json(concordance_json)};
+const fcScatterData = {_safe_json(fc_scatter_data)};
 
 const palette = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b'];
 const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];

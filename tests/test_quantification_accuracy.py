@@ -55,15 +55,14 @@ def download_pride_dataset():
     PRIDE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     zip_path = PRIDE_CACHE_DIR / "PXD063291.zip"
 
-    # Check if already extracted
-    extracted_files = list(PRIDE_CACHE_DIR.glob("*.tsv")) + list(PRIDE_CACHE_DIR.glob("**/diann-output/*.tsv"))
-    if extracted_files:
-        # Find the main report file
-        for f in extracted_files:
-            if "report" in f.name.lower() and f.suffix == ".tsv":
+    # Check if already extracted - look for the exact DIA-NN main report
+    for pattern in ["**/report.tsv", "**/DiaNN/report.tsv", "*.tsv"]:
+        candidates = list(PRIDE_CACHE_DIR.glob(pattern))
+        for f in candidates:
+            if f.name == "report.tsv":
                 return f
-        # Return first TSV if no report found
-        return extracted_files[0]
+        if candidates:
+            return candidates[0]
 
     # Download if not cached
     if not zip_path.exists():
@@ -80,10 +79,10 @@ def download_pride_dataset():
     except Exception as e:
         pytest.skip(f"Failed to extract PRIDE dataset: {e}")
 
-    # Find the DIA-NN report
+    # Find the DIA-NN main report (exact match first, then fallback)
     extracted_files = list(PRIDE_CACHE_DIR.rglob("*.tsv"))
     for f in extracted_files:
-        if "report" in f.name.lower():
+        if f.name == "report.tsv":
             return f
 
     if extracted_files:
