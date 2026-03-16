@@ -18,12 +18,18 @@ from mokume.core.constants import (
 )
 
 
+INTENSITY_COLUMN = "Intensity"
+"""Standard output intensity column name for all quantification methods."""
+
+
 class ProteinQuantificationMethod(ABC):
     """
     Abstract base class for protein quantification methods.
 
     All quantification methods (iBAQ, Top3, TopN, MaxLFQ, etc.) should
     inherit from this class and implement the required methods.
+
+    All methods produce a standard output column named 'Intensity'.
     """
 
     @property

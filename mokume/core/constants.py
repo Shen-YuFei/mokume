@@ -9,15 +9,12 @@ import os
 
 import pandas as pd
 
-
 # Column name constants
 PROTEIN_NAME = "ProteinName"
 PEPTIDE_SEQUENCE = "PeptideSequence"
 PEPTIDE_CANONICAL = "PeptideCanonical"
 PEPTIDE_CHARGE = "PrecursorCharge"
 CHANNEL = "Channel"
-MIXTRUE = "Mixture"
-TECHREPMIXTURE = "TechRepMixture"
 CONDITION = "Condition"
 BIOREPLICATE = "BioReplicate"
 TECHREPLICATE = "TechReplicate"
@@ -29,8 +26,6 @@ REFERENCE = "Reference"
 SAMPLE_ID = "SampleID"
 SAMPLE_ID_REGEX = r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
 SEARCH_ENGINE = "searchScore"
-SCAN = "Scan"
-MBR = "MatchBetweenRuns"
 IBAQ = "Ibaq"
 IBAQ_NORMALIZED = "IbaqNorm"
 IBAQ_LOG = "IbaqLog"
@@ -55,14 +50,14 @@ PARQUET_COLUMNS = [
     "pg_accessions",
     "peptidoform",
     "sequence",
-    "precursor_charge",
+    "charge",
     "channel",
     "condition",
     "biological_replicate",
     "run",
     "fraction",
     "intensity",
-    "reference_file_name",
+    "run_file_name",
     "sample_accession",
 ]
 
@@ -72,14 +67,14 @@ parquet_map = {
     "pg_accessions": PROTEIN_NAME,
     "peptidoform": PEPTIDE_SEQUENCE,
     "sequence": PEPTIDE_CANONICAL,
-    "precursor_charge": PEPTIDE_CHARGE,
+    "charge": PEPTIDE_CHARGE,
     "channel": CHANNEL,
     "condition": CONDITION,
     "biological_replicate": BIOREPLICATE,
     "run": RUN,
     "fraction": FRACTION,
     "intensity": INTENSITY,
-    "reference_file_name": REFERENCE,
+    "run_file_name": REFERENCE,
     "sample_accession": SAMPLE_ID,
 }
 

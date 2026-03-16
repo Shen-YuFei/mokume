@@ -1,0 +1,143 @@
+site_name: mokume
+site_description: A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more
+site_author: BigBio Team
+site_url: https://mokume.quantms.org/
+
+repo_name: bigbio/mokume
+repo_url: https://github.com/bigbio/mokume
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - search.share
+    - toc.follow
+    - toc.integrate
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+    admonition:
+      note: octicons/tag-16
+      abstract: octicons/checklist-16
+      info: octicons/info-16
+      tip: octicons/squirrel-16
+      success: octicons/check-16
+      question: octicons/question-16
+      warning: octicons/alert-16
+      failure: octicons/x-circle-16
+      danger: octicons/zap-16
+      bug: octicons/bug-16
+      example: octicons/beaker-16
+      quote: octicons/quote-16
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.caret
+  - pymdownx.tilde
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - def_list
+  - tables
+  - footnotes
+  - abbr
+  - toc:
+      permalink: true
+      permalink_title: Anchor link to this section
+      toc_depth: 3
+
+plugins:
+  - search:
+      lang:
+        - en
+
+nav:
+  - Home:
+      - Home: index.md
+      - Installation: installation.md
+      - Quick Start: quickstart.md
+  - Concepts:
+      - concepts/index.md
+      - Quantification Methods: concepts/quantification.md
+      - Normalization: concepts/normalization.md
+      - Batch Correction: concepts/batch-correction.md
+      - IRS Normalization: concepts/irs.md
+      - Preprocessing Filters: concepts/preprocessing.md
+  - User Guide:
+      - user-guide/index.md
+      - "features2proteins: Unified Pipeline": user-guide/features2proteins.md
+      - "features2peptides: Peptide Normalization": user-guide/features2peptides.md
+      - "peptides2protein: Protein Quantification": user-guide/peptides2protein.md
+      - "batch-correct: Batch Correction": user-guide/batch-correct.md
+      - Visualization & Reports: user-guide/visualization.md
+  - Reference:
+      - reference/index.md
+      - CLI Reference: reference/cli.md
+      - Python API: reference/python-api.md
+      - Configuration: reference/configuration.md
+      - Computed Values: reference/computed-values.md
+  - Community: community.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bigbio/mokume
+      name: GitHub Repository
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/mokume/
+      name: PyPI Package
+    - icon: fontawesome/solid/bug
+      link: https://github.com/bigbio/mokume/issues
+      name: Report Issues
+    - icon: fontawesome/solid/globe
+      link: https://quantms.org
+      name: quantms Ecosystem
+
+copyright: Copyright &copy; 2024-2026 BigBio Team

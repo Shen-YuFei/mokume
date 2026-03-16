@@ -1,0 +1,112 @@
+# IRS Normalization
+
+**Internal Reference Scaling (IRS)** is a normalization strategy for multi-plex TMT experiments that use shared reference channels across plexes to make protein intensities comparable.
+
+## The Problem
+
+In a multi-plex TMT experiment, each plex is a separate MS run. Protein intensities within a plex are directly comparable, but intensities **across plexes** are not — they differ due to loading variation, MS sensitivity drift, and other technical factors.
+
+## The Solution
+
+IRS uses reference channels (e.g., pooled samples) that are present in every plex as anchors. By scaling each plex so that reference channel intensities match, all samples become comparable.
+
+```mermaid
+graph LR
+    subgraph Plex 1
+        P1S1[Sample 1] --- P1R[Reference]
+        P1S2[Sample 2] --- P1R
+    end
+    subgraph Plex 2
+        P2S3[Sample 3] --- P2R[Reference]
+        P2S4[Sample 4] --- P2R
+    end
+    P1R -->|Scale to match| G[Global Reference]
+    P2R -->|Scale to match| G
+```
+
+## Scaling Formula
+
+For each protein in each plex:
+
+$$\text{adjusted} = \text{raw} \times \frac{\text{global\_ref}}{\text{plex\_ref}}$$
+
+Where:
+
+- **plex_ref** = median (or mean) of reference channel intensities within the plex
+- **global_ref** = geometric mean of plex_ref values across all plexes
+
+## Reference Sample Detection
+
+mokume automatically detects reference samples from SDRF metadata using a priority chain:
+
+| Priority | Method | SDRF Source |
+|:--------:|--------|-------------|
+| 1 | `characteristics[pooled sample]` column | Values: `"pooled"` or `"SN=sample1;SN=sample2"` |
+| 2 | Explicit sample names | `--irs-reference-samples` CLI option |
+| 3 | Column + values | `--irs-sdrf-column` + `--irs-sdrf-values` |
+| 4 | Regex scan | Searches all factor/characteristic columns for pattern |
+
+Default regex: `pool|powder|ref|reference|bridge`
+
+## Plex Detection
+
+Plexes are detected from quantms-style source names in the SDRF:
+
+| Source Name | Detected Plex |
+|-------------|:-------------:|
+| `p1_1` | `p1` |
+| `p1_10` | `p1` |
+| `p2_3` | `p2` |
+
+The naming convention is `{plex}_{channel}`, where the plex ID is everything before the last `_digit`.
+
+## Usage
+
+### CLI
+
+```bash
+# Auto-detect references from SDRF
+mokume features2proteins \
+    -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --quant-method median \
+    --irs --irs-remove-reference
+
+# Explicit reference samples
+mokume features2proteins \
+    -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --irs --irs-reference-samples "p1_11,p2_11"
+
+# Custom regex for reference detection
+mokume features2proteins \
+    -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --irs --irs-reference-regex "pool|bridge|control"
+```
+
+### Python
+
+```python
+from mokume.normalization.irs import (
+    IRSNormalizer,
+    detect_pooled_from_sdrf,
+    detect_plexes_from_sdrf,
+)
+
+# Detect references and plexes
+ref_samples = detect_pooled_from_sdrf("experiment.sdrf.tsv")
+sample_to_plex = detect_plexes_from_sdrf("experiment.sdrf.tsv")
+
+# Apply IRS
+normalizer = IRSNormalizer(reference_samples=ref_samples, stat="median")
+protein_df = normalizer.fit_transform(protein_df, sample_to_plex)
+```
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--irs-stat` | `median` | Statistic for plex reference: `median` or `mean` |
+| `--irs-remove-reference` | `False` | Remove reference samples from final output |
+| `--irs-reference-regex` | `pool\|powder\|ref\|reference\|bridge` | Regex for auto-detection |
+
+!!! info "IRS with Ratio quantification"
+    When using `--quant-method ratio`, IRS is not applied because ratio quantification already handles cross-plex normalization via per-plex reference division.

@@ -197,14 +197,14 @@ class ModificationFilter(BaseFilter):
             return df, self._create_result(input_count, input_count)
 
         # Build pattern for modifications to exclude
+        if not self.exclude_modifications:
+            return df, self._create_result(input_count, input_count)
+
         patterns = "|".join(re.escape(mod) for mod in self.exclude_modifications)
 
-        def has_excluded_mod(seq):
-            if pd.isna(seq):
-                return False
-            return bool(re.search(patterns, str(seq), re.IGNORECASE))
-
-        mask = ~df[self.sequence_column].apply(has_excluded_mod)
+        mask = ~df[self.sequence_column].fillna("").astype(str).str.contains(
+            patterns, case=False, regex=True
+        )
         filtered_df = df[mask].copy()
 
         output_count = len(filtered_df)
@@ -414,13 +414,12 @@ class SequencePatternFilter(BaseFilter):
             )
             return df, self._create_result(input_count, input_count)
 
-        def matches_any_pattern(seq):
-            if pd.isna(seq):
-                return False
-            seq_str = str(seq)
-            return any(p.search(seq_str) for p in self._compiled_patterns)
+        # Combine compiled patterns into single regex for vectorized matching
+        if not self._compiled_patterns:
+            return df, self._create_result(input_count, input_count)
 
-        mask = ~df[col].apply(matches_any_pattern)
+        combined_pattern = "|".join(p.pattern for p in self._compiled_patterns)
+        mask = ~df[col].fillna("").astype(str).str.contains(combined_pattern, regex=True)
         filtered_df = df[mask].copy()
 
         output_count = len(filtered_df)

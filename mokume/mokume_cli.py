@@ -21,7 +21,7 @@ LOG_LEVELS = ["debug", "info", "warn"]
 LOG_LEVELS_TO_LEVELS = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
-    "warn": logging.WARN,
+    "warn": logging.WARNING,
 }
 
 

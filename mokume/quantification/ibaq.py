@@ -90,9 +90,9 @@ def normalize_ibaq(res: DataFrame) -> DataFrame:
     """
     res = res.groupby([SAMPLE_ID, CONDITION]).apply(normalize)
     # Normalization method used by Proteomics DB 10 + log10(ibaq/sum(ibaq))
-    res[IBAQ_LOG] = res[IBAQ_NORMALIZED].apply(lambda x: (math.log10(x) + 10) if x > 0 else 0)
+    res[IBAQ_LOG] = np.where(res[IBAQ_NORMALIZED] > 0, np.log10(res[IBAQ_NORMALIZED]) + 10, 0)
     # Normalization used by PRIDE Team (no log transformation) (ibaq/total_ibaq) * 100'000'000
-    res[IBAQ_PPB] = res[IBAQ_NORMALIZED].apply(lambda x: x * 100_000_000)
+    res[IBAQ_PPB] = res[IBAQ_NORMALIZED] * 100_000_000
     return res
 
 

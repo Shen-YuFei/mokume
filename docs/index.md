@@ -1,0 +1,105 @@
+# mokume
+
+[![Python application](https://github.com/bigbio/mokume/actions/workflows/python-app.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-app.yml)
+[![PyPI version](https://badge.fury.io/py/mokume.svg)](https://badge.fury.io/py/mokume)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**A comprehensive proteomics quantification library for the quantms ecosystem.**
+
+The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (木目金), a Japanese metalworking technique that fuses multiple metal layers into distinctive patterns — similar to how this library melds peptide intensities into unified protein expression profiles.
+
+---
+
+<div class="grid cards" markdown>
+
+-   :material-test-tube:{ .lg .middle } **Multiple Quantification Methods**
+
+    ---
+
+    iBAQ, TopN, MaxLFQ, DirectLFQ, Sum, Ratio — choose the right method for your experiment.
+
+    [:octicons-arrow-right-24: Quantification methods](concepts/quantification.md)
+
+-   :material-chart-bell-curve-cumulative:{ .lg .middle } **Flexible Normalization**
+
+    ---
+
+    Feature-level, sample-level, hierarchical, and TMM normalization with a unified pipeline.
+
+    [:octicons-arrow-right-24: Normalization](concepts/normalization.md)
+
+-   :material-filter-variant:{ .lg .middle } **Batch Correction**
+
+    ---
+
+    Remove technical variation while preserving biological signal using ComBat.
+
+    [:octicons-arrow-right-24: Batch correction](concepts/batch-correction.md)
+
+-   :material-flask-outline:{ .lg .middle } **IRS for Multi-plex TMT**
+
+    ---
+
+    Internal Reference Scaling with automatic reference detection from SDRF.
+
+    [:octicons-arrow-right-24: IRS normalization](concepts/irs.md)
+
+-   :material-cog-outline:{ .lg .middle } **Preprocessing Filters**
+
+    ---
+
+    Comprehensive QC filters configurable via YAML or CLI.
+
+    [:octicons-arrow-right-24: Preprocessing](concepts/preprocessing.md)
+
+-   :material-rocket-launch-outline:{ .lg .middle } **One-Step Pipeline**
+
+    ---
+
+    Go from feature parquet to protein intensities in a single command.
+
+    [:octicons-arrow-right-24: Quick start](quickstart.md)
+
+</div>
+
+---
+
+## Quick Example
+
+=== "CLI"
+
+    ```bash
+    # MaxLFQ quantification with normalization
+    mokume features2proteins \
+        -p features.parquet \
+        -o proteins.csv \
+        -s experiment.sdrf.tsv \
+        --quant-method maxlfq
+    ```
+
+=== "Python"
+
+    ```python
+    from mokume.pipeline import QuantificationPipeline, PipelineConfig
+    from mokume.pipeline.config import InputConfig, QuantificationConfig
+
+    config = PipelineConfig(
+        input=InputConfig(parquet="features.parquet", sdrf="experiment.sdrf.tsv"),
+        quantification=QuantificationConfig(method="maxlfq"),
+    )
+    pipeline = QuantificationPipeline(config)
+    proteins = pipeline.run()
+    ```
+
+---
+
+## Part of the quantms Ecosystem
+
+mokume is a core component of the [quantms](https://quantms.org) proteomics analysis platform, providing the quantification engine that powers protein-level analysis from mass spectrometry data.
+
+| Ecosystem Tool | Purpose |
+|---|---|
+| [quantms](https://quantms.org) | Nextflow pipeline for quantitative proteomics |
+| [qpx](https://qpx.quantms.org) | Data format and conversion tools |
+| **mokume** | Protein quantification and normalization |
