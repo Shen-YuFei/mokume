@@ -496,6 +496,13 @@ def generate_qc_report(
     return output_html
 
 
+def _safe_json(obj):
+    """Serialize to JSON and escape closing script tags for safe HTML embedding."""
+    import json
+
+    return json.dumps(obj).replace("</", "<\\/")
+
+
 def _build_qc_html(title, metrics, highlight_genes, de_results):
     """Build the complete QC report HTML."""
     import json
@@ -763,7 +770,7 @@ const symbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
 
 // PCA Plot
 (function() {{
-    const pca = {json.dumps(pca).replace('</', '<\\/')};
+    const pca = {_safe_json(pca)};
     const conditions = [...new Set(pca.conditions)].sort();
     const plexes = [...new Set(pca.plexes)].sort();
 
@@ -806,7 +813,7 @@ const symbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
 
 // t-SNE Plot
 (function() {{
-    const tsne = {json.dumps(tsne).replace('</', '<\\/')};
+    const tsne = {_safe_json(tsne)};
     if (!tsne) {{
         document.getElementById('tsne-plot').innerHTML = '<p style="padding:20px;color:#999">t-SNE requires scikit-learn</p>';
         return;
@@ -862,7 +869,7 @@ Plotly.newPlot('pvca-plot', [{{
 
 // Correlation heatmap
 (function() {{
-    const corr = {json.dumps(corr).replace('</', '<\\/')};
+    const corr = {_safe_json(corr)};
     Plotly.newPlot('corr-plot', [{{
         type: 'heatmap',
         z: corr.matrix,
