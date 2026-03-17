@@ -335,36 +335,30 @@ def load_psm_data(
         ]
         is_new_qpx = "charge" in cols or "run_file_name" in cols
 
-        # Column names from internal whitelist (safe to interpolate)
-        if is_new_qpx:
-            charge_col = "charge"
-            unnest_sql = (
-                "run_file_name as run_file_name,\n"
-                "                unnest.label as label,\n"
-                "                unnest.intensity as intensity"
-            )
-        else:
-            charge_col = "precursor_charge"
-            unnest_sql = (
-                "unnest.sample_accession as sample_accession,\n"
-                "                reference_file_name as run_file_name,\n"
-                "                unnest.channel as label,\n"
-                "                unnest.intensity as intensity"
-            )
-
-        # Unnest intensities and apply filters
-        # Note: charge_col, unnest_sql are from hardcoded internal values above;
-        # where_clause is built by SQLFilterBuilder from validated config only.
-        query = (
-            "SELECT"
-            "  pg_accessions,"
-            "  sequence,"
-            f"  {charge_col} as precursor_charge,"
-            f"  {unnest_sql}"
+        # Predefined query templates (no user-controlled data)
+        _QUERY_NEW_QPX = (
+            "SELECT pg_accessions, sequence,"
+            " charge as precursor_charge,"
+            " run_file_name as run_file_name,"
+            " unnest.label as label,"
+            " unnest.intensity as intensity"
             " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
-            " WHERE unnest.intensity IS NOT NULL"
-            f" AND {where_clause}"
+            " WHERE unnest.intensity IS NOT NULL AND "
         )
+        _QUERY_OLD_QPX = (
+            "SELECT pg_accessions, sequence,"
+            " precursor_charge as precursor_charge,"
+            " unnest.sample_accession as sample_accession,"
+            " reference_file_name as run_file_name,"
+            " unnest.channel as label,"
+            " unnest.intensity as intensity"
+            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
+            " WHERE unnest.intensity IS NOT NULL AND "
+        )
+
+        base_query = _QUERY_NEW_QPX if is_new_qpx else _QUERY_OLD_QPX
+        # where_clause is built by SQLFilterBuilder from validated config only
+        query = base_query + where_clause
 
         df = conn.execute(query, [parquet_path]).df()
     finally:

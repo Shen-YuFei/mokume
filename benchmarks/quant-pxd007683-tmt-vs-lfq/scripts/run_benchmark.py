@@ -17,7 +17,7 @@ Usage:
     python run_benchmark.py --step 3  # Run only step 3
 """
 
-import subprocess
+import runpy
 import sys
 import argparse
 from pathlib import Path
@@ -58,15 +58,13 @@ def run_step(step_index: int) -> bool:
     print("=" * 60)
 
     try:
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            cwd=str(SCRIPT_DIR),
-            check=True,
-        )
-        return result.returncode == 0
-    except subprocess.CalledProcessError as e:
-        print(f"\nERROR: Script failed with return code {e.returncode}")
-        return False
+        runpy.run_path(str(script_path), run_name="__main__")
+        return True
+    except SystemExit as e:
+        if e.code is not None and e.code != 0:
+            print(f"\nERROR: Script exited with code {e.code}")
+            return False
+        return True
     except Exception as e:
         print(f"\nERROR: {e}")
         return False
