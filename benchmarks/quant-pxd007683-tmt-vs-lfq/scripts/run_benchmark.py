@@ -35,22 +35,33 @@ STEPS = [
 ]
 
 
-def run_step(step_index: int) -> bool:
-    """Run a single benchmark script by its index in STEPS."""
-    if step_index < 0 or step_index >= len(STEPS):
+def _validate_step(step_index: int):
+    """Validate step index and return (script_name, description, resolved_path) or None."""
+    if not 0 <= step_index < len(STEPS):
         print(f"  Invalid step index: {step_index}")
-        return False
+        return None
 
     script_name, description = STEPS[step_index]
     script_path = (SCRIPT_DIR / script_name).resolve()
 
     if not script_path.is_relative_to(SCRIPT_DIR.resolve()):
         print(f"  Script path escapes allowed directory: {script_path}")
-        return False
+        return None
 
     if not script_path.exists():
         print(f"  Script not found: {script_path}")
+        return None
+
+    return script_name, description, script_path
+
+
+def run_step(step_index: int) -> bool:
+    """Run a single benchmark script by its index in STEPS."""
+    validated = _validate_step(step_index)
+    if validated is None:
         return False
+
+    script_name, description, script_path = validated
 
     print(f"\n{'='*60}")
     print(f"Running: {description}")
