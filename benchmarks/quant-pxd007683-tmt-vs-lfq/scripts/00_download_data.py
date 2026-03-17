@@ -8,7 +8,6 @@ Downloads:
 - FASTA file (for iBAQ quantification)
 """
 
-import shutil
 import urllib.request
 import urllib.parse
 import sys
