@@ -11,7 +11,7 @@ Note: This module requires the optional 'inmoose' dependency.
 Install it with: pip install mokume[batch-correction]
 """
 
-import importlib.util
+import importlib
 import logging
 import warnings
 from typing import List, Optional, Dict, Union
@@ -33,8 +33,12 @@ logger.addHandler(logging.NullHandler())
 
 
 def is_inmoose_available() -> bool:
-    """Check if inmoose is installed."""
-    return importlib.util.find_spec("inmoose") is not None
+    """Check if inmoose is installed and importable."""
+    try:
+        importlib.import_module("inmoose")
+        return True
+    except (ImportError, ModuleNotFoundError):
+        return False
 
 
 def is_batch_correction_available() -> bool:

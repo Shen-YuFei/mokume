@@ -87,8 +87,8 @@ def list_available_files(base_url: str) -> List[str]:
     try:
         if urllib.parse.urlparse(base_url).scheme not in ("http", "https"):
             raise ValueError(f"URL scheme not allowed: {base_url}")
-        response = _opener.open(base_url, timeout=30)
-        content = response.read().decode('utf-8')
+        with _opener.open(base_url, timeout=30) as response:
+            content = response.read().decode('utf-8')
         import re
         links = re.findall(r'href="([^"]+)"', content)
         return [l for l in links if not l.startswith('/') and not l.startswith('?')]

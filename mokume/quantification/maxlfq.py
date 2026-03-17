@@ -27,6 +27,7 @@ References:
 """
 
 
+import importlib
 import warnings
 from typing import Optional
 
@@ -47,9 +48,12 @@ logger = get_logger("mokume.quantification.maxlfq")
 
 
 def _is_directlfq_available() -> bool:
-    """Check if DirectLFQ package is installed."""
-    import importlib.util
-    return importlib.util.find_spec("directlfq") is not None
+    """Check if DirectLFQ package is installed and importable."""
+    try:
+        importlib.import_module("directlfq")
+        return True
+    except (ImportError, ModuleNotFoundError):
+        return False
 
 
 def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:

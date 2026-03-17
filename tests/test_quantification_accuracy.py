@@ -71,7 +71,7 @@ def download_pride_dataset():
             if urllib.parse.urlparse(PRIDE_DATASET_URL).scheme not in ("http", "https"):
                 raise ValueError(f"URL scheme not allowed: {PRIDE_DATASET_URL}")
             _opener = urllib.request.build_opener()
-            with _opener.open(PRIDE_DATASET_URL) as response, open(zip_path, "wb") as out_file:
+            with _opener.open(PRIDE_DATASET_URL, timeout=30) as response, open(zip_path, "wb") as out_file:
                 shutil.copyfileobj(response, out_file)
         except Exception as e:
             pytest.skip(f"Failed to download PRIDE dataset: {e}")
