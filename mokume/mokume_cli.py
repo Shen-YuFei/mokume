@@ -44,7 +44,7 @@ LOG_LEVELS_TO_LEVELS = {
     required=False,
     help="Write log to this file.",
 )
-def cli(log_level: str, log_file: Path):
+def cli(log_level: str = "debug", log_file: Path = None):
     """
     mokume - A comprehensive proteomics quantification library.
 
