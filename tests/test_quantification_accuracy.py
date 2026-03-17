@@ -16,8 +16,10 @@ Test data sources:
 - Full dataset: https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/proteomes/pmultiqc/example-projects/PXD063291.zip
 """
 
+import shutil
 import zipfile
 import urllib.request
+import urllib.parse
 import warnings
 import pytest
 import numpy as np
@@ -66,7 +68,11 @@ def download_pride_dataset():
     if not zip_path.exists():
         print(f"Downloading PRIDE dataset from {PRIDE_DATASET_URL}...")
         try:
-            urllib.request.urlretrieve(PRIDE_DATASET_URL, zip_path)
+            if urllib.parse.urlparse(PRIDE_DATASET_URL).scheme not in ("http", "https"):
+                raise ValueError(f"URL scheme not allowed: {PRIDE_DATASET_URL}")
+            _opener = urllib.request.build_opener()
+            with _opener.open(PRIDE_DATASET_URL) as response, open(zip_path, "wb") as out_file:
+                shutil.copyfileobj(response, out_file)
         except Exception as e:
             pytest.skip(f"Failed to download PRIDE dataset: {e}")
 

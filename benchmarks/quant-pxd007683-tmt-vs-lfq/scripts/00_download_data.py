@@ -8,9 +8,13 @@ Downloads:
 - FASTA file (for iBAQ quantification)
 """
 
+import shutil
 import urllib.request
+import urllib.parse
 import sys
 from pathlib import Path
+
+_opener = urllib.request.build_opener()
 
 # Add parent to path for config import
 sys.path.insert(0, str(Path(__file__).parent))
@@ -27,15 +31,24 @@ def download_file(url: str, dest: Path, description: str = "") -> bool:
     print(f"    URL: {url}")
 
     try:
-        def report_progress(block_num, block_size, total_size):
-            downloaded = block_num * block_size
-            if total_size > 0:
-                percent = min(100, downloaded * 100 / total_size)
-                mb_downloaded = downloaded / (1024 * 1024)
-                mb_total = total_size / (1024 * 1024)
-                print(f"\r    Progress: {percent:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)", end="")
-
-        urllib.request.urlretrieve(url, dest, reporthook=report_progress)
+        if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+            raise ValueError(f"URL scheme not allowed: {url}")
+        with _opener.open(url) as response:
+            total_size = int(response.headers.get("Content-Length", 0))
+            downloaded = 0
+            block_size = 8192
+            with open(dest, "wb") as out_file:
+                while True:
+                    block = response.read(block_size)
+                    if not block:
+                        break
+                    out_file.write(block)
+                    downloaded += len(block)
+                    if total_size > 0:
+                        percent = min(100, downloaded * 100 / total_size)
+                        mb_downloaded = downloaded / (1024 * 1024)
+                        mb_total = total_size / (1024 * 1024)
+                        print(f"\r    Progress: {percent:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)", end="")
         print()  # newline after progress
         print(f"    Saved to: {dest}")
         return True

@@ -11,7 +11,9 @@ This script:
 
 import sys
 from pathlib import Path
+import shutil
 import urllib.request
+import urllib.parse
 import warnings
 
 import pandas as pd
@@ -29,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 warnings.filterwarnings("ignore")
 
+_opener = urllib.request.build_opener()
+
 
 def download_fasta():
     """Download FASTA file if not present."""
@@ -40,7 +44,10 @@ def download_fasta():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
-        urllib.request.urlretrieve(FASTA_URL, FASTA_PATH)
+        if urllib.parse.urlparse(FASTA_URL).scheme not in ("http", "https"):
+            raise ValueError(f"URL scheme not allowed: {FASTA_URL}")
+        with _opener.open(FASTA_URL) as response, open(FASTA_PATH, "wb") as out_file:
+            shutil.copyfileobj(response, out_file)
         print(f"Downloaded to: {FASTA_PATH}")
         return True
     except Exception as e:
