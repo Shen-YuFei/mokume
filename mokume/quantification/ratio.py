@@ -358,7 +358,7 @@ def load_psm_data(
 
         base_query = _QUERY_NEW_QPX if is_new_qpx else _QUERY_OLD_QPX
         # where_clause is built by SQLFilterBuilder from validated config only
-        query = base_query + where_clause
+        query = "".join((base_query, where_clause))
 
         df = conn.execute(query, [parquet_path]).df()
     finally:
