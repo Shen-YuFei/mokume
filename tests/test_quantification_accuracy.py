@@ -319,8 +319,10 @@ class TestSmallDiannSubset:
 
     def test_small_diann_data_loaded(self):
         """Verify small DIA-NN subset data is loaded correctly."""
-        assert len(self.diann_df) > 0, "DIA-NN report should not be empty"
-        assert len(self.peptide_df) > 0, "Peptide data should not be empty"
+        if not (len(self.diann_df) > 0):
+            raise AssertionError("DIA-NN report should not be empty")
+        if not (len(self.peptide_df) > 0):
+            raise AssertionError("Peptide data should not be empty")
 
         print("\n[Small DIA-NN Subset] Test data summary:")
         print(f"  Peptide measurements: {len(self.peptide_df):,}")
@@ -341,10 +343,14 @@ class TestSmallDiannSubset:
             sample_column="SampleID",
         )
 
-        assert len(result) > 0, "MaxLFQ should produce results"
-        assert "Intensity" in result.columns
-        assert result["Intensity"].notna().sum() > 0, "Should have non-NaN intensities"
-        assert (result["Intensity"] > 0).all(), "All intensities should be positive"
+        if not len(result) > 0:
+            raise AssertionError("MaxLFQ should produce results")
+        if "Intensity" not in result.columns:
+            raise AssertionError("'Intensity' not in result.columns")
+        if not result["Intensity"].notna().sum() > 0:
+            raise AssertionError("Should have non-NaN intensities")
+        if not (result["Intensity"] > 0).all():
+            raise AssertionError("All intensities should be positive")
 
         print("\n[Small DIA-NN Subset] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
@@ -380,7 +386,8 @@ class TestSmallDiannSubset:
         print("\n[Small DIA-NN Subset] Single-threaded vs Parallel MaxLFQ:")
         print(f"  Pearson correlation: {corr['pearson']:.4f}")
 
-        assert corr["pearson"] > 0.9999, "Parallel should produce same results as single-threaded"
+        if not (corr["pearson"] > 0.9999):
+            raise AssertionError("Parallel should produce same results as single-threaded")
 
     def test_small_diann_full_comparison(self):
         """
@@ -412,8 +419,8 @@ class TestSmallDiannSubset:
             results["Mokume MaxLFQ"], results["Top3"],
             intensity_cols["Mokume MaxLFQ"], intensity_cols["Top3"]
         )
-        assert corr_maxlfq_top3["spearman"] > 0.9, \
-            f"MaxLFQ and Top3 should correlate >0.9, got {corr_maxlfq_top3['spearman']:.3f}"
+        if not (corr_maxlfq_top3["spearman"] > 0.9):
+            raise AssertionError(f"MaxLFQ and Top3 should correlate >0.9, got {corr_maxlfq_top3['spearman']:.3f}")
 
     def test_small_diann_directlfq_comparison(self):
         """Compare DirectLFQ with mokume MaxLFQ on small subset."""
@@ -438,7 +445,8 @@ class TestSmallDiannSubset:
 
         # Test default MaxLFQ (should use DirectLFQ when available)
         maxlfq = MaxLFQQuantification(min_peptides=1, threads=1)
-        assert maxlfq.using_directlfq, "MaxLFQ should use DirectLFQ when available"
+        if not (maxlfq.using_directlfq):
+            raise AssertionError("MaxLFQ should use DirectLFQ when available")
 
         result_maxlfq = maxlfq.quantify(
             self.peptide_df,
@@ -459,7 +467,8 @@ class TestSmallDiannSubset:
         print(f"  Spearman correlation: {corr['spearman']:.4f}")
         print(f"  Number of comparisons: {corr['n']:,}")
 
-        assert corr["spearman"] > 0.99, "MaxLFQ with DirectLFQ should match DirectLFQ exactly"
+        if not (corr["spearman"] > 0.99):
+            raise AssertionError("MaxLFQ with DirectLFQ should match DirectLFQ exactly")
 
     def test_small_diann_builtin_fallback(self):
         """Test the built-in MaxLFQ fallback implementation."""
@@ -467,8 +476,10 @@ class TestSmallDiannSubset:
 
         # Force built-in implementation
         maxlfq_builtin = MaxLFQQuantification(min_peptides=1, threads=1, force_builtin=True)
-        assert not maxlfq_builtin.using_directlfq, "Should use built-in when forced"
-        assert maxlfq_builtin.name == "MaxLFQ (built-in)"
+        if maxlfq_builtin.using_directlfq:
+            raise AssertionError("Should use built-in when forced")
+        if not (maxlfq_builtin.name == "MaxLFQ (built-in)"):
+            raise AssertionError('Expected maxlfq_builtin.name == "MaxLFQ (built-in)"')
 
         result_builtin = maxlfq_builtin.quantify(
             self.peptide_df,
@@ -478,8 +489,10 @@ class TestSmallDiannSubset:
             sample_column="SampleID",
         )
 
-        assert len(result_builtin) > 0, "Built-in MaxLFQ should produce results"
-        assert "Intensity" in result_builtin.columns
+        if not (len(result_builtin) > 0):
+            raise AssertionError("Built-in MaxLFQ should produce results")
+        if "Intensity" not in result_builtin.columns:
+            raise AssertionError("'Intensity' not in result_builtin.columns")
 
         print("\n[Small DIA-NN Subset] Built-in MaxLFQ fallback:")
         print(f"  Protein-sample combinations: {len(result_builtin):,}")
@@ -508,8 +521,10 @@ class TestDiannWithSdrf:
 
     def test_pride_data_loaded(self):
         """Verify PRIDE dataset is loaded correctly."""
-        assert len(self.diann_df) > 0, "DIA-NN report should not be empty"
-        assert len(self.peptide_df) > 0, "Peptide data should not be empty"
+        if not (len(self.diann_df) > 0):
+            raise AssertionError("DIA-NN report should not be empty")
+        if not (len(self.peptide_df) > 0):
+            raise AssertionError("Peptide data should not be empty")
 
         print("\n[PRIDE PXD063291] Test data summary:")
         print(f"  Source: {self.report_path}")
@@ -531,9 +546,12 @@ class TestDiannWithSdrf:
             sample_column="SampleID",
         )
 
-        assert len(result) > 0, "MaxLFQ should produce results"
-        assert "Intensity" in result.columns
-        assert result["Intensity"].notna().sum() > 0, "Should have non-NaN intensities"
+        if not (len(result) > 0):
+            raise AssertionError("MaxLFQ should produce results")
+        if "Intensity" not in result.columns:
+            raise AssertionError("'Intensity' not in result.columns")
+        if not (result["Intensity"].notna().sum() > 0):
+            raise AssertionError("Should have non-NaN intensities")
 
         print("\n[PRIDE PXD063291] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
@@ -569,8 +587,8 @@ class TestDiannWithSdrf:
 
         print(f"\nValidation: MaxLFQ vs Top3 Spearman = {corr_maxlfq_top3['spearman']:.3f}")
 
-        assert corr_maxlfq_top3["spearman"] > 0.85, \
-            f"MaxLFQ and Top3 should correlate >0.85, got {corr_maxlfq_top3['spearman']:.3f}"
+        if not (corr_maxlfq_top3["spearman"] > 0.85):
+            raise AssertionError(f"MaxLFQ and Top3 should correlate >0.85, got {corr_maxlfq_top3['spearman']:.3f}")
 
         # If DIA-NN MaxLFQ is available, check correlation
         if "DIA-NN MaxLFQ" in results and len(results["DIA-NN MaxLFQ"]) > 0:
@@ -899,7 +917,8 @@ class TestAggregationLevels:
             print(f"    {sample}: {n_runs} runs")
 
         # Verify we have multiple runs per sample for meaningful test
-        assert runs_per_sample.max() > 1, "Need multiple runs per sample for this test"
+        if not (runs_per_sample.max() > 1):
+            raise AssertionError("Need multiple runs per sample for this test")
 
     def test_sample_level_quantification(self):
         """Test quantification at sample level (default behavior)."""
@@ -908,11 +927,15 @@ class TestAggregationLevels:
         )
 
         for method_name, df in results.items():
-            assert len(df) > 0, f"{method_name} should produce results"
-            assert "ProteinName" in df.columns
-            assert "SampleID" in df.columns
+            if not (len(df) > 0):
+                raise AssertionError(f"{method_name} should produce results")
+            if "ProteinName" not in df.columns:
+                raise AssertionError("'ProteinName' not in df.columns")
+            if "SampleID" not in df.columns:
+                raise AssertionError("'SampleID' not in df.columns")
             # Run column should NOT be in results for sample-level
-            assert "Run" not in df.columns or df["Run"].isna().all() or method_name.endswith("(Run)")
+            if not ("Run" not in df.columns or df["Run"].isna().all() or method_name.endswith("(Run)")):
+                raise AssertionError("Run column should not be in results for sample-level")
 
         print("\n[Sample Level] Quantification results:")
         for method_name, df in results.items():
@@ -925,10 +948,13 @@ class TestAggregationLevels:
         )
 
         for method_name, df in results.items():
-            assert len(df) > 0, f"{method_name} should produce results"
-            assert "ProteinName" in df.columns
+            if not (len(df) > 0):
+                raise AssertionError(f"{method_name} should produce results")
+            if "ProteinName" not in df.columns:
+                raise AssertionError("'ProteinName' not in df.columns")
             # Run column should be in results for run-level
-            assert "Run" in df.columns, f"{method_name} should have Run column"
+            if "Run" not in df.columns:
+                raise AssertionError(f"{method_name} should have Run column")
 
         print("\n[Run Level] Quantification results:")
         for method_name, df in results.items():
@@ -950,8 +976,8 @@ class TestAggregationLevels:
             print(f"\n[{method_base}] Sample-level: {n_sample} rows, Run-level: {n_run} rows")
 
             # Run-level should have >= sample-level rows (more granular)
-            assert n_run >= n_sample, \
-                f"{method_base}: Run-level ({n_run}) should have >= rows than sample-level ({n_sample})"
+            if not (n_run >= n_sample):
+                raise AssertionError(f"{method_base}: Run-level ({n_run}) should have >= rows than sample-level ({n_sample})")
 
     def test_full_comparison_sample_vs_run(self):
         """
@@ -1053,7 +1079,8 @@ class TestAggregationLevels:
                 print(f"  N comparisons: {len(x)}")
 
                 # They should correlate reasonably well
-                assert spearman_r > 0.7, f"Sample vs aggregated run-level should correlate > 0.7, got {spearman_r:.3f}"
+                if not (spearman_r > 0.7):
+                    raise AssertionError(f"Sample vs aggregated run-level should correlate > 0.7, got {spearman_r:.3f}")
 
 
 # Standalone test function for quick runs
