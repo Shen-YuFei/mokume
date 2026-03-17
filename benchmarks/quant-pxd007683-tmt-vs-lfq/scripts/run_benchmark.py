@@ -35,16 +35,13 @@ STEPS = [
 ]
 
 
-# Allowed script names (whitelist)
-_ALLOWED_SCRIPTS = frozenset(name for name, _ in STEPS)
-
-
-def run_script(script_name: str, description: str) -> bool:
-    """Run a single benchmark script."""
-    if script_name not in _ALLOWED_SCRIPTS:
-        print(f"  Script not in whitelist: {script_name}")
+def run_step(step_index: int) -> bool:
+    """Run a single benchmark script by its index in STEPS."""
+    if step_index < 0 or step_index >= len(STEPS):
+        print(f"  Invalid step index: {step_index}")
         return False
 
+    script_name, description = STEPS[step_index]
     script_path = (SCRIPT_DIR / script_name).resolve()
 
     if not script_path.is_relative_to(SCRIPT_DIR.resolve()):
@@ -60,10 +57,9 @@ def run_script(script_name: str, description: str) -> bool:
     print(f"Script: {script_name}")
     print("=" * 60)
 
-    cmd = [sys.executable, str(script_path)]
     try:
         result = subprocess.run(
-            cmd,
+            [sys.executable, str(script_path)],
             cwd=str(SCRIPT_DIR),
             check=True,
         )
@@ -103,29 +99,29 @@ def main():
     for i, (script, desc) in enumerate(STEPS):
         print(f"  {i}. {desc}")
 
-    # Determine which steps to run
+    # Determine which step indices to run
     if args.step is not None:
-        steps_to_run = [STEPS[args.step]]
+        indices_to_run = [args.step]
         print(f"\nRunning only step {args.step}")
     else:
-        steps_to_run = STEPS.copy()
+        indices_to_run = list(range(len(STEPS)))
 
         if args.skip_download:
-            steps_to_run = [(s, d) for s, d in steps_to_run if "download" not in s.lower()]
+            indices_to_run = [i for i in indices_to_run if "download" not in STEPS[i][0].lower()]
             print("\nSkipping download step")
 
         if args.quick:
-            steps_to_run = [(s, d) for s, d in steps_to_run if "grid_search" not in s.lower()]
+            indices_to_run = [i for i in indices_to_run if "grid_search" not in STEPS[i][0].lower()]
             print("\nQuick mode: skipping grid search")
 
     # Run steps
     results = []
-    for script, description in steps_to_run:
-        success = run_script(script, description)
-        results.append((script, success))
+    for idx in indices_to_run:
+        success = run_step(idx)
+        results.append((STEPS[idx][0], success))
 
         if not success:
-            print(f"\nStep failed: {script}")
+            print(f"\nStep failed: {STEPS[idx][0]}")
             if input("Continue with remaining steps? (y/n): ").lower() != "y":
                 break
 
