@@ -9,7 +9,7 @@ dependencies:
   - python>=3.9
   - scikit-learn
   - pyopenms
-  - numpy<2.1.0
+  - numpy<2.0.0
   - click
   - pandas
   - matplotlib
@@ -21,3 +21,5 @@ dependencies:
   - typing_extensions>=4.6.3
   - inmoose
   - anndata
+  - plotly
+  - statsmodels
