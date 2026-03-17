@@ -35,9 +35,21 @@ STEPS = [
 ]
 
 
+# Allowed script names (whitelist)
+_ALLOWED_SCRIPTS = frozenset(name for name, _ in STEPS)
+
+
 def run_script(script_name: str, description: str) -> bool:
     """Run a single benchmark script."""
-    script_path = SCRIPT_DIR / script_name
+    if script_name not in _ALLOWED_SCRIPTS:
+        print(f"  Script not in whitelist: {script_name}")
+        return False
+
+    script_path = (SCRIPT_DIR / script_name).resolve()
+
+    if not script_path.is_relative_to(SCRIPT_DIR.resolve()):
+        print(f"  Script path escapes allowed directory: {script_path}")
+        return False
 
     if not script_path.exists():
         print(f"  Script not found: {script_path}")
@@ -48,9 +60,10 @@ def run_script(script_name: str, description: str) -> bool:
     print(f"Script: {script_name}")
     print("=" * 60)
 
+    cmd = [sys.executable, str(script_path)]
     try:
         result = subprocess.run(
-            [sys.executable, str(script_path)],
+            cmd,
             cwd=str(SCRIPT_DIR),
             check=True,
         )

@@ -9,6 +9,7 @@ This script answers Q2: What proportion of variance is explained by:
 Uses PCA and ANOVA-style variance decomposition.
 """
 
+import logging
 import sys
 from pathlib import Path
 import warnings
@@ -157,8 +158,8 @@ def run_pca_analysis(df_wide: pd.DataFrame) -> dict:
             labels = pd.factorize(valid_df["condition"])[0]
             coords = valid_df[["PC1", "PC2"]].values
             silhouette = silhouette_score(coords, labels)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.warning("Silhouette score computation failed: %s", exc)
 
     return {
         "pca_df": pca_df,

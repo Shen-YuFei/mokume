@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import sys
 from pathlib import Path
+from typing import List
 
 _opener = urllib.request.build_opener()
 from config import (
@@ -75,7 +76,7 @@ def check_url_exists(url: str) -> bool:
         request = urllib.request.Request(url, method='HEAD')
         _opener.open(request, timeout=10)
         return True
-    except:
+    except Exception:
         return False
 
 
