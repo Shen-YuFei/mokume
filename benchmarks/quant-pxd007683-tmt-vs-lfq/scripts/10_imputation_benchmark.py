@@ -295,8 +295,8 @@ def plot_imputation_comparison(results_df: pd.DataFrame, output_path: Path):
             width = 0.35
             offset = (i - 0.5) * width
 
-            bars = ax.bar(x + offset, values, width, label=tech.upper(),
-                         color=["#ff7f00", "#984ea3"][i], alpha=0.8)
+            ax.bar(x + offset, values, width, label=tech.upper(),
+                   color=["#ff7f00", "#984ea3"][i], alpha=0.8)
 
         ax.set_xlabel("Imputation Method")
         ax.set_ylabel(metric)

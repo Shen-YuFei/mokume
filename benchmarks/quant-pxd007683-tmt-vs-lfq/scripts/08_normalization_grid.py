@@ -159,11 +159,7 @@ def apply_post_normalization(df: pd.DataFrame, method: str) -> pd.DataFrame:
         result = df.copy()
         # Get ranks for each column
         ranks = df.apply(lambda x: rankdata(x, method='average', nan_policy='omit'), axis=0)
-        # Get sorted values (ignoring NaN)
-        sorted_means = df.apply(lambda x: np.sort(x.dropna().values), axis=0)
-
         # Use mean of sorted values at each rank
-        n_rows = len(df)
         for col in df.columns:
             col_ranks = ranks[col].values
             col_sorted = np.sort(df[col].dropna().values)

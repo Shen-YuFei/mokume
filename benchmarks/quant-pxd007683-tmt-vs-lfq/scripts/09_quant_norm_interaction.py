@@ -193,7 +193,7 @@ def run_benchmark(technology: str) -> list:
         try:
             df_base = load_quantified_data(technology, quant_method)
             df_base = df_base.replace(0, np.nan).dropna(thresh=3)
-            n_proteins = len(df_base)
+            _ = len(df_base)  # protein count logged elsewhere
         except FileNotFoundError as e:
             print(f"  Skipping {quant_method}: {e}")
             continue

@@ -154,9 +154,6 @@ def normalize_columns(df: pd.DataFrame, data_format: str) -> pd.DataFrame:
         if "NormIntensity" not in df.columns and "Intensity" in df.columns:
             df["NormIntensity"] = df["Intensity"]
 
-    # Target columns we need
-    targets = ["ProteinName", "PeptideSequence", "SampleID", "NormIntensity"]
-
     # Build a reverse mapping: target -> list of possible source names
     # Use QUANTMS_PARQUET_MAPPING for all formats (ibaqpy-research uses this)
     source_mapping = QUANTMS_PARQUET_MAPPING
@@ -358,7 +355,6 @@ def load_raw_data(dataset: DatasetInfo) -> Optional[pd.DataFrame]:
             return None
 
     # Try alternative extensions
-    base_name = feature_path.stem.replace("_feature", "")
     for ext in [".parquet", ".csv", ".tsv"]:
         alt_path = RAW_DATA_DIR / f"{dataset.project_id}_feature{ext}"
         if alt_path.exists():

@@ -401,7 +401,7 @@ def analyze_batch_effect_magnitude(meta, data):
                     bio_var = matrix_complete[stype_cols].var(axis=1).mean()
                     biological_vars.append(bio_var)
 
-            biological_var = np.mean(biological_vars) if biological_vars else 0
+            _ = np.mean(biological_vars) if biological_vars else 0  # not used yet
 
             # Batch effect proportion
             batch_effect_pct = (between_batch_var / total_variance * 100) if total_variance > 0 else 0
@@ -627,7 +627,7 @@ def generate_summary_plots(meta, data, coverage_df, missing_df, corr_df, de_df, 
     # Calculate composite score (lower is better)
     scores = {}
     for method in coverage_df["Method"].tolist():
-        method_lower = method.lower()
+        _ = method.lower()  # reserved for future use
 
         # Get metrics
         core_pct = coverage_df[coverage_df["Method"] == method]["Core_Pct"].values[0]

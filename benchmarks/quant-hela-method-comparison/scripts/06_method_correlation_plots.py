@@ -134,7 +134,7 @@ def plot_density_scatter(
                    norm=LogNorm(), alpha=0.9)
 
     # Add colorbar
-    cb = plt.colorbar(hb, ax=ax, label='n_neighbors')
+    plt.colorbar(hb, ax=ax, label='n_neighbors')
 
     # Add diagonal line (y = x)
     lims = [

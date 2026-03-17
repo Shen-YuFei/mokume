@@ -119,8 +119,6 @@ def run_maxlfq_quantification(peptide_df: pd.DataFrame) -> pd.DataFrame:
     sample_cols = [c for c in wide_df.columns if c not in ["peptide", "protein"]]
 
     # Run MaxLFQ per protein
-    maxlfq = MaxLFQQuantification(min_peptides=1)
-
     proteins = wide_df["protein"].unique()
     results = []
 

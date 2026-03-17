@@ -258,7 +258,6 @@ def run_benchmark(technology: str) -> list:
             )
 
             n_peptides = len(df_filtered)
-            n_proteins = df_filtered["ProteinName"].nunique()
 
             if n_peptides == 0:
                 print("No peptides left, skipping")
