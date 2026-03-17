@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Optional, Dict, List
 
 import pandas as pd
-import numpy as np
 
 # Add parent directory to path for mokume imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     ALL_DATASETS,
     HELA_DATASETS,
-    PROCESSED_DIR,
     PROTEIN_QUANT_DIR,
     FASTA_FILE,
     QUANTIFICATION_METHODS,

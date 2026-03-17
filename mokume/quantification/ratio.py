@@ -13,8 +13,6 @@ References
 Proteome Sciences post-processing protocol for TMT data.
 """
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 import duckdb

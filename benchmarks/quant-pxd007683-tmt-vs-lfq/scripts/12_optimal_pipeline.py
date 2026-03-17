@@ -25,7 +25,6 @@ import warnings
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 # Add parent to path for config import
 sys.path.insert(0, str(Path(__file__).parent))

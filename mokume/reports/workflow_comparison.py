@@ -12,11 +12,9 @@ Designed to answer: "Which workflow preserves biology better?"
 """
 
 import html
-import json
 from typing import Optional
 
 import numpy as np
-import pandas as pd
 
 from mokume.reports.qc_report import compute_qc_metrics, _safe_json
 from mokume.core.logger import get_logger

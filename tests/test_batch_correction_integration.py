@@ -11,8 +11,6 @@ These tests verify that batch correction:
 import pytest
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from unittest.mock import patch
 
 # Skip if inmoose not installed
 pytest.importorskip("inmoose")

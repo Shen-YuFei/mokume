@@ -7,8 +7,7 @@ Handles parquet, TSV, and various tool output formats.
 """
 
 import sys
-from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional
 
 import pandas as pd
 import numpy as np
@@ -18,7 +17,6 @@ from config import (
     HELA_DATASETS,
     RAW_DATA_DIR,
     PROCESSED_DIR,
-    COLUMN_MAPPING,
     QUANTMS_PARQUET_MAPPING,
     DatasetInfo,
 )

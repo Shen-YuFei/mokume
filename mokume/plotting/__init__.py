@@ -6,6 +6,7 @@ and visualizations. The plotting dependencies (matplotlib, seaborn)
 are optional and can be installed with: pip install mokume[plotting]
 """
 
+import importlib.util
 from typing import TYPE_CHECKING
 
 _PLOTTING_AVAILABLE = None
@@ -22,13 +23,10 @@ def is_plotting_available() -> bool:
     """
     global _PLOTTING_AVAILABLE
     if _PLOTTING_AVAILABLE is None:
-        try:
-            import matplotlib
-            import seaborn
-
-            _PLOTTING_AVAILABLE = True
-        except ImportError:
-            _PLOTTING_AVAILABLE = False
+        _PLOTTING_AVAILABLE = (
+            importlib.util.find_spec("matplotlib") is not None
+            and importlib.util.find_spec("seaborn") is not None
+        )
     return _PLOTTING_AVAILABLE
 
 

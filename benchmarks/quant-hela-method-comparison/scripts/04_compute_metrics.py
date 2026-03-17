@@ -11,7 +11,7 @@ Calculate benchmarking metrics for all quantification methods:
 
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 
 import pandas as pd
 import numpy as np

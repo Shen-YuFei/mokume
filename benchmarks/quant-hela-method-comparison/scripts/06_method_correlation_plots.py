@@ -8,23 +8,20 @@ similar to the MaxQuant vs quantms comparison style.
 
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-from scipy import stats
 from scipy.stats import pearsonr, spearmanr
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (
     ALL_DATASETS,
-    HELA_DATASETS,
     PROTEIN_QUANT_DIR,
     PLOTS_DIR,
-    QUANTIFICATION_METHODS,
 )
 
 

@@ -55,8 +55,6 @@ def generate_de_report(
     str
         Path to the generated HTML file.
     """
-    import plotly.graph_objects as go
-
     protein_col = protein_df.columns[0]
     sample_cols = [c for c in protein_df.columns if c != protein_col]
     exp_samples = [s for s in sample_cols if sample_to_condition.get(s) is not None]

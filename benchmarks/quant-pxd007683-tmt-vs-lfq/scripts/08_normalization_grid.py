@@ -26,7 +26,7 @@ import seaborn as sns
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
-    SAMPLE_CONDITIONS, CONDITION_COLORS,
+    SAMPLE_CONDITIONS,
     CV_THRESHOLDS, LOCAL_QUANTIFIED_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
     EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,

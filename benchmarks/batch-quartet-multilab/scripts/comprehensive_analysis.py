@@ -11,7 +11,6 @@ This script evaluates:
 6. Critical assessment of mokume algorithms
 """
 
-import sys
 from pathlib import Path
 from itertools import combinations
 
@@ -19,9 +18,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import stats
-from scipy.cluster.hierarchy import linkage, dendrogram
-from scipy.spatial.distance import pdist
-import seaborn as sns
 
 # Paths
 BENCHMARK_DIR = Path(__file__).parent.parent

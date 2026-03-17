@@ -31,7 +31,7 @@ from config import (
 
 # Add mokume to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from mokume.normalization.tmm import TMMNormalizer, tmm_normalize
+from mokume.normalization.tmm import TMMNormalizer
 
 warnings.filterwarnings("ignore")
 

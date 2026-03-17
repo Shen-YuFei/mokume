@@ -14,11 +14,8 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from collections import defaultdict
-
 import numpy as np
 import pandas as pd
-from scipy import stats
 from sklearn.decomposition import PCA
 
 warnings.filterwarnings("ignore")
@@ -28,7 +25,7 @@ BENCHMARK_DIR = Path(__file__).parent.parent
 MOKUME_ROOT = BENCHMARK_DIR.parent.parent
 sys.path.insert(0, str(MOKUME_ROOT))
 
-from mokume.quantification import MaxLFQQuantification, TopNQuantification
+from mokume.quantification import MaxLFQQuantification
 from mokume.quantification.directlfq import is_directlfq_available, DirectLFQQuantification
 from mokume.postprocessing import is_batch_correction_available, apply_batch_correction
 

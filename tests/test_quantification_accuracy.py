@@ -16,8 +16,6 @@ Test data sources:
 - Full dataset: https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/proteomes/pmultiqc/example-projects/PXD063291.zip
 """
 
-import os
-import tempfile
 import zipfile
 import urllib.request
 import warnings

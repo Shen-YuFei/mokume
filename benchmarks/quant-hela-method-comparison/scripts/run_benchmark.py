@@ -15,7 +15,6 @@ Usage:
     python run_benchmark.py --phase 3 --stop 3  # Run only phase 3
 """
 
-import sys
 import argparse
 from pathlib import Path
 

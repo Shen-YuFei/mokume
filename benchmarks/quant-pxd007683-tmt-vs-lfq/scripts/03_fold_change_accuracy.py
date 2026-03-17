@@ -20,7 +20,6 @@ import warnings
 
 import pandas as pd
 import numpy as np
-from scipy import stats
 import matplotlib.pyplot as plt
 
 # Add parent to path for config import
@@ -29,7 +28,7 @@ from config import (
     RESULTS_DIR, FIGURES_DIR,
     SAMPLE_CONDITIONS, EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
     CONDITION_COLORS, TECHNOLOGY_COLORS,
-    BENCHMARKS_LOCAL_DIR, LOCAL_QUANTIFIED_DIR, LOCAL_DATA_DIR,
+    LOCAL_QUANTIFIED_DIR, LOCAL_DATA_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
 )
 

@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
     SAMPLE_CONDITIONS, CONDITION_COLORS,
-    BENCHMARKS_LOCAL_DIR, LOCAL_QUANTIFIED_DIR,
+    LOCAL_QUANTIFIED_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
 )
 

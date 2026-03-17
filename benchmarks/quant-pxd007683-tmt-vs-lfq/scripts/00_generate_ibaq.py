@@ -22,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     DATA_DIR, LOCAL_DATA_DIR, LOCAL_QUANTIFIED_DIR,
     FASTA_URL, FASTA_PATH,
-    SAMPLE_CONDITIONS,
 )
 
 # Add mokume to path

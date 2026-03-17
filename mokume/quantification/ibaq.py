@@ -6,7 +6,6 @@ method for protein quantification, including normalization and proteomic
 ruler calculations.
 """
 
-import math
 import logging
 from typing import List, Union, Optional
 

@@ -15,8 +15,6 @@ Note: MaxLFQ is included for comparison but is NOT recommended for TMT.
 import sys
 from pathlib import Path
 import warnings
-from itertools import product
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,11 +24,10 @@ import seaborn as sns
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
-    SAMPLE_CONDITIONS, CONDITION_COLORS,
+    SAMPLE_CONDITIONS,
     CV_THRESHOLDS, LOCAL_QUANTIFIED_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
     EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
-    get_methods_for_technology,
 )
 
 # Add mokume to path

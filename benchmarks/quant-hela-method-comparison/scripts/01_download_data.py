@@ -9,8 +9,6 @@ import urllib.request
 import urllib.error
 import sys
 from pathlib import Path
-from typing import Optional, List
-
 from config import (
     ALL_DATASETS,
     HELA_DATASETS,

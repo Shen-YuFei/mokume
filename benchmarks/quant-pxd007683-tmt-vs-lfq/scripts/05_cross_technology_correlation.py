@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
-    SAMPLE_CONDITIONS, CONDITION_COLORS, TECHNOLOGY_COLORS,
+    SAMPLE_CONDITIONS, CONDITION_COLORS,
     LOCAL_QUANTIFIED_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
 )
