@@ -4,6 +4,7 @@ CLI entry point for the mokume package.
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 import click
 
@@ -44,7 +45,7 @@ LOG_LEVELS_TO_LEVELS = {
     required=False,
     help="Write log to this file.",
 )
-def cli(log_level: str, log_file: Path):
+def cli(log_level: str = "debug", log_file: Optional[Path] = None):
     """
     mokume - A comprehensive proteomics quantification library.
 

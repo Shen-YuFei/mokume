@@ -4,7 +4,7 @@ Base class for preprocessing filters.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 import pandas as pd
 

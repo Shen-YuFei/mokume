@@ -3,7 +3,6 @@
 Generate visualizations for the batch effect correction benchmark.
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np

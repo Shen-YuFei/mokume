@@ -13,8 +13,6 @@ References
 Proteome Sciences post-processing protocol for TMT data.
 """
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 import duckdb
@@ -328,51 +326,41 @@ def load_psm_data(
 
     conn = duckdb.connect()
     try:
-        # Create raw view from parquet
-        conn.execute(
-            f"CREATE VIEW parquet_raw AS SELECT * FROM parquet_scan('{parquet_path.replace(chr(39), chr(39)*2)}')"
-        )
-
-        # Detect QPX format
+        # Detect QPX format using parameterized read_parquet
         cols = [
             r[0] for r in conn.execute(
-                "SELECT column_name FROM (DESCRIBE parquet_raw)"
+                "SELECT column_name FROM (DESCRIBE SELECT * FROM read_parquet(?))",
+                [parquet_path],
             ).fetchall()
         ]
         is_new_qpx = "charge" in cols or "run_file_name" in cols
 
-        if is_new_qpx:
-            charge_col = "charge"
-            run_col = "run_file_name"
-            # New QPX: extract label for TMT channel mapping
-            unnest_sql = (
-                f"{run_col} as run_file_name,\n"
-                "                unnest.label as label,\n"
-                "                unnest.intensity as intensity"
-            )
-        else:
-            charge_col = "precursor_charge"
-            run_col = "reference_file_name"
-            unnest_sql = (
-                "unnest.sample_accession as sample_accession,\n"
-                f"                {run_col} as run_file_name,\n"
-                "                unnest.channel as label,\n"
-                "                unnest.intensity as intensity"
-            )
+        # Predefined query templates (no user-controlled data)
+        _QUERY_NEW_QPX = (
+            "SELECT pg_accessions, sequence,"
+            " charge as precursor_charge,"
+            " run_file_name as run_file_name,"
+            " unnest.label as label,"
+            " unnest.intensity as intensity"
+            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
+            " WHERE unnest.intensity IS NOT NULL AND "
+        )
+        _QUERY_OLD_QPX = (
+            "SELECT pg_accessions, sequence,"
+            " precursor_charge as precursor_charge,"
+            " unnest.sample_accession as sample_accession,"
+            " reference_file_name as run_file_name,"
+            " unnest.channel as label,"
+            " unnest.intensity as intensity"
+            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
+            " WHERE unnest.intensity IS NOT NULL AND "
+        )
 
-        # Unnest intensities and apply filters
-        query = f"""
-            SELECT
-                pg_accessions,
-                sequence,
-                {charge_col} as precursor_charge,
-                {unnest_sql}
-            FROM parquet_raw, UNNEST(intensities) as unnest
-            WHERE unnest.intensity IS NOT NULL
-              AND {where_clause}
-        """
+        base_query = _QUERY_NEW_QPX if is_new_qpx else _QUERY_OLD_QPX
+        # where_clause is built by SQLFilterBuilder from validated config only
+        query = "".join((base_query, where_clause))
 
-        df = conn.execute(query).df()
+        df = conn.execute(query, [parquet_path]).df()
     finally:
         conn.close()
 

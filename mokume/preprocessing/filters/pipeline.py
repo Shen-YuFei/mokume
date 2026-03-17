@@ -2,7 +2,7 @@
 Filter pipeline for orchestrating multiple preprocessing filters.
 """
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 import pandas as pd
 

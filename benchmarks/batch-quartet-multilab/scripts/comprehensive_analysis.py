@@ -11,7 +11,6 @@ This script evaluates:
 6. Critical assessment of mokume algorithms
 """
 
-import sys
 from pathlib import Path
 from itertools import combinations
 
@@ -19,9 +18,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import stats
-from scipy.cluster.hierarchy import linkage, dendrogram
-from scipy.spatial.distance import pdist
-import seaborn as sns
 
 # Paths
 BENCHMARK_DIR = Path(__file__).parent.parent
@@ -173,7 +169,7 @@ def analyze_missing_values(meta, data):
 
         # CRITIQUE: Flag high missing value variance as a problem
         if missing_variance > 100:
-            print(f"  WARNING: High variance in missing values across batches suggests batch-specific quantification issues")
+            print("  WARNING: High variance in missing values across batches suggests batch-specific quantification issues")
 
     return pd.DataFrame(results)
 
@@ -339,9 +335,9 @@ def analyze_de_consistency(meta, data):
 
             # CRITIQUE
             if mean_lfc_corr < 0.7:
-                print(f"  WARNING: Low LFC correlation indicates quantification instability across labs")
+                print("  WARNING: Low LFC correlation indicates quantification instability across labs")
             if mean_concordance < 0.8 and concordances:
-                print(f"  WARNING: Low DE concordance - same experiment may give different conclusions in different labs")
+                print("  WARNING: Low DE concordance - same experiment may give different conclusions in different labs")
 
     return pd.DataFrame(results)
 
@@ -405,7 +401,7 @@ def analyze_batch_effect_magnitude(meta, data):
                     bio_var = matrix_complete[stype_cols].var(axis=1).mean()
                     biological_vars.append(bio_var)
 
-            biological_var = np.mean(biological_vars) if biological_vars else 0
+            _ = np.mean(biological_vars) if biological_vars else 0  # not used yet
 
             # Batch effect proportion
             batch_effect_pct = (between_batch_var / total_variance * 100) if total_variance > 0 else 0
@@ -631,7 +627,7 @@ def generate_summary_plots(meta, data, coverage_df, missing_df, corr_df, de_df, 
     # Calculate composite score (lower is better)
     scores = {}
     for method in coverage_df["Method"].tolist():
-        method_lower = method.lower()
+        _ = method.lower()  # reserved for future use
 
         # Get metrics
         core_pct = coverage_df[coverage_df["Method"] == method]["Core_Pct"].values[0]

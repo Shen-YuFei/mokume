@@ -16,10 +16,10 @@ Test data sources:
 - Full dataset: https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/proteomes/pmultiqc/example-projects/PXD063291.zip
 """
 
-import os
-import tempfile
+import shutil
 import zipfile
 import urllib.request
+import urllib.parse
 import warnings
 import pytest
 import numpy as np
@@ -68,7 +68,11 @@ def download_pride_dataset():
     if not zip_path.exists():
         print(f"Downloading PRIDE dataset from {PRIDE_DATASET_URL}...")
         try:
-            urllib.request.urlretrieve(PRIDE_DATASET_URL, zip_path)
+            if urllib.parse.urlparse(PRIDE_DATASET_URL).scheme not in ("http", "https"):
+                raise ValueError(f"URL scheme not allowed: {PRIDE_DATASET_URL}")
+            _opener = urllib.request.build_opener()
+            with _opener.open(PRIDE_DATASET_URL, timeout=30) as response, open(zip_path, "wb") as out_file:
+                shutil.copyfileobj(response, out_file)
         except Exception as e:
             pytest.skip(f"Failed to download PRIDE dataset: {e}")
 
@@ -190,7 +194,7 @@ def print_comparison_table(results: dict, intensity_cols: dict, dataset_name: st
     print("\n" + "=" * 90)
     print(f"QUANTIFICATION METHOD COMPARISON - {dataset_name}")
     print("=" * 90)
-    print(f"Test Data:")
+    print("Test Data:")
     print(f"  Peptide measurements: {peptide_count:,}")
     print(f"  Proteins: {protein_count}")
     print(f"  Samples: {sample_count}")
@@ -321,10 +325,12 @@ class TestSmallDiannSubset:
 
     def test_small_diann_data_loaded(self):
         """Verify small DIA-NN subset data is loaded correctly."""
-        assert len(self.diann_df) > 0, "DIA-NN report should not be empty"
-        assert len(self.peptide_df) > 0, "Peptide data should not be empty"
+        if not (len(self.diann_df) > 0):
+            raise AssertionError("DIA-NN report should not be empty")
+        if not (len(self.peptide_df) > 0):
+            raise AssertionError("Peptide data should not be empty")
 
-        print(f"\n[Small DIA-NN Subset] Test data summary:")
+        print("\n[Small DIA-NN Subset] Test data summary:")
         print(f"  Peptide measurements: {len(self.peptide_df):,}")
         print(f"  Unique proteins: {self.peptide_df['ProteinName'].nunique()}")
         print(f"  Unique samples: {self.peptide_df['SampleID'].nunique()}")
@@ -343,12 +349,16 @@ class TestSmallDiannSubset:
             sample_column="SampleID",
         )
 
-        assert len(result) > 0, "MaxLFQ should produce results"
-        assert "Intensity" in result.columns
-        assert result["Intensity"].notna().sum() > 0, "Should have non-NaN intensities"
-        assert (result["Intensity"] > 0).all(), "All intensities should be positive"
+        if not len(result) > 0:
+            raise AssertionError("MaxLFQ should produce results")
+        if "Intensity" not in result.columns:
+            raise AssertionError("'Intensity' not in result.columns")
+        if not result["Intensity"].notna().sum() > 0:
+            raise AssertionError("Should have non-NaN intensities")
+        if not (result["Intensity"] > 0).all():
+            raise AssertionError("All intensities should be positive")
 
-        print(f"\n[Small DIA-NN Subset] MaxLFQ results:")
+        print("\n[Small DIA-NN Subset] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
         print(f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}")
 
@@ -379,10 +389,11 @@ class TestSmallDiannSubset:
             "Intensity", "Intensity"
         )
 
-        print(f"\n[Small DIA-NN Subset] Single-threaded vs Parallel MaxLFQ:")
+        print("\n[Small DIA-NN Subset] Single-threaded vs Parallel MaxLFQ:")
         print(f"  Pearson correlation: {corr['pearson']:.4f}")
 
-        assert corr["pearson"] > 0.9999, "Parallel should produce same results as single-threaded"
+        if not (corr["pearson"] > 0.9999):
+            raise AssertionError("Parallel should produce same results as single-threaded")
 
     def test_small_diann_full_comparison(self):
         """
@@ -414,8 +425,8 @@ class TestSmallDiannSubset:
             results["Mokume MaxLFQ"], results["Top3"],
             intensity_cols["Mokume MaxLFQ"], intensity_cols["Top3"]
         )
-        assert corr_maxlfq_top3["spearman"] > 0.9, \
-            f"MaxLFQ and Top3 should correlate >0.9, got {corr_maxlfq_top3['spearman']:.3f}"
+        if not (corr_maxlfq_top3["spearman"] > 0.9):
+            raise AssertionError(f"MaxLFQ and Top3 should correlate >0.9, got {corr_maxlfq_top3['spearman']:.3f}")
 
     def test_small_diann_directlfq_comparison(self):
         """Compare DirectLFQ with mokume MaxLFQ on small subset."""
@@ -440,7 +451,8 @@ class TestSmallDiannSubset:
 
         # Test default MaxLFQ (should use DirectLFQ when available)
         maxlfq = MaxLFQQuantification(min_peptides=1, threads=1)
-        assert maxlfq.using_directlfq, "MaxLFQ should use DirectLFQ when available"
+        if not (maxlfq.using_directlfq):
+            raise AssertionError("MaxLFQ should use DirectLFQ when available")
 
         result_maxlfq = maxlfq.quantify(
             self.peptide_df,
@@ -455,13 +467,14 @@ class TestSmallDiannSubset:
             "Intensity", "Intensity"
         )
 
-        print(f"\n[Small DIA-NN Subset] DirectLFQ vs Mokume MaxLFQ:")
+        print("\n[Small DIA-NN Subset] DirectLFQ vs Mokume MaxLFQ:")
         print(f"  Using DirectLFQ backend: {maxlfq.using_directlfq}")
         print(f"  Pearson correlation:  {corr['pearson']:.4f}")
         print(f"  Spearman correlation: {corr['spearman']:.4f}")
         print(f"  Number of comparisons: {corr['n']:,}")
 
-        assert corr["spearman"] > 0.99, "MaxLFQ with DirectLFQ should match DirectLFQ exactly"
+        if not (corr["spearman"] > 0.99):
+            raise AssertionError("MaxLFQ with DirectLFQ should match DirectLFQ exactly")
 
     def test_small_diann_builtin_fallback(self):
         """Test the built-in MaxLFQ fallback implementation."""
@@ -469,8 +482,10 @@ class TestSmallDiannSubset:
 
         # Force built-in implementation
         maxlfq_builtin = MaxLFQQuantification(min_peptides=1, threads=1, force_builtin=True)
-        assert not maxlfq_builtin.using_directlfq, "Should use built-in when forced"
-        assert maxlfq_builtin.name == "MaxLFQ (built-in)"
+        if maxlfq_builtin.using_directlfq:
+            raise AssertionError("Should use built-in when forced")
+        if not (maxlfq_builtin.name == "MaxLFQ (built-in)"):
+            raise AssertionError('Expected maxlfq_builtin.name == "MaxLFQ (built-in)"')
 
         result_builtin = maxlfq_builtin.quantify(
             self.peptide_df,
@@ -480,10 +495,12 @@ class TestSmallDiannSubset:
             sample_column="SampleID",
         )
 
-        assert len(result_builtin) > 0, "Built-in MaxLFQ should produce results"
-        assert "Intensity" in result_builtin.columns
+        if not (len(result_builtin) > 0):
+            raise AssertionError("Built-in MaxLFQ should produce results")
+        if "Intensity" not in result_builtin.columns:
+            raise AssertionError("'Intensity' not in result_builtin.columns")
 
-        print(f"\n[Small DIA-NN Subset] Built-in MaxLFQ fallback:")
+        print("\n[Small DIA-NN Subset] Built-in MaxLFQ fallback:")
         print(f"  Protein-sample combinations: {len(result_builtin):,}")
         print(f"  Intensity range: {result_builtin['Intensity'].min():.2f} - {result_builtin['Intensity'].max():.2f}")
 
@@ -510,10 +527,12 @@ class TestDiannWithSdrf:
 
     def test_pride_data_loaded(self):
         """Verify PRIDE dataset is loaded correctly."""
-        assert len(self.diann_df) > 0, "DIA-NN report should not be empty"
-        assert len(self.peptide_df) > 0, "Peptide data should not be empty"
+        if not (len(self.diann_df) > 0):
+            raise AssertionError("DIA-NN report should not be empty")
+        if not (len(self.peptide_df) > 0):
+            raise AssertionError("Peptide data should not be empty")
 
-        print(f"\n[PRIDE PXD063291] Test data summary:")
+        print("\n[PRIDE PXD063291] Test data summary:")
         print(f"  Source: {self.report_path}")
         print(f"  Peptide measurements: {len(self.peptide_df):,}")
         print(f"  Unique proteins: {self.peptide_df['ProteinName'].nunique()}")
@@ -533,11 +552,14 @@ class TestDiannWithSdrf:
             sample_column="SampleID",
         )
 
-        assert len(result) > 0, "MaxLFQ should produce results"
-        assert "Intensity" in result.columns
-        assert result["Intensity"].notna().sum() > 0, "Should have non-NaN intensities"
+        if not (len(result) > 0):
+            raise AssertionError("MaxLFQ should produce results")
+        if "Intensity" not in result.columns:
+            raise AssertionError("'Intensity' not in result.columns")
+        if not (result["Intensity"].notna().sum() > 0):
+            raise AssertionError("Should have non-NaN intensities")
 
-        print(f"\n[PRIDE PXD063291] MaxLFQ results:")
+        print("\n[PRIDE PXD063291] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
         print(f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}")
 
@@ -571,8 +593,8 @@ class TestDiannWithSdrf:
 
         print(f"\nValidation: MaxLFQ vs Top3 Spearman = {corr_maxlfq_top3['spearman']:.3f}")
 
-        assert corr_maxlfq_top3["spearman"] > 0.85, \
-            f"MaxLFQ and Top3 should correlate >0.85, got {corr_maxlfq_top3['spearman']:.3f}"
+        if not (corr_maxlfq_top3["spearman"] > 0.85):
+            raise AssertionError(f"MaxLFQ and Top3 should correlate >0.85, got {corr_maxlfq_top3['spearman']:.3f}")
 
         # If DIA-NN MaxLFQ is available, check correlation
         if "DIA-NN MaxLFQ" in results and len(results["DIA-NN MaxLFQ"]) > 0:
@@ -893,15 +915,16 @@ class TestAggregationLevels:
         """Verify test data has multiple runs per sample for meaningful comparison."""
         runs_per_sample = self.peptide_df.groupby("SampleID")["Run"].nunique()
 
-        print(f"\n[Aggregation Levels] Test data structure:")
+        print("\n[Aggregation Levels] Test data structure:")
         print(f"  Unique samples: {self.peptide_df['SampleID'].nunique()}")
         print(f"  Unique runs: {self.peptide_df['Run'].nunique()}")
-        print(f"  Runs per sample:")
+        print("  Runs per sample:")
         for sample, n_runs in runs_per_sample.items():
             print(f"    {sample}: {n_runs} runs")
 
         # Verify we have multiple runs per sample for meaningful test
-        assert runs_per_sample.max() > 1, "Need multiple runs per sample for this test"
+        if not (runs_per_sample.max() > 1):
+            raise AssertionError("Need multiple runs per sample for this test")
 
     def test_sample_level_quantification(self):
         """Test quantification at sample level (default behavior)."""
@@ -910,13 +933,17 @@ class TestAggregationLevels:
         )
 
         for method_name, df in results.items():
-            assert len(df) > 0, f"{method_name} should produce results"
-            assert "ProteinName" in df.columns
-            assert "SampleID" in df.columns
+            if not (len(df) > 0):
+                raise AssertionError(f"{method_name} should produce results")
+            if "ProteinName" not in df.columns:
+                raise AssertionError("'ProteinName' not in df.columns")
+            if "SampleID" not in df.columns:
+                raise AssertionError("'SampleID' not in df.columns")
             # Run column should NOT be in results for sample-level
-            assert "Run" not in df.columns or df["Run"].isna().all() or method_name.endswith("(Run)")
+            if not ("Run" not in df.columns or df["Run"].isna().all() or method_name.endswith("(Run)")):
+                raise AssertionError("Run column should not be in results for sample-level")
 
-        print(f"\n[Sample Level] Quantification results:")
+        print("\n[Sample Level] Quantification results:")
         for method_name, df in results.items():
             print(f"  {method_name}: {len(df)} protein-sample combinations")
 
@@ -927,12 +954,15 @@ class TestAggregationLevels:
         )
 
         for method_name, df in results.items():
-            assert len(df) > 0, f"{method_name} should produce results"
-            assert "ProteinName" in df.columns
+            if not (len(df) > 0):
+                raise AssertionError(f"{method_name} should produce results")
+            if "ProteinName" not in df.columns:
+                raise AssertionError("'ProteinName' not in df.columns")
             # Run column should be in results for run-level
-            assert "Run" in df.columns, f"{method_name} should have Run column"
+            if "Run" not in df.columns:
+                raise AssertionError(f"{method_name} should have Run column")
 
-        print(f"\n[Run Level] Quantification results:")
+        print("\n[Run Level] Quantification results:")
         for method_name, df in results.items():
             n_runs = df["Run"].nunique() if "Run" in df.columns else 0
             print(f"  {method_name}: {len(df)} protein-run combinations ({n_runs} runs)")
@@ -952,8 +982,8 @@ class TestAggregationLevels:
             print(f"\n[{method_base}] Sample-level: {n_sample} rows, Run-level: {n_run} rows")
 
             # Run-level should have >= sample-level rows (more granular)
-            assert n_run >= n_sample, \
-                f"{method_base}: Run-level ({n_run}) should have >= rows than sample-level ({n_sample})"
+            if not (n_run >= n_sample):
+                raise AssertionError(f"{method_base}: Run-level ({n_run}) should have >= rows than sample-level ({n_sample})")
 
     def test_full_comparison_sample_vs_run(self):
         """
@@ -1049,13 +1079,14 @@ class TestAggregationLevels:
                 pearson_r, _ = stats.pearsonr(x, y)
                 spearman_r, _ = stats.spearmanr(x, y)
 
-                print(f"\n[MaxLFQ] Sample-level vs Run-level (aggregated to sample) correlation:")
+                print("\n[MaxLFQ] Sample-level vs Run-level (aggregated to sample) correlation:")
                 print(f"  Pearson:  {pearson_r:.4f}")
                 print(f"  Spearman: {spearman_r:.4f}")
                 print(f"  N comparisons: {len(x)}")
 
                 # They should correlate reasonably well
-                assert spearman_r > 0.7, f"Sample vs aggregated run-level should correlate > 0.7, got {spearman_r:.3f}"
+                if not (spearman_r > 0.7):
+                    raise AssertionError(f"Sample vs aggregated run-level should correlate > 0.7, got {spearman_r:.3f}")
 
 
 # Standalone test function for quick runs
@@ -1107,7 +1138,7 @@ def test_comprehensive_aggregation_comparison():
     diann_df = load_small_diann_report()
     peptide_df = prepare_peptide_data_with_runs(diann_df)
 
-    print(f"\nDATASET: Small DIA-NN Subset")
+    print("\nDATASET: Small DIA-NN Subset")
     print(f"  Peptide measurements: {len(peptide_df):,}")
     print(f"  Unique proteins: {peptide_df['ProteinName'].nunique()}")
     print(f"  Unique samples: {peptide_df['SampleID'].nunique()}")
@@ -1169,7 +1200,7 @@ def test_pride_aggregation_comparison():
     peptide_df["SampleID"] = peptide_df["Run"]
     peptide_df = peptide_df[peptide_df["NormIntensity"].notna() & (peptide_df["NormIntensity"] > 0)]
 
-    print(f"\nDATASET: PRIDE PXD063291")
+    print("\nDATASET: PRIDE PXD063291")
     print(f"  Source: {report_path}")
     print(f"  Peptide measurements: {len(peptide_df):,}")
     print(f"  Unique proteins: {peptide_df['ProteinName'].nunique()}")
@@ -1184,7 +1215,7 @@ def test_pride_aggregation_comparison():
 
     # Print correlation matrix
     sample_corr = compute_correlation_for_level(sample_results, sample_intensity_cols, run_column=None)
-    print_correlation_matrix(sample_corr, f"PRIDE PXD063291 - SAMPLE-LEVEL CORRELATIONS (Spearman)")
+    print_correlation_matrix(sample_corr, "PRIDE PXD063291 - SAMPLE-LEVEL CORRELATIONS (Spearman)")
 
     # Also compare with DIA-NN MaxLFQ if available
     diann_maxlfq = extract_diann_maxlfq(diann_df)

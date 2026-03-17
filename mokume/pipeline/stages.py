@@ -29,7 +29,6 @@ from mokume.model.normalization import (
     FeatureNormalizationMethod,
     PeptideNormalizationMethod,
 )
-from mokume.model.labeling import QuantificationCategory
 from mokume.core.constants import (
     PROTEIN_NAME,
     PEPTIDE_CANONICAL,

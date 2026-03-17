@@ -11,7 +11,7 @@ Calculate benchmarking metrics for all quantification methods:
 
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 
 import pandas as pd
 import numpy as np
@@ -469,22 +469,22 @@ def save_results(results: dict, output_dir: Path = None):
     if results["cv_summary"]:
         cv_df = pd.DataFrame(results["cv_summary"])
         cv_df.to_csv(output_dir / "cv_comparison.csv", index=False)
-        print(f"  Saved: cv_comparison.csv")
+        print("  Saved: cv_comparison.csv")
 
     # Cross-experiment correlation
     for method, corr_matrix in results["cross_experiment_corr"].items():
         corr_matrix.to_csv(output_dir / f"cross_experiment_corr_{method}.csv")
-    print(f"  Saved: cross_experiment_corr_*.csv")
+    print("  Saved: cross_experiment_corr_*.csv")
 
     # Rank consistency
     for method, rank_matrix in results["rank_consistency"].items():
         rank_matrix.to_csv(output_dir / f"rank_consistency_{method}.csv")
-    print(f"  Saved: rank_consistency_*.csv")
+    print("  Saved: rank_consistency_*.csv")
 
     # Expression stability
     for method, stability in results["expression_stability"].items():
         stability.to_csv(output_dir / f"expression_stability_{method}.csv", index=False)
-    print(f"  Saved: expression_stability_*.csv")
+    print("  Saved: expression_stability_*.csv")
 
     # TMT vs LFQ correlation
     if results.get("tmt_lfq"):
@@ -508,7 +508,7 @@ def save_results(results: dict, output_dir: Path = None):
 
         if tmt_lfq_summary:
             pd.DataFrame(tmt_lfq_summary).to_csv(output_dir / "tmt_lfq_comparison.csv", index=False)
-            print(f"  Saved: tmt_lfq_comparison.csv, tmt_lfq_values_*.csv")
+            print("  Saved: tmt_lfq_comparison.csv, tmt_lfq_values_*.csv")
 
     # Summary metrics
     summary = []
@@ -538,7 +538,7 @@ def save_results(results: dict, output_dir: Path = None):
 
     summary_df = pd.DataFrame(summary)
     summary_df.to_csv(output_dir / "summary_metrics.csv", index=False)
-    print(f"  Saved: summary_metrics.csv")
+    print("  Saved: summary_metrics.csv")
 
 
 def main():

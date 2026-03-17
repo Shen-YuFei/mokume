@@ -7,8 +7,7 @@ Handles parquet, TSV, and various tool output formats.
 """
 
 import sys
-from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional
 
 import pandas as pd
 import numpy as np
@@ -18,7 +17,6 @@ from config import (
     HELA_DATASETS,
     RAW_DATA_DIR,
     PROCESSED_DIR,
-    COLUMN_MAPPING,
     QUANTMS_PARQUET_MAPPING,
     DatasetInfo,
 )
@@ -155,9 +153,6 @@ def normalize_columns(df: pd.DataFrame, data_format: str) -> pd.DataFrame:
                 df["SampleID"] = df["Run"].astype(str)
         if "NormIntensity" not in df.columns and "Intensity" in df.columns:
             df["NormIntensity"] = df["Intensity"]
-
-    # Target columns we need
-    targets = ["ProteinName", "PeptideSequence", "SampleID", "NormIntensity"]
 
     # Build a reverse mapping: target -> list of possible source names
     # Use QUANTMS_PARQUET_MAPPING for all formats (ibaqpy-research uses this)
@@ -360,7 +355,6 @@ def load_raw_data(dataset: DatasetInfo) -> Optional[pd.DataFrame]:
             return None
 
     # Try alternative extensions
-    base_name = feature_path.stem.replace("_feature", "")
     for ext in [".parquet", ".csv", ".tsv"]:
         alt_path = RAW_DATA_DIR / f"{dataset.project_id}_feature{ext}"
         if alt_path.exists():

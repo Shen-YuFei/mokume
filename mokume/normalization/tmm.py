@@ -14,7 +14,7 @@ References
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Union
+from typing import Optional
 
 from mokume.core.logger import get_logger
 

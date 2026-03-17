@@ -11,11 +11,11 @@ Note: This module requires the optional 'inmoose' dependency.
 Install it with: pip install mokume[batch-correction]
 """
 
+import importlib
 import logging
 import warnings
 from typing import List, Optional, Dict, Union
 
-import numpy as np
 import pandas as pd
 
 warnings.filterwarnings(
@@ -33,11 +33,11 @@ logger.addHandler(logging.NullHandler())
 
 
 def is_inmoose_available() -> bool:
-    """Check if inmoose is installed."""
+    """Check if inmoose is installed and importable."""
     try:
-        import inmoose
+        importlib.import_module("inmoose")
         return True
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
         return False
 
 

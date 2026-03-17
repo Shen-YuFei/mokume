@@ -26,7 +26,7 @@ import seaborn as sns
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
-    SAMPLE_CONDITIONS, CONDITION_COLORS,
+    SAMPLE_CONDITIONS,
     CV_THRESHOLDS, LOCAL_QUANTIFIED_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
     EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
@@ -159,11 +159,7 @@ def apply_post_normalization(df: pd.DataFrame, method: str) -> pd.DataFrame:
         result = df.copy()
         # Get ranks for each column
         ranks = df.apply(lambda x: rankdata(x, method='average', nan_policy='omit'), axis=0)
-        # Get sorted values (ignoring NaN)
-        sorted_means = df.apply(lambda x: np.sort(x.dropna().values), axis=0)
-
         # Use mean of sorted values at each rank
-        n_rows = len(df)
         for col in df.columns:
             col_ranks = ranks[col].values
             col_sorted = np.sort(df[col].dropna().values)
@@ -308,7 +304,7 @@ def run_benchmark(technology: str) -> list:
     # Get appropriate quantification method for this technology
     quant_method = get_default_quant_method(technology)
     print(f"\n  Using quantification method: {quant_method}")
-    print(f"  (TMT uses 'sum' for reporter ions, LFQ uses 'directlfq' for MS1)")
+    print("  (TMT uses 'sum' for reporter ions, LFQ uses 'directlfq' for MS1)")
 
     # Load base data
     print(f"  Loading {quant_method} data...")

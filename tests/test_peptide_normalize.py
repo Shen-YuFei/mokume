@@ -158,7 +158,7 @@ class TestFeatureWideFormat:
 
         # Before enrichment, condition should equal sample_accession
         conditions_before = feature.get_unique_conditions()
-        samples = feature.get_unique_samples()
+        _ = feature.get_unique_samples()
         # Conditions default to sample_accession
         assert len(conditions_before) > 0
 

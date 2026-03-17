@@ -37,11 +37,8 @@ def _check_directlfq_available():
     """Check if directlfq is installed and importable."""
     global _DIRECTLFQ_AVAILABLE
     if _DIRECTLFQ_AVAILABLE is None:
-        try:
-            import directlfq
-            _DIRECTLFQ_AVAILABLE = True
-        except ImportError:
-            _DIRECTLFQ_AVAILABLE = False
+        import importlib.util
+        _DIRECTLFQ_AVAILABLE = importlib.util.find_spec("directlfq") is not None
     return _DIRECTLFQ_AVAILABLE
 
 

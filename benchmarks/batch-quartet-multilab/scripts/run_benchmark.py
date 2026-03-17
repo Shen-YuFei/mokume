@@ -10,15 +10,13 @@ We compare mokume's quantification methods (MaxLFQ, Top3, iBAQ, DirectLFQ)
 with the paper's results using the Quartet multi-lab dataset.
 """
 
+import logging
 import sys
 import time
 import warnings
 from pathlib import Path
-from collections import defaultdict
-
 import numpy as np
 import pandas as pd
-from scipy import stats
 from sklearn.decomposition import PCA
 
 warnings.filterwarnings("ignore")
@@ -28,7 +26,6 @@ BENCHMARK_DIR = Path(__file__).parent.parent
 MOKUME_ROOT = BENCHMARK_DIR.parent.parent
 sys.path.insert(0, str(MOKUME_ROOT))
 
-from mokume.quantification import MaxLFQQuantification, TopNQuantification
 from mokume.quantification.directlfq import is_directlfq_available, DirectLFQQuantification
 from mokume.postprocessing import is_batch_correction_available, apply_batch_correction
 
@@ -122,8 +119,6 @@ def run_maxlfq_quantification(peptide_df: pd.DataFrame) -> pd.DataFrame:
     sample_cols = [c for c in wide_df.columns if c not in ["peptide", "protein"]]
 
     # Run MaxLFQ per protein
-    maxlfq = MaxLFQQuantification(min_peptides=1)
-
     proteins = wide_df["protein"].unique()
     results = []
 
@@ -150,7 +145,8 @@ def run_maxlfq_quantification(peptide_df: pd.DataFrame) -> pd.DataFrame:
                         "run_id": sample,
                         "intensity": protein_intensities[i]
                     })
-        except Exception:
+        except Exception as exc:
+            logging.warning("MaxLFQ failed for protein %s: %s", protein, exc)
             continue
 
     return pd.DataFrame(results)

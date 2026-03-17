@@ -22,13 +22,12 @@ import warnings
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 # Add parent to path for config import
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
-    SAMPLE_CONDITIONS, CONDITION_COLORS,
+    SAMPLE_CONDITIONS,
     CV_THRESHOLDS, LOCAL_QUANTIFIED_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
     EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
@@ -296,8 +295,8 @@ def plot_imputation_comparison(results_df: pd.DataFrame, output_path: Path):
             width = 0.35
             offset = (i - 0.5) * width
 
-            bars = ax.bar(x + offset, values, width, label=tech.upper(),
-                         color=["#ff7f00", "#984ea3"][i], alpha=0.8)
+            ax.bar(x + offset, values, width, label=tech.upper(),
+                   color=["#ff7f00", "#984ea3"][i], alpha=0.8)
 
         ax.set_xlabel("Imputation Method")
         ax.set_ylabel(metric)

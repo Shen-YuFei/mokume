@@ -13,25 +13,20 @@ Create publication-quality plots for the benchmarking results:
 
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List
-
 import pandas as pd
 import numpy as np
 
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import seaborn as sns
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import (
     ALL_DATASETS,
-    HELA_DATASETS,
     ANALYSIS_DIR,
     PLOTS_DIR,
     PROTEIN_QUANT_DIR,
     QUANTIFICATION_METHODS,
-    PROTEINS_OF_INTEREST,
 )
 
 # Set style
