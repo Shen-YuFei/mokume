@@ -308,7 +308,7 @@ def run_benchmark(technology: str) -> list:
     # Get appropriate quantification method for this technology
     quant_method = get_default_quant_method(technology)
     print(f"\n  Using quantification method: {quant_method}")
-    print(f"  (TMT uses 'sum' for reporter ions, LFQ uses 'directlfq' for MS1)")
+    print("  (TMT uses 'sum' for reporter ions, LFQ uses 'directlfq' for MS1)")
 
     # Load base data
     print(f"  Loading {quant_method} data...")

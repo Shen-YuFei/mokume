@@ -510,7 +510,7 @@ def main():
         if all_results:
             combined = pd.concat(all_results, ignore_index=True)
             combined.to_csv(output_dir / "method_correlations.csv", index=False)
-            print(f"\n  Saved: method_correlations.csv")
+            print("\n  Saved: method_correlations.csv")
 
     print("\n" + "=" * 70)
     print(f"Done! Plots saved to: {output_dir}")

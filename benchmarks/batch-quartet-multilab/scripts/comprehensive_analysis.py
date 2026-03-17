@@ -169,7 +169,7 @@ def analyze_missing_values(meta, data):
 
         # CRITIQUE: Flag high missing value variance as a problem
         if missing_variance > 100:
-            print(f"  WARNING: High variance in missing values across batches suggests batch-specific quantification issues")
+            print("  WARNING: High variance in missing values across batches suggests batch-specific quantification issues")
 
     return pd.DataFrame(results)
 
@@ -335,9 +335,9 @@ def analyze_de_consistency(meta, data):
 
             # CRITIQUE
             if mean_lfc_corr < 0.7:
-                print(f"  WARNING: Low LFC correlation indicates quantification instability across labs")
+                print("  WARNING: Low LFC correlation indicates quantification instability across labs")
             if mean_concordance < 0.8 and concordances:
-                print(f"  WARNING: Low DE concordance - same experiment may give different conclusions in different labs")
+                print("  WARNING: Low DE concordance - same experiment may give different conclusions in different labs")
 
     return pd.DataFrame(results)
 

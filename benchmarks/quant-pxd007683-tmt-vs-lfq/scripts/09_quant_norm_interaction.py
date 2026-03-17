@@ -417,7 +417,7 @@ def main():
                   f"(RMSE={best_rmse['fc_rmse']:.3f})")
 
             # Best per quantification method
-            print(f"\n  Best normalization per quant method (by CV):")
+            print("\n  Best normalization per quant method (by CV):")
             for quant in tech_df["quant_method"].unique():
                 quant_df = tech_df[tech_df["quant_method"] == quant]
                 best = quant_df.loc[quant_df["within_cv"].idxmin()]

@@ -246,7 +246,7 @@ def run_grid_search(technology: str) -> pd.DataFrame:
                         break
 
             if intensity_col is None:
-                print(f"    Skipped (no intensity column found)")
+                print("    Skipped (no intensity column found)")
                 continue
 
             protein_col = "ProteinName" if "ProteinName" in protein_df.columns else "protein_accessions"

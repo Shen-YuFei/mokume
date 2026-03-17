@@ -91,7 +91,7 @@ def run_ibaq(
                 result = pd.read_csv(output_file, sep="\t")
                 return result
             else:
-                print(f"  ERROR: iBAQ output file not generated")
+                print("  ERROR: iBAQ output file not generated")
                 return None
 
     except Exception as e:
@@ -334,7 +334,7 @@ def quantify_all_datasets(
 
     # Check FASTA
     if "ibaq" in methods and not FASTA_FILE.exists():
-        print(f"\nWARNING: FASTA file not found. iBAQ will be skipped.")
+        print("\nWARNING: FASTA file not found. iBAQ will be skipped.")
 
     all_results = {}
 

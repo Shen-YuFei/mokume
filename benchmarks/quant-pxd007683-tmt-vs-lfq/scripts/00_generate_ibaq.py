@@ -94,7 +94,7 @@ def compute_ibaq(technology: str) -> pd.DataFrame:
     print(f"  Found {len(protein_accessions)} unique protein accessions")
 
     # Get theoretical peptide counts from FASTA
-    print(f"  Computing theoretical peptides from FASTA...")
+    print("  Computing theoretical peptides from FASTA...")
     try:
         peptide_counts, mw_dict, found_proteins = extract_fasta(
             fasta=str(FASTA_PATH),

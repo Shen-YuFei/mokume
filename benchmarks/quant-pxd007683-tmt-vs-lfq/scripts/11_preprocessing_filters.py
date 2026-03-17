@@ -227,7 +227,7 @@ def run_benchmark(technology: str) -> list:
     """Run preprocessing filter benchmark for a technology."""
     results = []
 
-    print(f"\n  Loading peptide data...")
+    print("\n  Loading peptide data...")
     try:
         df_peptides = load_peptide_data(technology)
         n_peptides_orig = len(df_peptides)
@@ -510,12 +510,12 @@ def main():
             ]
             if len(default) > 0:
                 d = default.iloc[0]
-                print(f"\n  Default (len≥7, mc≤2, pep≥2):")
+                print("\n  Default (len≥7, mc≤2, pep≥2):")
                 print(f"    CV={d['within_cv']:.4f}, n={d['n_proteins']}, "
                       f"RMSE={d['fc_rmse']:.3f}")
 
             # Individual filter impact
-            print(f"\n  Filter impact (mean change from baseline):")
+            print("\n  Filter impact (mean change from baseline):")
             baseline = tech_df[
                 (tech_df["min_length"] == 7) &
                 (tech_df["max_missed_cleavages"] == 2) &
