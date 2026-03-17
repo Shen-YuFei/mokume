@@ -17,7 +17,9 @@ Usage:
     python run_benchmark.py --step 3  # Run only step 3
 """
 
-import subprocess
+import multiprocessing
+import os
+import runpy
 import sys
 import argparse
 from pathlib import Path
@@ -68,17 +70,18 @@ def run_step(step_index: int) -> bool:
     print(f"Script: {script_name}")
     print("=" * 60)
 
-    cmd = [sys.executable, str(script_path)]
+    def _target(path: str, cwd: str) -> None:
+        os.chdir(cwd)
+        runpy.run_path(path, run_name="__main__")
+
     try:
-        result = subprocess.run(  # noqa: S603
-            cmd,
-            cwd=str(SCRIPT_DIR),
-            check=True,
+        proc = multiprocessing.Process(
+            target=_target,
+            args=(str(script_path), str(SCRIPT_DIR)),
         )
-        return result.returncode == 0
-    except subprocess.CalledProcessError as e:
-        print(f"\nERROR: Script failed with return code {e.returncode}")
-        return False
+        proc.start()
+        proc.join()
+        return proc.exitcode == 0
     except Exception as e:
         print(f"\nERROR: {e}")
         return False
