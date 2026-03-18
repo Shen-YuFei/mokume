@@ -87,18 +87,25 @@ class SQLFilterBuilder:
 
         # Contaminant/decoy filter
         if self.remove_contaminants and self.contaminant_patterns:
-            pattern_conditions = []
-            for pattern in self.contaminant_patterns:
-                # Use is_decoy column for DECOY filtering when available (more efficient)
-                if pattern.upper() == "DECOY" and self.has_is_decoy:
-                    pattern_conditions.append("is_decoy = false")
-                else:
-                    pattern_conditions.append("pg_accessions::text NOT LIKE ?")
-                    params.append("%" + pattern + "%")
-            conditions.append("(" + " AND ".join(pattern_conditions) + ")")
+            cont_conds, cont_params = self._build_contaminant_filter()
+            conditions.append("(" + " AND ".join(cont_conds) + ")")
+            params.extend(cont_params)
 
         clause = " AND ".join(conditions) if conditions else "1=1"
         return clause, params
+
+    def _build_contaminant_filter(self) -> tuple[list[str], list]:
+        """Build contaminant/decoy filter conditions and params."""
+        conditions: list[str] = []
+        params: list = []
+        for pattern in self.contaminant_patterns:
+            # Use is_decoy column for DECOY filtering when available (more efficient)
+            if pattern.upper() == "DECOY" and self.has_is_decoy:
+                conditions.append("is_decoy = false")
+            else:
+                conditions.append("pg_accessions::text NOT LIKE ?")
+                params.append("%" + pattern + "%")
+        return conditions, params
 
 
 class Feature:
@@ -132,10 +139,8 @@ class Feature:
 
         self.parquet_db = duckdb.connect()
 
-        safe_path = database_path.replace("'", "''")
-        self.parquet_db.execute(
-            "".join(["CREATE VIEW parquet_db_raw AS SELECT * FROM parquet_scan('", safe_path, "')"])
-        )
+        # Use DuckDB Python API to avoid SQL string interpolation for file paths
+        self.parquet_db.read_parquet(database_path).create_view("parquet_db_raw")
 
         self._detect_qpx_format()
         self._create_unnest_view()
@@ -427,9 +432,19 @@ class Feature:
         parquet_path = os.path.splitext(csv)[0] + ".parquet"
         duckdb.read_csv(csv).to_parquet(parquet_path)
 
+    def _validate_columns(self, columns: list) -> str:
+        """Validate and quote column names against the parquet_db view schema."""
+        valid = {
+            r[0] for r in self.parquet_db.execute("DESCRIBE parquet_db").fetchall()
+        }
+        for c in columns:
+            if c not in valid:
+                raise ValueError(f"Invalid column name: {c!r}")
+        return ",".join(['"' + c + '"' for c in columns])
+
     def get_report_from_database(self, samples: list, columns: list = None):
         """Retrieves a standardized report from the database for specified samples."""
-        cols = ",".join(columns) if columns is not None else "*"
+        cols = self._validate_columns(columns) if columns is not None else "*"
         placeholders = ",".join(["?"] * len(samples))
         sql = "".join(["SELECT ", cols, " FROM parquet_db WHERE sample_accession IN (", placeholders, ")"])
         database = self.parquet_db.execute(sql, samples)
@@ -518,7 +533,7 @@ class Feature:
 
     def get_report_condition_from_database(self, cons: list, columns: list = None) -> pd.DataFrame:
         """Retrieves a standardized report from the database for specified conditions."""
-        cols = ",".join(columns) if columns is not None else "*"
+        cols = self._validate_columns(columns) if columns is not None else "*"
         placeholders = ",".join(["?"] * len(cons))
         sql = "".join(["SELECT ", cols, " FROM parquet_db WHERE condition IN (", placeholders, ")"])
         database = self.parquet_db.execute(sql, cons)
@@ -605,10 +620,7 @@ class Feature:
         dict[int, float]
             Dictionary mapping technical replicate indices to scaling factors.
         """
-        _VALID_STAT_FNS = {"median", "avg"}
         stat_fn = "median" if (irs_stat or "").lower() == "median" else "avg"
-        if stat_fn not in _VALID_STAT_FNS:
-            raise ValueError(stat_fn)
 
         # Build filter conditions for contaminants only (not unique peptide requirement)
         # since IRS uses specific channel which may have different characteristics

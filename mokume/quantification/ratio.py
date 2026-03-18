@@ -301,13 +301,12 @@ def load_psm_data(
         Long-format PSM data with columns: ProteinName, PeptideCanonical,
         PrecursorCharge, SampleID, Fraction, Intensity.
     """
-    # Build SQL filters
+    # Build SQL filters (where_clause built after is_decoy detection below)
     filter_builder = SQLFilterBuilder(
         remove_contaminants=remove_contaminants,
         min_peptide_length=min_aa,
         require_unique=True,
     )
-    where_clause, where_params = filter_builder.build_where_clause()
 
     # Load SDRF for fraction info
     sdrf_df = pd.read_csv(sdrf_path, sep="\t")
@@ -334,6 +333,11 @@ def load_psm_data(
             ).fetchall()
         ]
         is_new_qpx = "charge" in cols or "run_file_name" in cols
+
+        # Set has_is_decoy before building WHERE clause so DECOY filter is optimal
+        if "is_decoy" in cols:
+            filter_builder.has_is_decoy = True
+        where_clause, where_params = filter_builder.build_where_clause()
 
         # Detect if pg_accessions is list<struct{accession,...}> (new QPX)
         pg_is_struct = False

@@ -106,6 +106,12 @@ markers = [
     "comparison: marks tests that print comparison tables",
 ]
 
+[tool.bandit]
+exclude_dirs = ["tests"]
+
+[tool.bandit.assert_used]
+skips = ["*/test_*.py", "*/tests/*"]
+
 [tool.isort]
 profile = "black"
 
