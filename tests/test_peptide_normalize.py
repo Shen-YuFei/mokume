@@ -20,19 +20,20 @@ class TestSQLFilterBuilder:
     def test_default_where_clause(self):
         """Test that default filter builder generates expected WHERE clause."""
         builder = SQLFilterBuilder()
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
         # Should include intensity > 0
         assert "intensity > 0" in where_clause
-        # Should include peptide length filter
-        assert 'LENGTH("sequence") >= 7' in where_clause
+        # Should include peptide length filter (parameterized)
+        assert 'LENGTH("sequence") >= ?' in where_clause
+        assert 7 in params
         # Should include unique peptide filter
         assert '"unique" = 1' in where_clause
-        # Should include contaminant filters
-        assert "CONTAMINANT" in where_clause
-        assert "DECOY" in where_clause
-        assert "ENTRAP" in where_clause
-        assert "NOT LIKE" in where_clause
+        # Should include contaminant filters (parameterized with ? placeholders)
+        assert "NOT LIKE ?" in where_clause
+        assert "%CONTAMINANT%" in params
+        assert "%DECOY%" in params
+        assert "%ENTRAP%" in params
 
     def test_custom_contaminant_patterns(self):
         """Test filter builder with custom contaminant patterns."""
@@ -40,34 +41,36 @@ class TestSQLFilterBuilder:
             contaminant_patterns=["CONTAM", "REV_"],
             min_peptide_length=5,
         )
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
-        assert "CONTAM" in where_clause
-        assert "REV_" in where_clause
-        assert "DECOY" not in where_clause
-        assert 'LENGTH("sequence") >= 5' in where_clause
+        assert "%CONTAM%" in params
+        assert "%REV_%" in params
+        assert "%DECOY%" not in params
+        assert 'LENGTH("sequence") >= ?' in where_clause
+        assert 5 in params
 
     def test_disable_contaminant_filter(self):
         """Test that contaminant filter can be disabled."""
         builder = SQLFilterBuilder(remove_contaminants=False)
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
-        assert "CONTAMINANT" not in where_clause
-        assert "DECOY" not in where_clause
+        assert "NOT LIKE" not in where_clause
+        assert not any("%" in str(p) for p in params)
         # Other filters should still be present
         assert "intensity > 0" in where_clause
 
     def test_min_intensity_threshold(self):
         """Test that min intensity threshold is applied."""
         builder = SQLFilterBuilder(min_intensity=1000.0)
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
-        assert "intensity >= 1000.0" in where_clause
+        assert "intensity >= ?" in where_clause
+        assert 1000.0 in params
 
     def test_disable_unique_requirement(self):
         """Test that unique peptide requirement can be disabled."""
         builder = SQLFilterBuilder(require_unique=False)
-        where_clause = builder.build_where_clause()
+        where_clause, _params = builder.build_where_clause()
 
         assert '"unique" = 1' not in where_clause
 

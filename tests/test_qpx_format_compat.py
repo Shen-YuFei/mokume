@@ -301,10 +301,9 @@ class TestNewQPXDeepCompat:
         fb = SQLFilterBuilder(remove_contaminants=True)
         feat = Feature(parquet_file, filter_builder=fb)
 
-        where_clause = fb.build_where_clause()
-        df = feat.parquet_db.execute(
-            f"SELECT * FROM parquet_db WHERE {where_clause}"
-        ).df()
+        where_clause, where_params = fb.build_where_clause()
+        sql = "".join(["SELECT * FROM parquet_db WHERE ", where_clause])
+        df = feat.parquet_db.execute(sql, where_params).df()
         # Should still return rows since our test data has no contaminants
         if len(df) == 0:
             raise AssertionError("Contaminant filter on struct pg_accessions returned no rows")

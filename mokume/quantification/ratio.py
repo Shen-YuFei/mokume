@@ -307,7 +307,7 @@ def load_psm_data(
         min_peptide_length=min_aa,
         require_unique=True,
     )
-    where_clause = filter_builder.build_where_clause()
+    where_clause, where_params = filter_builder.build_where_clause()
 
     # Load SDRF for fraction info
     sdrf_df = pd.read_csv(sdrf_path, sep="\t")
@@ -353,31 +353,30 @@ def load_psm_data(
         )
 
         # Predefined query templates (no user-controlled data)
-        _QUERY_NEW_QPX = (
-            "SELECT {pg_col}, sequence,"
-            " charge as precursor_charge,"
-            " run_file_name as run_file_name,"
-            " unnest.label as label,"
-            " unnest.intensity as intensity"
-            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
-            " WHERE unnest.intensity IS NOT NULL AND "
-        ).format(pg_col=pg_col)
-        _QUERY_OLD_QPX = (
-            "SELECT {pg_col}, sequence,"
-            " precursor_charge as precursor_charge,"
-            " unnest.sample_accession as sample_accession,"
-            " reference_file_name as run_file_name,"
-            " unnest.channel as label,"
-            " unnest.intensity as intensity"
-            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
-            " WHERE unnest.intensity IS NOT NULL AND "
-        ).format(pg_col=pg_col)
+        _QUERY_NEW_QPX = "".join([
+            "SELECT ", pg_col, ", sequence,",
+            " charge as precursor_charge,",
+            " run_file_name as run_file_name,",
+            " unnest.label as label,",
+            " unnest.intensity as intensity",
+            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
+            " WHERE unnest.intensity IS NOT NULL AND ",
+        ])
+        _QUERY_OLD_QPX = "".join([
+            "SELECT ", pg_col, ", sequence,",
+            " precursor_charge as precursor_charge,",
+            " unnest.sample_accession as sample_accession,",
+            " reference_file_name as run_file_name,",
+            " unnest.channel as label,",
+            " unnest.intensity as intensity",
+            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
+            " WHERE unnest.intensity IS NOT NULL AND ",
+        ])
 
         base_query = _QUERY_NEW_QPX if is_new_qpx else _QUERY_OLD_QPX
-        # where_clause is built by SQLFilterBuilder from validated config only
         query = "".join((base_query, where_clause))
 
-        df = conn.execute(query, [parquet_path]).df()
+        df = conn.execute(query, [parquet_path] + where_params).df()
     finally:
         conn.close()
 
