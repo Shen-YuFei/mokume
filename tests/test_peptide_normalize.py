@@ -23,17 +23,25 @@ class TestSQLFilterBuilder:
         where_clause, params = builder.build_where_clause()
 
         # Should include intensity > 0
-        assert "intensity > 0" in where_clause
+        if "intensity > 0" not in where_clause:
+            raise AssertionError("Missing 'intensity > 0' in where_clause")
         # Should include peptide length filter (parameterized)
-        assert 'LENGTH("sequence") >= ?' in where_clause
-        assert 7 in params
+        if 'LENGTH("sequence") >= ?' not in where_clause:
+            raise AssertionError("Missing LENGTH filter in where_clause")
+        if 7 not in params:
+            raise AssertionError("Missing 7 in params")
         # Should include unique peptide filter
-        assert '"unique" = 1' in where_clause
+        if '"unique" = 1' not in where_clause:
+            raise AssertionError("Missing unique filter in where_clause")
         # Should include contaminant filters (parameterized with ? placeholders)
-        assert "NOT LIKE ?" in where_clause
-        assert "%CONTAMINANT%" in params
-        assert "%DECOY%" in params
-        assert "%ENTRAP%" in params
+        if "NOT LIKE ?" not in where_clause:
+            raise AssertionError("Missing NOT LIKE placeholder in where_clause")
+        if "%CONTAMINANT%" not in params:
+            raise AssertionError("Missing %CONTAMINANT% in params")
+        if "%DECOY%" not in params:
+            raise AssertionError("Missing %DECOY% in params")
+        if "%ENTRAP%" not in params:
+            raise AssertionError("Missing %ENTRAP% in params")
 
     def test_custom_contaminant_patterns(self):
         """Test filter builder with custom contaminant patterns."""
@@ -43,36 +51,47 @@ class TestSQLFilterBuilder:
         )
         where_clause, params = builder.build_where_clause()
 
-        assert "%CONTAM%" in params
-        assert "%REV_%" in params
-        assert "%DECOY%" not in params
-        assert 'LENGTH("sequence") >= ?' in where_clause
-        assert 5 in params
+        if "%CONTAM%" not in params:
+            raise AssertionError("Missing %CONTAM% in params")
+        if "%REV_%" not in params:
+            raise AssertionError("Missing %REV_% in params")
+        if "%DECOY%" in params:
+            raise AssertionError("%DECOY% should not be in params")
+        if 'LENGTH("sequence") >= ?' not in where_clause:
+            raise AssertionError("Missing LENGTH filter")
+        if 5 not in params:
+            raise AssertionError("Missing 5 in params")
 
     def test_disable_contaminant_filter(self):
         """Test that contaminant filter can be disabled."""
         builder = SQLFilterBuilder(remove_contaminants=False)
         where_clause, params = builder.build_where_clause()
 
-        assert "NOT LIKE" not in where_clause
-        assert not any("%" in str(p) for p in params)
+        if "NOT LIKE" in where_clause:
+            raise AssertionError("NOT LIKE should not be in where_clause")
+        if any("%" in str(p) for p in params):
+            raise AssertionError("No pattern params expected when contaminants disabled")
         # Other filters should still be present
-        assert "intensity > 0" in where_clause
+        if "intensity > 0" not in where_clause:
+            raise AssertionError("Missing 'intensity > 0'")
 
     def test_min_intensity_threshold(self):
         """Test that min intensity threshold is applied."""
         builder = SQLFilterBuilder(min_intensity=1000.0)
         where_clause, params = builder.build_where_clause()
 
-        assert "intensity >= ?" in where_clause
-        assert 1000.0 in params
+        if "intensity >= ?" not in where_clause:
+            raise AssertionError("Missing intensity threshold placeholder")
+        if 1000.0 not in params:
+            raise AssertionError("Missing 1000.0 in params")
 
     def test_disable_unique_requirement(self):
         """Test that unique peptide requirement can be disabled."""
         builder = SQLFilterBuilder(require_unique=False)
         where_clause, _params = builder.build_where_clause()
 
-        assert '"unique" = 1' not in where_clause
+        if '"unique" = 1' in where_clause:
+            raise AssertionError("unique filter should not be present")
 
 
 class TestFeatureWideFormat:
@@ -94,7 +113,8 @@ class TestFeatureWideFormat:
 
         # Should have samples from UNNEST
         samples = feature.get_unique_samples()
-        assert len(samples) > 0
+        if len(samples) == 0:
+            raise AssertionError("Expected at least one sample")
 
     def test_feature_with_filter_builder(self, feature_path):
         """Test Feature class accepts and stores filter_builder."""
@@ -104,9 +124,12 @@ class TestFeatureWideFormat:
         )
         feature = Feature(feature_path, filter_builder=builder)
 
-        assert feature.filter_builder is not None
-        assert feature.filter_builder.remove_contaminants is True
-        assert feature.filter_builder.min_peptide_length == 7
+        if feature.filter_builder is None:
+            raise AssertionError("filter_builder should not be None")
+        if feature.filter_builder.remove_contaminants is not True:
+            raise AssertionError("remove_contaminants should be True")
+        if feature.filter_builder.min_peptide_length != 7:
+            raise AssertionError(f"Expected min_peptide_length=7, got {feature.filter_builder.min_peptide_length}")
 
     def test_get_median_map(self, feature_path):
         """Test that get_median_map works with wide format."""
@@ -114,10 +137,12 @@ class TestFeatureWideFormat:
         med_map = feature.get_median_map()
 
         # Should return results
-        assert len(med_map) > 0
+        if len(med_map) == 0:
+            raise AssertionError("Expected non-empty median map")
         # All values should be positive
         for sample, factor in med_map.items():
-            assert factor > 0
+            if factor <= 0:
+                raise AssertionError(f"Expected positive factor for {sample}, got {factor}")
 
     def test_get_median_map_with_filter(self, feature_path):
         """Test that get_median_map uses filter_builder when provided."""
@@ -131,11 +156,14 @@ class TestFeatureWideFormat:
         med_map_filtered = feature_filtered.get_median_map()
 
         # Both should return results
-        assert len(med_map_unfiltered) > 0
-        assert len(med_map_filtered) > 0
+        if len(med_map_unfiltered) == 0:
+            raise AssertionError("Expected non-empty unfiltered median map")
+        if len(med_map_filtered) == 0:
+            raise AssertionError("Expected non-empty filtered median map")
 
         # The samples should be the same (filtering applies to features, not samples)
-        assert set(med_map_unfiltered.keys()) == set(med_map_filtered.keys())
+        if set(med_map_unfiltered.keys()) != set(med_map_filtered.keys()):
+            raise AssertionError("Sample keys mismatch between filtered and unfiltered")
 
     def test_get_low_frequency_peptides(self, feature_path):
         """Test that get_low_frequency_peptides works with wide format."""
@@ -143,7 +171,8 @@ class TestFeatureWideFormat:
         low_freq = feature.get_low_frequency_peptides()
 
         # Should return a tuple
-        assert isinstance(low_freq, tuple)
+        if not isinstance(low_freq, tuple):
+            raise AssertionError(f"Expected tuple, got {type(low_freq)}")
 
     def test_get_median_map_to_condition(self, feature_path):
         """Test that get_median_map_to_condition works with wide format."""
@@ -151,9 +180,11 @@ class TestFeatureWideFormat:
         med_map = feature.get_median_map_to_condition()
 
         # Should return dict of dicts
-        assert isinstance(med_map, dict)
+        if not isinstance(med_map, dict):
+            raise AssertionError(f"Expected dict, got {type(med_map)}")
         for condition, samples in med_map.items():
-            assert isinstance(samples, dict)
+            if not isinstance(samples, dict):
+                raise AssertionError(f"Expected dict for condition {condition}, got {type(samples)}")
 
     def test_enrich_with_sdrf(self, feature_path, sdrf_path):
         """Test that enrich_with_sdrf enriches data with SDRF metadata."""
@@ -163,14 +194,16 @@ class TestFeatureWideFormat:
         conditions_before = feature.get_unique_conditions()
         _ = feature.get_unique_samples()
         # Conditions default to sample_accession
-        assert len(conditions_before) > 0
+        if len(conditions_before) == 0:
+            raise AssertionError("Expected at least one condition before enrichment")
 
         # Enrich with SDRF
         feature.enrich_with_sdrf(sdrf_path)
 
         # After enrichment, conditions should be from SDRF
         conditions_after = feature.get_unique_conditions()
-        assert len(conditions_after) > 0
+        if len(conditions_after) == 0:
+            raise AssertionError("Expected at least one condition after enrichment")
 
     def test_iter_samples(self, feature_path):
         """Test that iter_samples works with wide format."""
@@ -178,11 +211,14 @@ class TestFeatureWideFormat:
 
         count = 0
         for samples, df in feature.iter_samples(sample_num=5):
-            assert len(samples) <= 5
-            assert len(df) > 0
+            if len(samples) > 5:
+                raise AssertionError(f"Batch too large: {len(samples)} > 5")
+            if len(df) == 0:
+                raise AssertionError("Expected non-empty DataFrame in batch")
             count += 1
 
-        assert count > 0
+        if count == 0:
+            raise AssertionError("Expected at least one batch")
 
 
 class TestFeatureNewQPXFormat:
@@ -281,7 +317,8 @@ class TestPeptideNormalizationWideFormat:
         peptide_normalization(**args)
 
         # Output should exist
-        assert out.exists()
+        if not out.exists():
+            raise AssertionError("Output file was not created")
 
         # Clean up
         if out.exists():
@@ -313,7 +350,8 @@ class TestPeptideNormalizationWideFormat:
         peptide_normalization(**args)
 
         # Output should exist
-        assert out.exists()
+        if not out.exists():
+            raise AssertionError("Output file was not created")
 
         # Clean up
         if out.exists():
@@ -357,7 +395,8 @@ class TestPeptideNormalizationWideFormat:
         peptide_normalization(**args)
 
         # Output should exist
-        assert out.exists()
+        if not out.exists():
+            raise AssertionError("Output file was not created")
 
         # Clean up
         if out.exists():
