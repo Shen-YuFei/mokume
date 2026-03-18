@@ -8,14 +8,10 @@ Legacy QPX format columns:
   - precursor_charge, reference_file_name, intensities[{sample_accession, channel, intensity}]
 """
 
-import tempfile
-from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 
 def _make_new_qpx_parquet(path: str) -> None:
