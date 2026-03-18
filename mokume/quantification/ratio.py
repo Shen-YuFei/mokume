@@ -348,8 +348,8 @@ def load_psm_data(
                     [parquet_path],
                 ).fetchone()[0].lower()
                 pg_is_struct = "struct" in type_str
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not detect pg_accessions type: %s", exc)
         pg_col = (
             "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
             if pg_is_struct

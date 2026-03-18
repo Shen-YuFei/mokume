@@ -172,8 +172,8 @@ class Feature:
                     "SELECT typeof(pg_accessions) FROM parquet_db_raw LIMIT 1"
                 ).fetchone()[0].lower()
                 self._pg_accessions_is_struct = "struct" in type_str
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not detect pg_accessions type: %s", exc)
 
         # Detect new QPX fields for optimized filtering
         self._has_is_decoy = "is_decoy" in cols
