@@ -41,6 +41,10 @@ class SQLFilterBuilder:
         Minimum peptide sequence length.
     require_unique : bool
         Whether to require unique peptides only (unique = 1).
+    has_is_decoy : bool
+        Whether the parquet has an ``is_decoy`` column. When True, DECOY
+        filtering uses ``is_decoy = false`` instead of text pattern matching.
+        Automatically set by :class:`Feature` after format detection.
     """
 
     remove_contaminants: bool = True
@@ -50,6 +54,7 @@ class SQLFilterBuilder:
     min_intensity: float = 0.0
     min_peptide_length: int = 7
     require_unique: bool = True
+    has_is_decoy: bool = False
 
     def build_where_clause(self) -> str:
         """Build SQL WHERE clause string for DuckDB queries.
@@ -77,13 +82,16 @@ class SQLFilterBuilder:
         if self.require_unique:
             conditions.append('"unique" = 1')
 
-        # Contaminant/decoy filter - cast pg_accessions array to text for LIKE matching
+        # Contaminant/decoy filter
         if self.remove_contaminants and self.contaminant_patterns:
             pattern_conditions = []
             for pattern in self.contaminant_patterns:
-                # Escape any SQL special characters in the pattern
-                safe_pattern = pattern.replace("'", "''")
-                pattern_conditions.append(f"pg_accessions::text NOT LIKE '%{safe_pattern}%'")
+                # Use is_decoy column for DECOY filtering when available (more efficient)
+                if pattern.upper() == "DECOY" and self.has_is_decoy:
+                    pattern_conditions.append("is_decoy = false")
+                else:
+                    safe_pattern = pattern.replace("'", "''")
+                    pattern_conditions.append(f"pg_accessions::text NOT LIKE '%{safe_pattern}%'")
             conditions.append(f"({' AND '.join(pattern_conditions)})")
 
         return " AND ".join(conditions) if conditions else "1=1"
@@ -130,6 +138,9 @@ class Feature:
 
         self.samples = self.get_unique_samples()
         self.filter_builder = filter_builder
+        # Propagate is_decoy availability to filter builder for optimized DECOY filtering
+        if self.filter_builder is not None and self._has_is_decoy:
+            self.filter_builder.has_is_decoy = True
 
     def _detect_qpx_format(self) -> None:
         """Detect whether the parquet uses new or legacy QPX schema."""
@@ -142,6 +153,22 @@ class Feature:
         self._is_new_qpx = "charge" in cols or "run_file_name" in cols
         self._charge_col = "charge" if self._is_new_qpx else "precursor_charge"
         self._run_col = "run_file_name" if self._is_new_qpx else "reference_file_name"
+
+        # Detect if pg_accessions is list<struct{accession,...}> (new QPX)
+        # vs list<string> (legacy). If struct, we need to extract .accession.
+        self._pg_accessions_is_struct = False
+        if "pg_accessions" in cols:
+            try:
+                type_str = self.parquet_db.execute(
+                    "SELECT typeof(pg_accessions) FROM parquet_db_raw LIMIT 1"
+                ).fetchone()[0].lower()
+                self._pg_accessions_is_struct = "struct" in type_str
+            except Exception:
+                pass
+
+        # Detect new QPX fields for optimized filtering
+        self._has_is_decoy = "is_decoy" in cols
+        self._has_anchor_protein = "anchor_protein" in cols
 
     def _create_unnest_view(self) -> None:
         """Create the long-format DuckDB view by unnesting intensities."""
@@ -161,12 +188,26 @@ class Feature:
             sa_default = "unnest.sample_accession"
 
         charge_col, run_col = self._charge_col, self._run_col
+        # Normalize pg_accessions: extract accession strings from struct if needed
+        pg_expr = (
+            "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
+            if self._pg_accessions_is_struct
+            else "pg_accessions"
+        )
+
+        # Optional new QPX columns
+        extra_cols = ""
+        if self._has_is_decoy:
+            extra_cols += ",\n                    is_decoy"
+        if self._has_anchor_protein:
+            extra_cols += ",\n                    anchor_protein"
+
         self.parquet_db.execute(f"""
             CREATE VIEW parquet_db AS
             SELECT
                 sequence,
                 peptidoform,
-                pg_accessions,
+                {pg_expr},
                 {charge_col} as charge,
                 {run_col} as run_file_name,
                 "unique",
@@ -176,7 +217,7 @@ class Feature:
                 {sa_default} as condition,
                 1 as biological_replicate,
                 '1' as fraction,
-                split_part({sa_default}, '_', 1) as mixture
+                split_part({sa_default}, '_', 1) as mixture{extra_cols}
             FROM parquet_db_raw, UNNEST(intensities) as unnest
             WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
         """)
@@ -251,21 +292,42 @@ class Feature:
             join_clause = "ON p._legacy_sa = s.sdrf_sample_accession"
             sa_fallback = "p._legacy_sa"
 
+        # Normalize pg_accessions: extract accession strings from struct if needed
+        pg_expr = (
+            "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
+            if self._pg_accessions_is_struct
+            else "pg_accessions"
+        )
+
+        # Optional new QPX columns
+        opt_cols_raw = ""
+        if self._has_is_decoy:
+            opt_cols_raw += ",\n                    is_decoy"
+        if self._has_anchor_protein:
+            opt_cols_raw += ",\n                    anchor_protein"
+
         # Create intermediate view for unnested data
         self.parquet_db.execute(f"""
             CREATE OR REPLACE VIEW parquet_db_unnested AS
             SELECT
                 sequence,
                 peptidoform,
-                pg_accessions,
+                {pg_expr},
                 {charge_col} as charge,
                 {run_col} as run_file_name,
                 "unique",
                 {unnest_cols},
-                {run_col} as run{extra_cols}
+                {run_col} as run{extra_cols}{opt_cols_raw}
             FROM parquet_db_raw, UNNEST(intensities) as unnest
             WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0
         """)
+
+        # Optional new QPX columns for final view
+        opt_cols_final = ""
+        if self._has_is_decoy:
+            opt_cols_final += ",\n                p.is_decoy"
+        if self._has_anchor_protein:
+            opt_cols_final += ",\n                p.anchor_protein"
 
         # Recreate main view with SDRF data joined
         self.parquet_db.execute("DROP VIEW IF EXISTS parquet_db")
@@ -285,7 +347,7 @@ class Feature:
                 COALESCE(s.sdrf_condition, {sa_fallback}) as condition,
                 COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,
                 COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,
-                split_part(COALESCE(s.sdrf_sample_accession, {sa_fallback}), '_', 1) as mixture
+                split_part(COALESCE(s.sdrf_sample_accession, {sa_fallback}), '_', 1) as mixture{opt_cols_final}
             FROM parquet_db_unnested p
             LEFT JOIN sdrf_mapping s
                 {join_clause}
@@ -328,28 +390,41 @@ class Feature:
         """
         where_clause = self.filter_builder.build_where_clause() if self.filter_builder else "1=1"
 
-        f_table = self.parquet_db.sql(f"""
-            SELECT "sequence", "pg_accessions", COUNT(DISTINCT sample_accession) as "count"
-            FROM parquet_db
-            WHERE {where_clause}
-            GROUP BY "sequence", "pg_accessions"
-            """).df()
-        f_table.dropna(subset=["pg_accessions"], inplace=True)
-        try:
-            f_table["pg_accessions"] = f_table["pg_accessions"].apply(lambda x: x[0].split("|")[1])
-        except IndexError:
-            f_table["pg_accessions"] = f_table["pg_accessions"].apply(lambda x: x[0])
-        except Exception as e:
-            raise ValueError(
-                "Some errors occurred when parsing pg_accessions column in feature parquet!"
-            ) from e
-        f_table.set_index(["sequence", "pg_accessions"], inplace=True)
+        # Use anchor_protein directly when available (new QPX), otherwise parse pg_accessions
+        if self._has_anchor_protein:
+            f_table = self.parquet_db.sql(f"""
+                SELECT "sequence", anchor_protein as protein,
+                       COUNT(DISTINCT sample_accession) as "count"
+                FROM parquet_db
+                WHERE {where_clause}
+                GROUP BY "sequence", anchor_protein
+                """).df()
+            f_table.dropna(subset=["protein"], inplace=True)
+        else:
+            f_table = self.parquet_db.sql(f"""
+                SELECT "sequence", "pg_accessions",
+                       COUNT(DISTINCT sample_accession) as "count"
+                FROM parquet_db
+                WHERE {where_clause}
+                GROUP BY "sequence", "pg_accessions"
+                """).df()
+            f_table.dropna(subset=["pg_accessions"], inplace=True)
+            try:
+                f_table["protein"] = f_table["pg_accessions"].apply(lambda x: x[0].split("|")[1])
+            except IndexError:
+                f_table["protein"] = f_table["pg_accessions"].apply(lambda x: x[0])
+            except Exception as e:
+                raise ValueError(
+                    "Some errors occurred when parsing pg_accessions column in feature parquet!"
+                ) from e
+
+        f_table.set_index(["sequence", "protein"], inplace=True)
         f_table.drop(
             f_table[f_table["count"] >= (percentage * len(self.samples))].index,
             inplace=True,
         )
         f_table.reset_index(inplace=True)
-        return tuple(zip(f_table["pg_accessions"], f_table["sequence"]))
+        return tuple(zip(f_table["protein"], f_table["sequence"]))
 
     @staticmethod
     def csv2parquet(csv):

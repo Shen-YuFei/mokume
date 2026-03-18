@@ -335,18 +335,35 @@ def load_psm_data(
         ]
         is_new_qpx = "charge" in cols or "run_file_name" in cols
 
+        # Detect if pg_accessions is list<struct{accession,...}> (new QPX)
+        pg_is_struct = False
+        if "pg_accessions" in cols:
+            try:
+                type_str = conn.execute(
+                    "SELECT typeof(pg_accessions) FROM read_parquet(?) LIMIT 1",
+                    [parquet_path],
+                ).fetchone()[0].lower()
+                pg_is_struct = "struct" in type_str
+            except Exception:
+                pass
+        pg_col = (
+            "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
+            if pg_is_struct
+            else "pg_accessions"
+        )
+
         # Predefined query templates (no user-controlled data)
         _QUERY_NEW_QPX = (
-            "SELECT pg_accessions, sequence,"
+            "SELECT {pg_col}, sequence,"
             " charge as precursor_charge,"
             " run_file_name as run_file_name,"
             " unnest.label as label,"
             " unnest.intensity as intensity"
             " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
             " WHERE unnest.intensity IS NOT NULL AND "
-        )
+        ).format(pg_col=pg_col)
         _QUERY_OLD_QPX = (
-            "SELECT pg_accessions, sequence,"
+            "SELECT {pg_col}, sequence,"
             " precursor_charge as precursor_charge,"
             " unnest.sample_accession as sample_accession,"
             " reference_file_name as run_file_name,"
@@ -354,7 +371,7 @@ def load_psm_data(
             " unnest.intensity as intensity"
             " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
             " WHERE unnest.intensity IS NOT NULL AND "
-        )
+        ).format(pg_col=pg_col)
 
         base_query = _QUERY_NEW_QPX if is_new_qpx else _QUERY_OLD_QPX
         # where_clause is built by SQLFilterBuilder from validated config only
