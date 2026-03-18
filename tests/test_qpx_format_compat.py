@@ -132,9 +132,12 @@ class TestNewQPXFormat:
         from mokume.io.feature import Feature
         feat = Feature(parquet_file)
 
-        assert feat._is_new_qpx is True
-        assert feat._charge_col == "charge"
-        assert feat._run_col == "run_file_name"
+        if feat._is_new_qpx is not True:
+            raise AssertionError("Expected _is_new_qpx to be True")
+        if feat._charge_col != "charge":
+            raise AssertionError(f"Expected charge_col='charge', got '{feat._charge_col}'")
+        if feat._run_col != "run_file_name":
+            raise AssertionError(f"Expected run_col='run_file_name', got '{feat._run_col}'")
 
     def test_feature_query_new_format(self, tmp_path):
         parquet_file = str(tmp_path / "new_qpx.feature.parquet")
@@ -144,12 +147,11 @@ class TestNewQPXFormat:
         feat = Feature(parquet_file)
 
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
-        assert len(df) > 0
-        assert "charge" in df.columns
-        assert "run_file_name" in df.columns
-        assert "intensity" in df.columns
-        assert "channel" in df.columns
-        assert "sample_accession" in df.columns
+        if len(df) == 0:
+            raise AssertionError("Expected non-empty DataFrame")
+        for col in ["charge", "run_file_name", "intensity", "channel", "sample_accession"]:
+            if col not in df.columns:
+                raise AssertionError(f"Missing column: {col}")
 
     def test_feature_samples_new_format(self, tmp_path):
         parquet_file = str(tmp_path / "new_qpx.feature.parquet")
@@ -159,7 +161,8 @@ class TestNewQPXFormat:
         feat = Feature(parquet_file)
 
         samples = feat.get_unique_samples()
-        assert len(samples) > 0
+        if len(samples) == 0:
+            raise AssertionError("Expected at least one sample")
 
 
 class TestLegacyQPXFormat:
@@ -172,9 +175,12 @@ class TestLegacyQPXFormat:
         from mokume.io.feature import Feature
         feat = Feature(parquet_file)
 
-        assert feat._is_new_qpx is False
-        assert feat._charge_col == "precursor_charge"
-        assert feat._run_col == "reference_file_name"
+        if feat._is_new_qpx is not False:
+            raise AssertionError("Expected _is_new_qpx to be False")
+        if feat._charge_col != "precursor_charge":
+            raise AssertionError(f"Expected charge_col='precursor_charge', got '{feat._charge_col}'")
+        if feat._run_col != "reference_file_name":
+            raise AssertionError(f"Expected run_col='reference_file_name', got '{feat._run_col}'")
 
     def test_feature_query_legacy_format(self, tmp_path):
         parquet_file = str(tmp_path / "legacy_qpx.feature.parquet")
@@ -184,12 +190,11 @@ class TestLegacyQPXFormat:
         feat = Feature(parquet_file)
 
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
-        assert len(df) > 0
-        assert "charge" in df.columns
-        assert "run_file_name" in df.columns
-        assert "intensity" in df.columns
-        assert "channel" in df.columns
-        assert "sample_accession" in df.columns
+        if len(df) == 0:
+            raise AssertionError("Expected non-empty DataFrame")
+        for col in ["charge", "run_file_name", "intensity", "channel", "sample_accession"]:
+            if col not in df.columns:
+                raise AssertionError(f"Missing column: {col}")
 
     def test_feature_samples_legacy_format(self, tmp_path):
         parquet_file = str(tmp_path / "legacy_qpx.feature.parquet")
@@ -199,7 +204,8 @@ class TestLegacyQPXFormat:
         feat = Feature(parquet_file)
 
         samples = feat.get_unique_samples()
-        assert len(samples) > 0
+        if len(samples) == 0:
+            raise AssertionError("Expected at least one sample")
 
 
 class TestNewQPXDeepCompat:
@@ -235,7 +241,8 @@ class TestNewQPXDeepCompat:
             print(f"FAILED to parse pg_accessions: {e}")
             parsed_ok = False
 
-        assert parsed_ok, "pg_accessions struct parsing failed - needs compatibility fix"
+        if not parsed_ok:
+            raise AssertionError("pg_accessions struct parsing failed - needs compatibility fix")
 
     def test_unique_bool_filter_sql(self, tmp_path):
         """Verify 'unique = 1' SQL filter works with bool column."""
@@ -249,7 +256,8 @@ class TestNewQPXDeepCompat:
         df = feat.parquet_db.execute(
             'SELECT * FROM parquet_db WHERE "unique" = 1'
         ).df()
-        assert len(df) > 0, "unique=1 filter on bool column returned no rows"
+        if len(df) == 0:
+            raise AssertionError("unique=1 filter on bool column returned no rows")
 
     def test_unique_bool_filter_pandas(self, tmp_path):
         """Verify unique == 1 Pandas filter works with bool column."""
@@ -262,7 +270,8 @@ class TestNewQPXDeepCompat:
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
         # stages.py and peptide.py do: dataset_df[dataset_df["unique"] == 1]
         filtered = df[df["unique"] == 1]
-        assert len(filtered) > 0, "unique==1 filter on bool column returned no rows in Pandas"
+        if len(filtered) == 0:
+            raise AssertionError("unique==1 filter on bool column returned no rows in Pandas")
 
     def test_get_low_frequency_peptides(self, tmp_path):
         """Test get_low_frequency_peptides with struct pg_accessions."""
@@ -280,7 +289,8 @@ class TestNewQPXDeepCompat:
             print(f"FAILED get_low_frequency_peptides: {e}")
             lfp_ok = False
 
-        assert lfp_ok, "get_low_frequency_peptides failed with struct pg_accessions"
+        if not lfp_ok:
+            raise AssertionError("get_low_frequency_peptides failed with struct pg_accessions")
 
     def test_contaminant_filter_with_struct(self, tmp_path):
         """Test SQL contaminant filter (pg_accessions::text LIKE) with struct type."""
@@ -296,7 +306,8 @@ class TestNewQPXDeepCompat:
             f"SELECT * FROM parquet_db WHERE {where_clause}"
         ).df()
         # Should still return rows since our test data has no contaminants
-        assert len(df) > 0, "Contaminant filter on struct pg_accessions returned no rows"
+        if len(df) == 0:
+            raise AssertionError("Contaminant filter on struct pg_accessions returned no rows")
 
 
 class TestBothFormatsProduceSameSchema:
@@ -322,12 +333,14 @@ class TestBothFormatsProduceSameSchema:
             "intensity", "run", "condition", "biological_replicate",
             "fraction", "mixture",
         }
-        assert core_columns.issubset(set(df_new.columns)), (
-            f"New format missing core columns: {core_columns - set(df_new.columns)}"
-        )
-        assert core_columns.issubset(set(df_legacy.columns)), (
-            f"Legacy format missing core columns: {core_columns - set(df_legacy.columns)}"
-        )
+        if not core_columns.issubset(set(df_new.columns)):
+            raise AssertionError(
+                f"New format missing core columns: {core_columns - set(df_new.columns)}"
+            )
+        if not core_columns.issubset(set(df_legacy.columns)):
+            raise AssertionError(
+                f"Legacy format missing core columns: {core_columns - set(df_legacy.columns)}"
+            )
 
     def test_new_format_has_extra_columns(self, tmp_path):
         """New QPX format should expose is_decoy and anchor_protein."""
@@ -338,5 +351,7 @@ class TestBothFormatsProduceSameSchema:
         feat = Feature(new_file)
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
 
-        assert "is_decoy" in df.columns, "New QPX should expose is_decoy"
-        assert "anchor_protein" in df.columns, "New QPX should expose anchor_protein"
+        if "is_decoy" not in df.columns:
+            raise AssertionError("New QPX should expose is_decoy")
+        if "anchor_protein" not in df.columns:
+            raise AssertionError("New QPX should expose anchor_protein")
