@@ -50,6 +50,7 @@ def __getattr__(name):
     """Lazy import for optional dependencies."""
     if name == "DirectLFQQuantification":
         from mokume.quantification.directlfq import DirectLFQQuantification
+
         return DirectLFQQuantification
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -70,7 +71,6 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
         For MaxLFQ:
             - min_peptides: int (default 2)
             - n_jobs: int (default -1, all cores)
-            - use_variance_guided: bool (default True)
 
         For TopN:
             - n: int (default 3, can also be parsed from method name)
@@ -120,13 +120,13 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     elif method_lower == "maxlfq":
         return MaxLFQQuantification(
             min_peptides=kwargs.get("min_peptides", 2),
-            n_jobs=kwargs.get("n_jobs", -1),
-            use_variance_guided=kwargs.get("use_variance_guided", True),
+            threads=kwargs.get("n_jobs", -1),
             verbose=kwargs.get("verbose", 0),
         )
 
     elif method_lower == "directlfq":
         from mokume.quantification.directlfq import DirectLFQQuantification
+
         return DirectLFQQuantification(
             min_nonan=kwargs.get("min_nonan", 1),
             num_cores=kwargs.get("num_cores", None),
@@ -139,8 +139,7 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     else:
         available = "topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum"
         raise ValueError(
-            f"Unknown quantification method: {method}. "
-            f"Available methods: {available}"
+            f"Unknown quantification method: {method}. Available methods: {available}"
         )
 
 
