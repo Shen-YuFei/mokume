@@ -301,13 +301,12 @@ def load_psm_data(
         Long-format PSM data with columns: ProteinName, PeptideCanonical,
         PrecursorCharge, SampleID, Fraction, Intensity.
     """
-    # Build SQL filters
+    # Build SQL filters (where_clause built after is_decoy detection below)
     filter_builder = SQLFilterBuilder(
         remove_contaminants=remove_contaminants,
         min_peptide_length=min_aa,
         require_unique=True,
     )
-    where_clause = filter_builder.build_where_clause()
 
     # Load SDRF for fraction info
     sdrf_df = pd.read_csv(sdrf_path, sep="\t")
@@ -335,32 +334,53 @@ def load_psm_data(
         ]
         is_new_qpx = "charge" in cols or "run_file_name" in cols
 
+        # Set has_is_decoy before building WHERE clause so DECOY filter is optimal
+        if "is_decoy" in cols:
+            filter_builder.has_is_decoy = True
+        where_clause, where_params = filter_builder.build_where_clause()
+
+        # Detect if pg_accessions is list<struct{accession,...}> (new QPX)
+        pg_is_struct = False
+        if "pg_accessions" in cols:
+            try:
+                type_str = conn.execute(
+                    "SELECT typeof(pg_accessions) FROM read_parquet(?) LIMIT 1",
+                    [parquet_path],
+                ).fetchone()[0].lower()
+                pg_is_struct = "struct" in type_str
+            except Exception as exc:
+                logger.debug("Could not detect pg_accessions type: %s", exc)
+        pg_col = (
+            "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
+            if pg_is_struct
+            else "pg_accessions"
+        )
+
         # Predefined query templates (no user-controlled data)
-        _QUERY_NEW_QPX = (
-            "SELECT pg_accessions, sequence,"
-            " charge as precursor_charge,"
-            " run_file_name as run_file_name,"
-            " unnest.label as label,"
-            " unnest.intensity as intensity"
-            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
-            " WHERE unnest.intensity IS NOT NULL AND "
-        )
-        _QUERY_OLD_QPX = (
-            "SELECT pg_accessions, sequence,"
-            " precursor_charge as precursor_charge,"
-            " unnest.sample_accession as sample_accession,"
-            " reference_file_name as run_file_name,"
-            " unnest.channel as label,"
-            " unnest.intensity as intensity"
-            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest"
-            " WHERE unnest.intensity IS NOT NULL AND "
-        )
+        _QUERY_NEW_QPX = "".join([
+            "SELECT ", pg_col, ", sequence,",
+            " charge as precursor_charge,",
+            " run_file_name as run_file_name,",
+            " unnest.label as label,",
+            " unnest.intensity as intensity",
+            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
+            " WHERE unnest.intensity IS NOT NULL AND ",
+        ])
+        _QUERY_OLD_QPX = "".join([
+            "SELECT ", pg_col, ", sequence,",
+            " precursor_charge as precursor_charge,",
+            " unnest.sample_accession as sample_accession,",
+            " reference_file_name as run_file_name,",
+            " unnest.channel as label,",
+            " unnest.intensity as intensity",
+            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
+            " WHERE unnest.intensity IS NOT NULL AND ",
+        ])
 
         base_query = _QUERY_NEW_QPX if is_new_qpx else _QUERY_OLD_QPX
-        # where_clause is built by SQLFilterBuilder from validated config only
         query = "".join((base_query, where_clause))
 
-        df = conn.execute(query, [parquet_path]).df()
+        df = conn.execute(query, [parquet_path] + where_params).df()
     finally:
         conn.close()
 
