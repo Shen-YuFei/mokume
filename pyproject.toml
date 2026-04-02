@@ -57,9 +57,10 @@ flake8 = "^7.0"
 plotting = ["matplotlib", "seaborn"]
 reports = ["plotly"]
 directlfq = ["directlfq", "pyyaml"]
-batch-correction = ["inmoose"]
-inmoose = ["inmoose"]  # Deprecated alias, use batch-correction instead
-all = ["directlfq", "pyyaml", "inmoose", "matplotlib", "seaborn", "plotly"]
+batch-correction = ["combat"]
+inmoose = ["combat"]  # Deprecated alias, use batch-correction instead
+tissuemap = ["scanpy", "combat", "umap-learn", "matplotlib", "seaborn"]
+all = ["directlfq", "pyyaml", "combat", "matplotlib", "seaborn", "plotly", "scanpy", "umap-learn"]
 
 [tool.poetry.dependencies.matplotlib]
 version = "*"
@@ -77,12 +78,20 @@ optional = true
 version = ">=6.0"
 optional = true
 
-[tool.poetry.dependencies.inmoose]
-version = "*"
+[tool.poetry.dependencies.combat]
+version = ">=0.3"
 optional = true
 
 [tool.poetry.dependencies.plotly]
 version = ">=5.0"
+optional = true
+
+[tool.poetry.dependencies.scanpy]
+version = ">=1.9"
+optional = true
+
+[tool.poetry.dependencies.umap-learn]
+version = ">=0.5"
 optional = true
 
 [tool.poetry.urls]

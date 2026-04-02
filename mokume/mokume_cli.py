@@ -13,10 +13,11 @@ from mokume.commands.features2proteins import features2proteins
 from mokume.commands.peptides2protein import peptides2protein
 from mokume.commands.visualize import tsne_visualization
 from mokume.commands.batch_correct import correct_batches
+from mokume.commands.tissuemap import tissuemap_cmd
 
 import mokume
 
-CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 LOG_LEVELS = ["debug", "info", "warn"]
 LOG_LEVELS_TO_LEVELS = {
@@ -73,6 +74,7 @@ cli.add_command(features2proteins)  # Unified pipeline (recommended)
 cli.add_command(peptides2protein)
 cli.add_command(tsne_visualization)
 cli.add_command(correct_batches)
+cli.add_command(tissuemap_cmd)
 
 
 def main():

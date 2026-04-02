@@ -28,6 +28,9 @@ pip install mokume[directlfq]
 # Plotting support (for QC reports and visualizations)
 pip install mokume[plotting]
 
+# TissueMap pipeline (tissue specificity analysis)
+pip install mokume[tissuemap]
+
 # All optional dependencies
 pip install mokume[all]
 ```
@@ -116,7 +119,23 @@ mokume/
 │   ├── features2peptides.py # Feature to peptide conversion
 │   ├── peptides2protein.py  # Protein quantification
 │   ├── batch_correct.py     # Batch correction
+│   ├── tissuemap.py         # TissueMap pipeline CLI
 │   └── visualize.py         # t-SNE visualization
+│
+├── tissuemap/               # Per-dataset tissue proteome analysis
+│   ├── config.py            # YAML-based pipeline configuration
+│   ├── loader.py            # QPX parquet dataset loading + GIS auto-detect
+│   ├── preprocessing.py     # Log2+median normalization, tissue harmonization
+│   ├── protein_selection.py # NaN/contaminant protein filtering
+│   ├── batch_correction.py  # pyCombat batch correction (NaN-safe)
+│   ├── tissue_specificity.py# AdaTiSS scoring + GMM thresholding
+│   ├── embedding.py         # PCA + t-SNE dimensionality reduction
+│   ├── pipeline.py          # 9-step pipeline orchestrator
+│   └── plotting/            # Visualization modules
+│       ├── atlas.py         # Tissue atlas + dendrogram
+│       ├── embedding.py     # PCA scree plot
+│       ├── markers.py       # Marker heatmap, t-SNE, dotplot
+│       └── specificity.py   # TS score distribution
 │
 └── data/                    # Static data resources
     ├── organisms.py         # Organism histone data
@@ -286,6 +305,42 @@ mokume correct-batches \
 
 > **Note:** For integrated batch correction during quantification, use the Python API
 > with `PipelineConfig(batch_correction=True, ...)`. See Python API section below.
+
+### TissueMap Pipeline
+
+Per-dataset tissue proteome analysis with AdaTiSS tissue specificity scoring.
+
+```bash
+# Generate default configuration template
+mokume tissuemap --generate-config tissuemap.yaml
+
+# Run on a single dataset
+mokume tissuemap \
+    --scan-dir QPX_data/tissues-mq/PXD016999 \
+    --output-dir ./results
+
+# Run on multiple datasets (auto-discovers PXD* subdirectories)
+mokume tissuemap \
+    --scan-dir QPX_data/tissues-mq \
+    --tmt-dataset PXD016999 \
+    --output-dir ./results \
+    --n-jobs 8
+
+# Run with custom YAML configuration
+mokume tissuemap \
+    --scan-dir QPX_data/tissues-mq \
+    --config tissuemap.yaml \
+    --output-dir ./results
+```
+
+**Outputs per dataset:**
+
+| File | Description |
+|------|-------------|
+| `<ds_id>.corrected.h5ad` | Batch-corrected AnnData with embeddings |
+| `<ds_id>.ts_scores.h5ad` | Tissue specificity score matrix |
+| `protein_ts_scores.csv` | Per-protein TS scores and enrichment categories |
+| `plots/` | PCA scree, tissue atlas, dendrogram, marker heatmap, dotplot, TS distribution |
 
 ### t-SNE Visualization
 
@@ -847,6 +902,65 @@ mokume features2peptides \
 5. Normalize by detected peptide count
 6. Divide by theoretical peptide count
 7. Optional: Calculate TPA, copy number, concentration
+
+### TissueMap Pipeline API
+
+```python
+from pathlib import Path
+
+from mokume.tissuemap.config import (
+    TissueMapConfig, InputConfig, OutputConfig, load_config,
+)
+from mokume.tissuemap.pipeline import TissueMapPipeline
+
+# --- Option 1: Programmatic configuration ---
+config = TissueMapConfig(
+    n_jobs=8,
+    input=InputConfig(
+        scan_dir=Path("QPX_data/tissues-mq/PXD016999"),
+        tmt_datasets=["PXD016999"],
+    ),
+    output=OutputConfig(output_dir=Path("./results")),
+)
+pipeline = TissueMapPipeline(config)
+pipeline.run()
+
+# --- Option 2: YAML configuration ---
+config = load_config(Path("tissuemap.yaml"), overrides={
+    "input.scan_dir": "QPX_data/tissues-mq",
+    "output.output_dir": "./results",
+})
+pipeline = TissueMapPipeline(config)
+pipeline.run()
+```
+
+#### TissueMap Configuration Reference
+
+| Section | Parameter | Default | Description |
+| ------- | --------- | ------- | ----------- |
+| `input` | `scan_dir` | `.` | PXD dataset directory |
+| `input` | `tmt_datasets` | `[]` | Force TMT dataset IDs |
+| `input` | `min_tissue_samples` | `1` | Min samples per tissue |
+| `filtering` | `max_nan_frac` | `0.95` | Max NaN fraction |
+| `filtering` | `remove_contaminants` | `true` | Remove contaminants |
+| `tissue_specificity` | `use_pure_mad` | `true` | MAD-based estimation |
+| `tissue_specificity` | `ts_enriched_threshold` | `null` | Auto, floor 2.5 |
+| `tissue_specificity` | `ts_specific_threshold` | `null` | Auto, floor 4.0 |
+| `tissue_specificity` | `ts_housekeeping_threshold` | `null` | Auto, floor 2 |
+| `embedding` | `pca_components` | `50` | PCA components |
+| `embedding` | `tsne_perplexity` | `15.0` | t-SNE perplexity |
+| `plotting` | `dpi` | `250` | Plot resolution |
+| `plotting` | `save_pdf` | `true` | Also save PDF |
+| `output` | `output_dir` | `tissuemap_output` | Output directory |
+
+#### Enrichment Categories
+
+| Category | Criteria |
+| -------- | -------- |
+| **tissue-specific** | TS ≥ 4.0 in one tissue only |
+| **tissue-enriched** | At least one TS ≥ 2.5 |
+| **house-keeping** | All tissues, all \|TS\| < 2.0 |
+| **other** | Everything else |
 
 ## Citation
 
