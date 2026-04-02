@@ -19,6 +19,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _overlay_gmm_curves(ax, gmm, x_upper: float) -> None:
+    """Draw GMM component density curves on an axes."""
+    x_grid = np.linspace(0, x_upper, 500)
+    p_bg = gmm.bg_weight * _norm.pdf(x_grid, gmm.bg_mean, gmm.bg_std)
+    p_sp = gmm.sp_weight * _norm.pdf(x_grid, gmm.sp_mean, gmm.sp_std)
+    ax.plot(x_grid, p_bg, "--", color="#1565C0", lw=1.5,
+            label=f"Background (\u03bc={gmm.bg_mean:.2f})")
+    ax.plot(x_grid, p_sp, "--", color="#C62828", lw=1.5,
+            label=f"Specific (\u03bc={gmm.sp_mean:.2f})")
+    ax.plot(x_grid, p_bg + p_sp, "-", color="#222", lw=2,
+            label="GMM mixture", alpha=0.7)
+
+
 def _plot_histogram_panel(
     ax, max_ts, categories,
     ts_enriched, ts_specific, ts_housekeeping, gmm,
@@ -52,15 +65,7 @@ def _plot_histogram_panel(
             label=f"House-keeping |TS|<{ts_housekeeping:.2f} (n={n_hk})",
         )
     if gmm is not None:
-        x_grid = np.linspace(0, x_upper, 500)
-        p_bg = gmm.bg_weight * _norm.pdf(x_grid, gmm.bg_mean, gmm.bg_std)
-        p_sp = gmm.sp_weight * _norm.pdf(x_grid, gmm.sp_mean, gmm.sp_std)
-        ax.plot(x_grid, p_bg, "--", color="#1565C0", lw=1.5,
-                label=f"Background (\u03bc={gmm.bg_mean:.2f})")
-        ax.plot(x_grid, p_sp, "--", color="#C62828", lw=1.5,
-                label=f"Specific (\u03bc={gmm.sp_mean:.2f})")
-        ax.plot(x_grid, p_bg + p_sp, "-", color="#222", lw=2,
-                label="GMM mixture", alpha=0.7)
+        _overlay_gmm_curves(ax, gmm, x_upper)
 
     left_bound = float(max_ts.min()) - 0.5 if len(max_ts) > 0 else 0.0
     ax.set_xlim(left=left_bound, right=x_upper * 1.05)

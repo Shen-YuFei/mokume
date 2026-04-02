@@ -296,6 +296,63 @@ def _save_atlas_figures(
     logger.info("Saved slide_atlas_dendrogram.png")
 
 
+def _store_group_metadata(
+    adata: ad.AnnData,
+    proteomic_groups: dict, tissue_colors: dict,
+) -> None:
+    """Store proteomic groups and hex tissue colors in adata.uns."""
+    adata.uns["proteomic_groups"] = proteomic_groups
+    adata.uns["tissue_colors"] = {
+        t: matplotlib.colors.rgb2hex(c[:3]) if isinstance(c, tuple) else c
+        for t, c in tissue_colors.items()
+    }
+
+
+def _build_tissue_order(
+    proteomic_groups: dict, tissues: np.ndarray,
+) -> list[str]:
+    """Ordered tissue list from proteomic groups, filtered to present tissues."""
+    return [
+        t for members in proteomic_groups.values()
+        for t in members if (tissues == t).sum() > 0
+    ]
+
+
+def _configure_tsne_axes(ax, adata: ad.AnnData) -> None:
+    """Apply title, labels, aspect, despine, and stats box to the t-SNE axes."""
+    ax.set_title("A  Tissue Atlas", fontsize=16, fontweight="bold", loc="left", pad=8)
+    ax.set_aspect("equal")
+    _despine(ax)
+    ax.set_xlabel("t-SNE 1", fontsize=10, color="#888", labelpad=5)
+    ax.set_ylabel("t-SNE 2", fontsize=10, color="#888", labelpad=5)
+
+    metrics = adata.uns.get("embedding_metrics", {})
+    pca_var = metrics.get("pca_var_explained")
+    pca_str = f"{pca_var:.3f}" if pca_var is not None else "N/A"
+    stats = (
+        f"{adata.n_vars:,} proteins | {adata.n_obs} samples"
+        f" | {adata.obs['tissue'].nunique()} tissues"
+        f" | PCA variance = {pca_str}"
+    )
+    ax.text(
+        0.01, 0.01, stats, transform=ax.transAxes,
+        fontsize=8.5, fontfamily="monospace", verticalalignment="bottom",
+        bbox={
+            "boxstyle": "round,pad=0.5", "facecolor": "#F5F5F5",
+            "edgecolor": "#BDBDBD", "alpha": 0.95, "linewidth": 1,
+        },
+    )
+
+
+def _compute_fig_width(proteomic_groups: dict, tissues: np.ndarray) -> float:
+    """Estimate figure width from number of legend entries."""
+    n_legend = sum(
+        1 + sum(1 for t in members if (tissues == t).sum() > 0)
+        for members in proteomic_groups.values()
+    )
+    return max(20, 14 + n_legend * 0.35)
+
+
 def plot_slide_atlas_dendrogram(
     adata: ad.AnnData,
     out_dir: Path,
@@ -308,38 +365,23 @@ def plot_slide_atlas_dendrogram(
         logger.warning("No t-SNE embedding, skipping slide figure")
         return
 
-    tsne_emb = adata.obsm["X_tsne"]
     tissues = adata.obs["tissue"].values
     unique_tissues = sorted(np.unique(tissues))
 
     proteomic_groups, tissue_to_group, z_linkage = _compute_tissue_groups(adata)
     tissue_colors = _build_tissue_colors(proteomic_groups)
+    _store_group_metadata(adata, proteomic_groups, tissue_colors)
+    tissue_order = _build_tissue_order(proteomic_groups, tissues)
 
-    adata.uns["proteomic_groups"] = proteomic_groups
-    adata.uns["tissue_colors"] = {
-        t: matplotlib.colors.rgb2hex(c[:3]) if isinstance(c, tuple) else c
-        for t, c in tissue_colors.items()
-    }
-
-    tissue_order = [
-        t for members in proteomic_groups.values()
-        for t in members if (tissues == t).sum() > 0
-    ]
-
-    n_legend_entries = sum(
-        1 + sum(1 for t in members if (tissues == t).sum() > 0)
-        for members in proteomic_groups.values()
-    )
-    fig_width = max(20, 14 + n_legend_entries * 0.35)
-
-    fig = plt.figure(figsize=(fig_width, 11))
+    fig = plt.figure(figsize=(_compute_fig_width(proteomic_groups, tissues), 11))
     gs = GridSpec(
         1, 2, width_ratios=[1.4, 0.8], wspace=0.01,
         left=0.01, right=0.99, bottom=0.05, top=0.90,
     )
 
     ax_tsne = fig.add_subplot(gs[0])
-    _draw_tsne_panel(ax_tsne, tsne_emb, tissues, tissue_order, tissue_colors, proteomic_groups)
+    _draw_tsne_panel(ax_tsne, adata.obsm["X_tsne"], tissues,
+                     tissue_order, tissue_colors, proteomic_groups)
 
     legend_elements = _build_legend_elements(tissues, proteomic_groups, tissue_colors)
     leg = ax_tsne.legend(
@@ -349,29 +391,7 @@ def plot_slide_atlas_dendrogram(
         title="Proteomic group", title_fontsize=8,
     )
     leg.set_alignment("left")
-
-    ax_tsne.set_title("A  Tissue Atlas", fontsize=16, fontweight="bold", loc="left", pad=8)
-    ax_tsne.set_aspect("equal")
-    _despine(ax_tsne)
-    ax_tsne.set_xlabel("t-SNE 1", fontsize=10, color="#888", labelpad=5)
-    ax_tsne.set_ylabel("t-SNE 2", fontsize=10, color="#888", labelpad=5)
-
-    metrics = adata.uns.get("embedding_metrics", {})
-    pca_var = metrics.get("pca_var_explained")
-    pca_str = f"{pca_var:.3f}" if pca_var is not None else "N/A"
-    stats = (
-        f"{adata.n_vars:,} proteins | {adata.n_obs} samples"
-        f" | {adata.obs['tissue'].nunique()} tissues"
-        f" | PCA variance = {pca_str}"
-    )
-    ax_tsne.text(
-        0.01, 0.01, stats, transform=ax_tsne.transAxes,
-        fontsize=8.5, fontfamily="monospace", verticalalignment="bottom",
-        bbox={
-            "boxstyle": "round,pad=0.5", "facecolor": "#F5F5F5",
-            "edgecolor": "#BDBDBD", "alpha": 0.95, "linewidth": 1,
-        },
-    )
+    _configure_tsne_axes(ax_tsne, adata)
 
     ax_dend = fig.add_subplot(gs[1])
     _draw_dendrogram_panel(ax_dend, z_linkage, unique_tissues, tissue_to_group)

@@ -28,10 +28,8 @@ from mokume.tissuemap.plotting.markers import (
 from mokume.tissuemap.plotting.specificity import plot_ts_distribution
 from mokume.tissuemap.preprocessing import harmonize_tissues, log2_median_normalize
 from mokume.tissuemap.protein_selection import filter_proteins
-from mokume.tissuemap.tissue_specificity import (
-    build_ts_anndata,
-    compute_ts_scores,
-)
+from mokume.tissuemap.enrichment import build_ts_anndata
+from mokume.tissuemap.tissue_specificity import compute_ts_scores
 
 logger = logging.getLogger(__name__)
 

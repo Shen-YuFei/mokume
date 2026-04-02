@@ -248,6 +248,46 @@ def _filter_low_sample_tissues(
     return mat, meta
 
 
+def _detect_quant_type(
+    long: pd.DataFrame, is_tmt: bool | None,
+) -> tuple[bool, str]:
+    """Auto-detect quantification type from TMT labels."""
+    labels_unique = long["tmt_label"].unique()
+    detected_tmt = any("TMT" in label or "iTRAQ" in label for label in labels_unique)
+    if is_tmt is None:
+        is_tmt = detected_tmt
+    return is_tmt, "TMT" if is_tmt else "LFQ"
+
+
+def _merge_quant_data(
+    long: pd.DataFrame, run_map: pd.DataFrame,
+    ds_dir: Path, ds_id: str, is_tmt: bool,
+) -> pd.DataFrame:
+    """Merge feature data with sample mapping (TMT or LFQ path)."""
+    if is_tmt:
+        merged = _normalize_tmt(long, run_map, ds_dir, ds_id)
+    else:
+        run_map_lfq = run_map.drop_duplicates("run_file_name")[
+            ["run_file_name", "sample_accession", "fraction"]
+        ]
+        merged = long.merge(run_map_lfq, on="run_file_name", how="left")
+    return merged.dropna(subset=["sample_accession"])
+
+
+def _attach_metadata(
+    tissue_meta: pd.DataFrame, run_map: pd.DataFrame,
+    quant_type: str, ds_id: str,
+) -> None:
+    """Attach batch, quant_type, and dataset columns to tissue metadata."""
+    batch_map = (
+        run_map.drop_duplicates("sample_accession")
+        .set_index("sample_accession")["batch"]
+    )
+    tissue_meta["batch"] = tissue_meta.index.map(batch_map).fillna("unknown")
+    tissue_meta["quant_type"] = quant_type
+    tissue_meta["dataset"] = ds_id
+
+
 def load_dataset(
     ds_dir: Path,
     ds_id: str,
@@ -282,33 +322,10 @@ def load_dataset(
     long = _read_and_explode_features(ds_dir, ds_id, feature_prefix)
     run_map = build_run_to_sample_map(ds_dir, ds_id)
 
-    # Auto-detect quant type
-    labels_unique = long["tmt_label"].unique()
-    detected_tmt = any("TMT" in label or "iTRAQ" in label for label in labels_unique)
-    if is_tmt is None:
-        is_tmt = detected_tmt
-    quant_type = "TMT" if is_tmt else "LFQ"
-
-    if is_tmt:
-        merged = _normalize_tmt(long, run_map, ds_dir, ds_id)
-    else:
-        run_map_lfq = run_map.drop_duplicates("run_file_name")[
-            ["run_file_name", "sample_accession", "fraction"]
-        ]
-        merged = long.merge(run_map_lfq, on="run_file_name", how="left")
-
-    merged = merged.dropna(subset=["sample_accession"])
-
+    is_tmt, quant_type = _detect_quant_type(long, is_tmt)
+    merged = _merge_quant_data(long, run_map, ds_dir, ds_id, is_tmt)
     mat, tissue_meta = _pivot_and_annotate(merged, ds_dir, ds_id)
-
-    # Build full metadata
-    batch_map = (
-        run_map.drop_duplicates("sample_accession")
-        .set_index("sample_accession")["batch"]
-    )
-    tissue_meta["batch"] = tissue_meta.index.map(batch_map).fillna("unknown")
-    tissue_meta["quant_type"] = quant_type
-    tissue_meta["dataset"] = ds_id
+    _attach_metadata(tissue_meta, run_map, quant_type, ds_id)
 
     mat, tissue_meta = _filter_low_sample_tissues(
         mat, tissue_meta, ds_id, min_tissue_samples, low_sample_warning_threshold,

@@ -156,6 +156,39 @@ def _draw_heatmap(
     ax.set_title(title, fontsize=12, fontweight="bold", pad=20)
 
 
+def _compute_tissue_means(
+    adata: ad.AnnData, tissue_order: list[str],
+) -> pd.DataFrame:
+    """Per-tissue mean expression for each protein."""
+    tissues = adata.obs["tissue"].values
+    tissue_means = pd.DataFrame(index=adata.var.index)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for t in tissue_order:
+            mask = tissues == t
+            if mask.sum() > 0:
+                tissue_means[t] = np.nanmean(adata.X[mask, :], axis=0)
+    return tissue_means
+
+
+def _prepare_heatmap_data(
+    heat_proteins: list[tuple[str, str]],
+    tissue_means: pd.DataFrame, tissue_order: list[str],
+) -> tuple[list[str], list[str], list[str], list[str], np.ndarray] | None:
+    """Filter markers to available proteins/tissues and compute z-scores.
+
+    Returns None if no valid data remains.
+    """
+    protein_names, protein_tissues = zip(*heat_proteins)
+    cols_set, idx_set = set(tissue_means.columns), set(tissue_means.index)
+    available_tissues = [t for t in tissue_order if t in cols_set]
+    available_proteins = [p for p in protein_names if p in idx_set]
+    if not (available_proteins and available_tissues):
+        return None
+    heat_z = _compute_zscore_matrix(tissue_means, available_proteins, available_tissues)
+    return list(protein_names), list(protein_tissues), available_tissues, available_proteins, heat_z
+
+
 def plot_marker_heatmap(
     adata: ad.AnnData,
     tissue_order: list[str],
@@ -170,30 +203,18 @@ def plot_marker_heatmap(
         logger.warning("No tissue_markers in adata.uns, skipping heatmap")
         return
 
-    tissues = adata.obs["tissue"].values
     tissue_colors = adata.uns.get("tissue_colors", {})
-
-    tissue_means = pd.DataFrame(index=adata.var.index)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        for t in tissue_order:
-            mask = tissues == t
-            if mask.sum() > 0:
-                tissue_means[t] = np.nanmean(adata.X[mask, :], axis=0)
+    tissue_means = _compute_tissue_means(adata, tissue_order)
 
     heat_proteins = _collect_top_markers(adata, tissue_order, n_top)
     if not heat_proteins:
         logger.warning("No markers found for heatmap")
         return
 
-    protein_names = [p[0] for p in heat_proteins]
-    protein_tissues = [p[1] for p in heat_proteins]
-    available_tissues = [t for t in tissue_order if t in tissue_means.columns]
-    available_proteins = [p for p in protein_names if p in tissue_means.index]
-    if not available_proteins or not available_tissues:
+    prepared = _prepare_heatmap_data(heat_proteins, tissue_means, tissue_order)
+    if prepared is None:
         return
-
-    heat_z = _compute_zscore_matrix(tissue_means, available_proteins, available_tissues)
+    protein_names, protein_tissues, available_tissues, available_proteins, heat_z = prepared
 
     fig_height = max(12, len(available_proteins) * 0.14)
     fig, ax = plt.subplots(figsize=(14, fig_height))
@@ -263,6 +284,18 @@ def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
         sp.set_visible(False)
 
 
+def _create_subplot_grid(
+    n_items: int, n_cols: int = 4,
+) -> tuple[plt.Figure, list]:
+    """Create a subplot grid and return (fig, flat_axes_list)."""
+    n_rows = (n_items + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5.5 * n_rows))
+    flat = np.asarray(axes).flatten().tolist()
+    for ax in flat[n_items:]:
+        ax.set_visible(False)
+    return fig, flat
+
+
 def plot_marker_tsne(
     adata: ad.AnnData,
     tissue_order: list[str],
@@ -273,8 +306,11 @@ def plot_marker_tsne(
     save_pdf: bool = True,
 ) -> None:
     """2x4 grid of t-SNE colored by showcase marker expression."""
-    if "X_tsne" not in adata.obsm or "tissue_markers" not in adata.uns:
-        logger.warning("Missing t-SNE or markers, skipping marker_tsne")
+    if "X_tsne" not in adata.obsm:
+        logger.warning("Missing t-SNE, skipping marker_tsne")
+        return
+    if "tissue_markers" not in adata.uns:
+        logger.warning("Missing markers, skipping marker_tsne")
         return
 
     showcase = _select_showcase_markers(adata, tissue_order, n_showcase)
@@ -282,20 +318,11 @@ def plot_marker_tsne(
         return
 
     tsne = adata.obsm["X_tsne"]
-    n_cols = 4
-    n_rows = (len(showcase) + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5.5 * n_rows))
-    if n_rows == 1:
-        axes = [axes] if n_cols == 1 else list(axes)
-    else:
-        axes = list(axes.flatten())
+    fig, flat_axes = _create_subplot_grid(len(showcase))
 
     var_index_map = {name: i for i, name in enumerate(adata.var.index)}
     for idx, (prot, tissue) in enumerate(showcase):
-        _render_marker_subplot(axes[idx], tsne, adata, prot, tissue, var_index_map)
-
-    for idx in range(len(showcase), len(axes)):
-        axes[idx].set_visible(False)
+        _render_marker_subplot(flat_axes[idx], tsne, adata, prot, tissue, var_index_map)
 
     fig.suptitle(
         "t-SNE — Top tissue marker expression",

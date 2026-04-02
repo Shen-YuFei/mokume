@@ -27,13 +27,18 @@ import logging
 import warnings
 from dataclasses import dataclass
 
-import anndata as ad
 import numpy as np
 import pandas as pd
 from scipy.stats import norm as _norm
 from sklearn.mixture import GaussianMixture
 
 from mokume.tissuemap.config import TissueSpecificityConfig
+from mokume.tissuemap.enrichment import (
+    FLOOR_ENRICHED,
+    FLOOR_HOUSEKEEPING,
+    FLOOR_SPECIFIC,
+    _classify_enrichment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,10 +137,6 @@ def _fit_pure_mad(
 _SIGMA_FLOOR_ABSOLUTE_MIN = 0.01
 _SIGMA_FLOOR_PERCENTILE = 5
 
-# Literature floor thresholds (Jiang et al. 2020, PMID 32916130)
-FLOOR_ENRICHED: float = 2.5
-FLOOR_SPECIFIC: float = 4.0
-FLOOR_HOUSEKEEPING: float = 2.0
 
 
 def _resolve_sigma_floor(
@@ -256,24 +257,7 @@ def _auto_thresholds_gmm(
     fallback_enriched: float = FLOOR_ENRICHED,
     fallback_specific: float = FLOOR_SPECIFIC,
 ) -> GMMThresholds:
-    """Fit a 2-component GMM to max TS scores and derive thresholds.
-
-    - **Enriched** threshold: intersection point where P(bg) = P(specific).
-    - **Specific** threshold: where P(specific | x) > posterior cutoff.
-
-    Parameters
-    ----------
-    max_ts : np.ndarray
-        Per-protein max TS scores (NaN-free).
-    fallback_enriched : float
-        Enriched threshold if GMM fails.
-    fallback_specific : float
-        Specific threshold if GMM fails.
-
-    Returns
-    -------
-    GMMThresholds
-    """
+    """Fit a 2-component GMM and derive enriched/specific thresholds."""
     valid = max_ts[np.isfinite(max_ts)]
     if len(valid) < _GMM_MIN_PROTEINS:
         logger.warning("Too few proteins (%d) for GMM, using fixed thresholds", len(valid))
@@ -295,21 +279,21 @@ def _auto_thresholds_gmm(
 
     ts_enriched, ts_specific = _derive_gmm_thresholds(valid, means, stds, weights)
 
-    logger.info(
-        "GMM auto thresholds: enriched=%.3f, specific=%.3f "
-        "(bg: mu=%.2f, sigma=%.2f, w=%.1f%%; sp: mu=%.2f, sigma=%.2f, w=%.1f%%)",
-        ts_enriched, ts_specific,
-        means[bg_idx], stds[bg_idx], weights[bg_idx] * 100,
-        means[sp_idx], stds[sp_idx], weights[sp_idx] * 100,
-    )
-
-    return GMMThresholds(
+    result = GMMThresholds(
         ts_enriched=ts_enriched, ts_specific=ts_specific,
         bg_mean=float(means[bg_idx]), bg_std=float(stds[bg_idx]),
         bg_weight=float(weights[bg_idx]),
         sp_mean=float(means[sp_idx]), sp_std=float(stds[sp_idx]),
         sp_weight=float(weights[sp_idx]),
     )
+    logger.info(
+        "GMM auto thresholds: enriched=%.3f, specific=%.3f "
+        "(bg: mu=%.2f, sigma=%.2f, w=%.1f%%; sp: mu=%.2f, sigma=%.2f, w=%.1f%%)",
+        result.ts_enriched, result.ts_specific,
+        result.bg_mean, result.bg_std, result.bg_weight * 100,
+        result.sp_mean, result.sp_std, result.sp_weight * 100,
+    )
+    return result
 
 
 def _compute_ts_vectorized_mad(
@@ -465,6 +449,52 @@ def _resolve_thresholds(
     return ts_enriched, ts_specific, ts_housekeeping, gmm_result
 
 
+def _build_ts_dataframe(
+    ts_matrix: np.ndarray,
+    protein_ids: np.ndarray,
+    unique_tissues: list[str],
+    pop_params: list[PopulationParams],
+) -> pd.DataFrame:
+    """Assemble TS DataFrame with population params and max tissue."""
+    ts_df = pd.DataFrame(ts_matrix, index=protein_ids, columns=unique_tissues)
+    ts_df["mu"] = [p.mu for p in pop_params]
+    ts_df["sigma"] = [p.sigma for p in pop_params]
+    ts_df["pi"] = [p.pi for p in pop_params]
+
+    ts_only = ts_df[unique_tissues]
+    ts_df["max_ts"] = ts_only.max(axis=1)
+    finite_mask = np.isfinite(ts_df["max_ts"].values)
+    ts_df["max_tissue"] = pd.NA
+    if finite_mask.any():
+        ts_df.loc[finite_mask, "max_tissue"] = ts_only.loc[finite_mask].idxmax(axis=1)
+    return ts_df
+
+
+def _finalize_ts_df(
+    ts_df: pd.DataFrame,
+    unique_tissues: list[str],
+    tissue_labels: np.ndarray,
+    log2_matrix: np.ndarray,
+    ts_enriched: float, ts_specific: float,
+    ts_housekeeping: float, gmm_result,
+) -> None:
+    """Add enrichment categories and threshold attrs to ts_df (in-place)."""
+    ts_df["enrichment_category"] = _classify_enrichment(
+        ts_df[unique_tissues].values,
+        tissue_labels_all=tissue_labels,
+        unique_tissues=unique_tissues,
+        log2_matrix=log2_matrix,
+        ts_enriched=ts_enriched,
+        ts_specific=ts_specific,
+        ts_housekeeping=ts_housekeeping,
+    )
+    ts_df.attrs["ts_enriched_threshold"] = ts_enriched
+    ts_df.attrs["ts_specific_threshold"] = ts_specific
+    ts_df.attrs["ts_housekeeping_threshold"] = ts_housekeeping
+    if gmm_result is not None:
+        ts_df.attrs["gmm"] = gmm_result
+
+
 def compute_ts_scores(
     log2_matrix: np.ndarray,
     tissue_labels: np.ndarray,
@@ -504,139 +534,20 @@ def compute_ts_scores(
             log2_matrix, tissue_labels, unique_tissues, sigma_floor,
         )
 
-    ts_df = pd.DataFrame(ts_matrix, index=protein_ids, columns=unique_tissues)
-    ts_df["mu"] = [p.mu for p in pop_params]
-    ts_df["sigma"] = [p.sigma for p in pop_params]
-    ts_df["pi"] = [p.pi for p in pop_params]
-
-    ts_only = ts_df[unique_tissues]
-    ts_df["max_ts"] = ts_only.max(axis=1)
-    finite_mask = np.isfinite(ts_df["max_ts"].values)
-    ts_df["max_tissue"] = pd.NA
-    if finite_mask.any():
-        ts_df.loc[finite_mask, "max_tissue"] = ts_only.loc[finite_mask].idxmax(axis=1)
-
+    ts_df = _build_ts_dataframe(
+        ts_matrix, protein_ids, unique_tissues, pop_params,
+    )
     ts_enriched, ts_specific, ts_housekeeping, gmm_result = _resolve_thresholds(
         config, ts_df["max_ts"].dropna().values,
     )
-
-    ts_df["enrichment_category"] = _classify_enrichment(
-        ts_only.values,
-        tissue_labels_all=tissue_labels,
-        unique_tissues=unique_tissues,
-        log2_matrix=log2_matrix,
-        ts_enriched=ts_enriched,
-        ts_specific=ts_specific,
-        ts_housekeeping=ts_housekeeping,
+    _finalize_ts_df(
+        ts_df, unique_tissues, tissue_labels, log2_matrix,
+        ts_enriched, ts_specific, ts_housekeeping, gmm_result,
     )
-
-    ts_df.attrs["ts_enriched_threshold"] = ts_enriched
-    ts_df.attrs["ts_specific_threshold"] = ts_specific
-    ts_df.attrs["ts_housekeeping_threshold"] = ts_housekeeping
-    if gmm_result is not None:
-        ts_df.attrs["gmm"] = gmm_result
 
     cats = ts_df["enrichment_category"].value_counts()
-    logger.info("AdaTiSS TS scores computed for %d proteins:", n_proteins)
-    for cat in ["tissue-specific", "tissue-enriched", "house-keeping", "other"]:
-        logger.info("%s: %d", cat, cats.get(cat, 0))
-
+    summary = ", ".join(f"{c}: {cats.get(c, 0)}" for c in
+                        ["tissue-specific", "tissue-enriched", "house-keeping", "other"])
+    logger.info("AdaTiSS TS scores (%d proteins): %s", n_proteins, summary)
     return ts_df
 
-
-def _classify_enrichment(
-    ts_matrix: np.ndarray,
-    tissue_labels_all: np.ndarray,
-    unique_tissues: list[str],
-    log2_matrix: np.ndarray,
-    ts_enriched: float = FLOOR_ENRICHED,
-    ts_specific: float = FLOOR_SPECIFIC,
-    ts_housekeeping: float = FLOOR_HOUSEKEEPING,
-) -> list[str]:
-    """Classify each protein into enrichment categories (vectorized)."""
-    n_proteins = ts_matrix.shape[0]
-    n_tissues = len(unique_tissues)
-
-    # Pre-compute per-protein stats across tissues (all vectorized)
-    n_valid = np.sum(~np.isnan(ts_matrix), axis=1)  # (n_proteins,)
-    max_ts = np.nanmax(ts_matrix, axis=1)  # (n_proteins,)
-    n_above_enriched = np.nansum(ts_matrix >= ts_enriched, axis=1)
-    n_above_specific = np.nansum(ts_matrix >= ts_specific, axis=1)
-    n_in_gap = np.nansum(
-        (ts_matrix >= ts_enriched) & (ts_matrix < ts_specific), axis=1,
-    )
-    all_below_hk = np.all(
-        np.isnan(ts_matrix) | (np.abs(ts_matrix) < ts_housekeeping), axis=1,
-    )
-
-    # Pre-compute per-tissue detection mask (vectorized)
-    # detected[p, t] = True if protein p has at least one non-NaN in tissue t
-    detected = np.zeros((n_proteins, n_tissues), dtype=bool)
-    for t_idx, tissue in enumerate(unique_tissues):
-        t_mask = tissue_labels_all == tissue
-        tissue_data = log2_matrix[t_mask, :]  # (n_tissue_samples, n_proteins)
-        detected[:, t_idx] = np.any(~np.isnan(tissue_data), axis=0)
-    detected_all = detected.sum(axis=1) == n_tissues
-
-    # Classify using vectorized boolean conditions
-    cats = np.full(n_proteins, "other", dtype=object)
-
-    # House-keeping: detected in all tissues AND all |TS| < hk AND enough tissues
-    hk_mask = (n_valid >= 3) & detected_all & all_below_hk
-    cats[hk_mask] = "house-keeping"
-
-    # Tissue-enriched: at least one TS >= enriched (overrides hk)
-    enriched_mask = (n_valid >= 3) & (n_above_enriched >= 1)
-    cats[enriched_mask] = "tissue-enriched"
-
-    # Tissue-specific: max >= specific, exactly 1 above specific, 0 in gap
-    specific_mask = (
-        (n_valid >= 3)
-        & (max_ts >= ts_specific)
-        & (n_above_specific == 1)
-        & (n_in_gap == 0)
-    )
-    cats[specific_mask] = "tissue-specific"
-
-    # Sparse proteins stay "other"
-    cats[n_valid < 3] = "other"
-
-    return cats.tolist()
-
-
-
-def build_ts_anndata(
-    ts_df: pd.DataFrame,
-    unique_tissues: list[str],
-) -> ad.AnnData:
-    """Build an AnnData where obs = tissues, var = proteins, X = TS scores.
-
-    Parameters
-    ----------
-    ts_df : pd.DataFrame
-        Output of :func:`compute_ts_scores`.
-    unique_tissues : list[str]
-        Tissue names (becomes obs index).
-
-    Returns
-    -------
-    ad.AnnData
-        Tissues x proteins AnnData with TS scores in X and enrichment
-        metadata in ``var``.
-    """
-    tissue_cols = [c for c in ts_df.columns if c in unique_tissues]
-    ts_matrix = ts_df[tissue_cols].values.T  # tissues x proteins
-
-    var_df = ts_df[["mu", "sigma", "pi", "enrichment_category", "max_tissue", "max_ts"]].copy()
-    var_df.index = ts_df.index
-    var_df.index.name = "protein"
-
-    obs_df = pd.DataFrame(index=tissue_cols)
-    obs_df.index.name = "tissue"
-
-    adata = ad.AnnData(
-        X=ts_matrix.astype(np.float32),
-        obs=obs_df,
-        var=var_df,
-    )
-    return adata
