@@ -129,7 +129,7 @@ mokume/
 │   ├── protein_selection.py # NaN/contaminant protein filtering
 │   ├── batch_correction.py  # pyCombat batch correction (NaN-safe)
 │   ├── tissue_specificity.py# AdaTiSS scoring + GMM thresholding
-│   ├── embedding.py         # PCA + t-SNE + Leiden clustering
+│   ├── embedding.py         # PCA + t-SNE dimensionality reduction
 │   ├── pipeline.py          # 9-step pipeline orchestrator
 │   └── plotting/            # Visualization modules
 │       ├── atlas.py         # Tissue atlas + dendrogram

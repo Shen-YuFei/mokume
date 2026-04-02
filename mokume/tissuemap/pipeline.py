@@ -76,6 +76,10 @@ class TissueMapPipeline:
         n_ds = len(ds_dirs)
         workers = min(self.config.n_jobs, n_ds)
 
+        # Dynamically scale per-dataset embedding threads to avoid
+        # oversubscription (workers × embed_jobs ≤ n_jobs).
+        self._embed_n_jobs = max(1, self.config.n_jobs // workers)
+
         tmt_set = frozenset(self.config.input.tmt_datasets)
 
         if workers > 1:
@@ -113,16 +117,17 @@ class TissueMapPipeline:
                 result[child.name] = child
         return result
 
-    def _run_one(
-        self, ds_id: str, ds_dir: Path, out_dir: Path, tmt_set: frozenset[str],
-    ) -> None:
-        """Process a single dataset."""
-        is_tmt = ds_id in tmt_set
+    def _load_and_normalize(
+        self, ds_id: str, ds_dir: Path, tmt_set: frozenset[str],
+    ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+        """Load, normalize, harmonize, and filter a dataset.
 
+        Returns (mat_filt, meta) or None if dataset should be skipped.
+        """
+        is_tmt = ds_id in tmt_set
         logger.info("Loading dataset %s", ds_id)
         mat, meta = load_dataset(
-            ds_dir,
-            ds_id,
+            ds_dir, ds_id,
             is_tmt=is_tmt if self.config.input.tmt_datasets else None,
             feature_prefix=self.config.input.feature_prefix,
             min_tissue_samples=self.config.input.min_tissue_samples,
@@ -133,75 +138,32 @@ class TissueMapPipeline:
         mat_norm = log2_median_normalize(mat)
 
         logger.info("Tissue harmonization")
-        meta = harmonize_tissues(
-            meta, min_samples=self.config.input.min_tissue_samples
-        )
-        # Align matrix columns with meta
+        meta = harmonize_tissues(meta, min_samples=self.config.input.min_tissue_samples)
         common = mat_norm.columns.intersection(meta.index)
-        mat_norm = mat_norm[common]
-        meta = meta.loc[common]
+        mat_norm, meta = mat_norm[common], meta.loc[common]
         logger.info(
             "After harmonization: %d proteins x %d samples, %d tissues",
-            mat_norm.shape[0],
-            mat_norm.shape[1],
-            meta["tissue"].nunique(),
+            mat_norm.shape[0], mat_norm.shape[1], meta["tissue"].nunique(),
         )
 
         if mat_norm.shape[1] < 5:
             logger.warning("Too few samples (%d), skipping dataset %s", mat_norm.shape[1], ds_id)
-            return
+            return None
 
         logger.info("Protein selection")
         mat_filt = filter_proteins(mat_norm, self.config.filtering)
-
         if mat_filt.shape[0] < 10:
             logger.warning("Too few proteins (%d), skipping dataset %s", mat_filt.shape[0], ds_id)
-            return
+            return None
 
-        logger.info("Batch correction")
-        log2_arr = mat_filt.T.values.astype(np.float32)  # samples x proteins
-        sample_ids = np.array(mat_filt.columns)
-        batch_labels = meta.loc[sample_ids, "batch"].values
+        return mat_filt, meta
 
-        corrected = batch_correct(log2_arr, sample_ids, batch_labels)
-
-        # Build AnnData
-        adata = ad.AnnData(
-            X=corrected.astype(np.float32),
-            obs=meta.loc[sample_ids].copy(),
-            var=pd.DataFrame(index=mat_filt.index),
-        )
-        adata.var.index.name = "protein"
-        adata.layers["log2_corrected"] = corrected.astype(np.float32)
-
-        logger.info("Computing tissue specificity scores")
-        ts_df = compute_ts_scores(
-            corrected,
-            adata.obs["tissue"].values,
-            np.array(adata.var.index),
-            self.config.tissue_specificity,
-        )
-        unique_tissues = sorted(adata.obs["tissue"].unique())
-        ts_adata = build_ts_anndata(ts_df, unique_tissues)
-
-        # Store TS summary in var
-        for col in ["enrichment_category", "max_tissue", "max_ts", "mu", "sigma"]:
-            if col in ts_df.columns:
-                adata.var[col] = ts_df[col].values
-
-        logger.info("PCA + t-SNE embedding")
-        adata = embed(adata, self.config.embedding, n_jobs=self.config.n_jobs)
-
-        logger.info("Generating plots")
-        ds_plot_dir = out_dir / ds_id / "plots"
-        ds_plot_dir.mkdir(parents=True, exist_ok=True)
-        self._generate_plots(adata, ts_df, unique_tissues, ds_plot_dir)
-
-        logger.info("Saving outputs")
-        ds_out = out_dir / ds_id
+    def _save_outputs(
+        self, ds_id: str, ds_out: Path,
+        adata: ad.AnnData, ts_adata: ad.AnnData, ts_df: pd.DataFrame,
+    ) -> None:
+        """Write h5ad and CSV outputs to disk."""
         ds_out.mkdir(parents=True, exist_ok=True)
-
-        # Clean uns keys that h5ad cannot serialize (nested dicts, tuples)
         _clean_uns_for_h5ad(adata)
 
         corrected_path = ds_out / f"{ds_id}.corrected.h5ad"
@@ -216,7 +178,99 @@ class TissueMapPipeline:
         ts_df.to_csv(ts_csv_path)
         logger.info("Saved: %s", ts_csv_path)
 
+    def _run_one(
+        self, ds_id: str, ds_dir: Path, out_dir: Path, tmt_set: frozenset[str],
+    ) -> None:
+        """Process a single dataset."""
+        result = self._load_and_normalize(ds_id, ds_dir, tmt_set)
+        if result is None:
+            return
+        mat_filt, meta = result
+
+        logger.info("Batch correction")
+        log2_arr = mat_filt.T.values.astype(np.float32)
+        sample_ids = np.array(mat_filt.columns)
+        corrected = batch_correct(log2_arr, sample_ids, meta.loc[sample_ids, "batch"].values)
+
+        adata = ad.AnnData(
+            X=corrected.astype(np.float32),
+            obs=meta.loc[sample_ids].copy(),
+            var=pd.DataFrame(index=mat_filt.index),
+        )
+        adata.var.index.name = "protein"
+        adata.layers["log2_corrected"] = corrected.astype(np.float32)
+
+        logger.info("Computing tissue specificity scores")
+        ts_df = compute_ts_scores(
+            corrected, adata.obs["tissue"].values,
+            np.array(adata.var.index), self.config.tissue_specificity,
+        )
+        unique_tissues = sorted(adata.obs["tissue"].unique())
+        ts_adata = build_ts_anndata(ts_df, unique_tissues)
+
+        for col in ["enrichment_category", "max_tissue", "max_ts", "mu", "sigma"]:
+            if col in ts_df.columns:
+                adata.var[col] = ts_df[col].values
+
+        logger.info("PCA + t-SNE embedding")
+        adata = embed(adata, self.config.embedding, n_jobs=self._embed_n_jobs)
+
+        logger.info("Generating plots")
+        ds_plot_dir = out_dir / ds_id / "plots"
+        ds_plot_dir.mkdir(parents=True, exist_ok=True)
+        self._generate_plots(adata, ts_df, unique_tissues, ds_plot_dir)
+
+        logger.info("Saving outputs")
+        self._save_outputs(ds_id, out_dir / ds_id, adata, ts_adata, ts_df)
         logger.info("Dataset %s completed", ds_id)
+
+    def _plot_embedding_group(
+        self, adata: ad.AnnData, plot_dir: Path,
+    ) -> None:
+        """Generate embedding-dependent plots (PCA scree, atlas)."""
+        cfg = self.config.plotting
+        try:
+            plot_pca_scree(adata, plot_dir, dpi=cfg.dpi, save_pdf=cfg.save_pdf)
+        except _RECOVERABLE_ERRORS as exc:
+            logger.error("PCA plotting failed: %s", exc, exc_info=True)
+        try:
+            plot_slide_atlas_dendrogram(
+                adata, plot_dir, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+            )
+        except _RECOVERABLE_ERRORS as exc:
+            logger.error("Atlas plotting failed: %s", exc, exc_info=True)
+
+    def _plot_marker_group(
+        self, adata: ad.AnnData, unique_tissues: list[str],
+        plot_dir: Path, has_embedding: bool,
+    ) -> None:
+        """Generate marker-related plots (heatmap, t-SNE, dotplot, CSV)."""
+        cfg = self.config.plotting
+        adata = compute_markers(adata)
+        plot_marker_heatmap(
+            adata, unique_tissues, plot_dir,
+            n_top=5, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+        )
+        if has_embedding:
+            plot_marker_tsne(
+                adata, unique_tissues, plot_dir,
+                n_showcase=8, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+            )
+        plot_dotplot(adata, unique_tissues, plot_dir, n_top=3, dpi=cfg.dpi)
+        save_markers_csv(adata, unique_tissues, plot_dir, n_top=cfg.n_marker_top)
+
+    def _plot_ts_group(
+        self, ts_df: pd.DataFrame, unique_tissues: list[str], plot_dir: Path,
+    ) -> None:
+        """Generate tissue specificity distribution plot."""
+        cfg = self.config.plotting
+        plot_ts_distribution(
+            ts_df, unique_tissues, plot_dir,
+            ts_enriched=ts_df.attrs.get("ts_enriched_threshold", 2.5),
+            ts_specific=ts_df.attrs.get("ts_specific_threshold", 4.0),
+            ts_housekeeping=ts_df.attrs.get("ts_housekeeping_threshold"),
+            dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+        )
 
     def _generate_plots(
         self,
@@ -226,65 +280,19 @@ class TissueMapPipeline:
         plot_dir: Path,
     ) -> None:
         """Generate all visualization outputs."""
-        cfg = self.config.plotting
         has_embedding = "X_tsne" in adata.obsm
 
-        # Embedding-dependent plots (require PCA / t-SNE)
         if has_embedding:
-            try:
-                plot_pca_scree(adata, plot_dir, dpi=cfg.dpi, save_pdf=cfg.save_pdf)
-            except _RECOVERABLE_ERRORS as exc:
-                logger.error("PCA plotting failed: %s", exc, exc_info=True)
-
-            try:
-                plot_slide_atlas_dendrogram(
-                    adata, plot_dir, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
-                )
-            except _RECOVERABLE_ERRORS as exc:
-                logger.error("Atlas plotting failed: %s", exc, exc_info=True)
+            self._plot_embedding_group(adata, plot_dir)
         else:
             logger.info("Embedding disabled, skipping PCA/atlas/t-SNE plots")
 
-        # Marker plots (heatmap + dotplot work without embedding)
         try:
-            adata = compute_markers(adata)
-            plot_marker_heatmap(
-                adata, unique_tissues, plot_dir,
-                n_top=5, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
-            )
-            if has_embedding:
-                plot_marker_tsne(
-                    adata, unique_tissues, plot_dir,
-                    n_showcase=8, dpi=cfg.dpi,
-                    save_pdf=cfg.save_pdf,
-                )
-            plot_dotplot(
-                adata, unique_tissues, plot_dir,
-                n_top=3, dpi=cfg.dpi,
-            )
-            save_markers_csv(
-                adata, unique_tissues, plot_dir, n_top=cfg.n_marker_top,
-            )
+            self._plot_marker_group(adata, unique_tissues, plot_dir, has_embedding)
         except _RECOVERABLE_ERRORS as exc:
             logger.error("Marker plotting failed: %s", exc, exc_info=True)
 
         try:
-            ts_enriched_used = ts_df.attrs.get(
-                "ts_enriched_threshold", 2.5,
-            )
-            ts_specific_used = ts_df.attrs.get(
-                "ts_specific_threshold", 4.0,
-            )
-            gmm_fit = ts_df.attrs.get("gmm")
-            ts_hk_used = ts_df.attrs.get("ts_housekeeping_threshold")
-
-            plot_ts_distribution(
-                ts_df, unique_tissues, plot_dir,
-                ts_enriched=ts_enriched_used,
-                ts_specific=ts_specific_used,
-                ts_housekeeping=ts_hk_used,
-                gmm=gmm_fit,
-                dpi=cfg.dpi, save_pdf=cfg.save_pdf,
-            )
+            self._plot_ts_group(ts_df, unique_tissues, plot_dir)
         except _RECOVERABLE_ERRORS as exc:
             logger.error("TS plotting failed: %s", exc, exc_info=True)

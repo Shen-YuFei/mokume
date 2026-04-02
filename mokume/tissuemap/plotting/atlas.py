@@ -105,6 +105,22 @@ def _draw_ellipse(ax, points, color, label=None):
         )
 
 
+def _name_cluster(
+    members: list[str], cluster_id: int, used_names: set[str],
+) -> str:
+    """Assign a human-readable name to a cluster using heuristics."""
+    member_set = set(members)
+    # Exact subset match first
+    for pattern, pname in _GROUP_HEURISTICS:
+        if pattern <= member_set and pname not in used_names:
+            return pname
+    # Partial overlap fallback
+    for pattern, pname in _GROUP_HEURISTICS:
+        if pattern & member_set and pname not in used_names:
+            return pname
+    return f"Group {cluster_id}"
+
+
 def _compute_tissue_groups(
     adata: ad.AnnData,
     max_clusters: int = 10,
@@ -141,27 +157,15 @@ def _compute_tissue_groups(
     proteomic_groups: dict[str, list[str]] = {}
     used_names: set[str] = set()
     for cl, members in raw_groups.items():
-        member_set = set(members)
-        name = None
-        for pattern, pname in _GROUP_HEURISTICS:
-            if pattern <= member_set and pname not in used_names:
-                name = pname
-                break
-        if name is None:
-            for pattern, pname in _GROUP_HEURISTICS:
-                if pattern & member_set and pname not in used_names:
-                    name = pname
-                    break
-        if name is None:
-            name = f"Group {cl}"
+        name = _name_cluster(members, cl, used_names)
         used_names.add(name)
         proteomic_groups[name] = members
 
-    tissue_to_group: dict[str, str] = {}
-    for group_name, members in proteomic_groups.items():
-        for tissue in members:
-            tissue_to_group[tissue] = group_name
-
+    tissue_to_group: dict[str, str] = {
+        tissue: group_name
+        for group_name, members in proteomic_groups.items()
+        for tissue in members
+    }
     return proteomic_groups, tissue_to_group, z_linkage
 
 
@@ -180,6 +184,116 @@ def _build_tissue_colors(
             frac = 0.35 + 0.55 * (i / max(n - 1, 1))
             tissue_colors[t] = cmap(frac)
     return tissue_colors
+
+
+def _draw_tsne_panel(
+    ax, tsne_emb, tissues, tissue_order, tissue_colors, proteomic_groups,
+) -> None:
+    """Scatter t-SNE points and draw group hulls / ellipses."""
+    for t in tissue_order:
+        mask = tissues == t
+        ax.scatter(
+            tsne_emb[mask, 0], tsne_emb[mask, 1],
+            c=[tissue_colors.get(t, "#999")], s=45, alpha=0.88,
+            edgecolors="white", linewidths=0.4, zorder=2,
+        )
+
+    for group_name, members in proteomic_groups.items():
+        present = [t for t in members if (tissues == t).sum() > 0]
+        if not present:
+            continue
+        group_mask = np.isin(tissues, present)
+        group_pts = tsne_emb[group_mask]
+        color = _GROUP_PALETTE.get(group_name, {"base": "#999"})["base"]
+        if group_mask.sum() >= _SMALL_THRESHOLD:
+            _draw_convex_hull(ax, group_pts, color, label=group_name, pad=2.5)
+        else:
+            _draw_ellipse(ax, group_pts, color, label=group_name)
+
+
+def _build_legend_elements(
+    tissues, proteomic_groups, tissue_colors,
+) -> list[Line2D]:
+    """Build legend handles for tissue groups."""
+    elements: list[Line2D] = []
+    for group_name, members in proteomic_groups.items():
+        elements.append(
+            Line2D(
+                [0], [0], marker="none", label=f"  {group_name}",
+                color="none", markerfacecolor="none",
+            )
+        )
+        for t in members:
+            n = int((tissues == t).sum())
+            if n > 0:
+                elements.append(
+                    Line2D(
+                        [0], [0], marker="o", color="none",
+                        markerfacecolor=tissue_colors.get(t, "#999"),
+                        markeredgecolor="white", markeredgewidth=0.3,
+                        markersize=8, label=f"    {t} ({n})",
+                    )
+                )
+    return elements
+
+
+def _draw_dendrogram_panel(
+    ax, z_linkage, unique_tissues, tissue_to_group,
+) -> None:
+    """Render dendrogram and style labels by group color."""
+    scipy_dendro(
+        z_linkage, labels=unique_tissues, ax=ax,
+        orientation="right", leaf_font_size=8,
+        above_threshold_color="#BDBDBD", color_threshold=0,
+    )
+    for coll in ax.collections:
+        coll.set_linewidth(0.8)
+    for line in ax.lines:
+        line.set_linewidth(0.8)
+    for lbl in ax.get_yticklabels():
+        t = lbl.get_text()
+        grp = tissue_to_group.get(t, "")
+        color = _GROUP_PALETTE.get(grp, {"base": "#333"})["base"]
+        lbl.set_color(color)
+        lbl.set_fontweight("bold")
+        lbl.set_fontsize(8)
+    ax.set_title("B  Tissue Dendrogram", fontsize=16, fontweight="bold", loc="left", pad=8)
+    ax.set_xlabel("Ward distance (correlation)", fontsize=9, labelpad=5)
+    ax.tick_params(axis="x", labelsize=7)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.tick_params(left=False)
+
+
+def _save_atlas_figures(
+    fig, ax_tsne, ax_dend, out_dir: Path, dpi: int, save_pdf: bool,
+) -> None:
+    """Save combined figure and individual sub-plots."""
+    fig.savefig(
+        out_dir / "slide_atlas_dendrogram.png",
+        dpi=dpi, bbox_inches="tight", facecolor="white",
+    )
+    if save_pdf:
+        fig.savefig(
+            out_dir / "slide_atlas_dendrogram.pdf",
+            bbox_inches="tight", facecolor="white",
+        )
+    for ax, name in [(ax_tsne, "tissue_atlas"), (ax_dend, "tissue_dendrogram")]:
+        extent = ax.get_tightbbox(fig.canvas.get_renderer()).transformed(
+            fig.dpi_scale_trans.inverted(),
+        )
+        fig.savefig(
+            out_dir / f"{name}.png",
+            dpi=dpi, bbox_inches=extent, facecolor="white",
+        )
+        if save_pdf:
+            fig.savefig(
+                out_dir / f"{name}.pdf",
+                bbox_inches=extent, facecolor="white",
+            )
+    plt.close()
+    logger.info("Saved slide_atlas_dendrogram.png")
 
 
 def plot_slide_atlas_dendrogram(
@@ -212,7 +326,6 @@ def plot_slide_atlas_dendrogram(
         for t in members if (tissues == t).sum() > 0
     ]
 
-    # Adaptive figure width based on legend entry count
     n_legend_entries = sum(
         1 + sum(1 for t in members if (tissues == t).sum() > 0)
         for members in proteomic_groups.values()
@@ -226,48 +339,9 @@ def plot_slide_atlas_dendrogram(
     )
 
     ax_tsne = fig.add_subplot(gs[0])
+    _draw_tsne_panel(ax_tsne, tsne_emb, tissues, tissue_order, tissue_colors, proteomic_groups)
 
-    for t in tissue_order:
-        mask = tissues == t
-        ax_tsne.scatter(
-            tsne_emb[mask, 0], tsne_emb[mask, 1],
-            c=[tissue_colors.get(t, "#999")], s=45, alpha=0.88,
-            edgecolors="white", linewidths=0.4, zorder=2,
-        )
-
-    for group_name, members in proteomic_groups.items():
-        present = [t for t in members if (tissues == t).sum() > 0]
-        if not present:
-            continue
-        group_mask = np.isin(tissues, present)
-        group_pts = tsne_emb[group_mask]
-        color = _GROUP_PALETTE.get(group_name, {"base": "#999"})["base"]
-        if group_mask.sum() >= _SMALL_THRESHOLD:
-            _draw_convex_hull(
-                ax_tsne, group_pts, color, label=group_name, pad=2.5,
-            )
-        else:
-            _draw_ellipse(ax_tsne, group_pts, color, label=group_name)
-
-    legend_elements = []
-    for group_name, members in proteomic_groups.items():
-        legend_elements.append(
-            Line2D(
-                [0], [0], marker="none", label=f"  {group_name}",
-                color="none", markerfacecolor="none",
-            )
-        )
-        for t in members:
-            if (tissues == t).sum() > 0:
-                n = (tissues == t).sum()
-                legend_elements.append(
-                    Line2D(
-                        [0], [0], marker="o", color="none",
-                        markerfacecolor=tissue_colors.get(t, "#999"),
-                        markeredgecolor="white", markeredgewidth=0.3,
-                        markersize=8, label=f"    {t} ({n})",
-                    )
-                )
+    legend_elements = _build_legend_elements(tissues, proteomic_groups, tissue_colors)
     leg = ax_tsne.legend(
         handles=legend_elements, loc="center left", bbox_to_anchor=(1.01, 0.5),
         fontsize=7, frameon=True, framealpha=0.95, edgecolor="#ddd",
@@ -300,60 +374,6 @@ def plot_slide_atlas_dendrogram(
     )
 
     ax_dend = fig.add_subplot(gs[1])
+    _draw_dendrogram_panel(ax_dend, z_linkage, unique_tissues, tissue_to_group)
 
-    scipy_dendro(
-        z_linkage, labels=unique_tissues, ax=ax_dend,
-        orientation="right", leaf_font_size=8,
-        above_threshold_color="#BDBDBD", color_threshold=0,
-    )
-
-    for coll in ax_dend.collections:
-        coll.set_linewidth(0.8)
-    for line in ax_dend.lines:
-        line.set_linewidth(0.8)
-
-    for lbl in ax_dend.get_yticklabels():
-        t = lbl.get_text()
-        grp = tissue_to_group.get(t, "")
-        color = _GROUP_PALETTE.get(grp, {"base": "#333"})["base"]
-        lbl.set_color(color)
-        lbl.set_fontweight("bold")
-        lbl.set_fontsize(8)
-
-    ax_dend.set_title("B  Tissue Dendrogram", fontsize=16, fontweight="bold", loc="left", pad=8)
-    ax_dend.set_xlabel(
-        "Ward distance (correlation)", fontsize=9, labelpad=5,
-    )
-    ax_dend.tick_params(axis="x", labelsize=7)
-    ax_dend.spines["top"].set_visible(False)
-    ax_dend.spines["right"].set_visible(False)
-    ax_dend.spines["left"].set_visible(False)
-    ax_dend.tick_params(left=False)
-
-    fig.savefig(
-        out_dir / "slide_atlas_dendrogram.png",
-        dpi=dpi, bbox_inches="tight", facecolor="white",
-    )
-    if save_pdf:
-        fig.savefig(
-            out_dir / "slide_atlas_dendrogram.pdf",
-            bbox_inches="tight", facecolor="white",
-        )
-
-    # Save sub-plots individually
-    for ax, name in [(ax_tsne, "tissue_atlas"), (ax_dend, "tissue_dendrogram")]:
-        extent = ax.get_tightbbox(fig.canvas.get_renderer()).transformed(
-            fig.dpi_scale_trans.inverted(),
-        )
-        fig.savefig(
-            out_dir / f"{name}.png",
-            dpi=dpi, bbox_inches=extent, facecolor="white",
-        )
-        if save_pdf:
-            fig.savefig(
-                out_dir / f"{name}.pdf",
-                bbox_inches=extent, facecolor="white",
-            )
-
-    plt.close()
-    logger.info("Saved slide_atlas_dendrogram.png")
+    _save_atlas_figures(fig, ax_tsne, ax_dend, out_dir, dpi, save_pdf)

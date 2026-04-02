@@ -35,10 +35,6 @@ from sklearn.mixture import GaussianMixture
 
 from mokume.tissuemap.config import TissueSpecificityConfig
 
-# Suppress expected warnings globally (thread-safe, unlike catch_warnings)
-warnings.filterwarnings("ignore", message="All-NaN slice", category=RuntimeWarning)
-warnings.filterwarnings("ignore", message="idxmax", category=FutureWarning)
-
 logger = logging.getLogger(__name__)
 
 
@@ -168,10 +164,12 @@ def _resolve_sigma_floor(
         return max(configured, _SIGMA_FLOOR_ABSOLUTE_MIN)
 
     # Auto: 5th percentile of per-protein MAD
-    mads = np.nanmedian(
-        np.abs(log2_matrix - np.nanmedian(log2_matrix, axis=0, keepdims=True)),
-        axis=0,
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mads = np.nanmedian(
+            np.abs(log2_matrix - np.nanmedian(log2_matrix, axis=0, keepdims=True)),
+            axis=0,
+        )
     mads = mads[~np.isnan(mads)]
     mads = mads[mads > 0]
 
@@ -207,6 +205,51 @@ _GMM_MAX_ITER = 200
 _GMM_POSTERIOR_CUTOFF = 0.95
 
 
+def _fallback_gmm(
+    fallback_enriched: float, fallback_specific: float,
+    means=None, stds=None, weights=None,
+) -> GMMThresholds:
+    """Return GMMThresholds with fixed fallback values."""
+    return GMMThresholds(
+        ts_enriched=fallback_enriched, ts_specific=fallback_specific,
+        bg_mean=float(means[0]) if means is not None else 0.0,
+        bg_std=float(stds[0]) if stds is not None else 1.0,
+        bg_weight=float(weights[0]) if weights is not None else 0.5,
+        sp_mean=float(means[1]) if means is not None else fallback_specific,
+        sp_std=float(stds[1]) if stds is not None else 1.0,
+        sp_weight=float(weights[1]) if weights is not None else 0.5,
+    )
+
+
+def _derive_gmm_thresholds(
+    valid: np.ndarray, means, stds, weights,
+) -> tuple[float, float]:
+    """Compute enriched/specific thresholds from GMM components."""
+    bg_idx = int(np.argmin(means))
+    sp_idx = int(np.argmax(means))
+
+    x_grid = np.linspace(float(valid.min()), float(valid.max()), 10000)
+    p_bg = weights[bg_idx] * _norm.pdf(x_grid, means[bg_idx], stds[bg_idx])
+    p_sp = weights[sp_idx] * _norm.pdf(x_grid, means[sp_idx], stds[sp_idx])
+
+    # Enriched: intersection between means
+    diff = p_bg - p_sp
+    sign_changes = np.where(np.diff(np.sign(diff)))[0]
+    intersections = x_grid[sign_changes]
+    between = intersections[
+        (intersections > means[bg_idx]) & (intersections < means[sp_idx] + 3 * stds[sp_idx])
+    ]
+    ts_enriched = float(between[0]) if len(between) > 0 else float(means[bg_idx] + 2 * stds[bg_idx])
+
+    # Specific: posterior P(specific|x) > cutoff
+    posterior_sp = p_sp / (p_bg + p_sp + 1e-12)
+    above_cutoff = x_grid[posterior_sp > _GMM_POSTERIOR_CUTOFF]
+    ts_specific = float(above_cutoff[0]) if len(above_cutoff) > 0 else ts_enriched * 1.5
+    ts_specific = max(ts_specific, ts_enriched + 0.1)
+
+    return ts_enriched, ts_specific
+
+
 def _auto_thresholds_gmm(
     max_ts: np.ndarray,
     *,
@@ -234,11 +277,7 @@ def _auto_thresholds_gmm(
     valid = max_ts[np.isfinite(max_ts)]
     if len(valid) < _GMM_MIN_PROTEINS:
         logger.warning("Too few proteins (%d) for GMM, using fixed thresholds", len(valid))
-        return GMMThresholds(
-            ts_enriched=fallback_enriched, ts_specific=fallback_specific,
-            bg_mean=0.0, bg_std=1.0, bg_weight=0.5,
-            sp_mean=fallback_specific, sp_std=1.0, sp_weight=0.5,
-        )
+        return _fallback_gmm(fallback_enriched, fallback_specific)
 
     gmm = GaussianMixture(n_components=2, random_state=42, max_iter=_GMM_MAX_ITER)
     gmm.fit(valid.reshape(-1, 1))
@@ -252,34 +291,9 @@ def _auto_thresholds_gmm(
 
     if np.isclose(means[bg_idx], means[sp_idx], atol=1e-6):
         logger.warning("GMM components collapsed, using fixed thresholds")
-        return GMMThresholds(
-            ts_enriched=fallback_enriched, ts_specific=fallback_specific,
-            bg_mean=float(means[0]), bg_std=float(stds[0]), bg_weight=float(weights[0]),
-            sp_mean=float(means[1]), sp_std=float(stds[1]), sp_weight=float(weights[1]),
-        )
+        return _fallback_gmm(fallback_enriched, fallback_specific, means, stds, weights)
 
-    # Evaluate densities on a fine grid
-    x_grid = np.linspace(float(valid.min()), float(valid.max()), 10000)
-
-    p_bg = weights[bg_idx] * _norm.pdf(x_grid, means[bg_idx], stds[bg_idx])
-    p_sp = weights[sp_idx] * _norm.pdf(x_grid, means[sp_idx], stds[sp_idx])
-
-    # Enriched: intersection between means
-    diff = p_bg - p_sp
-    sign_changes = np.where(np.diff(np.sign(diff)))[0]
-    intersections = x_grid[sign_changes]
-    between = intersections[
-        (intersections > means[bg_idx]) & (intersections < means[sp_idx] + 3 * stds[sp_idx])
-    ]
-    ts_enriched = float(between[0]) if len(between) > 0 else float(means[bg_idx] + 2 * stds[bg_idx])
-
-    # Specific: posterior P(specific|x) > cutoff
-    posterior_sp = p_sp / (p_bg + p_sp + 1e-12)
-    above_cutoff = x_grid[posterior_sp > _GMM_POSTERIOR_CUTOFF]
-    ts_specific = float(above_cutoff[0]) if len(above_cutoff) > 0 else ts_enriched * 1.5
-
-    # Sanity: specific must be > enriched
-    ts_specific = max(ts_specific, ts_enriched + 0.1)
+    ts_enriched, ts_specific = _derive_gmm_thresholds(valid, means, stds, weights)
 
     logger.info(
         "GMM auto thresholds: enriched=%.3f, specific=%.3f "
@@ -313,10 +327,12 @@ def _compute_ts_vectorized_mad(
     n_tissues = len(unique_tissues)
 
     # Vectorized μ, MAD, σ for all proteins at once
-    mu = np.nanmedian(log2_matrix, axis=0)  # (n_proteins,)
-    mad = np.nanmedian(
-        np.abs(log2_matrix - mu[np.newaxis, :]), axis=0,
-    )  # (n_proteins,)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mu = np.nanmedian(log2_matrix, axis=0)  # (n_proteins,)
+        mad = np.nanmedian(
+            np.abs(log2_matrix - mu[np.newaxis, :]), axis=0,
+        )  # (n_proteins,)
     sigma = np.maximum(mad, sigma_floor)  # (n_proteins,)
 
     # Sparse proteins: < 3 non-NaN values → invalid
@@ -327,7 +343,9 @@ def _compute_ts_vectorized_mad(
 
     # Population proportion: fraction within ±2σ
     within_2s = np.abs(log2_matrix - mu[np.newaxis, :]) <= 2.0 * sigma[np.newaxis, :]
-    pi = np.nanmean(within_2s.astype(np.float32), axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        pi = np.nanmean(within_2s.astype(np.float32), axis=0)
     pi[too_sparse] = 0.0
 
     # Full z-score matrix  (NaN propagates naturally)
@@ -335,10 +353,12 @@ def _compute_ts_vectorized_mad(
 
     # Per-tissue median z-scores — loop over tissues, not proteins
     ts_matrix = np.full((n_proteins, n_tissues), np.nan)
-    for t_idx, tissue in enumerate(unique_tissues):
-        t_mask = tissue_labels == tissue
-        z_tissue = z_matrix[t_mask, :]  # (n_tissue_samples, n_proteins)
-        ts_matrix[:, t_idx] = np.nanmedian(z_tissue, axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for t_idx, tissue in enumerate(unique_tissues):
+            t_mask = tissue_labels == tissue
+            z_tissue = z_matrix[t_mask, :]  # (n_tissue_samples, n_proteins)
+            ts_matrix[:, t_idx] = np.nanmedian(z_tissue, axis=0)
 
     # Build PopulationParams list (lightweight Python objects)
     pop_params = [
@@ -401,6 +421,50 @@ def _compute_ts_loop(
     return ts_matrix, pop_params
 
 
+def _resolve_thresholds(
+    config: TissueSpecificityConfig,
+    max_ts_values: np.ndarray,
+) -> tuple[float, float, float, GMMThresholds | None]:
+    """Resolve enriched/specific/housekeeping thresholds from config or GMM."""
+    need_auto = (
+        config.ts_enriched_threshold is None
+        or config.ts_specific_threshold is None
+        or config.ts_housekeeping_threshold is None
+    )
+
+    gmm_result: GMMThresholds | None = None
+    if need_auto:
+        gmm_result = _auto_thresholds_gmm(
+            max_ts_values,
+            fallback_enriched=FLOOR_ENRICHED,
+            fallback_specific=FLOOR_SPECIFIC,
+        )
+
+    if config.ts_enriched_threshold is not None:
+        ts_enriched = config.ts_enriched_threshold
+    else:
+        ts_enriched = max(gmm_result.ts_enriched, FLOOR_ENRICHED)
+        logger.info("Auto enriched threshold: %.3f (GMM=%.3f, floor=%.1f)",
+                     ts_enriched, gmm_result.ts_enriched, FLOOR_ENRICHED)
+
+    if config.ts_specific_threshold is not None:
+        ts_specific = config.ts_specific_threshold
+    else:
+        ts_specific = max(gmm_result.ts_specific, FLOOR_SPECIFIC)
+        logger.info("Auto specific threshold: %.3f (GMM=%.3f, floor=%.1f)",
+                     ts_specific, gmm_result.ts_specific, FLOOR_SPECIFIC)
+
+    if config.ts_housekeeping_threshold is not None:
+        ts_housekeeping = config.ts_housekeeping_threshold
+    else:
+        ts_hk_raw = gmm_result.bg_mean + gmm_result.bg_std
+        ts_housekeeping = max(ts_hk_raw, FLOOR_HOUSEKEEPING)
+        logger.info("Auto housekeeping threshold: %.3f (bg_mean=%.2f + bg_std=%.2f, floor=%.1f)",
+                     ts_housekeeping, gmm_result.bg_mean, gmm_result.bg_std, FLOOR_HOUSEKEEPING)
+
+    return ts_enriched, ts_specific, ts_housekeeping, gmm_result
+
+
 def compute_ts_scores(
     log2_matrix: np.ndarray,
     tissue_labels: np.ndarray,
@@ -429,8 +493,6 @@ def compute_ts_scores(
     """
     unique_tissues = sorted(np.unique(tissue_labels))
     n_proteins = log2_matrix.shape[1]
-
-    # Resolve sigma_floor: auto-detect from data or use configured value
     sigma_floor = _resolve_sigma_floor(log2_matrix, config.sigma_floor)
 
     if config.use_pure_mad:
@@ -442,60 +504,22 @@ def compute_ts_scores(
             log2_matrix, tissue_labels, unique_tissues, sigma_floor,
         )
 
-    # Build result DataFrame
     ts_df = pd.DataFrame(ts_matrix, index=protein_ids, columns=unique_tissues)
     ts_df["mu"] = [p.mu for p in pop_params]
     ts_df["sigma"] = [p.sigma for p in pop_params]
     ts_df["pi"] = [p.pi for p in pop_params]
 
-    # Max tissue and max TS
-    tissue_cols = unique_tissues
-    ts_only = ts_df[tissue_cols]
-    ts_df["max_tissue"] = ts_only.idxmax(axis=1)
+    ts_only = ts_df[unique_tissues]
     ts_df["max_ts"] = ts_only.max(axis=1)
+    finite_mask = np.isfinite(ts_df["max_ts"].values)
+    ts_df["max_tissue"] = pd.NA
+    if finite_mask.any():
+        ts_df.loc[finite_mask, "max_tissue"] = ts_only.loc[finite_mask].idxmax(axis=1)
 
-    # Resolve thresholds: None → GMM auto, user-specified → fixed
-    need_auto = (
-        config.ts_enriched_threshold is None
-        or config.ts_specific_threshold is None
-        or config.ts_housekeeping_threshold is None
+    ts_enriched, ts_specific, ts_housekeeping, gmm_result = _resolve_thresholds(
+        config, ts_df["max_ts"].dropna().values,
     )
 
-    gmm_result: GMMThresholds | None = None
-    if need_auto:
-        max_ts_arr = ts_df["max_ts"].dropna().values
-        gmm_result = _auto_thresholds_gmm(
-            max_ts_arr,
-            fallback_enriched=FLOOR_ENRICHED,
-            fallback_specific=FLOOR_SPECIFIC,
-        )
-
-    # Enriched: user value or GMM (clamped to floor)
-    if config.ts_enriched_threshold is not None:
-        ts_enriched = config.ts_enriched_threshold
-    else:
-        ts_enriched = max(gmm_result.ts_enriched, FLOOR_ENRICHED)
-        logger.info("Auto enriched threshold: %.3f (GMM=%.3f, floor=%.1f)",
-                     ts_enriched, gmm_result.ts_enriched, FLOOR_ENRICHED)
-
-    # Specific: user value or GMM (clamped to floor)
-    if config.ts_specific_threshold is not None:
-        ts_specific = config.ts_specific_threshold
-    else:
-        ts_specific = max(gmm_result.ts_specific, FLOOR_SPECIFIC)
-        logger.info("Auto specific threshold: %.3f (GMM=%.3f, floor=%.1f)",
-                     ts_specific, gmm_result.ts_specific, FLOOR_SPECIFIC)
-
-    # Housekeeping: user value or GMM bg_mean+bg_std (clamped to floor)
-    if config.ts_housekeeping_threshold is not None:
-        ts_housekeeping = config.ts_housekeeping_threshold
-    else:
-        ts_hk_raw = gmm_result.bg_mean + gmm_result.bg_std
-        ts_housekeeping = max(ts_hk_raw, FLOOR_HOUSEKEEPING)
-        logger.info("Auto housekeeping threshold: %.3f (bg_mean=%.2f + bg_std=%.2f, floor=%.1f)",
-                     ts_housekeeping, gmm_result.bg_mean, gmm_result.bg_std, FLOOR_HOUSEKEEPING)
-
-    # Enrichment classification
     ts_df["enrichment_category"] = _classify_enrichment(
         ts_only.values,
         tissue_labels_all=tissue_labels,
@@ -506,14 +530,12 @@ def compute_ts_scores(
         ts_housekeeping=ts_housekeeping,
     )
 
-    # Store thresholds used (for plotting)
     ts_df.attrs["ts_enriched_threshold"] = ts_enriched
     ts_df.attrs["ts_specific_threshold"] = ts_specific
     ts_df.attrs["ts_housekeeping_threshold"] = ts_housekeeping
     if gmm_result is not None:
         ts_df.attrs["gmm"] = gmm_result
 
-    # Summary stats
     cats = ts_df["enrichment_category"].value_counts()
     logger.info("AdaTiSS TS scores computed for %d proteins:", n_proteins)
     for cat in ["tissue-specific", "tissue-enriched", "house-keeping", "other"]:

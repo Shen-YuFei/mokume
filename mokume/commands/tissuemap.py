@@ -79,17 +79,9 @@ def tissuemap_cmd(
       mokume tissuemap --generate-config tissuemap.yaml
       mokume tissuemap --scan-dir ./data --config tissuemap.yaml
     """
-    from mokume.tissuemap.config import (
-        InputConfig,
-        OutputConfig,
-        PlottingConfig,
-        TissueMapConfig,
-        generate_default_yaml,
-        load_config,
-    )
+    from mokume.tissuemap.config import generate_default_yaml
     from mokume.tissuemap.pipeline import TissueMapPipeline
 
-    # Handle --generate-config: write template and exit
     if generate_config is not None:
         generate_default_yaml(generate_config)
         click.echo(f"Default config written to {generate_config}")
@@ -98,31 +90,37 @@ def tissuemap_cmd(
     if scan_dir is None:
         raise click.UsageError("--scan-dir is required when not using --generate-config.")
 
-    # Build config: YAML file → CLI overrides → defaults
+    config = _build_config(scan_dir, output_dir, config_path, tmt_datasets, n_jobs, dpi)
+    TissueMapPipeline(config).run()
+
+
+def _build_config(
+    scan_dir: Path, output_dir: Path,
+    config_path: Optional[Path],
+    tmt_datasets: tuple[str, ...],
+    n_jobs: int, dpi: Optional[int],
+):
+    """Build TissueMapConfig from CLI arguments."""
+    from mokume.tissuemap.config import (
+        InputConfig, OutputConfig, PlottingConfig,
+        TissueMapConfig, load_config,
+    )
+
     if config_path is not None:
-        overrides: dict[str, object] = {}
-        overrides["input.scan_dir"] = str(scan_dir)
-        overrides["output.output_dir"] = str(output_dir)
+        overrides: dict[str, object] = {
+            "input.scan_dir": str(scan_dir),
+            "output.output_dir": str(output_dir),
+            "n_jobs": n_jobs,
+        }
         if tmt_datasets:
             overrides["input.tmt_datasets"] = list(tmt_datasets)
-        overrides["n_jobs"] = n_jobs
         if dpi is not None:
             overrides["plotting.dpi"] = dpi
-        config = load_config(config_path, overrides=overrides)
-    else:
-        config = TissueMapConfig(
-            n_jobs=n_jobs,
-            input=InputConfig(
-                scan_dir=scan_dir,
-                tmt_datasets=list(tmt_datasets),
-            ),
-            plotting=PlottingConfig(
-                dpi=dpi if dpi is not None else 250,
-            ),
-            output=OutputConfig(
-                output_dir=output_dir,
-            ),
-        )
+        return load_config(config_path, overrides=overrides)
 
-    pipeline = TissueMapPipeline(config)
-    pipeline.run()
+    return TissueMapConfig(
+        n_jobs=n_jobs,
+        input=InputConfig(scan_dir=scan_dir, tmt_datasets=list(tmt_datasets)),
+        plotting=PlottingConfig(dpi=dpi if dpi is not None else 250),
+        output=OutputConfig(output_dir=output_dir),
+    )

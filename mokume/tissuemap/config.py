@@ -111,24 +111,8 @@ def _coerce_value(cls: type, key: str, value: Any) -> Any:
     return value
 
 
-def load_config(yaml_path: Path, overrides: dict[str, Any] | None = None) -> TissueMapConfig:
-    """Load a :class:`TissueMapConfig` from a YAML file.
-
-    Parameters
-    ----------
-    yaml_path : Path
-        Path to the YAML configuration file.
-    overrides : dict, optional
-        CLI overrides applied **after** YAML loading.
-        Keys are ``"section.field"`` strings, e.g. ``"embedding.pca_components"``.
-
-    Returns
-    -------
-    TissueMapConfig
-    """
-    with open(yaml_path, encoding="utf-8") as fh:
-        raw: dict[str, Any] = yaml.safe_load(fh) or {}
-
+def _parse_sections(raw: dict[str, Any]) -> dict[str, Any]:
+    """Parse YAML sections into dataclass instances."""
     sections: dict[str, Any] = {}
     for section_name, cls in _SECTION_MAP.items():
         section_data = raw.get(section_name, {})
@@ -147,32 +131,55 @@ def load_config(yaml_path: Path, overrides: dict[str, Any] | None = None) -> Tis
                 section_name, ", ".join(sorted(unknown)),
             )
         sections[section_name] = cls(**kwargs)
+    return sections
 
-    # Top-level fields (not in a section)
+
+def _apply_overrides(cfg: TissueMapConfig, overrides: dict[str, Any]) -> None:
+    """Apply dotted CLI overrides to the config in-place."""
+    for dotted_key, value in overrides.items():
+        if value is None:
+            continue
+        if "." not in dotted_key:
+            if hasattr(cfg, dotted_key):
+                object.__setattr__(cfg, dotted_key, value)
+            continue
+        section_name, field_name = dotted_key.split(".", 1)
+        if section_name not in _SECTION_MAP:
+            continue
+        sub = getattr(cfg, section_name)
+        if hasattr(sub, field_name):
+            coerced = _coerce_value(type(sub), field_name, value)
+            object.__setattr__(sub, field_name, coerced)
+
+
+def load_config(yaml_path: Path, overrides: dict[str, Any] | None = None) -> TissueMapConfig:
+    """Load a :class:`TissueMapConfig` from a YAML file.
+
+    Parameters
+    ----------
+    yaml_path : Path
+        Path to the YAML configuration file.
+    overrides : dict, optional
+        CLI overrides applied **after** YAML loading.
+        Keys are ``"section.field"`` strings, e.g. ``"embedding.pca_components"``.
+
+    Returns
+    -------
+    TissueMapConfig
+    """
+    with open(yaml_path, encoding="utf-8") as fh:
+        raw: dict[str, Any] = yaml.safe_load(fh) or {}
+
+    sections = _parse_sections(raw)
+
     top_kwargs: dict[str, Any] = {}
     if "n_jobs" in raw:
         top_kwargs["n_jobs"] = int(raw["n_jobs"])
 
     cfg = TissueMapConfig(**top_kwargs, **sections)
 
-    # Apply CLI overrides
     if overrides:
-        for dotted_key, value in overrides.items():
-            if value is None:
-                continue
-            # Top-level override (no dot)
-            if "." not in dotted_key:
-                if hasattr(cfg, dotted_key):
-                    object.__setattr__(cfg, dotted_key, value)
-                continue
-            parts = dotted_key.split(".", 1)
-            if parts[0] not in _SECTION_MAP:
-                continue
-            section_name, field_name = parts
-            sub = getattr(cfg, section_name)
-            if hasattr(sub, field_name):
-                coerced = _coerce_value(type(sub), field_name, value)
-                object.__setattr__(sub, field_name, coerced)
+        _apply_overrides(cfg, overrides)
 
     return cfg
 
