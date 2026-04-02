@@ -59,7 +59,8 @@ reports = ["plotly"]
 directlfq = ["directlfq", "pyyaml"]
 batch-correction = ["inmoose"]
 inmoose = ["inmoose"]  # Deprecated alias, use batch-correction instead
-all = ["directlfq", "pyyaml", "inmoose", "matplotlib", "seaborn", "plotly"]
+tissuemap = ["scanpy", "inmoose", "umap-learn", "matplotlib", "seaborn"]
+all = ["directlfq", "pyyaml", "inmoose", "matplotlib", "seaborn", "plotly", "scanpy", "umap-learn"]
 
 [tool.poetry.dependencies.matplotlib]
 version = "*"
@@ -83,6 +84,14 @@ optional = true
 
 [tool.poetry.dependencies.plotly]
 version = ">=5.0"
+optional = true
+
+[tool.poetry.dependencies.scanpy]
+version = ">=1.9"
+optional = true
+
+[tool.poetry.dependencies.umap-learn]
+version = ">=0.5"
 optional = true
 
 [tool.poetry.urls]

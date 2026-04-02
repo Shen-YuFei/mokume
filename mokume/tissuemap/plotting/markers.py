@@ -1,0 +1,395 @@
+"""
+Tissue marker analysis plots: heatmap, marker t-SNE, dotplot.
+"""
+
+from __future__ import annotations
+
+import logging
+import warnings
+from pathlib import Path
+
+import anndata as ad
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+import numpy as np
+import pandas as pd
+from pandas.errors import PerformanceWarning
+import scanpy as sc
+
+logger = logging.getLogger(__name__)
+
+# Custom colormaps
+_HEATMAP_CMAP = LinearSegmentedColormap.from_list(
+    "custom_heatmap", ["#2166AC", "#F7F7F7", "#B2182B"]
+)
+_EXPR_CMAP = LinearSegmentedColormap.from_list(
+    "expr", ["#EEEEEE", "#FDD835", "#F4511E", "#B71C1C"]
+)
+
+
+
+def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
+    """Run Wilcoxon rank-sum test for tissue markers.
+
+    Adds ``tissue_markers`` key to ``adata.uns``.
+    Skips gracefully when too many tissues have < *min_group_size* samples
+    (Wilcoxon requires ≥ 2 per group).
+    """
+
+    # Check group sizes — Wilcoxon needs ≥ 2 samples per group
+    tissue_counts = adata.obs["tissue"].value_counts()
+    valid = tissue_counts[tissue_counts >= min_group_size]
+    if len(valid) < 2:
+        n_single = (tissue_counts < min_group_size).sum()
+        logger.warning(
+            "Wilcoxon markers skipped: %d / %d tissues have < %d samples",
+            n_single, len(tissue_counts), min_group_size,
+        )
+        return adata
+
+    # Subset to tissues with enough samples
+    if len(valid) < len(tissue_counts):
+        dropped = tissue_counts[tissue_counts < min_group_size]
+        logger.info(
+            "Wilcoxon: using %d / %d tissues (dropped %d with < %d samples)",
+            len(valid), len(tissue_counts), len(dropped), min_group_size,
+        )
+        mask = adata.obs["tissue"].isin(valid.index)
+        adata_sub = adata[mask].copy()
+    else:
+        adata_sub = adata
+
+    # Ensure X has no NaN for rank_genes_groups
+    x_backup = adata_sub.X.copy()
+    adata_sub.X = np.nan_to_num(adata_sub.X, nan=0.0).astype(np.float32)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        warnings.simplefilter("ignore", PerformanceWarning)
+        sc.tl.rank_genes_groups(
+            adata_sub, groupby="tissue", method="wilcoxon",
+            key_added="tissue_markers", use_raw=False,
+        )
+    adata_sub.X = x_backup
+
+    # Copy results back to original adata
+    adata.uns["tissue_markers"] = adata_sub.uns["tissue_markers"]
+    logger.info("Wilcoxon rank_genes_groups done")
+    return adata
+
+
+
+def plot_marker_heatmap(
+    adata: ad.AnnData,
+    tissue_order: list[str],
+    out_dir: Path,
+    *,
+    n_top: int = 5,
+    dpi: int = 200,
+    save_pdf: bool = True,
+) -> None:
+    """Top *n_top* Wilcoxon markers per tissue, z-scored heatmap."""
+    if "tissue_markers" not in adata.uns:
+        logger.warning("No tissue_markers in adata.uns, skipping heatmap")
+        return
+
+    tissues = adata.obs["tissue"].values
+    tissue_colors = adata.uns.get("tissue_colors", {})
+
+    # Compute tissue means
+    tissue_means = pd.DataFrame(index=adata.var.index)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for t in tissue_order:
+            mask = tissues == t
+            if mask.sum() > 0:
+                tissue_means[t] = np.nanmean(adata.X[mask, :], axis=0)
+
+    # Collect top markers (unique proteins)
+    heat_proteins: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for tissue in tissue_order:
+        try:
+            result = sc.get.rank_genes_groups_df(
+                adata, group=tissue, key="tissue_markers"
+            )
+        except (KeyError, ValueError):
+            continue
+        for _, row in result.iterrows():
+            prot = row["names"]
+            count_this_tissue = sum(1 for p, t in heat_proteins if t == tissue)
+            if prot not in seen and count_this_tissue < n_top:
+                heat_proteins.append((prot, tissue))
+                seen.add(prot)
+
+    if not heat_proteins:
+        logger.warning("No markers found for heatmap")
+        return
+
+    protein_names = [p[0] for p in heat_proteins]
+    protein_tissues = [p[1] for p in heat_proteins]
+
+    # Filter to tissues present in tissue_means
+    available_tissues = [t for t in tissue_order if t in tissue_means.columns]
+    available_proteins = [p for p in protein_names if p in tissue_means.index]
+    if not available_proteins or not available_tissues:
+        return
+
+    heat_mat = tissue_means.loc[available_proteins, available_tissues].values.astype(float)
+
+    # Z-score per protein (row)
+    row_mean = np.nanmean(heat_mat, axis=1, keepdims=True)
+    row_std = np.nanstd(heat_mat, axis=1, keepdims=True)
+    row_std[row_std == 0] = 1
+    heat_z = (heat_mat - row_mean) / row_std
+    heat_z = np.clip(heat_z, -3, 3)
+    heat_z = np.nan_to_num(heat_z, nan=0.0)
+
+    # Plot
+    fig_height = max(12, len(available_proteins) * 0.14)
+    fig, ax = plt.subplots(figsize=(14, fig_height))
+
+    im = ax.imshow(
+        heat_z, aspect="auto", cmap=_HEATMAP_CMAP, vmin=-3, vmax=3,
+        interpolation="nearest",
+    )
+
+    ax.set_yticks(range(len(available_proteins)))
+    ax.set_yticklabels(available_proteins, fontsize=5)
+    ax.set_xticks(range(len(available_tissues)))
+    ax.set_xticklabels(available_tissues, rotation=60, ha="right", fontsize=7)
+
+    # Color x-tick labels by tissue group
+    for i, t in enumerate(available_tissues):
+        color = tissue_colors.get(t, "#333")
+        if isinstance(color, tuple):
+            color = matplotlib.colors.rgb2hex(color[:3])
+        ax.get_xticklabels()[i].set_color(color)
+        ax.get_xticklabels()[i].set_fontweight("bold")
+
+    # Tissue group color bar on top
+    for i, t in enumerate(available_tissues):
+        c = tissue_colors.get(t, "#999")
+        ax.add_patch(plt.Rectangle((i - 0.5, -1.5), 1, 1, color=c, clip_on=False))
+
+    # Horizontal lines between tissue marker groups
+    prev_tissue = protein_tissues[0] if protein_tissues else None
+    for i, prot in enumerate(available_proteins):
+        idx_in_heat = protein_names.index(prot)
+        t = protein_tissues[idx_in_heat]
+        if t != prev_tissue:
+            ax.axhline(y=i - 0.5, color="#ddd", linewidth=0.5)
+            prev_tissue = t
+
+    cbar = plt.colorbar(im, ax=ax, shrink=0.3, aspect=20, pad=0.02)
+    cbar.set_label("Z-score (mean tissue expression)", fontsize=9)
+
+    ax.set_title(
+        f"Top {n_top} marker proteins per tissue (Wilcoxon, "
+        f"{len(available_tissues)} tissues)\n"
+        f"{adata.n_vars:,} proteins, {adata.n_obs} samples",
+        fontsize=12, fontweight="bold", pad=20,
+    )
+
+    plt.tight_layout()
+    fig.savefig(out_dir / "marker_heatmap.png", dpi=dpi, bbox_inches="tight")
+    if save_pdf:
+        fig.savefig(out_dir / "marker_heatmap.pdf", bbox_inches="tight")
+    plt.close()
+    logger.info("Saved marker_heatmap.png")
+
+
+
+def plot_marker_tsne(
+    adata: ad.AnnData,
+    tissue_order: list[str],
+    out_dir: Path,
+    *,
+    n_showcase: int = 8,
+    dpi: int = 200,
+    save_pdf: bool = True,
+) -> None:
+    """2x4 grid of t-SNE colored by showcase marker expression."""
+    if "X_tsne" not in adata.obsm or "tissue_markers" not in adata.uns:
+        logger.warning("Missing t-SNE or markers, skipping marker_tsne")
+        return
+
+    tsne = adata.obsm["X_tsne"]
+
+    # Pick 1 top marker per tissue (up to n_showcase)
+    showcase: list[tuple[str, str]] = []
+    seen_prots: set[str] = set()
+    for t in tissue_order:
+        try:
+            result = sc.get.rank_genes_groups_df(
+                adata, group=t, key="tissue_markers"
+            )
+        except (KeyError, ValueError):
+            continue
+        for _, row in result.iterrows():
+            prot = row["names"]
+            if prot not in seen_prots and prot in adata.var.index:
+                showcase.append((prot, t))
+                seen_prots.add(prot)
+                break
+        if len(showcase) >= n_showcase:
+            break
+
+    if not showcase:
+        return
+
+    n_cols = 4
+    n_rows = (len(showcase) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5.5 * n_rows))
+    if n_rows == 1:
+        axes = [axes] if n_cols == 1 else list(axes)
+    else:
+        axes = list(axes.flatten())
+
+    var_index_map = {name: i for i, name in enumerate(adata.var.index)}
+    for idx, (prot, tissue) in enumerate(showcase):
+        ax = axes[idx]
+        prot_idx = var_index_map[prot]
+        expr = adata.X[:, prot_idx].copy()
+        expr = np.nan_to_num(expr, nan=0.0)
+
+        order = np.argsort(expr)
+        vmin = float(np.percentile(expr, 5))
+        vmax = float(np.percentile(expr, 95))
+        scat = ax.scatter(
+            tsne[order, 0], tsne[order, 1], c=expr[order],
+            cmap=_EXPR_CMAP, s=18, alpha=0.85, edgecolors="none",
+            vmin=vmin, vmax=vmax,
+        )
+        plt.colorbar(scat, ax=ax, shrink=0.6, aspect=15, pad=0.02)
+
+        # TS score if available
+        ts_val = ""
+        if "max_ts" in adata.var.columns:
+            ts_val = f" (TS={adata.var.loc[prot, 'max_ts']:.2f})"
+        ax.set_title(f"{prot}\n{tissue} marker{ts_val}", fontsize=9, fontweight="bold")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for sp in ax.spines.values():
+            sp.set_visible(False)
+
+    # Hide unused axes
+    for idx in range(len(showcase), len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle(
+        "t-SNE — Top tissue marker expression",
+        fontsize=14, fontweight="bold", y=1.01,
+    )
+    plt.tight_layout()
+    fig.savefig(out_dir / "marker_tsne.png", dpi=dpi, bbox_inches="tight")
+    if save_pdf:
+        fig.savefig(out_dir / "marker_tsne.pdf", bbox_inches="tight")
+    plt.close()
+    logger.info("Saved marker_tsne.png")
+
+
+
+def plot_dotplot(
+    adata: ad.AnnData,
+    tissue_order: list[str],
+    out_dir: Path,
+    *,
+    n_top: int = 3,
+    dpi: int = 150,
+) -> None:
+    """Scanpy dotplot of top markers per tissue."""
+    if "tissue_markers" not in adata.uns:
+        return
+
+    available = [t for t in tissue_order if t in adata.obs["tissue"].values]
+
+    # Collect top markers
+    dotplot_genes: list[str] = []
+    seen: set[str] = set()
+    for tissue in available:
+        try:
+            result = sc.get.rank_genes_groups_df(
+                adata, group=tissue, key="tissue_markers"
+            )
+        except (KeyError, ValueError):
+            continue
+        count = 0
+        for _, row in result.iterrows():
+            g = row["names"]
+            if g not in seen and g in adata.var.index:
+                dotplot_genes.append(g)
+                seen.add(g)
+                count += 1
+                if count >= n_top:
+                    break
+            if len(dotplot_genes) >= n_top * len(available):
+                break
+
+    if not dotplot_genes:
+        return
+
+    # Limit to 60 genes max for readability
+    dotplot_genes = dotplot_genes[:60]
+
+    # In-place NaN→0 + Categorical tissue for dotplot, then restore
+    x_backup = adata.X.copy()
+    tissue_backup = adata.obs["tissue"].copy()
+    try:
+        adata.X = np.nan_to_num(adata.X, nan=0.0).astype(np.float32)
+        adata.obs["tissue"] = pd.Categorical(
+            adata.obs["tissue"], categories=available, ordered=True,
+        )
+        dp = sc.pl.dotplot(
+            adata, var_names=dotplot_genes, groupby="tissue",
+            standard_scale="var", show=False, return_fig=True,
+            figsize=(20, 10),
+        )
+        dp.savefig(out_dir / "marker_dotplot.png", dpi=dpi, bbox_inches="tight")
+        plt.close()
+        logger.info("Saved marker_dotplot.png")
+    except (ValueError, TypeError, RuntimeError, KeyError) as exc:
+        logger.error("Dotplot failed: %s", exc)
+    finally:
+        adata.X = x_backup
+        adata.obs["tissue"] = tissue_backup
+
+
+
+def save_markers_csv(
+    adata: ad.AnnData,
+    tissue_order: list[str],
+    out_dir: Path,
+    *,
+    n_top: int = 10,
+) -> None:
+    """Save top markers per tissue to CSV."""
+    if "tissue_markers" not in adata.uns:
+        return
+
+    records: list[dict] = []
+    for tissue in tissue_order:
+        try:
+            result = sc.get.rank_genes_groups_df(
+                adata, group=tissue, key="tissue_markers"
+            )
+        except (KeyError, ValueError):
+            continue
+        top = result.head(n_top)
+        for _, row in top.iterrows():
+            records.append(
+                {
+                    "tissue": tissue,
+                    "protein": row["names"],
+                    "score": round(row["scores"], 2),
+                    "logfoldchange": round(row["logfoldchanges"], 3),
+                    "pval_adj": f"{row['pvals_adj']:.2e}",
+                }
+            )
+
+    if records:
+        df = pd.DataFrame(records)
+        csv_path = out_dir / "tissue_markers_top10.csv"
+        df.to_csv(csv_path, index=False)
+        logger.info("Saved %s (%d markers)", csv_path.name, len(df))
