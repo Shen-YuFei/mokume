@@ -503,23 +503,9 @@ def compute_ts_scores(
 ) -> pd.DataFrame:
     """Compute AdaTiSS tissue specificity scores.
 
-    Parameters
-    ----------
-    log2_matrix : np.ndarray
-        Samples (rows) x proteins (columns), log2 scale with NaN.
-    tissue_labels : np.ndarray
-        Tissue label per sample.
-    protein_ids : np.ndarray
-        Protein identifiers (one per column).
-    config : TissueSpecificityConfig
-        Algorithm parameters.
-
-    Returns
-    -------
-    pd.DataFrame
-        Proteins (rows) x tissues (columns), TS scores.
-        Also has columns: ``mu``, ``sigma``, ``pi``, ``enrichment_category``,
-        ``max_tissue``, ``max_ts``.
+    Returns a DataFrame (proteins × tissues) with TS scores plus columns
+    ``mu``, ``sigma``, ``pi``, ``enrichment_category``, ``max_tissue``,
+    ``max_ts``.
     """
     unique_tissues = sorted(np.unique(tissue_labels))
     n_proteins = log2_matrix.shape[1]
