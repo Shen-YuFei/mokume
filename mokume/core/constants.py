@@ -6,6 +6,7 @@ throughout the package for data processing and analysis.
 """
 
 import os
+from typing import Dict, Iterable, List, Set, Tuple
 
 import pandas as pd
 
@@ -81,7 +82,12 @@ parquet_map = {
 
 def get_accession(identifier: str) -> str:
     """
-    Get protein accession from the identifier (e.g. sp|P12345|PROT_NAME).
+    Get protein accession from the identifier.
+
+    Supports multiple formats:
+    - Standard UniProt: ``sp|P12345|PROT_NAME`` or ``tr|Q12345|PROT_NAME`` → ``P12345``
+    - Non-standard 2-part: ``P02768ups|ALBU_HUMAN_UPS`` → ``P02768ups``
+    - Plain accession: ``O13547`` → ``O13547``
 
     Parameters
     ----------
@@ -93,11 +99,36 @@ def get_accession(identifier: str) -> str:
     str
         Protein accession.
     """
+    _DB_PREFIXES = {"sp", "tr", "sw", "nxp"}
     identifier_lst = identifier.split("|")
     if len(identifier_lst) == 1:
         return identifier_lst[0]
-    else:
+    if identifier_lst[0].lower() in _DB_PREFIXES:
         return identifier_lst[1]
+    return identifier_lst[0]
+
+
+def build_accession_map(
+    proteins: Iterable[str],
+) -> Tuple[Dict[str, List[str]], Set[str]]:
+    """
+    Build a mapping from normalized accessions to original protein names.
+
+    Parameters
+    ----------
+    proteins : Iterable[str]
+        Protein identifiers in any supported format.
+
+    Returns
+    -------
+    tuple[dict[str, list[str]], set[str]]
+        A tuple of (acc_to_originals dict, protein_accessions set).
+    """
+    acc_to_originals = {}
+    for p in proteins:
+        acc = get_accession(p)
+        acc_to_originals.setdefault(acc, []).append(p)
+    return acc_to_originals, set(acc_to_originals.keys())
 
 
 # Functions needed by Combiner
