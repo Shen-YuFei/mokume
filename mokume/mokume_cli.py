@@ -4,6 +4,7 @@ CLI entry point for the mokume package.
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 import click
 
@@ -12,10 +13,11 @@ from mokume.commands.features2proteins import features2proteins
 from mokume.commands.peptides2protein import peptides2protein
 from mokume.commands.visualize import tsne_visualization
 from mokume.commands.batch_correct import correct_batches
+from mokume.commands.tissuemap import tissuemap_cmd
 
 import mokume
 
-CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 LOG_LEVELS = ["debug", "info", "warn"]
 LOG_LEVELS_TO_LEVELS = {
@@ -44,7 +46,7 @@ LOG_LEVELS_TO_LEVELS = {
     required=False,
     help="Write log to this file.",
 )
-def cli(log_level: str, log_file: Path):
+def cli(log_level: str = "debug", log_file: Optional[Path] = None):
     """
     mokume - A comprehensive proteomics quantification library.
 
@@ -72,6 +74,7 @@ cli.add_command(features2proteins)  # Unified pipeline (recommended)
 cli.add_command(peptides2protein)
 cli.add_command(tsne_visualization)
 cli.add_command(correct_batches)
+cli.add_command(tissuemap_cmd)
 
 
 def main():

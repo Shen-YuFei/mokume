@@ -29,7 +29,6 @@ from mokume.model.normalization import (
     FeatureNormalizationMethod,
     PeptideNormalizationMethod,
 )
-from mokume.model.labeling import QuantificationCategory
 from mokume.core.constants import (
     PROTEIN_NAME,
     PEPTIDE_CANONICAL,
@@ -162,18 +161,13 @@ class LoadingStage:
             feature.enrich_with_sdrf(self.config.input.sdrf)
 
         # Build query with filters
-        where_clause = filter_builder.build_where_clause()
-        query = f"""
-            SELECT
-                pg_accessions,
-                sequence,
-                sample_accession,
-                intensity
-            FROM parquet_db
-            WHERE {where_clause}
-        """
+        where_clause, where_params = filter_builder.build_where_clause()
+        query = "".join([
+            "SELECT pg_accessions, sequence, sample_accession, intensity",
+            " FROM parquet_db WHERE ", where_clause,
+        ])
 
-        df = feature.parquet_db.sql(query).df()
+        df = feature.parquet_db.execute(query, where_params).df()
 
         # Parse protein accessions
         # Extract first element from pg_accessions list, then parse UniProt ID

@@ -5,12 +5,15 @@ Phase 1: Data Acquisition
 Download datasets from PRIDE ibaqpy-research FTP for benchmarking protein quantification methods.
 """
 
+import shutil
 import urllib.request
 import urllib.error
+import urllib.parse
 import sys
 from pathlib import Path
-from typing import Optional, List
+from typing import List
 
+_opener = urllib.request.build_opener()
 from config import (
     ALL_DATASETS,
     HELA_DATASETS,
@@ -46,7 +49,10 @@ def download_file(url: str, dest: Path, verbose: bool = True) -> bool:
         print(f"  Downloading: {url}")
 
     try:
-        urllib.request.urlretrieve(url, dest)
+        if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+            raise ValueError(f"URL scheme not allowed: {url}")
+        with _opener.open(url) as response, open(dest, "wb") as out_file:
+            shutil.copyfileobj(response, out_file)
         if verbose:
             size_mb = dest.stat().st_size / (1024 * 1024)
             print(f"  Saved to: {dest.name} ({size_mb:.1f} MB)")
@@ -65,10 +71,12 @@ def download_file(url: str, dest: Path, verbose: bool = True) -> bool:
 def check_url_exists(url: str) -> bool:
     """Check if a URL exists without downloading."""
     try:
+        if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+            raise ValueError(f"URL scheme not allowed: {url}")
         request = urllib.request.Request(url, method='HEAD')
-        urllib.request.urlopen(request, timeout=10)
+        _opener.open(request, timeout=10)
         return True
-    except:
+    except Exception:
         return False
 
 
@@ -77,8 +85,10 @@ def list_available_files(base_url: str) -> List[str]:
     List files available at a URL (works for directory listings).
     """
     try:
-        response = urllib.request.urlopen(base_url, timeout=30)
-        content = response.read().decode('utf-8')
+        if urllib.parse.urlparse(base_url).scheme not in ("http", "https"):
+            raise ValueError(f"URL scheme not allowed: {base_url}")
+        with _opener.open(base_url, timeout=30) as response:
+            content = response.read().decode('utf-8')
         import re
         links = re.findall(r'href="([^"]+)"', content)
         return [l for l in links if not l.startswith('/') and not l.startswith('?')]

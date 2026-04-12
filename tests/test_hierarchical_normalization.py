@@ -99,7 +99,7 @@ class TestHierarchicalSampleNormalizer:
         """Test that normalization produces valid shift factors."""
         # Force quadratic optimization for better alignment
         normalizer = HierarchicalSampleNormalizer(num_samples_quadratic=100)
-        normalized = normalizer.fit_transform(simple_df)
+        _ = normalizer.fit_transform(simple_df)
 
         # Check that normalization factors are computed
         assert normalizer.normalization_factors_ is not None

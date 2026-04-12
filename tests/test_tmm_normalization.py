@@ -212,7 +212,7 @@ class TestTMMNormalizer:
         }, index=['P1', 'P2', 'P3'])
 
         tmm = TMMNormalizer()
-        result = tmm.fit_transform(data)
+        _ = tmm.fit_transform(data)
 
         # Factor should be 1.0
         assert np.isclose(tmm.norm_factors_['S1'], 1.0)

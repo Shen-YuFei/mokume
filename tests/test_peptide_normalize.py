@@ -20,19 +20,20 @@ class TestSQLFilterBuilder:
     def test_default_where_clause(self):
         """Test that default filter builder generates expected WHERE clause."""
         builder = SQLFilterBuilder()
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
         # Should include intensity > 0
         assert "intensity > 0" in where_clause
-        # Should include peptide length filter
-        assert 'LENGTH("sequence") >= 7' in where_clause
+        # Should include peptide length filter (parameterized)
+        assert 'LENGTH("sequence") >= ?' in where_clause
+        assert 7 in params
         # Should include unique peptide filter
         assert '"unique" = 1' in where_clause
-        # Should include contaminant filters
-        assert "CONTAMINANT" in where_clause
-        assert "DECOY" in where_clause
-        assert "ENTRAP" in where_clause
-        assert "NOT LIKE" in where_clause
+        # Should include contaminant filters (parameterized with ? placeholders)
+        assert "NOT LIKE ?" in where_clause
+        assert "%CONTAMINANT%" in params
+        assert "%DECOY%" in params
+        assert "%ENTRAP%" in params
 
     def test_custom_contaminant_patterns(self):
         """Test filter builder with custom contaminant patterns."""
@@ -40,34 +41,36 @@ class TestSQLFilterBuilder:
             contaminant_patterns=["CONTAM", "REV_"],
             min_peptide_length=5,
         )
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
-        assert "CONTAM" in where_clause
-        assert "REV_" in where_clause
-        assert "DECOY" not in where_clause
-        assert 'LENGTH("sequence") >= 5' in where_clause
+        assert "%CONTAM%" in params
+        assert "%REV_%" in params
+        assert "%DECOY%" not in params
+        assert 'LENGTH("sequence") >= ?' in where_clause
+        assert 5 in params
 
     def test_disable_contaminant_filter(self):
         """Test that contaminant filter can be disabled."""
         builder = SQLFilterBuilder(remove_contaminants=False)
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
-        assert "CONTAMINANT" not in where_clause
-        assert "DECOY" not in where_clause
+        assert "NOT LIKE" not in where_clause
+        assert not any("%" in str(p) for p in params)
         # Other filters should still be present
         assert "intensity > 0" in where_clause
 
     def test_min_intensity_threshold(self):
         """Test that min intensity threshold is applied."""
         builder = SQLFilterBuilder(min_intensity=1000.0)
-        where_clause = builder.build_where_clause()
+        where_clause, params = builder.build_where_clause()
 
-        assert "intensity >= 1000.0" in where_clause
+        assert "intensity >= ?" in where_clause
+        assert 1000.0 in params
 
     def test_disable_unique_requirement(self):
         """Test that unique peptide requirement can be disabled."""
         builder = SQLFilterBuilder(require_unique=False)
-        where_clause = builder.build_where_clause()
+        where_clause, _params = builder.build_where_clause()
 
         assert '"unique" = 1' not in where_clause
 
@@ -158,7 +161,7 @@ class TestFeatureWideFormat:
 
         # Before enrichment, condition should equal sample_accession
         conditions_before = feature.get_unique_conditions()
-        samples = feature.get_unique_samples()
+        _ = feature.get_unique_samples()
         # Conditions default to sample_accession
         assert len(conditions_before) > 0
 
@@ -196,24 +199,19 @@ class TestFeatureNewQPXFormat:
     def test_loads_new_qpx_format(self, feature_path):
         """Test that Feature detects and loads new QPX schema."""
         feature = Feature(feature_path)
-        if feature._is_new_qpx is not True:
-            raise AssertionError("Expected _is_new_qpx to be True")
-        if feature._charge_col != "charge":
-            raise AssertionError(f"Expected _charge_col='charge', got '{feature._charge_col}'")
-        if feature._run_col != "run_file_name":
-            raise AssertionError(f"Expected _run_col='run_file_name', got '{feature._run_col}'")
+        assert feature._is_new_qpx is True
+        assert feature._charge_col == "charge"
+        assert feature._run_col == "run_file_name"
 
         samples = feature.get_unique_samples()
-        if len(samples) == 0:
-            raise AssertionError("Expected at least one sample")
+        assert len(samples) > 0
 
     def test_unnested_columns_present(self, feature_path):
         """Test that unnested view has expected column names."""
         feature = Feature(feature_path)
         df = feature.parquet_db.sql("SELECT * FROM parquet_db LIMIT 1").df()
         for col in ["charge", "run_file_name", "sample_accession", "channel", "intensity", "condition"]:
-            if col not in df.columns:
-                raise AssertionError(f"Missing column: {col}")
+            assert col in df.columns, f"Missing column: {col}"
 
     def test_enrich_with_sdrf_maps_sample_accession(self, feature_path, sdrf_path):
         """Test that enrich_with_sdrf correctly maps (run_file_name, label) -> source name."""
@@ -222,10 +220,8 @@ class TestFeatureNewQPXFormat:
 
         samples = feature.get_unique_samples()
         # After SDRF enrichment, samples should be SDRF source names
-        if "Sample_A_126" not in samples:
-            raise AssertionError(f"'Sample_A_126' not found in samples: {samples}")
-        if "Sample_A_127N" not in samples:
-            raise AssertionError(f"'Sample_A_127N' not found in samples: {samples}")
+        assert "Sample_A_126" in samples, f"'Sample_A_126' not found in samples: {samples}"
+        assert "Sample_A_127N" in samples, f"'Sample_A_127N' not found in samples: {samples}"
 
     def test_enrich_with_sdrf_maps_condition(self, feature_path, sdrf_path):
         """Test that enrich_with_sdrf maps conditions from SDRF factor values."""
@@ -233,20 +229,16 @@ class TestFeatureNewQPXFormat:
         feature.enrich_with_sdrf(sdrf_path)
 
         conditions = feature.get_unique_conditions()
-        if "normal" not in conditions:
-            raise AssertionError(f"'normal' not found in conditions: {conditions}")
-        if "disease" not in conditions:
-            raise AssertionError(f"'disease' not found in conditions: {conditions}")
+        assert "normal" in conditions, f"'normal' not found in conditions: {conditions}"
+        assert "disease" in conditions, f"'disease' not found in conditions: {conditions}"
 
     def test_get_median_map(self, feature_path):
         """Test get_median_map works with new QPX format."""
         feature = Feature(feature_path)
         med_map = feature.get_median_map()
-        if len(med_map) == 0:
-            raise AssertionError("Expected non-empty median map")
+        assert len(med_map) > 0
         for sample, factor in med_map.items():
-            if factor <= 0:
-                raise AssertionError(f"Expected positive factor for {sample}, got {factor}")
+            assert factor > 0
 
 
 class TestPeptideNormalizationWideFormat:

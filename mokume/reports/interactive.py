@@ -55,8 +55,6 @@ def generate_de_report(
     str
         Path to the generated HTML file.
     """
-    import plotly.graph_objects as go
-
     protein_col = protein_df.columns[0]
     sample_cols = [c for c in protein_df.columns if c != protein_col]
     exp_samples = [s for s in sample_cols if sample_to_condition.get(s) is not None]
@@ -219,80 +217,84 @@ def _build_html(
         ],
     }
 
-    return f"""<!DOCTYPE html>
+    plotly_traces_json = json.dumps(plotly_traces)
+    volcano_layout_json = json.dumps(volcano_layout)
+
+    from string import Template
+    return Template("""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{title}</title>
+    <title>$title</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-               background: #f5f5f5; color: #333; }}
-        .header {{ background: #2c3e50; color: white; padding: 20px 30px; }}
-        .header h1 {{ font-size: 24px; margin-bottom: 8px; }}
-        .stats {{ display: flex; gap: 20px; margin-top: 10px; }}
-        .stat-box {{ background: rgba(255,255,255,0.15); padding: 8px 16px;
-                     border-radius: 6px; text-align: center; }}
-        .stat-box .number {{ font-size: 22px; font-weight: bold; }}
-        .stat-box .label {{ font-size: 11px; opacity: 0.8; }}
-        .container {{ max-width: 1400px; margin: 0 auto; padding: 20px; }}
-        .row {{ display: flex; gap: 20px; margin-bottom: 20px; }}
-        .col-8 {{ flex: 2; }}
-        .col-4 {{ flex: 1; }}
-        .card {{ background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                 padding: 16px; }}
-        .card h3 {{ margin-bottom: 12px; font-size: 15px; color: #2c3e50; }}
-        #volcano-plot {{ width: 100%; height: 500px; }}
-        #expression-plot {{ width: 100%; height: 350px; }}
-        .table-controls {{ margin-bottom: 10px; display: flex; gap: 10px; align-items: center; }}
-        .table-controls input {{ padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px;
-                                  font-size: 13px; width: 250px; }}
-        .table-controls select {{ padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
-                                   font-size: 13px; }}
-        #de-table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
-        #de-table th {{ background: #34495e; color: white; padding: 8px 10px; cursor: pointer;
-                        text-align: left; position: sticky; top: 0; }}
-        #de-table th:hover {{ background: #2c3e50; }}
-        #de-table td {{ padding: 6px 10px; border-bottom: 1px solid #eee; }}
-        #de-table tr:hover {{ background: #e8f4fd; cursor: pointer; }}
-        #de-table tr.selected {{ background: #d4edda; }}
-        .sig-up {{ color: #d62728; font-weight: bold; }}
-        .sig-down {{ color: #1f77b4; font-weight: bold; }}
-        .sig-unchanged {{ color: #999; }}
-        .table-wrapper {{ max-height: 400px; overflow-y: auto; border: 1px solid #ddd;
-                          border-radius: 4px; }}
-        .info-text {{ font-size: 12px; color: #666; margin-top: 8px; }}
-        .highlight {{ background: #fff3cd; }}
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+               background: #f5f5f5; color: #333; }
+        .header { background: #2c3e50; color: white; padding: 20px 30px; }
+        .header h1 { font-size: 24px; margin-bottom: 8px; }
+        .stats { display: flex; gap: 20px; margin-top: 10px; }
+        .stat-box { background: rgba(255,255,255,0.15); padding: 8px 16px;
+                     border-radius: 6px; text-align: center; }
+        .stat-box .number { font-size: 22px; font-weight: bold; }
+        .stat-box .label { font-size: 11px; opacity: 0.8; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .row { display: flex; gap: 20px; margin-bottom: 20px; }
+        .col-8 { flex: 2; }
+        .col-4 { flex: 1; }
+        .card { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                 padding: 16px; }
+        .card h3 { margin-bottom: 12px; font-size: 15px; color: #2c3e50; }
+        #volcano-plot { width: 100%; height: 500px; }
+        #expression-plot { width: 100%; height: 350px; }
+        .table-controls { margin-bottom: 10px; display: flex; gap: 10px; align-items: center; }
+        .table-controls input { padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px;
+                                  font-size: 13px; width: 250px; }
+        .table-controls select { padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
+                                   font-size: 13px; }
+        #de-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        #de-table th { background: #34495e; color: white; padding: 8px 10px; cursor: pointer;
+                        text-align: left; position: sticky; top: 0; }
+        #de-table th:hover { background: #2c3e50; }
+        #de-table td { padding: 6px 10px; border-bottom: 1px solid #eee; }
+        #de-table tr:hover { background: #e8f4fd; cursor: pointer; }
+        #de-table tr.selected { background: #d4edda; }
+        .sig-up { color: #d62728; font-weight: bold; }
+        .sig-down { color: #1f77b4; font-weight: bold; }
+        .sig-unchanged { color: #999; }
+        .table-wrapper { max-height: 400px; overflow-y: auto; border: 1px solid #ddd;
+                          border-radius: 4px; }
+        .info-text { font-size: 12px; color: #666; margin-top: 8px; }
+        .highlight { background: #fff3cd; }
     </style>
 </head>
 <body>
 
 <div class="header">
-    <h1>{title}</h1>
+    <h1>$title</h1>
     <div class="stats">
         <div class="stat-box">
-            <div class="number">{n_total}</div>
+            <div class="number">$n_total</div>
             <div class="label">Proteins Tested</div>
         </div>
         <div class="stat-box" style="border-left: 3px solid #d62728;">
-            <div class="number" style="color: #ff6b6b;">{n_up}</div>
+            <div class="number" style="color: #ff6b6b;">$n_up</div>
             <div class="label">Upregulated</div>
         </div>
         <div class="stat-box" style="border-left: 3px solid #1f77b4;">
-            <div class="number" style="color: #74b9ff;">{n_down}</div>
+            <div class="number" style="color: #74b9ff;">$n_down</div>
             <div class="label">Downregulated</div>
         </div>
         <div class="stat-box">
-            <div class="number">{n_unchanged}</div>
+            <div class="number">$n_unchanged</div>
             <div class="label">Unchanged</div>
         </div>
         <div class="stat-box">
-            <div class="number">{log2fc_threshold}</div>
+            <div class="number">$log2fc_threshold</div>
             <div class="label">|log2FC| cutoff</div>
         </div>
         <div class="stat-box">
-            <div class="number">{fdr_threshold}</div>
+            <div class="number">$fdr_threshold</div>
             <div class="label">FDR cutoff</div>
         </div>
     </div>
@@ -349,33 +351,33 @@ def _build_html(
 
 <script>
 // Data
-const intensityData = {intensity_data};
-const tableRows = {table_rows};
-const sampleToCondition = {sample_to_condition};
-const condColors = {cond_colors};
-const expSamples = {exp_samples};
+const intensityData = $intensity_data;
+const tableRows = $table_rows;
+const sampleToCondition = $sample_to_condition;
+const condColors = $cond_colors;
+const expSamples = $exp_samples;
 
 // Volcano plot
-const volcanoTraces = {json.dumps(plotly_traces)};
-const volcanoLayout = {json.dumps(volcano_layout)};
-volcanoLayout.margin = {{t: 50, b: 50, l: 60, r: 20}};
+const volcanoTraces = $plotly_traces_json;
+const volcanoLayout = $volcano_layout_json;
+volcanoLayout.margin = {t: 50, b: 50, l: 60, r: 20};
 
-Plotly.newPlot('volcano-plot', volcanoTraces, volcanoLayout, {{responsive: true}});
+Plotly.newPlot('volcano-plot', volcanoTraces, volcanoLayout, {responsive: true});
 
 // Click handler for volcano
-document.getElementById('volcano-plot').on('plotly_click', function(data) {{
+document.getElementById('volcano-plot').on('plotly_click', function(data) {
     const protein = data.points[0].customdata[0];
     showExpression(protein);
     highlightTableRow(protein);
-}});
+});
 
 // Expression plot
-function showExpression(protein) {{
+function showExpression(protein) {
     const data = intensityData[protein];
-    if (!data) {{
+    if (!data) {
         document.getElementById('expression-info').textContent = 'No intensity data for ' + protein;
         return;
-    }}
+    }
 
     // Find DE info
     const deRow = tableRows.find(r => r.protein === protein);
@@ -386,34 +388,34 @@ function showExpression(protein) {{
     const y = samples.map(s => Math.log2(data[s]));
     const colors = samples.map(s => condColors[sampleToCondition[s]] || '#999');
 
-    const trace = {{
+    const trace = {
         type: 'bar',
         x: x,
         y: y,
-        marker: {{ color: colors }},
-        hovertemplate: '<b>%{{x}}</b><br>log2 intensity: %{{y:.2f}}<extra></extra>',
-    }};
+        marker: { color: colors },
+        hovertemplate: '<b>%{x}</b><br>log2 intensity: %{y:.2f}<extra></extra>',
+    };
 
-    const layout = {{
-        title: {{ text: protein + fcText, font: {{ size: 13 }} }},
-        xaxis: {{ tickangle: 45, tickfont: {{ size: 9 }} }},
-        yaxis: {{ title: 'log2 Intensity' }},
-        margin: {{ t: 40, b: 80, l: 50, r: 10 }},
+    const layout = {
+        title: { text: protein + fcText, font: { size: 13 } },
+        xaxis: { tickangle: 45, tickfont: { size: 9 } },
+        yaxis: { title: 'log2 Intensity' },
+        margin: { t: 40, b: 80, l: 50, r: 10 },
         showlegend: false,
-    }};
+    };
 
-    Plotly.newPlot('expression-plot', [trace], layout, {{responsive: true}});
+    Plotly.newPlot('expression-plot', [trace], layout, {responsive: true});
     document.getElementById('expression-info').textContent =
         'Showing: ' + protein + ' | Condition colors match legend';
-}}
+}
 
 // Populate table
-function populateTable(filter, search) {{
+function populateTable(filter, search) {
     const tbody = document.getElementById('de-tbody');
     tbody.innerHTML = '';
     let count = 0;
 
-    tableRows.forEach(row => {{
+    tableRows.forEach(row => {
         if (filter === 'UP' && row.sig !== 'UP') return;
         if (filter === 'DOWN' && row.sig !== 'DOWN') return;
         if (filter === 'significant' && row.sig === 'Unchanged') return;
@@ -422,10 +424,10 @@ function populateTable(filter, search) {{
         count++;
         const tr = document.createElement('tr');
         tr.id = 'row-' + row.protein;
-        tr.onclick = function() {{
+        tr.onclick = function() {
             showExpression(row.protein);
             highlightTableRow(row.protein);
-        }};
+        };
 
         const sigClass = row.sig === 'UP' ? 'sig-up' : row.sig === 'DOWN' ? 'sig-down' : 'sig-unchanged';
 
@@ -434,44 +436,44 @@ function populateTable(filter, search) {{
             + '<td style="text-align:right">' + row.pvalue + '</td>'
             + '<td class="' + sigClass + '">' + row.sig + '</td>';
         tbody.appendChild(tr);
-    }});
+    });
 
     document.getElementById('table-count').textContent = count + ' / ' + tableRows.length + ' proteins';
-}}
+}
 
-function highlightTableRow(protein) {{
+function highlightTableRow(protein) {
     document.querySelectorAll('#de-table tr.selected').forEach(tr => tr.classList.remove('selected'));
     const row = document.getElementById('row-' + protein);
-    if (row) {{
+    if (row) {
         row.classList.add('selected');
-        row.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-    }}
-}}
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
 
 // Sort
 let sortDir = [1, 1, 1, 1];
-function sortTable(col) {{
+function sortTable(col) {
     sortDir[col] *= -1;
-    tableRows.sort((a, b) => {{
+    tableRows.sort((a, b) => {
         const keys = ['protein', 'log2FC', 'pvalue_raw', 'sig'];
         let va = a[keys[col]], vb = b[keys[col]];
         if (typeof va === 'string') return va.localeCompare(vb) * sortDir[col];
         return (va - vb) * sortDir[col];
-    }});
+    });
     const filter = document.getElementById('sig-filter').value;
     const search = document.getElementById('search-input').value;
     populateTable(filter, search);
-}}
+}
 
 // Filters
-document.getElementById('search-input').addEventListener('input', function() {{
+document.getElementById('search-input').addEventListener('input', function() {
     const filter = document.getElementById('sig-filter').value;
     populateTable(filter, this.value);
-}});
-document.getElementById('sig-filter').addEventListener('change', function() {{
+});
+document.getElementById('sig-filter').addEventListener('change', function() {
     const search = document.getElementById('search-input').value;
     populateTable(this.value, search);
-}});
+});
 
 // Initial render
 populateTable('all', '');
@@ -485,4 +487,19 @@ if (firstHighlight) showExpression(firstHighlight.protein);
     Generated by <a href="https://github.com/bigbio/mokume" style="color: #666;">mokume</a>
 </div>
 </body>
-</html>"""
+</html>""").substitute(
+        title=title,
+        n_total=n_total,
+        n_up=n_up,
+        n_down=n_down,
+        n_unchanged=n_unchanged,
+        log2fc_threshold=log2fc_threshold,
+        fdr_threshold=fdr_threshold,
+        intensity_data=intensity_data,
+        table_rows=table_rows,
+        sample_to_condition=sample_to_condition,
+        cond_colors=cond_colors,
+        exp_samples=exp_samples,
+        plotly_traces_json=plotly_traces_json,
+        volcano_layout_json=volcano_layout_json,
+    )

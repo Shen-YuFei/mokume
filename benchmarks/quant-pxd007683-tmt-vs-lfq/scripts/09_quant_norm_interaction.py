@@ -15,8 +15,6 @@ Note: MaxLFQ is included for comparison but is NOT recommended for TMT.
 import sys
 from pathlib import Path
 import warnings
-from itertools import product
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,11 +24,10 @@ import seaborn as sns
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
-    SAMPLE_CONDITIONS, CONDITION_COLORS,
+    SAMPLE_CONDITIONS,
     CV_THRESHOLDS, LOCAL_QUANTIFIED_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
     EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
-    get_methods_for_technology,
 )
 
 # Add mokume to path
@@ -196,7 +193,7 @@ def run_benchmark(technology: str) -> list:
         try:
             df_base = load_quantified_data(technology, quant_method)
             df_base = df_base.replace(0, np.nan).dropna(thresh=3)
-            n_proteins = len(df_base)
+            _ = len(df_base)  # protein count logged elsewhere
         except FileNotFoundError as e:
             print(f"  Skipping {quant_method}: {e}")
             continue
@@ -420,7 +417,7 @@ def main():
                   f"(RMSE={best_rmse['fc_rmse']:.3f})")
 
             # Best per quantification method
-            print(f"\n  Best normalization per quant method (by CV):")
+            print("\n  Best normalization per quant method (by CV):")
             for quant in tech_df["quant_method"].unique():
                 quant_df = tech_df[tech_df["quant_method"] == quant]
                 best = quant_df.loc[quant_df["within_cv"].idxmin()]

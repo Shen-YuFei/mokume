@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Optional, Dict, List
 
 import pandas as pd
-import numpy as np
 
 # Add parent directory to path for mokume imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     ALL_DATASETS,
     HELA_DATASETS,
-    PROCESSED_DIR,
     PROTEIN_QUANT_DIR,
     FASTA_FILE,
     QUANTIFICATION_METHODS,
@@ -93,7 +91,7 @@ def run_ibaq(
                 result = pd.read_csv(output_file, sep="\t")
                 return result
             else:
-                print(f"  ERROR: iBAQ output file not generated")
+                print("  ERROR: iBAQ output file not generated")
                 return None
 
     except Exception as e:
@@ -336,7 +334,7 @@ def quantify_all_datasets(
 
     # Check FASTA
     if "ibaq" in methods and not FASTA_FILE.exists():
-        print(f"\nWARNING: FASTA file not found. iBAQ will be skipped.")
+        print("\nWARNING: FASTA file not found. iBAQ will be skipped.")
 
     all_results = {}
 

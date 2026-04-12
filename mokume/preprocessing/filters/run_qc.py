@@ -2,10 +2,9 @@
 Run/Sample QC preprocessing filters.
 """
 
-from typing import Optional, Tuple, List
+from typing import Tuple
 
 import pandas as pd
-import numpy as np
 
 from mokume.core.logger import get_logger
 from mokume.core.constants import (

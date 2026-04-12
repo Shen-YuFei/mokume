@@ -5,12 +5,9 @@ Provides statistical testing to identify proteins with significant abundance
 differences between experimental conditions.
 """
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 from scipy import stats
-from scipy.optimize import minimize_scalar
 from statsmodels.stats.multitest import multipletests
 
 from mokume.core.logger import get_logger

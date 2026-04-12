@@ -20,7 +20,6 @@ import warnings
 
 import pandas as pd
 import numpy as np
-from scipy import stats
 import matplotlib.pyplot as plt
 
 # Add parent to path for config import
@@ -29,7 +28,7 @@ from config import (
     RESULTS_DIR, FIGURES_DIR,
     SAMPLE_CONDITIONS, EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
     CONDITION_COLORS, TECHNOLOGY_COLORS,
-    BENCHMARKS_LOCAL_DIR, LOCAL_QUANTIFIED_DIR, LOCAL_DATA_DIR,
+    LOCAL_QUANTIFIED_DIR, LOCAL_DATA_DIR,
     FIGURE_DPI, FIGURE_FORMAT,
 )
 
@@ -257,7 +256,7 @@ def plot_fold_change_accuracy(fc_df: pd.DataFrame, technology: str, output_path:
             patch.set_facecolor(color)
             patch.set_alpha(0.6)
 
-        ax.axhline(expected_yeast, color="red", linestyle="--", label=f"Expected yeast")
+        ax.axhline(expected_yeast, color="red", linestyle="--", label="Expected yeast")
         ax.axhline(0, color="green", linestyle="--", label="Expected human")
 
     ax.set_ylabel("Observed log2(Fold-Change)")
@@ -345,7 +344,7 @@ def main():
             all_fc_data[technology] = fc_df
 
             # Species breakdown
-            print(f"  Species in results:")
+            print("  Species in results:")
             for species, count in fc_df["species"].value_counts().items():
                 print(f"    {species}: {count}")
 
@@ -423,7 +422,7 @@ def main():
         if human_key in metrics:
             m = metrics[human_key]
             print(f"\n{tech.upper()} - Human proteins (negative control):")
-            print(f"  Expected log2FC: 0.0")
+            print("  Expected log2FC: 0.0")
             print(f"  Observed median log2FC: {m['observed_median_log2_fc']:.2f}")
             print(f"  False positive rate (|log2FC| > 1): {m['false_positive_rate']:.1%}")
 

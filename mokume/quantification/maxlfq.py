@@ -27,6 +27,7 @@ References:
 """
 
 
+import importlib
 import warnings
 from typing import Optional
 
@@ -47,11 +48,11 @@ logger = get_logger("mokume.quantification.maxlfq")
 
 
 def _is_directlfq_available() -> bool:
-    """Check if DirectLFQ package is installed."""
+    """Check if DirectLFQ package is installed and importable."""
     try:
-        import directlfq
+        importlib.import_module("directlfq")
         return True
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
         return False
 
 

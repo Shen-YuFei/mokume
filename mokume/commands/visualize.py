@@ -45,7 +45,7 @@ def compute_tsne(df_pca, n_components=2, perplexity=30, learning_rate=200, n_ite
     required=False,
     default="proteins.tsv",
 )
-def tsne_visualization(folder: str, pattern: str):
+def tsne_visualization(folder: str = None, pattern: str = "proteins.tsv"):
     """Generate a t-SNE visualization for protein data from specified files."""
     if not is_plotting_available():
         raise click.ClickException(

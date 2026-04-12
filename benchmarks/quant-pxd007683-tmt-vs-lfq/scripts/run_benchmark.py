@@ -17,7 +17,9 @@ Usage:
     python run_benchmark.py --step 3  # Run only step 3
 """
 
-import subprocess
+import multiprocessing
+import os
+import runpy
 import sys
 import argparse
 from pathlib import Path
@@ -35,29 +37,51 @@ STEPS = [
 ]
 
 
-def run_script(script_name: str, description: str) -> bool:
-    """Run a single benchmark script."""
-    script_path = SCRIPT_DIR / script_name
+def _validate_step(step_index: int):
+    """Validate step index and return (script_name, description, resolved_path) or None."""
+    if not 0 <= step_index < len(STEPS):
+        print(f"  Invalid step index: {step_index}")
+        return None
+
+    script_name, description = STEPS[step_index]
+    script_path = (SCRIPT_DIR / script_name).resolve()
+
+    if not script_path.is_relative_to(SCRIPT_DIR.resolve()):
+        print(f"  Script path escapes allowed directory: {script_path}")
+        return None
 
     if not script_path.exists():
         print(f"  Script not found: {script_path}")
+        return None
+
+    return script_name, description, script_path
+
+
+def run_step(step_index: int) -> bool:
+    """Run a single benchmark script by its index in STEPS."""
+    validated = _validate_step(step_index)
+    if validated is None:
         return False
+
+    script_name, description, script_path = validated
 
     print(f"\n{'='*60}")
     print(f"Running: {description}")
     print(f"Script: {script_name}")
     print("=" * 60)
 
+    def _target(path: str, cwd: str) -> None:
+        os.chdir(cwd)
+        runpy.run_path(path, run_name="__main__")
+
     try:
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            cwd=str(SCRIPT_DIR),
-            check=True,
+        proc = multiprocessing.Process(
+            target=_target,
+            args=(str(script_path), str(SCRIPT_DIR)),
         )
-        return result.returncode == 0
-    except subprocess.CalledProcessError as e:
-        print(f"\nERROR: Script failed with return code {e.returncode}")
-        return False
+        proc.start()
+        proc.join()
+        return proc.exitcode == 0
     except Exception as e:
         print(f"\nERROR: {e}")
         return False
@@ -90,29 +114,29 @@ def main():
     for i, (script, desc) in enumerate(STEPS):
         print(f"  {i}. {desc}")
 
-    # Determine which steps to run
+    # Determine which step indices to run
     if args.step is not None:
-        steps_to_run = [STEPS[args.step]]
+        indices_to_run = [args.step]
         print(f"\nRunning only step {args.step}")
     else:
-        steps_to_run = STEPS.copy()
+        indices_to_run = list(range(len(STEPS)))
 
         if args.skip_download:
-            steps_to_run = [(s, d) for s, d in steps_to_run if "download" not in s.lower()]
+            indices_to_run = [i for i in indices_to_run if "download" not in STEPS[i][0].lower()]
             print("\nSkipping download step")
 
         if args.quick:
-            steps_to_run = [(s, d) for s, d in steps_to_run if "grid_search" not in s.lower()]
+            indices_to_run = [i for i in indices_to_run if "grid_search" not in STEPS[i][0].lower()]
             print("\nQuick mode: skipping grid search")
 
     # Run steps
     results = []
-    for script, description in steps_to_run:
-        success = run_script(script, description)
-        results.append((script, success))
+    for idx in indices_to_run:
+        success = run_step(idx)
+        results.append((STEPS[idx][0], success))
 
         if not success:
-            print(f"\nStep failed: {script}")
+            print(f"\nStep failed: {STEPS[idx][0]}")
             if input("Continue with remaining steps? (y/n): ").lower() != "y":
                 break
 

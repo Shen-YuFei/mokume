@@ -5,6 +5,7 @@ This module provides optional interactive HTML reports using plotly.
 Install with: pip install mokume[reports]
 """
 
+import importlib.util
 from typing import TYPE_CHECKING
 
 _INTERACTIVE_AVAILABLE = None
@@ -21,12 +22,7 @@ def is_interactive_available() -> bool:
     """
     global _INTERACTIVE_AVAILABLE
     if _INTERACTIVE_AVAILABLE is None:
-        try:
-            import plotly
-
-            _INTERACTIVE_AVAILABLE = True
-        except ImportError:
-            _INTERACTIVE_AVAILABLE = False
+        _INTERACTIVE_AVAILABLE = importlib.util.find_spec("plotly") is not None
     return _INTERACTIVE_AVAILABLE
 
 

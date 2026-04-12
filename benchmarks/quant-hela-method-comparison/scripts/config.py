@@ -6,8 +6,8 @@ All datasets from ibaqpy-research FTP with verified file names.
 """
 
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from dataclasses import dataclass
+from typing import Dict
 
 # Base directories
 BENCHMARK_DIR = Path(__file__).parent

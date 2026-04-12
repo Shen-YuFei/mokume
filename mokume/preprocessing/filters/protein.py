@@ -3,7 +3,7 @@ Protein-level preprocessing filters.
 """
 
 import re
-from typing import Optional, Tuple, List
+from typing import Tuple, List
 
 import pandas as pd
 
