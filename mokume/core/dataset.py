@@ -41,7 +41,7 @@ from mokume.core.constants import PROTEIN_NAME, SAMPLE_ID
 from mokume.core.schema import validate_schema
 
 # Type alias for data that can be either eager or lazy
-DataLevel = Union[pd.DataFrame, "LazyFrame"]
+DataLevel = Union[pd.DataFrame, Any]  # LazyFrame at runtime
 
 # Sentinel to avoid circular import at module level
 _LazyFrame = None
