@@ -1,5 +1,33 @@
 {% extends "base.html" %}
 
+{% block extrahead %}
+<meta property="og:image" content="https://mokume.quantms.org/images/social-card.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "mokume",
+  "description": "Python library for protein quantification from peptide-level data. Supports iBAQ, TopN, DirectLFQ, MaxLFQ, and ratio methods.",
+  "applicationCategory": "Scientific Software",
+  "applicationSubCategory": "Proteomics",
+  "operatingSystem": "Linux, macOS, Windows",
+  "url": "https://mokume.quantms.org",
+  "downloadUrl": "https://pypi.org/project/mokume/",
+  "license": "https://opensource.org/licenses/MIT",
+  "author": {
+    "@type": "Organization",
+    "name": "BigBio",
+    "url": "https://quantms.org"
+  },
+  "citation": {
+    "@type": "ScholarlyArticle",
+    "name": "ibaqpy: A comprehensive Python library for proteomics absolute quantification",
+    "url": "https://doi.org/10.1016/j.jprot.2025.105440"
+  }
+}
+</script>
+{% endblock %}
+
 {% block footer %}
 <footer class="md-footer">
   {% if page.previous_page or page.next_page %}
