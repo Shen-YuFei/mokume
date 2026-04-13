@@ -128,6 +128,9 @@ extra_css:
   - https://quantms.org/css/quantms-theme.css
 
 extra:
+  analytics:
+    provider: google
+    property: G-6PL70G5VC1
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/bigbio/mokume
