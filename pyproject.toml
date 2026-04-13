@@ -1,16 +1,18 @@
-[tool.poetry]
+# PEP 621 project metadata (used by uv, pip, and other standard tools)
+[project]
 name = "mokume"
+dynamic = ["version"]
 description = "A comprehensive proteomics quantification library supporting multiple methods (iBAQ, Top3, TopN, MaxLFQ, DirectLFQ)"
 readme = "README.md"
-license = "MIT"
-version = "0.1.0"
+license = { text = "MIT" }
+requires-python = ">=3.9"
 authors = [
-    "Yasset Perez-Riverol <ypriverol@gmail.com>",
-    "Dai Chengxin <chengxin2024@126.com>",
-    "Julianus Pfeuffer <jule.pf@gmail.com>",
-    "Joshua Klein <joshua.adam.klein@gmail.com>",
-    "Enrique Audain <enrique.audain.martinez@uni-oldenburg.de>",
-    "Ping Zheng <zprobot80@gmail.com>"
+    { name = "Yasset Perez-Riverol", email = "ypriverol@gmail.com" },
+    { name = "Dai Chengxin", email = "chengxin2024@126.com" },
+    { name = "Julianus Pfeuffer", email = "jule.pf@gmail.com" },
+    { name = "Joshua Klein", email = "joshua.adam.klein@gmail.com" },
+    { name = "Enrique Audain", email = "enrique.audain.martinez@uni-oldenburg.de" },
+    { name = "Ping Zheng", email = "zprobot80@gmail.com" }
 ]
 keywords = [
     "quantms",
@@ -33,80 +35,57 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Development Status :: 4 - Beta"
 ]
-packages = [
-    { include = "mokume" }
+dependencies = [
+    "scikit-learn",
+    "pyopenms",
+    "numpy<2.1.0",
+    "click",
+    "pandas",
+    "pyarrow>=16.1.0",
+    "duckdb>=0.10.1",
+    "qnorm",
+    "scipy>=1.10",
+    "statsmodels>=0.13",
+    "typing_extensions>=4.6.3",
+    "anndata",
 ]
 
-[tool.poetry.urls]
+[project.optional-dependencies]
+plotting = ["matplotlib", "seaborn>=0.13.2"]
+reports = ["plotly>=5.0"]
+directlfq = ["directlfq>=0.3.0", "pyyaml>=6.0"]
+batch-correction = ["combat>=0.3"]
+inmoose = ["combat>=0.3"]
+tissuemap = ["scanpy>=1.9", "combat>=0.3", "umap-learn>=0.5", "matplotlib", "seaborn>=0.13.2"]
+all = ["directlfq>=0.3.0", "pyyaml>=6.0", "combat>=0.3", "matplotlib", "seaborn>=0.13.2", "plotly>=5.0", "scanpy>=1.9", "umap-learn>=0.5"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "ruff",
+]
+
+[project.scripts]
+mokume = "mokume.mokume_cli:main"
+
+[project.urls]
 Homepage = "https://quantms.org"
 Documentation = "https://mokume.quantms.org"
 GitHub = "https://github.com/bigbio/mokume"
 "Bug Tracker" = "https://github.com/bigbio/mokume/issues"
 PyPI = "https://pypi.org/project/mokume/"
 
-[tool.poetry.dependencies]
-python = ">=3.9"
-scikit-learn = "*"
-pyopenms = "*"
-numpy = "<2.1.0"
-click = "*"
-pandas = "*"
-pyarrow = ">=16.1.0"
-duckdb = ">=0.10.1"
-qnorm  = "*"
-scipy  = ">=1.10"
-statsmodels = ">=0.13"
-typing_extensions = ">=4.6.3"
-anndata = "*"
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.0"
-pytest-cov = "^4.0"
-flake8 = "^7.0"
+[tool.hatch.version]
+source = "vcs"
 
-[tool.poetry.extras]
-plotting = ["matplotlib", "seaborn"]
-reports = ["plotly"]
-directlfq = ["directlfq", "pyyaml"]
-batch-correction = ["combat"]
-inmoose = ["combat"]  # Deprecated alias, use batch-correction instead
-tissuemap = ["scanpy", "combat", "umap-learn", "matplotlib", "seaborn"]
-all = ["directlfq", "pyyaml", "combat", "matplotlib", "seaborn", "plotly", "scanpy", "umap-learn"]
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version"
 
-[tool.poetry.dependencies.matplotlib]
-version = "*"
-optional = true
-
-[tool.poetry.dependencies.seaborn]
-version = ">=0.13.2"
-optional = true
-
-[tool.poetry.dependencies.directlfq]
-version = ">=0.3.0"
-optional = true
-
-[tool.poetry.dependencies.pyyaml]
-version = ">=6.0"
-optional = true
-
-[tool.poetry.dependencies.combat]
-version = ">=0.3"
-optional = true
-
-[tool.poetry.dependencies.plotly]
-version = ">=5.0"
-optional = true
-
-[tool.poetry.dependencies.scanpy]
-version = ">=1.9"
-optional = true
-
-[tool.poetry.dependencies.umap-learn]
-version = ">=0.5"
-optional = true
-
-[tool.poetry.scripts]
-mokume = "mokume.mokume_cli:main"
+[tool.hatch.build.targets.wheel]
+packages = ["mokume"]
 
 [tool.pytest.ini_options]
 # Show print output during tests (needed for quantification comparison tables)
@@ -131,7 +110,3 @@ profile = "black"
 [tool.black]
 line-length = 99
 target-version = ["py39"]
-
-[build-system]
-requires = ["poetry-core>=1.2.0"]
-build-backend = "poetry.core.masonry.api"
