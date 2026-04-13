@@ -19,7 +19,11 @@ keywords = [
     "data-analysis",
     "big data",
     "ibaq",
-    "quantification"
+    "quantification",
+    "protein-quantification",
+    "directlfq",
+    "maxlfq",
+    "tmt-quantification"
 ]
 classifiers = [
     "Intended Audience :: Science/Research",
@@ -32,6 +36,13 @@ classifiers = [
 packages = [
     { include = "mokume" }
 ]
+
+[tool.poetry.urls]
+Homepage = "https://quantms.org"
+Documentation = "https://mokume.quantms.org"
+GitHub = "https://github.com/bigbio/mokume"
+"Bug Tracker" = "https://github.com/bigbio/mokume/issues"
+PyPI = "https://pypi.org/project/mokume/"
 
 [tool.poetry.dependencies]
 python = ">=3.9"
