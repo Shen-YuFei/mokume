@@ -1,5 +1,4 @@
-"""
-Censored-aware missing value imputation for proteomics data.
+"""Censored-aware missing value imputation for proteomics data.
 
 Implements multiple imputation strategies that account for the
 non-random nature of missingness in mass spectrometry data:
@@ -13,6 +12,7 @@ References
 ----------
 - Lazar C, et al. Accounting for the Multiple Natures of Missing Values
   in Label-Free Quantitative Proteomics. J Proteome Res. 2016;15(4):1116-25.
+
 """
 
 import numpy as np
@@ -28,26 +28,7 @@ def classify_missing(
     data: pd.DataFrame,
     quantile_threshold: float = 0.01,
 ) -> pd.DataFrame:
-    """
-    Classify each missing value as MNAR or MCAR.
-
-    A missing value is classified as MNAR if the observed values for that
-    protein are near or below the per-sample detection threshold.
-
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Protein intensity matrix (proteins × samples), may contain NaN.
-    quantile_threshold : float
-        Quantile of per-sample observed intensities used as the censoring
-        threshold. Default: 0.01 (1st percentile).
-
-    Returns
-    -------
-    pd.DataFrame
-        Boolean matrix of same shape as *data*, True where a value is
-        classified as MNAR (left-censored), False for MCAR or observed.
-    """
+    """Classify each missing value as MNAR or MCAR."""
     # Per-sample censoring threshold
     thresholds = data.quantile(quantile_threshold, axis=0)
 
@@ -83,7 +64,7 @@ def impute_minprob(
     shift: float = 1.6,
     scale: float = 0.3,
 ) -> pd.DataFrame:
-    """MinProb imputation: draw from N(q_low - shift*sd, scale*sd) per sample."""
+    """Perform MinProb imputation using a low-tail normal draw per sample."""
     result = data.copy()
     n_imputed = 0
 
@@ -113,24 +94,7 @@ def impute_mindet(
     data: pd.DataFrame,
     quantile: float = 0.01,
 ) -> pd.DataFrame:
-    """
-    MinDet (minimum detection) imputation.
-
-    Replaces missing values with the *quantile*-th percentile of observed
-    values in the corresponding sample.
-
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Log2 protein intensity matrix (proteins × samples).
-    quantile : float
-        Quantile to use as the imputation value (default 0.01).
-
-    Returns
-    -------
-    pd.DataFrame
-        Imputed matrix.
-    """
+    """Apply MinDet imputation using a per-sample observed quantile."""
     result = data.copy()
     n_imputed = 0
 
@@ -154,33 +118,16 @@ def impute_censored(
     method: str = "minprob",
     **kwargs,
 ) -> pd.DataFrame:
-    """
-    Unified interface for censored-aware imputation.
-
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Log2 protein intensity matrix (proteins × samples).
-    method : str
-        Imputation method: ``"minprob"``, ``"mindet"``,
-        ``"knn"``, or ``"none"``.
-    **kwargs
-        Method-specific keyword arguments.
-
-    Returns
-    -------
-    pd.DataFrame
-        Imputed matrix.
-    """
+    """Dispatch censored-aware imputation by method name."""
     method = method.lower()
     if method == "none":
         logger.info("No imputation applied (method='none')")
         return data.copy()
-    elif method == "minprob":
+    if method == "minprob":
         return impute_minprob(data, **kwargs)
-    elif method == "mindet":
+    if method == "mindet":
         return impute_mindet(data, **kwargs)
-    elif method == "knn":
+    if method == "knn":
         imputer = KNNImputer(
             n_neighbors=kwargs.get("n_neighbors", 5),
             weights=kwargs.get("weights", "uniform"),
@@ -193,8 +140,7 @@ def impute_censored(
         n_imputed = data.isna().sum().sum()
         logger.info("KNN imputation: %d values imputed", n_imputed)
         return result
-    else:
-        raise ValueError(
-            f"Unknown imputation method '{method}'. "
-            f"Choose from: 'minprob', 'mindet', 'knn', 'none'"
-        )
+    raise ValueError(
+        f"Unknown imputation method '{method}'. "
+        f"Choose from: 'minprob', 'mindet', 'knn', 'none'"
+    )

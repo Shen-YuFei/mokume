@@ -1,5 +1,4 @@
-"""
-Pipeline configuration dataclasses.
+"""Pipeline configuration dataclasses.
 
 This module provides nested configuration dataclasses for the
 quantification pipeline, replacing the flat PipelineConfig.
@@ -11,7 +10,9 @@ from typing import Optional
 
 @dataclass
 class InputConfig:
+
     """Input file paths."""
+
     parquet: str
     sdrf: Optional[str] = None
     fasta_file: Optional[str] = None
@@ -19,7 +20,9 @@ class InputConfig:
 
 @dataclass
 class FilterConfig:
+
     """Peptide/protein filtering parameters."""
+
     min_aa: int = 7
     min_unique_peptides: int = 2
     remove_contaminants: bool = True
@@ -27,7 +30,9 @@ class FilterConfig:
 
 @dataclass
 class NormalizationConfig:
+
     """Normalization method parameters."""
+
     run_method: str = "median"
     sample_method: str = "globalMedian"
     proteins_file: Optional[str] = None
@@ -35,7 +40,9 @@ class NormalizationConfig:
 
 @dataclass
 class QuantificationConfig:
+
     """Quantification method parameters."""
+
     method: str = "maxlfq"
     ion_alignment: Optional[str] = None
     coverage_threshold: Optional[float] = None
@@ -48,7 +55,9 @@ class QuantificationConfig:
 
 @dataclass
 class IRSConfig:
+
     """IRS (Internal Reference Scaling) normalization parameters."""
+
     enabled: bool = False
     reference_samples: Optional[list] = None
     sdrf_column: Optional[str] = None
@@ -60,7 +69,9 @@ class IRSConfig:
 
 @dataclass
 class BatchCorrectionConfig:
+
     """Batch correction parameters."""
+
     enabled: bool = False
     method: str = "sample_prefix"
     column: Optional[str] = None
@@ -72,7 +83,9 @@ class BatchCorrectionConfig:
 
 @dataclass
 class ImputationConfig:
+
     """Missing value imputation parameters."""
+
     enabled: bool = False
     method: str = "none"
     # MinProb parameters
@@ -85,7 +98,9 @@ class ImputationConfig:
 
 @dataclass
 class DEConfig:
+
     """Differential expression analysis parameters."""
+
     enabled: bool = False
     contrasts: Optional[list] = None
     method: str = "auto"
@@ -97,7 +112,9 @@ class DEConfig:
 
 @dataclass
 class OutputConfig:
+
     """Output and export parameters."""
+
     export_peptides: Optional[str] = None
     export_ions: Optional[str] = None
     plot_dir: Optional[str] = None
@@ -111,8 +128,8 @@ class OutputConfig:
 
 @dataclass
 class PipelineConfig:
-    """
-    Configuration for the quantification pipeline.
+
+    """Configuration for the quantification pipeline.
 
     Organizes settings into logical groups:
     - input: File paths (parquet, sdrf, fasta)
@@ -125,6 +142,7 @@ class PipelineConfig:
     - de: Differential expression analysis
     - output: Export paths, plotting, reports
     """
+
     input: InputConfig
     filtering: FilterConfig = field(default_factory=FilterConfig)
     normalization: NormalizationConfig = field(default_factory=NormalizationConfig)

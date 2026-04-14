@@ -1,5 +1,4 @@
-"""
-DEqMS-style differential expression analysis.
+"""DEqMS-style differential expression analysis.
 
 Implements the spectraCounteBayes method from Zhu et al. (2020) which extends
 limma's empirical Bayes moderated t-test by incorporating peptide/spectra
@@ -10,19 +9,30 @@ Reference
 Zhu Y, Orre LM, Zhou Tran Y, et al. DEqMS: a method for accurate variance
 estimation in differential protein expression analysis. *Mol Cell Proteomics*.
 2020;19(6):1047-1057.
+
 """
 
 import warnings
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.special import digamma, polygamma
 from statsmodels.nonparametric.smoothers_lowess import lowess
+from statsmodels.stats.multitest import multipletests
 
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.analysis.deqms")
+
+
+class _DEqMSInputs(NamedTuple):
+    log2fc: np.ndarray
+    sigma2: np.ndarray
+    df_residual: np.ndarray
+    peptide_counts: np.ndarray
+    stdev_unscaled: np.ndarray
 
 
 def _trigamma(x):
@@ -31,24 +41,7 @@ def _trigamma(x):
 
 
 def _estimate_d0_grid(mean_sq_residual, max_genes):
-    """
-    Estimate prior degrees of freedom d0 by grid search.
-
-    Replicates the DEqMS grid search:
-    ``for i in 1:(numgenes*10): testd0 = i/10``
-
-    Parameters
-    ----------
-    mean_sq_residual : float
-        Mean of ``(eg - egpred)^2 - trigamma(df/2)``.
-    max_genes : int
-        Number of proteins (controls grid range).
-
-    Returns
-    -------
-    float
-        Estimated prior degrees of freedom d0.
-    """
+    """Estimate prior degrees of freedom d0 by grid search."""
     best_d0 = 1.0
     best_diff = np.inf
     prev_diff = np.inf
@@ -107,21 +100,27 @@ def _fit_variance_curve(
     return y_pred
 
 
+def _build_deqms_inputs(stats_df: pd.DataFrame) -> _DEqMSInputs:
+    return _DEqMSInputs(
+        log2fc=stats_df["log2FC"].values,
+        sigma2=stats_df["s2"].values,
+        df_residual=stats_df["df_residual"].values,
+        peptide_counts=stats_df["peptide_count"].values,
+        stdev_unscaled=stats_df["stdev_unscaled"].values,
+    )
+
+
 def spectra_count_ebayes(
-    log2fc: np.ndarray,
-    sigma2: np.ndarray,
-    df_residual: np.ndarray,
-    peptide_counts: np.ndarray,
-    stdev_unscaled: np.ndarray,
+    inputs: _DEqMSInputs,
     fit_method: str = "loess",
 ) -> dict:
-    """DEqMS spectra-count-adjusted eBayes moderated t-test."""
-    log_var = np.log(sigma2)
-    df_safe = df_residual.copy().astype(float)
+    """Apply spectra-count-adjusted eBayes moderation with DEqMS."""
+    log_var = np.log(inputs.sigma2)
+    df_safe = inputs.df_residual.copy().astype(float)
     df_safe[df_safe == 0] = np.nan
 
     eg = log_var - digamma(df_safe / 2.0) + np.log(df_safe / 2.0)
-    y_pred = _fit_variance_curve(log_var, peptide_counts, fit_method)
+    y_pred = _fit_variance_curve(log_var, inputs.peptide_counts, fit_method)
     eg_pred = y_pred - digamma(df_safe / 2.0) + np.log(df_safe / 2.0)
 
     myfct = (eg - eg_pred) ** 2 - _trigamma(df_safe / 2.0)
@@ -129,9 +128,9 @@ def spectra_count_ebayes(
     logger.info("DEqMS prior d0 = %.2f", d0)
 
     s02 = np.exp(eg_pred + digamma(d0 / 2.0) - np.log(d0 / 2.0))
-    post_var = (d0 * s02 + df_safe * sigma2) / (d0 + df_safe)
+    post_var = (d0 * s02 + df_safe * inputs.sigma2) / (d0 + df_safe)
     post_df = d0 + df_safe
-    sca_t = log2fc / (stdev_unscaled * np.sqrt(post_var))
+    sca_t = inputs.log2fc / (inputs.stdev_unscaled * np.sqrt(post_var))
     sca_p = 2.0 * stats.t.sf(np.abs(sca_t), df=post_df)
 
     return {
@@ -143,13 +142,13 @@ def spectra_count_ebayes(
 
 def _collect_deqms_stats(
     log2_matrix: pd.DataFrame,
-    samples_a: list[str],
-    samples_b: list[str],
-    cond_a: str,
-    cond_b: str,
+    sample_groups: tuple[list[str], list[str]],
+    contrast: tuple[str, str],
     peptide_counts: pd.Series | None,
 ) -> pd.DataFrame:
     """Compute per-protein stats with peptide counts for DEqMS."""
+    samples_a, samples_b = sample_groups
+    cond_a, cond_b = contrast
     rows = []
     for protein in log2_matrix.index:
         va = log2_matrix.loc[protein, samples_a].dropna().values
@@ -178,8 +177,6 @@ def _finalize_deqms(
     stats_df: pd.DataFrame, result: dict, cond_a: str, cond_b: str,
 ) -> pd.DataFrame:
     """Attach eBayes results and apply BH correction."""
-    from statsmodels.stats.multitest import multipletests
-
     for key in ("sca_t", "post_var", "prior_var", "d0", "post_df"):
         stats_df[key] = result[key]
     stats_df["sca_pvalue"] = result["sca_p"]
@@ -208,25 +205,26 @@ def run_deqms(
     log2_matrix: pd.DataFrame,
     samples_a: list[str],
     samples_b: list[str],
-    cond_a: str,
-    cond_b: str,
-    peptide_counts: pd.Series | None = None,
-    fit_method: str = "loess",
+    contrast: tuple[str, str],
+    **options,
 ) -> pd.DataFrame:
     """Run DEqMS differential expression analysis."""
+    peptide_counts = options.pop("peptide_counts", None)
+    fit_method = options.pop("fit_method", "loess")
+    if options:
+        unknown = ", ".join(sorted(options))
+        raise TypeError(f"Unexpected DEqMS options: {unknown}")
+
+    cond_a, cond_b = contrast
     stats_df = _collect_deqms_stats(
-        log2_matrix, samples_a, samples_b, cond_a, cond_b, peptide_counts,
+        log2_matrix,
+        (samples_a, samples_b),
+        contrast,
+        peptide_counts,
     )
     if stats_df.empty:
         logger.warning("No proteins passed DE filtering for DEqMS")
         return pd.DataFrame()
 
-    result = spectra_count_ebayes(
-        log2fc=stats_df["log2FC"].values,
-        sigma2=stats_df["s2"].values,
-        df_residual=stats_df["df_residual"].values,
-        peptide_counts=stats_df["peptide_count"].values,
-        stdev_unscaled=stats_df["stdev_unscaled"].values,
-        fit_method=fit_method,
-    )
+    result = spectra_count_ebayes(_build_deqms_inputs(stats_df), fit_method=fit_method)
     return _finalize_deqms(stats_df, result, cond_a, cond_b)
