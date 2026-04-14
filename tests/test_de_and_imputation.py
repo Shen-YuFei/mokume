@@ -12,16 +12,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mokume.analysis.differential_expression import (
-    DifferentialExpression,
-    _trigamma,
-    _tetragamma,
-)
+from mokume.analysis.differential_expression import DifferentialExpression
 from mokume.analysis.deqms import run_deqms
 from mokume.analysis.limrots import run_limrots
 from mokume.analysis.proda import run_proda, DropoutParams
 from mokume.imputation.censored import (
-    classify_missing,
     impute_minprob,
     impute_mindet,
     impute_censored,
@@ -67,20 +62,6 @@ def _make_wide_df(matrix, samples_a, samples_b):
     s2c = {s: "A" for s in samples_a}
     s2c.update({s: "B" for s in samples_b})
     return wide, s2c
-
-
-# ---------------------------------------------------------------------------
-# _trigamma / _tetragamma
-# ---------------------------------------------------------------------------
-
-class TestMathHelpers:
-    def test_trigamma_positive(self):
-        assert _trigamma(1.0) > 0
-        assert np.isfinite(_trigamma(1.0))
-
-    def test_tetragamma_negative(self):
-        assert _tetragamma(1.0) < 0
-        assert np.isfinite(_tetragamma(1.0))
 
 
 # ---------------------------------------------------------------------------
@@ -242,16 +223,6 @@ class TestCensoredImputation:
         with pytest.raises(ValueError, match="Unknown imputation method"):
             impute_censored(data, method="invalid")
 
-    def test_classify_missing(self):
-        rng = np.random.default_rng(42)
-        data = pd.DataFrame(
-            rng.normal(23, 1, (20, 6)),
-            columns=[f"S{i}" for i in range(6)],
-        )
-        data.iloc[0, 0] = np.nan
-        is_mnar = classify_missing(data)
-        assert is_mnar.shape == data.shape
-        assert is_mnar.dtypes.unique().tolist() == [np.dtype("bool")]
 
 
 # ---------------------------------------------------------------------------

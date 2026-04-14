@@ -25,40 +25,6 @@ from mokume.core.logger import get_logger
 logger = get_logger("mokume.imputation.censored")
 
 
-def classify_missing(
-    data: pd.DataFrame,
-    quantile_threshold: float = 0.01,
-) -> pd.DataFrame:
-    """Classify each missing value as MNAR or MCAR."""
-    # Per-sample censoring threshold
-    thresholds = data.quantile(quantile_threshold, axis=0)
-
-    is_mnar = pd.DataFrame(False, index=data.index, columns=data.columns)
-
-    for col in data.columns:
-        missing_mask = data[col].isna()
-        if not missing_mask.any():
-            continue
-        # For each missing protein, check if its observed values in
-        # other samples are near the threshold
-        for protein in data.index[missing_mask]:
-            obs_vals = data.loc[protein].dropna()
-            if len(obs_vals) == 0:
-                is_mnar.loc[protein, col] = True
-            elif obs_vals.min() <= thresholds[col] * 2.0:
-                is_mnar.loc[protein, col] = True
-
-    n_missing = data.isna().sum().sum()
-    n_mnar = is_mnar.sum().sum()
-    logger.info(
-        "Missing value classification: %d total, %d MNAR (%.1f%%), %d MCAR",
-        n_missing, n_mnar,
-        100 * n_mnar / max(n_missing, 1),
-        n_missing - n_mnar,
-    )
-    return is_mnar
-
-
 def impute_minprob(
     data: pd.DataFrame,
     quantile: float = 0.01,

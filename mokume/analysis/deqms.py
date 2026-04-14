@@ -75,15 +75,12 @@ def _constant_variance_fit(log_var: np.ndarray, valid: np.ndarray) -> np.ndarray
 def _fit_variance_curve(
     log_var: np.ndarray,
     peptide_counts: np.ndarray,
-    fit_method: str,
 ) -> np.ndarray:
     """Fit log-variance ~ log2(count) via LOESS and return predictions."""
     counts = peptide_counts.copy().astype(float)
     if np.isfinite(counts).any() and np.nanmin(counts) == 0:
         logger.info("Minimum peptide count is 0, adding pseudocount 1")
         counts = counts + 1
-    if fit_method != "loess":
-        raise ValueError(f"Unsupported fit_method: {fit_method}")
     x = np.log2(counts)
     valid = np.isfinite(x) & np.isfinite(log_var)
     if valid.sum() < 3 or np.unique(x[valid]).size < 2:
@@ -111,17 +108,14 @@ def _build_deqms_inputs(stats_df: pd.DataFrame) -> _DEqMSInputs:
     )
 
 
-def spectra_count_ebayes(
-    inputs: _DEqMSInputs,
-    fit_method: str = "loess",
-) -> dict:
+def spectra_count_ebayes(inputs: _DEqMSInputs) -> dict:
     """Apply spectra-count-adjusted eBayes moderation with DEqMS."""
     log_var = np.log(inputs.sigma2)
     df_safe = inputs.df_residual.copy().astype(float)
     df_safe[df_safe == 0] = np.nan
 
     eg = log_var - digamma(df_safe / 2.0) + np.log(df_safe / 2.0)
-    y_pred = _fit_variance_curve(log_var, inputs.peptide_counts, fit_method)
+    y_pred = _fit_variance_curve(log_var, inputs.peptide_counts)
     eg_pred = y_pred - digamma(df_safe / 2.0) + np.log(df_safe / 2.0)
 
     myfct = (eg - eg_pred) ** 2 - _trigamma(df_safe / 2.0)
@@ -211,7 +205,6 @@ def run_deqms(
 ) -> pd.DataFrame:
     """Run DEqMS differential expression analysis."""
     peptide_counts = options.pop("peptide_counts", None)
-    fit_method = options.pop("fit_method", "loess")
     if options:
         unknown = ", ".join(sorted(options))
         raise TypeError(f"Unexpected DEqMS options: {unknown}")
@@ -227,5 +220,5 @@ def run_deqms(
         logger.warning("No proteins passed DE filtering for DEqMS")
         return pd.DataFrame()
 
-    result = spectra_count_ebayes(_build_deqms_inputs(stats_df), fit_method=fit_method)
+    result = spectra_count_ebayes(_build_deqms_inputs(stats_df))
     return _finalize_deqms(stats_df, result, cond_a, cond_b)

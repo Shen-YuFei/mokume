@@ -10,7 +10,6 @@ import pandas as pd
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
-from mokume.analysis import _shared_stats
 from mokume.analysis.deqms import run_deqms
 from mokume.analysis.limrots import run_limrots
 from mokume.analysis.proda import run_proda
@@ -27,16 +26,6 @@ _DE_OPTION_DEFAULTS = {
     "n_boot": 100,
     "n_threads": None,
 }
-
-
-def _trigamma(x):
-    """Compute the trigamma function (second derivative of log-gamma)."""
-    return _shared_stats._trigamma(x)
-
-
-def _tetragamma(x):
-    """Compute the tetragamma function (third derivative of log-gamma)."""
-    return _shared_stats._tetragamma(x)
 
 
 class DifferentialExpression:
@@ -244,37 +233,6 @@ def _log2_transform(
     if skip:
         return intensity
     return np.log2(intensity.replace(0, np.nan))
-
-
-def _moderated_test(
-    stats_df: pd.DataFrame,
-    d0: float,
-    s0_sq: float,
-    cond_a: str,
-    cond_b: str,
-) -> pd.DataFrame:
-    """Compute moderated t-statistics from per-protein stats."""
-    results = []
-    for _, row in stats_df.iterrows():
-        df_res = row["df_residual"]
-        s2_mod = (d0 * s0_sq + df_res * row["s2"]) / (d0 + df_res)
-        se = np.sqrt(s2_mod * (1.0 / row["n_a"] + 1.0 / row["n_b"]))
-        if se == 0:
-            continue
-        t_stat = row["log2FC"] / se
-        pvalue = 2.0 * stats.t.sf(np.abs(t_stat), df=d0 + df_res)
-        if np.isnan(pvalue):
-            continue
-        results.append({
-            "ProteinName": row["ProteinName"],
-            "log2FC": row["log2FC"],
-            "pvalue": pvalue,
-            f"mean_{cond_a}": row[f"mean_{cond_a}"],
-            f"mean_{cond_b}": row[f"mean_{cond_b}"],
-            "n_a": int(row["n_a"]),
-            "n_b": int(row["n_b"]),
-        })
-    return pd.DataFrame(results)
 
 
 def _ihw_covariate(de_df: pd.DataFrame) -> np.ndarray | None:
