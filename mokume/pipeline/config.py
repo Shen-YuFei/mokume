@@ -71,13 +71,27 @@ class BatchCorrectionConfig:
 
 
 @dataclass
+class ImputationConfig:
+    """Missing value imputation parameters."""
+    enabled: bool = False
+    method: str = "none"
+    # MinProb parameters
+    quantile: float = 0.01
+    shift: float = 1.6
+    scale: float = 0.3
+    # KNN parameters
+    n_neighbors: int = 5
+
+
+@dataclass
 class DEConfig:
     """Differential expression analysis parameters."""
     enabled: bool = False
     contrasts: Optional[list] = None
-    method: str = "ttest"
+    method: str = "auto"
     log2fc_threshold: float = 0.5
     fdr_threshold: float = 0.05
+    fdr_method: str = "bh"
     output: Optional[str] = None
 
 
@@ -107,6 +121,7 @@ class PipelineConfig:
     - quantification: Quant method and method-specific params
     - irs: Internal Reference Scaling for multi-plex TMT
     - batch: Batch correction (ComBat)
+    - imputation: Missing value imputation (MinProb, MinDet, KNN)
     - de: Differential expression analysis
     - output: Export paths, plotting, reports
     """
@@ -116,5 +131,6 @@ class PipelineConfig:
     quantification: QuantificationConfig = field(default_factory=QuantificationConfig)
     irs: IRSConfig = field(default_factory=IRSConfig)
     batch: BatchCorrectionConfig = field(default_factory=BatchCorrectionConfig)
+    imputation: ImputationConfig = field(default_factory=ImputationConfig)
     de: DEConfig = field(default_factory=DEConfig)
     output: OutputConfig = field(default_factory=OutputConfig)

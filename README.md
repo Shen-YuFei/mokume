@@ -71,7 +71,8 @@ mokume/
 ├── normalization/           # Normalization implementations
 │   ├── feature.py           # Feature-level normalization
 │   ├── peptide.py           # Peptide-level normalization pipeline
-│   └── protein.py           # Protein-level normalization
+│   ├── protein.py           # Protein-level normalization
+│   └── loess.py             # LOESS regression normalization
 │
 ├── preprocessing/           # Preprocessing filters
 │   └── filters/             # Quality control filters
@@ -99,8 +100,15 @@ mokume/
 │   ├── mean.py              # Mean summarization
 │   └── sum.py               # Sum summarization
 │
+├── analysis/                # Differential expression analysis
+│   ├── differential_expression.py  # Main DE orchestrator (LimROTS, DEqMS, proDA)
+│   ├── limrots.py           # LimROTS: limma + ROTS bootstrap-optimized test
+│   ├── deqms.py             # DEqMS peptide-count-weighted eBayes
+│   └── proda.py             # proDA probabilistic dropout-aware DE
+│
 ├── imputation/              # Missing value handling
-│   └── methods.py           # Imputation implementations
+│   ├── methods.py           # Standard imputation (KNN, etc.)
+│   └── censored.py          # Censored-aware imputation (MinProb, MinDet, KNN)
 │
 ├── postprocessing/          # Data reshaping and correction
 │   ├── reshape.py           # Pivot operations (wide/long format)
@@ -171,6 +179,107 @@ The `MaxLFQQuantification` class provides two implementations:
    - Achieves ~0.95 Spearman correlation with DIA-NN's MaxLFQ values
 
 Use `force_builtin=True` to always use the built-in implementation, or check `maxlfq.using_directlfq` to see which backend is active.
+
+## Differential Expression Analysis
+
+mokume provides modern empirical Bayes and bootstrap-based statistical methods for identifying differentially expressed proteins with high sensitivity while controlling false positives.
+
+### DE Methods
+
+- **LimROTS** — Combines limma empirical Bayes variance stabilization with ROTS bootstrap-optimized test statistic and permutation-based FDR. Best overall sensitivity; recommended for MaxLFQ data.
+- **DEqMS** — Extends limma with peptide-count weighting via spectra count eBayes. Better false-positive control on noisy data; recommended for DirectLFQ data.
+- **proDA** — Probabilistic dropout-aware analysis that models missing values as informative dropout events rather than discarding them.
+
+FDR correction: **BH** (Benjamini-Hochberg, default) or **IHW** (Independent Hypothesis Weighting).
+
+### Python API
+
+```python
+from mokume.analysis import DifferentialExpression
+
+import pandas as pd
+protein_df = pd.read_csv("maxlfq_proteins.csv")
+sample_to_condition = {
+    "Control_R1": "Control", "Control_R2": "Control", "Control_R3": "Control",
+    "Treatment_R1": "Treatment", "Treatment_R2": "Treatment", "Treatment_R3": "Treatment",
+}
+
+# LimROTS (recommended for MaxLFQ)
+de = DifferentialExpression(method="limrots", log2fc_threshold=1.0, fdr_threshold=0.05)
+result = de.run(protein_df, sample_to_condition, ("Treatment", "Control"))
+
+# DEqMS (recommended for DirectLFQ, requires peptide counts)
+de = DifferentialExpression(method="deqms", peptide_counts=peptide_counts)
+result = de.run(protein_df, sample_to_condition, ("Treatment", "Control"))
+
+# Multiple contrasts
+contrasts = [("Treatment", "Control"), ("Drug", "Control")]
+results = de.run_comparisons(protein_df, sample_to_condition, contrasts)
+# Returns dict: {"Treatment_vs_Control": DataFrame, "Drug_vs_Control": DataFrame}
+```
+
+Output columns: `ProteinName`, `log2FC`, `pvalue`, `adj_pvalue`, `significance` (`UP` / `DOWN` / `Unchanged`).
+
+### Missing Value Imputation
+
+```python
+from mokume.imputation.censored import impute_censored
+
+# MinProb: draw from left-shifted normal (recommended for MNAR)
+imputed = impute_censored(log2_matrix, method="minprob", q=0.01, tune_sigma=1.0)
+
+# MinDet: replace NaN with per-column quantile
+imputed = impute_censored(log2_matrix, method="mindet", q=0.01)
+
+# KNN: k-nearest neighbor imputation
+imputed = impute_censored(log2_matrix, method="knn", k=10)
+```
+
+### LOESS Normalization
+
+```python
+from mokume.normalization import loess_normalize
+
+# Correct intensity-dependent biases via locally-weighted regression
+normalized = loess_normalize(log2_matrix)
+```
+
+## End-to-End Pipeline (`features2proteins`)
+
+The `features2proteins` command runs the complete workflow from quantms feature files to protein quantification with optional differential expression:
+
+```bash
+# MaxLFQ quantification + automatic DE (LimROTS)
+mokume features2proteins \
+    -p features.parquet \
+    -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --de \
+    --de-contrasts "Treatment-Control,Drug-Control" \
+    -o output_dir/
+
+# DirectLFQ quantification + automatic DE (DEqMS)
+mokume features2proteins \
+    -p features.parquet \
+    -s experiment.sdrf.tsv \
+    --quant-method directlfq \
+    --de \
+    --de-contrasts "Treatment-Control" \
+    --de-log2fc 1.0 \
+    --de-fdr 0.05 \
+    -o output_dir/
+
+# Explicit DE method override
+mokume features2proteins \
+    -p features.parquet \
+    -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --de \
+    --de-method deqms \
+    --de-fdr-method ihw \
+    --de-contrasts "Treatment-Control" \
+    -o output_dir/
+```
 
 ## CLI Usage
 

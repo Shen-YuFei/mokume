@@ -36,6 +36,10 @@ from mokume.normalization.irs import (
     detect_plexes_from_sdrf,
     detect_condition_from_sdrf,
 )
+from mokume.normalization.loess import (
+    LOESSNormalizer,
+    loess_normalize,
+)
 
 __all__ = [
     # Feature normalization
@@ -62,4 +66,7 @@ __all__ = [
     "detect_reference_by_regex",
     "detect_plexes_from_sdrf",
     "detect_condition_from_sdrf",
+    # LOESS normalization
+    "LOESSNormalizer",
+    "loess_normalize",
 ]

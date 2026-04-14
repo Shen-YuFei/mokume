@@ -12,6 +12,8 @@ import warnings
 warnings.filterwarnings(
     "ignore", category=PendingDeprecationWarning, module="numpy.matrixlib.defmatrix"
 )
+# Suppress pyopenms false-positive OPENMS_DATA_PATH warning
+warnings.filterwarnings("ignore", message=".*OPENMS_DATA_PATH.*")
 
 __version__ = "0.1.0"
 

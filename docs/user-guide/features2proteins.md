@@ -186,9 +186,10 @@ mokume features2proteins \
     --quant-method maxlfq \
     --de \
     --de-contrasts "NASH-HL,NASH-Control" \
-    --de-method ttest \
+    --de-method limrots \
     --de-log2fc 0.5 \
     --de-fdr 0.05 \
+    --de-fdr-method ihw \
     --de-output de_results.csv
 ```
 
@@ -196,9 +197,10 @@ mokume features2proteins \
 |-----------|---------|-------------|
 | `--de` | off | Enable differential expression |
 | `--de-contrasts` | all pairs | Comma-separated contrasts (e.g., "A-B") |
-| `--de-method` | `ttest` | Method: ttest or limma |
+| `--de-method` | `auto` | Method: auto, limrots, deqms, or proda |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
+| `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
 | `--de-output` | auto | Output file for DE results |
 
 ## Plots and Reports
@@ -241,7 +243,7 @@ mokume features2proteins \
     --remove-contaminants \
     --irs --irs-remove-reference \
     --batch-correction --batch-method sample_prefix \
-    --de --de-contrasts "NASH-HL" --de-method ttest \
+    --de --de-contrasts "NASH-HL" --de-method limrots --de-fdr-method ihw \
     --plot-dir plots/ --plot-volcano --plot-pca \
     --interactive-report --report-output qc_report.html
 ```

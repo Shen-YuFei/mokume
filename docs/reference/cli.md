@@ -76,7 +76,11 @@ mokume features2proteins [OPTIONS]
 |--------|---------|-------------|
 | `--batch-correction` | off | Enable ComBat batch correction |
 | `--batch-method` | `sample_prefix` | Detection method: sample_prefix, run, column |
+| `--batch-column` | none | SDRF column used when `--batch-method=column` |
 | `--batch-covariates` | none | Comma-separated SDRF columns to preserve |
+| `--batch-parametric` / `--batch-nonparametric` | parametric | ComBat estimation mode |
+| `--batch-mean-only` | off | Only adjust batch means |
+| `--batch-ref` | none | Reference batch ID |
 
 ### Differential Expression
 
@@ -84,9 +88,10 @@ mokume features2proteins [OPTIONS]
 |--------|---------|-------------|
 | `--de` | off | Enable differential expression analysis |
 | `--de-contrasts` | all pairs | Comma-separated contrasts (e.g., "A-B,A-C") |
-| `--de-method` | `ttest` | Method: ttest or limma |
+| `--de-method` | `auto` | Method: auto, limrots, deqms, or proda |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
+| `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
 | `--de-output` | auto | Output file for DE results |
 
 ### Plots & Reports

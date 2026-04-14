@@ -547,7 +547,7 @@ class QuantificationStage:
         peptide_df = peptide_df[peptide_df[PROTEIN_NAME].isin(found_proteins)]
 
         protein_intensities = (
-            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID])[NORM_INTENSITY]
+            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID], observed=False)[NORM_INTENSITY]
             .sum()
             .reset_index()
         )
@@ -572,7 +572,7 @@ class QuantificationStage:
     def _quantify_median(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
         """Quantify using median of peptides."""
         result = (
-            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID])[NORM_INTENSITY]
+            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID], observed=False)[NORM_INTENSITY]
             .median()
             .reset_index()
         )
@@ -763,11 +763,32 @@ class PostprocessingStage:
         if not contrasts:
             return None
 
+        # Auto-select DE method based on quantification if "auto"
+        de_method = self.config.de.method
+        if de_method == "auto":
+            quant = self.config.quantification.method.lower()
+            de_method = "deqms" if quant == "directlfq" else "limrots"
+            logger.info(f"Auto-selected DE method: {de_method} (quant={quant})")
+
+        # Load peptide counts for DEqMS
+        peptide_counts = None
+        if de_method == "deqms" and self.config.input.parquet:
+            try:
+                pep_df = pd.read_parquet(
+                    self.config.input.parquet,
+                    columns=["anchor_protein", "sequence"],
+                )
+                peptide_counts = pep_df.groupby("anchor_protein")["sequence"].nunique()
+            except (FileNotFoundError, KeyError, ValueError) as exc:
+                logger.warning("Could not load peptide counts for DEqMS: %s", exc)
+
         de = DifferentialExpression(
-            method=self.config.de.method,
+            method=de_method,
             log2fc_threshold=self.config.de.log2fc_threshold,
             fdr_threshold=self.config.de.fdr_threshold,
+            fdr_method=self.config.de.fdr_method,
             skip_log2=(self.config.quantification.method.lower() == "ratio"),
+            peptide_counts=peptide_counts,
         )
 
         all_results = {}

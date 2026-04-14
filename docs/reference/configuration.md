@@ -84,9 +84,10 @@ from mokume.pipeline.config import (
 |-------|------|---------|-------------|
 | `enabled` | `bool` | `False` | Enable DE analysis |
 | `contrasts` | `list \| None` | `None` | Contrasts (e.g., ["A-B"]) |
-| `method` | `str` | `"ttest"` | Method: ttest or limma |
+| `method` | `str` | `"auto"` | Method: auto, limrots, deqms, or proda |
 | `log2fc_threshold` | `float` | `0.5` | Min absolute log2 fold change |
 | `fdr_threshold` | `float` | `0.05` | Max FDR |
+| `fdr_method` | `str` | `"bh"` | FDR correction: bh or ihw |
 | `output` | `str \| None` | `None` | Output file for DE results |
 
 ### OutputConfig
@@ -135,7 +136,8 @@ config = PipelineConfig(
     de=DEConfig(
         enabled=True,
         contrasts=["NASH-HL"],
-        method="ttest",
+        method="auto",
+        fdr_method="ihw",
     ),
     output=OutputConfig(
         plot_dir="plots/",
