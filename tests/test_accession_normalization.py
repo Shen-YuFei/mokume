@@ -1,4 +1,5 @@
-"""Tests for protein accession normalization and FASTA matching.
+"""
+Tests for protein accession normalization and FASTA matching.
 
 Covers get_accession, build_accession_map, and the normalization
 path in extract_fasta / get_protein_molecular_weights.
@@ -13,7 +14,6 @@ from mokume.io.fasta import _strip_nonstandard_aa
 # ---------------------------------------------------------------------------
 
 class TestGetAccession:
-
     """Tests for get_accession with standard and non-standard formats."""
 
     def test_standard_uniprot_sp(self):
@@ -53,7 +53,6 @@ class TestGetAccession:
 # ---------------------------------------------------------------------------
 
 class TestBuildAccessionMap:
-
     """Tests for build_accession_map normalization helper."""
 
     def test_standard_proteins(self):
@@ -100,7 +99,6 @@ class TestBuildAccessionMap:
 # ---------------------------------------------------------------------------
 
 class TestStripNonstandardAA:
-
     """Tests for _strip_nonstandard_aa helper in io.fasta."""
 
     def test_no_nonstandard(self):

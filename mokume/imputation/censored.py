@@ -1,4 +1,5 @@
-"""Censored-aware missing value imputation for proteomics data.
+"""
+Censored-aware missing value imputation for proteomics data.
 
 Implements multiple imputation strategies that account for the
 non-random nature of missingness in mass spectrometry data:

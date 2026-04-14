@@ -1,4 +1,5 @@
-"""Differential expression analysis for proteomics data.
+"""
+Differential expression analysis for proteomics data.
 
 Provides statistical testing to identify proteins with significant abundance
 differences between experimental conditions.
@@ -39,6 +40,7 @@ def _tetragamma(x):
 
 
 class DifferentialExpression:
+
     """Differential expression analysis for protein intensity data."""
 
     SUPPORTED_METHODS = ("limrots", "deqms", "proda")

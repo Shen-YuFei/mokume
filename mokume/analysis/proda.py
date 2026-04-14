@@ -1,4 +1,5 @@
-"""Probabilistic dropout model for differential expression analysis.
+"""
+Probabilistic dropout model for differential expression analysis.
 
 Implements a simplified version of the proDA approach (Ahlmann-Eltze & Anders,
 2019) which models missing values as probabilistic dropouts rather than
@@ -27,7 +28,6 @@ logger = get_logger("mokume.analysis.proda")
 
 
 class DropoutParams(NamedTuple):
-
     """Per-sample dropout curve parameters for one condition."""
 
     rho: np.ndarray

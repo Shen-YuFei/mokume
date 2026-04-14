@@ -1,4 +1,5 @@
-"""LOESS (LOcally Estimated Scatterplot Smoothing) normalization.
+"""
+LOESS (LOcally Estimated Scatterplot Smoothing) normalization.
 
 Corrects intensity-dependent systematic bias between samples using
 local regression on MA plots.  For each sample, the bias curve
@@ -23,6 +24,7 @@ logger = get_logger("mokume.normalization.loess")
 
 
 class LOESSNormalizer:
+
     """LOESS regression-based normalization."""
 
     def __init__(self, frac: float = 0.75, reference: str = "median"):

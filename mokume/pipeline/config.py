@@ -1,4 +1,5 @@
-"""Pipeline configuration dataclasses.
+"""
+Pipeline configuration dataclasses.
 
 This module provides nested configuration dataclasses for the
 quantification pipeline, replacing the flat PipelineConfig.
@@ -83,7 +84,6 @@ class BatchCorrectionConfig:
 
 @dataclass
 class ImputationConfig:
-
     """Missing value imputation parameters."""
 
     enabled: bool = False
@@ -128,8 +128,8 @@ class OutputConfig:
 
 @dataclass
 class PipelineConfig:
-
-    """Configuration for the quantification pipeline.
+    """
+    Configuration for the quantification pipeline.
 
     Organizes settings into logical groups:
     - input: File paths (parquet, sdrf, fasta)
