@@ -156,14 +156,13 @@ class DifferentialExpression:
 
     def _finalize_results(self, de_df: pd.DataFrame) -> pd.DataFrame:
         """Apply FDR correction and classify significance."""
-        if self.fdr_method == "ihw" and "adj_pvalue" not in de_df.columns:
+        if self.fdr_method == "ihw":
             de_df["adj_pvalue"] = _ihw_correction(
                 de_df["pvalue"].values,
                 de_df,
                 alpha=self.fdr_threshold,
             )
-        elif "adj_pvalue" not in de_df.columns:
-            # Benjamini-Hochberg (default)
+        else:
             de_df["adj_pvalue"] = multipletests(
                 de_df["pvalue"].values, method="fdr_bh"
             )[1]

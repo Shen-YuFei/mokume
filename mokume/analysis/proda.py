@@ -40,8 +40,10 @@ def _fit_dropout_curve(intensities: np.ndarray) -> tuple[float, float]:
     n_total = len(intensities)
     n_obs = len(observed)
 
+    if n_obs == 0:
+        return -2.0, 1.0
     if n_obs < 5 or n_obs == n_total:
-        return np.nanmedian(observed) - 2.0, 1.0
+        return float(np.nanmedian(observed)) - 2.0, 1.0
 
     obs_min = np.min(observed)
 

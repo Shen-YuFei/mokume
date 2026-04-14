@@ -162,25 +162,43 @@ class TestDEProDA:
 # ---------------------------------------------------------------------------
 
 class TestIHW:
-    def test_ihw_via_de(self):
+    def test_ihw_differs_from_bh(self):
         mat, sa, sb, _ = _make_protein_matrix()
         wide, s2c = _make_wide_df(mat, sa, sb)
-        de = DifferentialExpression(
+        res_bh = DifferentialExpression(
+            method="deqms", log2fc_threshold=1.0, fdr_method="bh", skip_log2=True,
+        ).run(wide, s2c, ("A", "B"))
+        res_ihw = DifferentialExpression(
             method="deqms", log2fc_threshold=1.0, fdr_method="ihw", skip_log2=True,
+        ).run(wide, s2c, ("A", "B"))
+        assert len(res_ihw) > 0
+        assert "adj_pvalue" in res_ihw.columns
+        # IHW should produce different adjusted p-values than BH
+        merged = res_bh.merge(res_ihw, on="ProteinName", suffixes=("_bh", "_ihw"))
+        assert not np.allclose(
+            merged["adj_pvalue_bh"].values,
+            merged["adj_pvalue_ihw"].values,
+            equal_nan=True,
         )
-        result = de.run(wide, s2c, ("A", "B"))
-        assert len(result) > 0
-        assert "adj_pvalue" in result.columns
 
     def test_ihw_fallback_on_small_data(self):
         # Very few proteins → should fall back to BH
         mat, sa, sb, _ = _make_protein_matrix(n_proteins=5)
         wide, s2c = _make_wide_df(mat, sa, sb)
-        de = DifferentialExpression(
+        res_bh = DifferentialExpression(
+            method="deqms", log2fc_threshold=1.0, fdr_method="bh", skip_log2=True,
+        ).run(wide, s2c, ("A", "B"))
+        res_ihw = DifferentialExpression(
             method="deqms", log2fc_threshold=1.0, fdr_method="ihw", skip_log2=True,
+        ).run(wide, s2c, ("A", "B"))
+        assert len(res_ihw) > 0
+        # With too few proteins, IHW falls back to BH → same results
+        merged = res_bh.merge(res_ihw, on="ProteinName", suffixes=("_bh", "_ihw"))
+        assert np.allclose(
+            merged["adj_pvalue_bh"].values,
+            merged["adj_pvalue_ihw"].values,
+            equal_nan=True,
         )
-        result = de.run(wide, s2c, ("A", "B"))
-        assert len(result) > 0
 
 
 # ---------------------------------------------------------------------------

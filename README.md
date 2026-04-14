@@ -215,7 +215,7 @@ result = de.run(protein_df, sample_to_condition, ("Treatment", "Control"))
 # Multiple contrasts
 contrasts = [("Treatment", "Control"), ("Drug", "Control")]
 results = de.run_comparisons(protein_df, sample_to_condition, contrasts)
-# Returns dict: {"Treatment_vs_Control": DataFrame, "Drug_vs_Control": DataFrame}
+# Returns dict: {"Treatment-Control": DataFrame, "Drug-Control": DataFrame}
 ```
 
 Output columns: `ProteinName`, `log2FC`, `pvalue`, `adj_pvalue`, `significance` (`UP` / `DOWN` / `Unchanged`).
@@ -226,13 +226,13 @@ Output columns: `ProteinName`, `log2FC`, `pvalue`, `adj_pvalue`, `significance` 
 from mokume.imputation.censored import impute_censored
 
 # MinProb: draw from left-shifted normal (recommended for MNAR)
-imputed = impute_censored(log2_matrix, method="minprob", q=0.01, tune_sigma=1.0)
+imputed = impute_censored(log2_matrix, method="minprob", quantile=0.01, shift=1.6, scale=0.3)
 
 # MinDet: replace NaN with per-column quantile
-imputed = impute_censored(log2_matrix, method="mindet", q=0.01)
+imputed = impute_censored(log2_matrix, method="mindet", quantile=0.01)
 
 # KNN: k-nearest neighbor imputation
-imputed = impute_censored(log2_matrix, method="knn", k=10)
+imputed = impute_censored(log2_matrix, method="knn", n_neighbors=10)
 ```
 
 ### LOESS Normalization
