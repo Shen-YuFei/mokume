@@ -1,5 +1,4 @@
-"""
-DEqMS-style differential expression analysis.
+"""DEqMS-style differential expression analysis.
 
 Implements the spectraCounteBayes method from Zhu et al. (2020) which extends
 limma's empirical Bayes moderated t-test by incorporating peptide/spectra

@@ -1,5 +1,4 @@
-"""
-LimROTS: limma + ROTS bootstrap-optimized test statistic.
+"""LimROTS: limma + ROTS bootstrap-optimized test statistic.
 
 Combines limma's empirical Bayes moderated statistics with ROTS-style
 bootstrap optimization of the test statistic d/(a1 + a2*s), yielding

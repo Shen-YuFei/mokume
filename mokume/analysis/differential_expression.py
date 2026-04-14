@@ -1,5 +1,4 @@
-"""
-Differential expression analysis for proteomics data.
+"""Differential expression analysis for proteomics data.
 
 Provides statistical testing to identify proteins with significant abundance
 differences between experimental conditions.

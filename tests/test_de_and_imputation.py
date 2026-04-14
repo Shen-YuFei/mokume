@@ -1,5 +1,4 @@
-"""
-Tests for new analysis, imputation, and normalization modules.
+"""Tests for new analysis, imputation, and normalization modules.
 
 Covers: DifferentialExpression (limrots, deqms, proda, ihw),
         censored imputation (minprob, mindet, knn),

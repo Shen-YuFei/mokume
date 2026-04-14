@@ -1,5 +1,4 @@
-"""
-LOESS (LOcally Estimated Scatterplot Smoothing) normalization.
+"""LOESS (LOcally Estimated Scatterplot Smoothing) normalization.
 
 Corrects intensity-dependent systematic bias between samples using
 local regression on MA plots.  For each sample, the bias curve
