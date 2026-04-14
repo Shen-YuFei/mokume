@@ -12,6 +12,7 @@ scatterplots. J Am Stat Assoc. 1979;74(368):829-36.
 Yang YH, et al. Normalization for cDNA microarray data: a robust
 composite method addressing single and multiple slide systematic
 variation. Nucleic Acids Res. 2002;30(4):e15.
+
 """
 
 import pandas as pd
@@ -23,40 +24,15 @@ logger = get_logger("mokume.normalization.loess")
 
 
 class LOESSNormalizer:
-    """
-    LOESS regression-based normalization.
-
-    For each sample, fits a LOWESS curve of M (log-ratio to reference)
-    vs A (average intensity), then subtracts the fitted bias.
-
-    Parameters
-    ----------
-    frac : float
-        Fraction of data used in each local regression (default 0.75).
-    reference : str
-        How to compute the reference:
-        ``"median"`` (default): per-protein median across samples.
-        ``"mean"``: per-protein mean across samples.
-    """
+    """LOESS regression-based normalization."""
 
     def __init__(self, frac: float = 0.75, reference: str = "median"):
+        """Initialize the LOESS normalizer parameters."""
         self.frac = frac
         self.reference = reference
 
     def fit_transform(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Normalize the data using LOESS.
-
-        Parameters
-        ----------
-        data : pd.DataFrame
-            Log2 protein intensity matrix (proteins × samples).
-
-        Returns
-        -------
-        pd.DataFrame
-            Normalized matrix.
-        """
+        """Normalize the data using LOESS."""
         if self.reference == "median":
             ref = data.median(axis=1)
         elif self.reference == "mean":
@@ -100,21 +76,5 @@ def loess_normalize(
     frac: float = 0.75,
     reference: str = "median",
 ) -> pd.DataFrame:
-    """
-    Functional interface for LOESS normalization.
-
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Log2 protein intensity matrix (proteins × samples).
-    frac : float
-        LOWESS smoothing fraction.
-    reference : str
-        Reference computation method.
-
-    Returns
-    -------
-    pd.DataFrame
-        Normalized matrix.
-    """
+    """Apply LOESS normalization through the functional interface."""
     return LOESSNormalizer(frac=frac, reference=reference).fit_transform(data)

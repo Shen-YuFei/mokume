@@ -11,6 +11,7 @@ Reference
 Ahlmann-Eltze C, Anders S. proDA: Probabilistic Dropout Analysis for
 Identifying Differentially Abundant Proteins in Label-Free Quantitative
 Mass Spectrometry. *bioRxiv*. 2019. doi:10.1101/661496
+
 """
 
 from typing import NamedTuple
@@ -28,6 +29,7 @@ logger = get_logger("mokume.analysis.proda")
 
 class DropoutParams(NamedTuple):
     """Per-sample dropout curve parameters for one condition."""
+
     rho: np.ndarray
     zeta: np.ndarray
 
@@ -143,26 +145,28 @@ def _fit_dropouts(
     samples_b: list[str],
 ) -> tuple[DropoutParams, DropoutParams]:
     """Fit per-sample dropout curves and pack into per-condition params."""
+    def _pack_dropouts(sample_names: list[str], dropout_params: dict[str, tuple[float, float]]) -> DropoutParams:
+        return DropoutParams(
+            rho=np.array([dropout_params[s][0] for s in sample_names]),
+            zeta=np.array([dropout_params[s][1] for s in sample_names]),
+        )
+
     all_samples = samples_a + samples_b
     logger.info("Fitting dropout curves for %d samples", len(all_samples))
     dp = {s: _fit_dropout_curve(log2_matrix[s].values) for s in all_samples}
-    make = lambda slist: DropoutParams(
-        rho=np.array([dp[s][0] for s in slist]),
-        zeta=np.array([dp[s][1] for s in slist]),
-    )
-    return make(samples_a), make(samples_b)
+    return _pack_dropouts(samples_a, dp), _pack_dropouts(samples_b, dp)
 
 
 def _test_all_proteins(
     log2_matrix: pd.DataFrame,
-    samples_a: list[str],
-    samples_b: list[str],
-    cond_a: str,
-    cond_b: str,
-    dropout_a: DropoutParams,
-    dropout_b: DropoutParams,
+    sample_groups: tuple[list[str], list[str]],
+    contrast: tuple[str, str],
+    dropouts: tuple[DropoutParams, DropoutParams],
 ) -> list[dict]:
     """Apply dropout-aware Wald test to every protein."""
+    samples_a, samples_b = sample_groups
+    cond_a, cond_b = contrast
+    dropout_a, dropout_b = dropouts
     results = []
     for protein in log2_matrix.index:
         va = log2_matrix.loc[protein, samples_a].values.astype(float)
@@ -192,7 +196,10 @@ def run_proda(
     """Run proDA-style probabilistic dropout DE analysis."""
     dropout_a, dropout_b = _fit_dropouts(log2_matrix, samples_a, samples_b)
     rows = _test_all_proteins(
-        log2_matrix, samples_a, samples_b, cond_a, cond_b, dropout_a, dropout_b,
+        log2_matrix,
+        (samples_a, samples_b),
+        (cond_a, cond_b),
+        (dropout_a, dropout_b),
     )
     if not rows:
         logger.warning("No proteins passed DE filtering for proDA")

@@ -10,23 +10,38 @@ Reference
 Anwar AM, Jeba A, Lahti L, Coffey E. LimROTS: a hybrid method
 integrating empirical Bayes and reproducibility-optimized statistics
 for robust differential expression analysis. Bioinformatics. 2025.
+
 """
 
 import os
 from concurrent.futures import ProcessPoolExecutor
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 from scipy import stats
-from statsmodels.stats.multitest import multipletests
 
-from mokume.analysis.differential_expression import (
+from mokume.analysis._shared_stats import (
     _collect_protein_stats,
     _fit_f_prior,
 )
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.analysis.limrots")
+
+
+_LIMROTS_OPTION_DEFAULTS = {
+    "n_boot": 100,
+    "n_threads": None,
+    "seed": 42,
+}
+
+
+class _ResampledStats(NamedTuple):
+    d: np.ndarray
+    s: np.ndarray
+    pd: np.ndarray
+    ps: np.ndarray
 
 
 def _limma_moderated_ds(stats_df: pd.DataFrame):
@@ -55,89 +70,209 @@ def _init_worker(shared_dict: dict) -> None:
     _SHARED.update(shared_dict)
 
 
+def _empty_iteration_columns(n_prot: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return empty d and s columns for one resampling iteration."""
+    return np.full(n_prot, np.nan), np.full(n_prot, np.nan)
+
+
+def _moderated_columns(
+    stats_df: pd.DataFrame,
+    prot_to_idx: dict[str, int],
+    n_prot: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map moderated LimROTS statistics back to the full protein index."""
+    d_col, s_col = _empty_iteration_columns(n_prot)
+    if stats_df.empty:
+        return d_col, s_col
+
+    d_vals, s_vals, _, _ = _limma_moderated_ds(stats_df)
+    for protein, d_val, s_val in zip(stats_df["ProteinName"].values, d_vals, s_vals):
+        idx = prot_to_idx.get(protein)
+        if idx is None:
+            continue
+        d_col[idx] = d_val
+        s_col[idx] = s_val
+    return d_col, s_col
+
+
+def _safe_iteration_columns(
+    label: str,
+    b: int,
+    left_samples: list[str],
+    right_samples: list[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Collect moderated columns for one resampling iteration."""
+    try:
+        stats_df = _collect_protein_stats(
+            _SHARED["log2_mat"],
+            (left_samples, right_samples),
+            (_SHARED["cond_a"], _SHARED["cond_b"]),
+        )
+        return _moderated_columns(
+            stats_df,
+            _SHARED["prot_to_idx"],
+            _SHARED["n_prot"],
+        )
+    except Exception as exc:
+        logger.warning("%s %d failed: %s", label, b, exc)
+        return _empty_iteration_columns(_SHARED["n_prot"])
+
+
 def _worker_bootstrap(b: int):
     """Thin wrapper that reads shared data for ProcessPoolExecutor."""
-    return _bootstrap_one(
-        b,
-        _SHARED["log2_mat"],
-        _SHARED["samples_a"],
-        _SHARED["samples_b"],
-        _SHARED["all_samples"],
-        _SHARED["boot_sa"],
-        _SHARED["boot_sb"],
-        _SHARED["perm_orders"],
-        _SHARED["cond_a"],
-        _SHARED["cond_b"],
-        _SHARED["n_prot"],
-        _SHARED["prot_to_idx"],
-        _SHARED["n_a"],
-    )
+    return _bootstrap_one(b)
 
 
-def _bootstrap_one(
-    b, log2_mat, samples_a, samples_b, all_samples,
-    boot_sa, boot_sb, perm_orders,
-    cond_a, cond_b, n_prot, prot_to_idx, n_a,
-):
-    """Run one bootstrap + permutation iteration."""
-    d_col = np.full(n_prot, np.nan)
-    s_col = np.full(n_prot, np.nan)
-    pd_col = np.full(n_prot, np.nan)
-    ps_col = np.full(n_prot, np.nan)
+def _bootstrap_one(b: int):
+    """Run one bootstrap and permutation iteration from shared worker state."""
+    samples_a = _SHARED["samples_a"]
+    samples_b = _SHARED["samples_b"]
 
     # Bootstrap
-    try:
-        sa_b = [samples_a[i] for i in boot_sa[b]]
-        sb_b = [samples_b[i] for i in boot_sb[b]]
-        bst = _collect_protein_stats(log2_mat, sa_b, sb_b, cond_a, cond_b)
-        if not bst.empty:
-            bd0, bs0 = _fit_f_prior(
-                bst["s2"].values, bst["df_residual"].values,
-            )
-            dfp = bst["df_residual"].values + bd0
-            s2p = (
-                bd0 * bs0 + bst["df_residual"].values * bst["s2"].values
-            ) / dfp
-            su = np.sqrt(1.0 / bst["n_a"].values + 1.0 / bst["n_b"].values)
-            for j, p in enumerate(bst["ProteinName"].values):
-                if p in prot_to_idx:
-                    idx = prot_to_idx[p]
-                    d_col[idx] = np.abs(bst["log2FC"].values[j])
-                    s_col[idx] = np.sqrt(s2p[j]) * su[j]
-    except Exception as exc:
-        logger.warning("Bootstrap %d failed: %s", b, exc)
+    sa_b = [samples_a[i] for i in _SHARED["boot_sa"][b]]
+    sb_b = [samples_b[i] for i in _SHARED["boot_sb"][b]]
+    d_col, s_col = _safe_iteration_columns("Bootstrap", b, sa_b, sb_b)
 
     # Permutation
-    try:
-        po = perm_orders[b]
-        pa = [all_samples[i] for i in po[:n_a]]
-        pb = [all_samples[i] for i in po[n_a:]]
-        pst = _collect_protein_stats(log2_mat, pa, pb, cond_a, cond_b)
-        if not pst.empty:
-            pd0, ps0 = _fit_f_prior(
-                pst["s2"].values, pst["df_residual"].values,
-            )
-            pdfp = pst["df_residual"].values + pd0
-            ps2p = (
-                pd0 * ps0 + pst["df_residual"].values * pst["s2"].values
-            ) / pdfp
-            psu = np.sqrt(
-                1.0 / pst["n_a"].values + 1.0 / pst["n_b"].values,
-            )
-            for j, p in enumerate(pst["ProteinName"].values):
-                if p in prot_to_idx:
-                    idx = prot_to_idx[p]
-                    pd_col[idx] = np.abs(pst["log2FC"].values[j])
-                    ps_col[idx] = np.sqrt(ps2p[j]) * psu[j]
-    except Exception as exc:
-        logger.warning("Permutation %d failed: %s", b, exc)
+    all_samples = _SHARED["all_samples"]
+    split = _SHARED["n_a"]
+    permuted = _SHARED["perm_orders"][b]
+    pa = [all_samples[i] for i in permuted[:split]]
+    pb = [all_samples[i] for i in permuted[split:]]
+    pd_col, ps_col = _safe_iteration_columns("Permutation", b, pa, pb)
 
     return b, d_col, s_col, pd_col, ps_col
 
 
-def _optimize_ssq(D, S, pD, pS, n_boot, n_prot):
+def _generate_sampling_plan(
+    rng: np.random.Generator,
+    samples_a: list[str],
+    samples_b: list[str],
+    n_boot: int,
+) -> dict:
+    """Pre-generate bootstrap and permutation indices."""
+    all_samples = samples_a + samples_b
+    return {
+        "all_samples": all_samples,
+        "boot_sa": [
+            rng.choice(len(samples_a), len(samples_a), replace=True)
+            for _ in range(n_boot)
+        ],
+        "boot_sb": [
+            rng.choice(len(samples_b), len(samples_b), replace=True)
+            for _ in range(n_boot)
+        ],
+        "perm_orders": [rng.permutation(len(all_samples)) for _ in range(n_boot)],
+        "n_a": len(samples_a),
+    }
+
+
+def _run_parallel_iterations(
+    n_prot: int,
+    n_boot: int,
+    n_threads: int,
+    shared_dict: dict,
+) -> _ResampledStats:
+    """Run LimROTS bootstrap and permutation iterations in parallel."""
+    d_mat = np.full((n_prot, n_boot), np.nan)
+    s_mat = np.full((n_prot, n_boot), np.nan)
+    pd_mat = np.full((n_prot, n_boot), np.nan)
+    ps_mat = np.full((n_prot, n_boot), np.nan)
+
+    with ProcessPoolExecutor(
+        max_workers=n_threads,
+        initializer=_init_worker,
+        initargs=(shared_dict,),
+    ) as pool:
+        for b, d_col, s_col, pd_col, ps_col in pool.map(_worker_bootstrap, range(n_boot)):
+            d_mat[:, b] = d_col
+            s_mat[:, b] = s_col
+            pd_mat[:, b] = pd_col
+            ps_mat[:, b] = ps_col
+
+    return _ResampledStats(
+        np.nan_to_num(d_mat),
+        np.nan_to_num(s_mat, nan=1.0),
+        np.nan_to_num(pd_mat),
+        np.nan_to_num(ps_mat, nan=1.0),
+    )
+
+
+def _build_limrots_result(
+    stats_df: pd.DataFrame,
+    prot_index: np.ndarray,
+    pvalues: np.ndarray,
+    fdr: np.ndarray,
+) -> pd.DataFrame:
+    """Assemble the final LimROTS result table."""
+    return pd.DataFrame(
+        {
+            "ProteinName": prot_index,
+            "log2FC": stats_df["log2FC"].values,
+            "pvalue": pvalues,
+            "adj_pvalue": fdr,
+        }
+    )
+
+
+def _build_shared_state(
+    log2_matrix: pd.DataFrame,
+    sample_groups: tuple[list[str], list[str]],
+    contrast: tuple[str, str],
+    prot_index: np.ndarray,
+    sampling_plan: dict,
+) -> dict:
+    """Build the shared worker state for LimROTS resampling."""
+    samples_a, samples_b = sample_groups
+    cond_a, cond_b = contrast
+    return {
+        "log2_mat": log2_matrix,
+        "samples_a": samples_a,
+        "samples_b": samples_b,
+        "cond_a": cond_a,
+        "cond_b": cond_b,
+        "n_prot": len(prot_index),
+        "prot_to_idx": {protein: idx for idx, protein in enumerate(prot_index)},
+        **sampling_plan,
+    }
+
+
+def _top_overlap(values_a: np.ndarray, values_b: np.ndarray, n_top: int) -> float:
+    """Compute overlap fraction between top-ranked proteins."""
+    top_a = set(np.argsort(-values_a)[:n_top])
+    top_b = set(np.argsort(-values_b)[:n_top])
+    return len(top_a & top_b) / n_top
+
+
+def _separation_zscore(resampled: _ResampledStats, ssq: float, n_top: int) -> float:
+    """Measure bootstrap-versus-permutation separation for one ssq value."""
+    overlaps = []
+    perm_overlaps = []
+    for idx in range(0, resampled.d.shape[1] - 1, 2):
+        overlaps.append(
+            _top_overlap(
+                resampled.d[:, idx] / (ssq + resampled.s[:, idx]),
+                resampled.d[:, idx + 1] / (ssq + resampled.s[:, idx + 1]),
+                n_top,
+            )
+        )
+        perm_overlaps.append(
+            _top_overlap(
+                resampled.pd[:, idx] / (ssq + resampled.ps[:, idx]),
+                resampled.pd[:, idx + 1] / (ssq + resampled.ps[:, idx + 1]),
+                n_top,
+            )
+        )
+
+    if not overlaps:
+        return -np.inf
+    sd_ol = np.std(overlaps, ddof=1) if len(overlaps) > 1 else 1e-10
+    return (np.mean(overlaps) - np.mean(perm_overlaps)) / max(sd_ol, 1e-10)
+
+
+def _optimize_ssq(resampled: _ResampledStats, n_prot: int):
     """Find optimal fudge factor via z-score maximization."""
-    s_pos = S[S > 0]
+    s_pos = resampled.s[resampled.s > 0]
     if len(s_pos) == 0:
         return 0.01
     ssq_grid = np.quantile(s_pos, np.linspace(0, 0.95, 20))
@@ -147,25 +282,7 @@ def _optimize_ssq(D, S, pD, pS, n_boot, n_prot):
 
     for ssq in ssq_grid:
         for n_top in n_tops:
-            overlaps = []
-            perm_overlaps = []
-            for i in range(0, n_boot - 1, 2):
-                t1 = D[:, i] / (ssq + S[:, i])
-                t2 = D[:, i + 1] / (ssq + S[:, i + 1])
-                top1 = set(np.argsort(-t1)[:n_top])
-                top2 = set(np.argsort(-t2)[:n_top])
-                overlaps.append(len(top1 & top2) / n_top)
-
-                pt1 = pD[:, i] / (ssq + pS[:, i])
-                pt2 = pD[:, i + 1] / (ssq + pS[:, i + 1])
-                ptop1 = set(np.argsort(-pt1)[:n_top])
-                ptop2 = set(np.argsort(-pt2)[:n_top])
-                perm_overlaps.append(len(ptop1 & ptop2) / n_top)
-
-            mean_ol = np.mean(overlaps)
-            mean_pol = np.mean(perm_overlaps)
-            sd_ol = max(np.std(overlaps, ddof=1), 1e-10)
-            z = (mean_ol - mean_pol) / sd_ol
+            z = _separation_zscore(resampled, ssq, n_top)
             if z > best_z:
                 best_z = z
                 best_ssq = ssq
@@ -173,7 +290,7 @@ def _optimize_ssq(D, S, pD, pS, n_boot, n_prot):
     return best_ssq
 
 
-def _permutation_fdr(t_final, perm_t, n_boot):
+def _permutation_fdr(t_final, perm_t):
     """Compute FDR from permutation distribution."""
     n_prot = len(t_final)
     abs_t = np.abs(t_final)
@@ -195,124 +312,71 @@ def _permutation_fdr(t_final, perm_t, n_boot):
     return fdr
 
 
+def _prepare_limrots_run(
+    log2_matrix: pd.DataFrame,
+    sample_groups: tuple[list[str], list[str]],
+    contrast: tuple[str, str],
+    options: dict,
+):
+    """Prepare shared inputs and original statistics for LimROTS."""
+    stats_df = _collect_protein_stats(log2_matrix, sample_groups, contrast)
+    if stats_df.empty:
+        return None
+
+    d_orig, s_orig, _, df_post = _limma_moderated_ds(stats_df)
+    prot_index = stats_df["ProteinName"].values
+    sampling_plan = _generate_sampling_plan(
+        np.random.default_rng(options["seed"]),
+        sample_groups[0],
+        sample_groups[1],
+        options["n_boot"],
+    )
+    return (
+        stats_df,
+        prot_index,
+        d_orig,
+        s_orig,
+        df_post,
+        options["n_threads"] or os.cpu_count() or 4,
+        _build_shared_state(log2_matrix, sample_groups, contrast, prot_index, sampling_plan),
+    )
+
+
+def _final_limrots_outputs(
+    d_orig: np.ndarray,
+    s_orig: np.ndarray,
+    df_post: np.ndarray,
+    resampled: _ResampledStats,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the final parametric p-values and permutation FDR."""
+    best_ssq = _optimize_ssq(resampled, len(d_orig))
+    logger.info("LimROTS: optimal s0 = %.4f", best_ssq)
+    t_final = d_orig / (best_ssq + s_orig)
+    perm_t = resampled.pd / (best_ssq + resampled.ps)
+    return 2.0 * stats.t.sf(np.abs(t_final), df=df_post), _permutation_fdr(t_final, perm_t)
+
+
 def run_limrots(
     log2_matrix: pd.DataFrame,
     samples_a: list[str],
     samples_b: list[str],
-    cond_a: str,
-    cond_b: str,
-    n_boot: int = 100,
-    n_threads: int | None = None,
-    seed: int = 42,
+    contrast: tuple[str, str],
+    **options,
 ) -> pd.DataFrame:
-    """LimROTS: limma + ROTS bootstrap-optimized DE test.
+    """Run LimROTS differential expression with bootstrap-optimized moderation."""
+    unknown = set(options) - set(_LIMROTS_OPTION_DEFAULTS)
+    if unknown:
+        unknown_args = ", ".join(sorted(unknown))
+        raise TypeError(f"Unexpected LimROTS options: {unknown_args}")
 
-    Parameters
-    ----------
-    log2_matrix : pd.DataFrame
-        Log2-transformed protein intensity matrix (proteins × samples).
-    samples_a, samples_b : list[str]
-        Sample column names for the two conditions.
-    cond_a, cond_b : str
-        Condition labels for the contrast.
-    n_boot : int
-        Number of bootstrap/permutation iterations.
-    n_threads : int or None
-        Number of parallel workers. ``None`` uses all available CPU cores.
-    seed : int
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    pd.DataFrame
-        DE results with columns: ProteinName, log2FC, pvalue, adj_pvalue.
-    """
-    rng = np.random.default_rng(seed)
-
-    # Step 1: Original limma stats
-    stats_df = _collect_protein_stats(
-        log2_matrix, samples_a, samples_b, cond_a, cond_b,
-    )
-    if stats_df.empty:
+    settings = {**_LIMROTS_OPTION_DEFAULTS, **options}
+    prepared = _prepare_limrots_run(log2_matrix, (samples_a, samples_b), contrast, settings)
+    if prepared is None:
         return pd.DataFrame()
 
-    d_orig, s_orig, d0, df_post = _limma_moderated_ds(stats_df)
-    n_prot = len(d_orig)
-    all_samples = samples_a + samples_b
-    n_a = len(samples_a)
-    prot_index = stats_df["ProteinName"].values
-    prot_to_idx = {p: i for i, p in enumerate(prot_index)}
+    stats_df, prot_index, d_orig, s_orig, df_post, n_threads, shared_dict = prepared
 
-    # Pre-generate random indices
-    boot_sa = [
-        rng.choice(len(samples_a), len(samples_a), replace=True)
-        for _ in range(n_boot)
-    ]
-    boot_sb = [
-        rng.choice(len(samples_b), len(samples_b), replace=True)
-        for _ in range(n_boot)
-    ]
-    perm_orders = [
-        rng.permutation(len(all_samples)) for _ in range(n_boot)
-    ]
-
-    # Step 2-3: Parallel bootstrap + permutation
-    D = np.full((n_prot, n_boot), np.nan)
-    S = np.full((n_prot, n_boot), np.nan)
-    pD = np.full((n_prot, n_boot), np.nan)
-    pS = np.full((n_prot, n_boot), np.nan)
-
-    if n_threads is None:
-        n_threads = os.cpu_count() or 4
-    logger.info("LimROTS: %d bootstrap iterations (%d workers)", n_boot, n_threads)
-
-    shared_dict = {
-        "log2_mat": log2_matrix,
-        "samples_a": samples_a,
-        "samples_b": samples_b,
-        "all_samples": all_samples,
-        "boot_sa": boot_sa,
-        "boot_sb": boot_sb,
-        "perm_orders": perm_orders,
-        "cond_a": cond_a,
-        "cond_b": cond_b,
-        "n_prot": n_prot,
-        "prot_to_idx": prot_to_idx,
-        "n_a": n_a,
-    }
-
-    with ProcessPoolExecutor(
-        max_workers=n_threads,
-        initializer=_init_worker,
-        initargs=(shared_dict,),
-    ) as pool:
-        for b, dc, sc, pdc, psc in pool.map(_worker_bootstrap, range(n_boot)):
-            D[:, b] = dc
-            S[:, b] = sc
-            pD[:, b] = pdc
-            pS[:, b] = psc
-
-    D = np.nan_to_num(D)
-    S = np.nan_to_num(S, nan=1.0)
-    pD = np.nan_to_num(pD)
-    pS = np.nan_to_num(pS, nan=1.0)
-
-    # Step 4: Optimize fudge factor
-    best_ssq = _optimize_ssq(D, S, pD, pS, n_boot, n_prot)
-    logger.info("LimROTS: optimal s0 = %.4f", best_ssq)
-
-    # Step 5: Final optimized test statistic → permutation FDR
-    t_final = d_orig / (best_ssq + s_orig)
-    perm_t = pD / (best_ssq + pS)
-    fdr = _permutation_fdr(t_final, perm_t, n_boot)
-
-    # Parametric p-values for ranking / AUC
-    pvalues = 2.0 * stats.t.sf(np.abs(t_final), df=df_post)
-
-    result = pd.DataFrame({
-        "ProteinName": prot_index,
-        "log2FC": stats_df["log2FC"].values,
-        "pvalue": pvalues,
-        "adj_pvalue": fdr,
-    })
-    return result
+    logger.info("LimROTS: %d bootstrap iterations (%d workers)", settings["n_boot"], n_threads)
+    resampled = _run_parallel_iterations(shared_dict["n_prot"], settings["n_boot"], n_threads, shared_dict)
+    pvalues, fdr = _final_limrots_outputs(d_orig, s_orig, df_post, resampled)
+    return _build_limrots_result(stats_df, prot_index, pvalues, fdr)

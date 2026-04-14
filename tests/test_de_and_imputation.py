@@ -110,7 +110,7 @@ class TestDELimROTS:
     def test_run_limrots_direct(self):
         mat, sa, sb, _ = _make_protein_matrix()
         log2_mat = np.log2(mat.clip(lower=1))
-        result = run_limrots(log2_mat, sa, sb, "A", "B", n_boot=10)
+        result = run_limrots(log2_mat, sa, sb, ("A", "B"), n_boot=10)
         assert len(result) > 0
         assert "pvalue" in result.columns
 
@@ -133,7 +133,7 @@ class TestDEDEqMS:
     def test_run_deqms_direct(self):
         mat, sa, sb, _ = _make_protein_matrix()
         log2_mat = np.log2(mat.clip(lower=1))
-        result = run_deqms(log2_mat, sa, sb, "A", "B")
+        result = run_deqms(log2_mat, sa, sb, ("A", "B"))
         assert len(result) > 0
         assert "pvalue" in result.columns
 
@@ -142,7 +142,7 @@ class TestDEDEqMS:
         log2_mat = np.log2(mat.clip(lower=1))
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = run_deqms(log2_mat, sa, sb, "A", "B")
+            result = run_deqms(log2_mat, sa, sb, ("A", "B"))
         assert len(result) > 0
         runtime_warnings = [
             w for w in caught
