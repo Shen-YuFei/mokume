@@ -1,6 +1,7 @@
 # CLI Reference
 
-mokume provides four main commands. Use `mokume --help` or `mokume <command> --help` for details.
+mokume provides six main commands. In practice, most users start with `features2proteins` for quantification workflows or `tissuemap` for tissue atlas workflows.
+Use `mokume --help` or `mokume <command> --help` for details.
 
 ## features2proteins
 
@@ -42,8 +43,8 @@ mokume features2proteins [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--run-normalization` | `median` | Run-level: median, mean, iqr, max, max_min, none |
-| `--sample-normalization` | `globalMedian` | Sample-level: globalMedian, conditionMedian, hierarchical, none |
+| `--run-normalization` | `median` | Run-level: median, mean, max, global, max_min, iqr, none |
+| `--sample-normalization` | `globalMedian` | Sample-level: globalMedian, conditionMedian, hierarchical, tmm, none |
 | `--normalization-proteins` | none | File with protein IDs for normalization |
 
 ### IRS (Multi-Plex TMT)
@@ -94,6 +95,8 @@ mokume features2proteins [OPTIONS]
 | `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
 | `--de-output` | auto | Output file for DE results |
 
+`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods.
+
 ### Plots & Reports
 
 | Option | Default | Description |
@@ -140,11 +143,21 @@ mokume features2peptides [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--run-normalization` | `median` | Feature normalization: mean, median, iqr, none |
-| `--sample-normalization` | `globalMedian` | Sample normalization: globalMedian, conditionMedian, hierarchical, none |
+| `--run-normalization` | `median` | Feature normalization: median, mean, max, global, max_min, iqr, none |
+| `--sample-normalization` | `globalMedian` | Sample normalization: globalMedian, conditionMedian, hierarchical, tmm, none |
 | `--skip_normalization` | off | Skip all normalization |
 | `--log2` | off | Log2 transform output |
 | `--save_parquet` | off | Save output as parquet |
+
+### TMT / ITRAQ
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--irs_channel` | none | Explicit pooled/reference channel label |
+| `--irs_autodetect_regex` | none | Regex to detect pooled samples from SDRF |
+| `--irs_stat` | `median` | IRS per-run statistic |
+| `--irs_scope` | `global` | IRS scaling scope: global, by_mixture, or two_stage |
+| `--aggregation_level` | `sample` | Aggregate at sample or run level |
 
 ### Filter Configuration
 
@@ -175,7 +188,7 @@ mokume peptides2protein [OPTIONS]
 |--------|---------|-------------|
 | `-p/--peptides` | required | Input peptide intensity file |
 | `-f/--fasta` | none | FASTA file (required for iBAQ) |
-| `--method` | `ibaq` | Method: ibaq, top3, top5, top10, topn, maxlfq, sum, directlfq |
+| `--method` | `ibaq` | Method: ibaq, top3, topn, maxlfq, sum, directlfq |
 | `-e/--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
 | `-n/--normalize` | off | Normalize quantification values |
 | `--min_aa` | 7 | Min amino acid length |
@@ -188,9 +201,11 @@ mokume peptides2protein [OPTIONS]
 | `--topn_n` | 3 | N for TopN quantification |
 | `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
 | `--min_nonan` | 1 | Min non-NaN for DirectLFQ |
-| `-o/--output` | required | Output file path |
+| `-o/--output` | none | Output file path |
 | `--verbose` | off | Print distribution info |
 | `--qc_report` | QCprofile.pdf | QC report PDF path |
+
+Use `--method topn --topn_n 5` or `--method topn --topn_n 10` for Top5 or Top10-style quantification. `-o/--output` is effectively required for `ibaq`; for the other methods, omitting it prints the result table to stdout.
 
 ---
 
@@ -209,11 +224,34 @@ mokume correct-batches [OPTIONS]
 | `-o/--output` | required | Output file path |
 | `-sid/--sample_id_column` | `SampleID` | Sample ID column |
 | `-pid/--protein_id_column` | `ProteinName` | Protein ID column |
-| `-ibaq/--ibaq_raw_column` | `IBAQ` | Raw intensity column |
+| `--ibaq_raw_column` | `IBAQ` | Raw intensity column |
 | `--ibaq_corrected_column` | `IBAQ_BEC` | Corrected intensity column |
 | `--comment` | `#` | Comment character |
 | `--sep` | `\t` | Field separator |
 | `--export_anndata` | off | Export to AnnData h5ad |
+
+---
+
+## tissuemap
+
+Per-dataset tissue proteome atlas analysis from QPX outputs.
+
+```bash
+mokume tissuemap [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--scan-dir` | required unless `--generate-config` | Dataset directory or parent directory containing datasets |
+| `--output-dir` | `tissuemap_output` | Output directory for results |
+| `--config` | none | YAML configuration file |
+| `--generate-config` | none | Generate a default YAML template and exit |
+| `--tmt-dataset` | auto | Mark one or more dataset IDs as TMT |
+| `--n-jobs` | `8` | Threads for dataset processing and embedding |
+| `--dpi` | `250` | Plot resolution override |
+
+!!! note
+    Install the optional dependencies first with `pip install mokume[tissuemap]`.
 
 ---
 

@@ -86,6 +86,19 @@ mokume features2proteins -p data.parquet -o out.csv \
     --normalization-proteins housekeeping_proteins.txt
 ```
 
+### LOESS Normalization
+
+LOESS normalization is available as a standalone Python API utility for log2-scale matrices when you want to correct intensity-dependent bias using MA-style local regression.
+
+```python
+from mokume.normalization import loess_normalize
+
+normalized = loess_normalize(log2_df, frac=0.75, reference="median")
+```
+
+!!! note
+    LOESS is not currently exposed as a top-level `features2proteins` CLI normalization mode. It is most useful as a programmatic utility when you already have a matrix and want to test intensity-dependent bias correction explicitly.
+
 ### TMM Normalization
 
 Trimmed Mean of M-values computes normalization factors robust to composition bias from highly abundant proteins. Based on Robinson & Oshlack (2010).

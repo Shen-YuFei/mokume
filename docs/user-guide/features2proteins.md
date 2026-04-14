@@ -55,6 +55,13 @@ The `features2proteins` command is the recommended way to go from raw feature da
 | Median | `--quant-method median` | No | Median peptide intensity |
 | Ratio | `--quant-method ratio` | No | Log2 sample/reference (TMT) |
 
+In practice:
+
+- Use `maxlfq` as the default starting point for standard LFQ workflows.
+- Use `directlfq` when you explicitly want the DirectLFQ package to handle normalization and quantification together.
+- Use `ibaq` when you need absolute-style quantification and have a FASTA file.
+- Use `ratio` for TMT PS-style reference-based analysis.
+
 ```bash
 # iBAQ (requires FASTA)
 mokume features2proteins \
@@ -81,7 +88,7 @@ Adjusts for intensity differences between MS runs within each sample.
 ```bash
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
-    --run-normalization median  # median, mean, iqr, max, max_min, none
+    --run-normalization median  # median, mean, max, global, max_min, iqr, none
 ```
 
 ### Sample-Level Normalization
@@ -97,11 +104,19 @@ mokume features2proteins -p data.parquet -o out.csv \
 mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical
 
+# TMM normalization
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization tmm
+
 # With specific normalization proteins
 mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical \
     --normalization-proteins housekeeping.txt
 ```
+
+- `globalMedian` is the default and a good general-purpose starting point.
+- `hierarchical` is useful when you want DirectLFQ-style normalization with a non-DirectLFQ quantification method.
+- `tmm` is available for composition-bias-aware sample normalization.
 
 ## IRS Normalization (Multi-Plex TMT)
 
@@ -202,6 +217,9 @@ mokume features2proteins \
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
 | `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
 | `--de-output` | auto | Output file for DE results |
+
+!!! tip
+    `--de-method auto` chooses `deqms` for `directlfq` quantification and `limrots` for all others. Use `proda` explicitly when dropout-aware modeling is more appropriate for your matrix.
 
 ## Plots and Reports
 

@@ -13,6 +13,7 @@ from mokume.pipeline.config import (
     QuantificationConfig,
     IRSConfig,
     BatchCorrectionConfig,
+    ImputationConfig,
     DEConfig,
     OutputConfig,
 )
@@ -38,7 +39,7 @@ from mokume.pipeline.config import (
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `run_method` | `str` | `"median"` | Run-level normalization: median, mean, iqr, max, max_min, none |
+| `run_method` | `str` | `"median"` | Run-level normalization: median, mean, max, global, max_min, iqr, none |
 | `sample_method` | `str` | `"globalMedian"` | Sample-level: globalMedian, conditionMedian, hierarchical, tmm, none |
 | `proteins_file` | `str \| None` | `None` | File with protein IDs for normalization |
 
@@ -77,6 +78,20 @@ from mokume.pipeline.config import (
 | `parametric` | `bool` | `True` | Use parametric ComBat |
 | `mean_only` | `bool` | `False` | Only correct mean (not variance) |
 | `ref_batch` | `int \| None` | `None` | Reference batch index |
+
+### ImputationConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `bool` | `False` | Enable missing value imputation |
+| `method` | `str` | `"none"` | Method: none, minprob, mindet, knn |
+| `quantile` | `float` | `0.01` | Quantile used by MinProb / MinDet |
+| `shift` | `float` | `1.6` | Mean shift for MinProb |
+| `scale` | `float` | `0.3` | Standard deviation scaling for MinProb |
+| `n_neighbors` | `int` | `5` | Number of neighbors for KNN imputation |
+
+!!! note
+    `ImputationConfig` is part of the configuration schema, but the current high-level `features2proteins` CLI and functional pipeline entry point do not yet expose imputation parameters directly. For now, use the standalone utilities in `mokume.imputation` when you need MinProb, MinDet, or KNN imputation.
 
 ### DEConfig
 
@@ -146,6 +161,105 @@ config = PipelineConfig(
         interactive_report=True,
         report_output="qc_report.html",
     ),
+)
+```
+
+---
+
+## TissueMapConfig
+
+The `TissueMapConfig` dataclass controls the `TissueMapPipeline`.
+
+```python
+from mokume.tissuemap.config import (
+    TissueMapConfig,
+    InputConfig as TissueMapInputConfig,
+    FilteringConfig,
+    TissueSpecificityConfig,
+    EmbeddingConfig,
+    PlottingConfig,
+    OutputConfig as TissueMapOutputConfig,
+)
+```
+
+### Top-Level Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `n_jobs` | `int` | `8` | Threads used for dataset processing and embedding |
+| `input` | `TissueMapInputConfig` | default factory | Dataset discovery and input controls |
+| `filtering` | `FilteringConfig` | default factory | Protein filtering controls |
+| `tissue_specificity` | `TissueSpecificityConfig` | default factory | AdaTiSS tissue-specificity scoring controls |
+| `embedding` | `EmbeddingConfig` | default factory | PCA / t-SNE settings |
+| `plotting` | `PlottingConfig` | default factory | Plot output controls |
+| `output` | `TissueMapOutputConfig` | default factory | Output directory settings |
+
+### TissueMap InputConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scan_dir` | `Path` | `Path(".")` | Dataset directory or parent directory containing datasets |
+| `tmt_datasets` | `list[str]` | `[]` | Dataset IDs that should be treated as TMT |
+| `feature_prefix` | `str \| None` | `None` | Optional custom QPX feature parquet prefix |
+| `min_tissue_samples` | `int` | `1` | Minimum number of samples required per tissue label |
+| `low_sample_warning_threshold` | `int` | `0` | Warning threshold for low-sample tissues |
+
+### FilteringConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_nan_frac` | `float` | `0.95` | Maximum allowed missing fraction per protein |
+| `remove_contaminants` | `bool` | `True` | Remove contaminants before downstream analysis |
+| `contaminant_pattern` | `str` | `"CONTAM\|ENTRAP\|DECOY"` | Regex used to identify contaminants |
+
+### TissueSpecificityConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `use_pure_mad` | `bool` | `True` | Use MAD-based robust scaling for AdaTiSS |
+| `sigma_floor` | `float \| None` | `None` | Manual lower bound for fitted sigma |
+| `ts_enriched_threshold` | `float \| None` | `None` | Threshold for tissue-enriched proteins |
+| `ts_specific_threshold` | `float \| None` | `None` | Threshold for tissue-specific proteins |
+| `ts_housekeeping_threshold` | `float \| None` | `None` | Threshold for housekeeping-like proteins |
+
+### EmbeddingConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_nan_frac_for_pca` | `float \| None` | `None` | Optional missingness limit for PCA input proteins |
+| `pca_components` | `int` | `50` | Number of PCA components |
+| `tsne_perplexity` | `float` | `15.0` | t-SNE perplexity |
+| `random_state` | `int` | `42` | Random seed for reproducibility |
+
+### PlottingConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dpi` | `int` | `250` | Plot resolution |
+| `save_pdf` | `bool` | `True` | Save PDF copies of plots |
+| `n_marker_top` | `int` | `10` | Number of top markers saved per tissue |
+
+### TissueMap OutputConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `output_dir` | `Path` | `Path("tissuemap_output")` | Output directory for dataset results |
+
+### Example
+
+```python
+from pathlib import Path
+
+from mokume.tissuemap.config import InputConfig, OutputConfig, TissueMapConfig
+
+config = TissueMapConfig(
+    n_jobs=8,
+    input=InputConfig(
+        scan_dir=Path("QPX_data/tissues-mq"),
+        tmt_datasets=["PXD016999"],
+        min_tissue_samples=2,
+    ),
+    output=OutputConfig(output_dir=Path("./tissuemap_results")),
 )
 ```
 

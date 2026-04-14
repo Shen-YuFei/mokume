@@ -115,7 +115,8 @@ nav:
       - "features2proteins: Unified Pipeline": user-guide/features2proteins.md
       - "features2peptides: Peptide Normalization": user-guide/features2peptides.md
       - "peptides2protein: Protein Quantification": user-guide/peptides2protein.md
-      - "batch-correct: Batch Correction": user-guide/batch-correct.md
+      - "correct-batches: Batch Correction": user-guide/batch-correct.md
+      - "tissuemap: Tissue Proteome Atlas": user-guide/tissuemap.md
       - Visualization & Reports: user-guide/visualization.md
   - Reference:
       - reference/index.md

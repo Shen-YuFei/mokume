@@ -9,6 +9,9 @@ You need:
 1. A **parquet file** in quantms.io/qpx format (output from quantms pipeline)
 2. Optionally, an **SDRF file** for sample metadata
 
+For most workflows, `pip install mokume` is enough.
+If you want TissueMap, install `mokume[tissuemap]` first.
+
 ## One-Step Pipeline (Recommended)
 
 The `features2proteins` command handles everything: loading, filtering, normalization, and quantification.
@@ -115,8 +118,8 @@ For more control, use the peptide normalization step separately:
 mokume features2peptides \
     -p features.parquet \
     -s experiment.sdrf.tsv \
-    --nmethod median \
-    --pnmethod globalMedian \
+    --run-normalization median \
+    --sample-normalization globalMedian \
     --output peptides.csv
 
 # Step 2: Quantify proteins
@@ -126,8 +129,28 @@ mokume peptides2protein \
     -o proteins.tsv
 ```
 
+## Tissue Atlas Workflow
+
+Use `tissuemap` when your goal is tissue atlas analysis rather than standard protein quantification.
+
+```bash
+# Install the optional dependencies first
+pip install mokume[tissuemap]
+
+# Run a single dataset
+mokume tissuemap \
+    --scan-dir QPX_data/tissues-mq/PXD016999 \
+    --output-dir ./tissuemap_results
+
+# Or generate a YAML template first
+mokume tissuemap --generate-config tissuemap.yaml
+```
+
+This workflow generates batch-corrected AnnData outputs, tissue-specificity scores, and atlas-style plots.
+
 ## What's Next?
 
 - [Quantification Methods](concepts/quantification.md) — understand iBAQ, MaxLFQ, TopN, and more
 - [Normalization](concepts/normalization.md) — learn about the normalization pipeline
 - [Unified Pipeline](user-guide/features2proteins.md) — full reference for features2proteins
+- [Tissue Proteome Atlas](user-guide/tissuemap.md) — run the per-dataset TissueMap workflow
