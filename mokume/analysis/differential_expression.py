@@ -7,7 +7,6 @@ differences between experimental conditions.
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
 from mokume.analysis.deqms import run_deqms
@@ -156,16 +155,21 @@ class DifferentialExpression:
 
     def _finalize_results(self, de_df: pd.DataFrame) -> pd.DataFrame:
         """Apply FDR correction and classify significance."""
-        if self.fdr_method == "ihw":
-            de_df["adj_pvalue"] = _ihw_correction(
-                de_df["pvalue"].values,
-                de_df,
-                alpha=self.fdr_threshold,
-            )
-        else:
-            de_df["adj_pvalue"] = multipletests(
-                de_df["pvalue"].values, method="fdr_bh"
-            )[1]
+        pvalues = de_df["pvalue"].values
+        valid = np.isfinite(pvalues)
+        adj = np.full(len(pvalues), np.nan)
+        if valid.any():
+            if self.fdr_method == "ihw":
+                adj[valid] = _ihw_correction(
+                    pvalues[valid],
+                    de_df.loc[valid],
+                    alpha=self.fdr_threshold,
+                )
+            else:
+                adj[valid] = multipletests(
+                    pvalues[valid], method="fdr_bh"
+                )[1]
+        de_df["adj_pvalue"] = adj
 
         # Classify significance
         de_df["significance"] = "Unchanged"

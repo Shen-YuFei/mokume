@@ -219,7 +219,7 @@ mokume features2proteins \
 | `--de-output` | auto | Output file for DE results |
 
 !!! tip
-    `--de-method auto` chooses `deqms` for `directlfq` quantification and `limrots` for all others. Use `proda` explicitly when dropout-aware modeling is more appropriate for your matrix.
+    `--de-method auto` chooses `deqms` for `directlfq` quantification and `limrots` for all others. Use `proda` explicitly when dropout-aware modeling is more appropriate for your matrix. See [Differential Expression concepts](../concepts/differential-expression.md) for a detailed comparison of methods.
 
 ## Plots and Reports
 
