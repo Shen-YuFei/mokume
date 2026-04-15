@@ -53,6 +53,14 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (æœ
 
     [:octicons-arrow-right-24: Preprocessing](concepts/preprocessing.md)
 
+-   :material-chart-scatter-plot-hexbin:{ .lg .middle } **Differential Expression**
+
+    ---
+
+    LimROTS, DEqMS, and proDA with BH or IHW FDR correction â€” choose by discovery vs precision priority.
+
+    [:octicons-arrow-right-24: Differential Expression](concepts/differential-expression.md)
+
 -   :material-map-marker-path:{ .lg .middle } **Tissue Proteome Atlas**
 
     ---

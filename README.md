@@ -350,8 +350,8 @@ mokume features2peptides \
     -s experiment.sdrf.tsv \
     --remove_decoy_contaminants \
     --remove_low_frequency_peptides \
-    --nmethod median \
-    --pnmethod globalMedian \
+    --run-normalization median \
+    --sample-normalization globalMedian \
     --output peptides-norm.csv
 ```
 
@@ -579,8 +579,8 @@ peptide_normalization(
     remove_low_frequency_peptides=True,
     output="peptides-norm.csv",
     skip_normalization=False,
-    nmethod="median",      # Feature normalization: mean, median, iqr, none
-    pnmethod="globalMedian",  # Peptide normalization: globalMedian, conditionMedian, none
+    nmethod="median",      # Feature normalization: mean, median, max, global, max_min, iqr, none
+    pnmethod="globalMedian",  # Sample normalization: globalMedian, conditionMedian, hierarchical, tmm, none
     log2=True,
     save_parquet=False,
 )
@@ -685,19 +685,22 @@ With covariates:     Batch effect removed, tissue signal preserved
 
 ```python
 from mokume.pipeline import QuantificationPipeline, PipelineConfig
+from mokume.pipeline.config import (
+    InputConfig, QuantificationConfig, BatchCorrectionConfig,
+)
 
 # Batch correction with covariates from SDRF
 config = PipelineConfig(
-    parquet="data.parquet",
-    sdrf="experiment.sdrf.tsv",
-    quant_method="maxlfq",
-    # Batch correction options
-    batch_correction=True,
-    batch_method="sample_prefix",  # Detect batches from sample names
-    batch_covariates=[             # Preserve biological signal from SDRF
-        "characteristics[sex]",
-        "characteristics[organism part]",
-    ],
+    input=InputConfig(
+        parquet="data.parquet",
+        sdrf="experiment.sdrf.tsv",
+    ),
+    quantification=QuantificationConfig(method="maxlfq"),
+    batch=BatchCorrectionConfig(
+        enabled=True,
+        method="sample_prefix",
+        covariates=["characteristics[sex]", "characteristics[organism part]"],
+    ),
 )
 
 pipeline = QuantificationPipeline(config)
@@ -879,22 +882,27 @@ print(human.histone_entries)  # List of histone protein accessions
 
 ## Normalization Methods
 
-### Feature-Level Normalization (`--nmethod`)
+### Feature-Level Normalization (`--run-normalization`)
 
 | Method | Description |
 |--------|-------------|
 | `median` | Normalize by median across MS runs |
 | `mean` | Normalize by mean across MS runs |
+| `max` | Normalize by maximum intensity within each run |
+| `global` | Normalize by total intensity within each run |
+| `max_min` | Apply min-max scaling |
 | `iqr` | Normalize by interquartile range |
 | `none` | Skip feature normalization |
 
-### Peptide-Level Normalization (`--pnmethod`)
+### Sample-Level Normalization (`--sample-normalization`)
 
 | Method | Description |
 |--------|-------------|
 | `globalMedian` | Adjust all samples to global median |
 | `conditionMedian` | Adjust samples within each condition to median |
-| `none` | Skip peptide normalization |
+| `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
+| `tmm` | Trimmed Mean of M-values normalization |
+| `none` | Skip sample normalization |
 
 ## Preprocessing Filters
 
