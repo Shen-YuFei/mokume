@@ -274,7 +274,14 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--de-contrasts",
     "de_contrasts",
-    help="Comma-separated contrasts (e.g., 'NASH-HL,GroupA-GroupB')",
+    help="Comma-separated contrasts (e.g., 'A vs B,A vs C' or 'A-B,A-C')",
+    default=None,
+)
+@click.option(
+    "--de-contrasts-file",
+    "de_contrasts_file",
+    help="TSV file with contrasts (columns: group1, group2)",
+    type=click.Path(exists=True),
     default=None,
 )
 @click.option(
@@ -409,6 +416,7 @@ def features2proteins(
     # DE
     differential_expression: bool,
     de_contrasts: str,
+    de_contrasts_file: str,
     de_method: str,
     de_log2fc_threshold: float,
     de_fdr_threshold: float,
@@ -458,8 +466,8 @@ def features2proteins(
 
     \b
     DIFFERENTIAL EXPRESSION:
-      Use --de to enable DE analysis. Contrasts are auto-detected or
-      specified via --de-contrasts (e.g., 'NASH-HL').
+      Use --de to enable DE analysis. Contrasts must be specified
+      via --de-contrasts (e.g., 'NASH vs HL') or --de-contrasts-file (TSV).
 
     \b
     EXAMPLES:
@@ -553,8 +561,27 @@ def features2proteins(
     )
     parsed_de_contrasts = (
         [s.strip() for s in de_contrasts.split(",")]
-        if de_contrasts else None
+        if de_contrasts else []
     )
+    if de_contrasts_file:
+        import csv
+        with open(de_contrasts_file, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            if not reader.fieldnames or not {"group1", "group2"}.issubset(reader.fieldnames):
+                raise click.UsageError(
+                    f"Contrasts file '{de_contrasts_file}' must have 'group1' and 'group2' "
+                    f"columns. Found: {reader.fieldnames}"
+                )
+            for row in reader:
+                g1 = row.get("group1", "").strip()
+                g2 = row.get("group2", "").strip()
+                if g1 and g2:
+                    parsed_de_contrasts.append(f"{g1} vs {g2}")
+        click.echo(
+            f"Loaded {len(parsed_de_contrasts)} contrasts "
+            f"(inline + file: {de_contrasts_file})"
+        )
+    parsed_de_contrasts = parsed_de_contrasts or None
     parsed_highlight_genes = (
         [s.strip() for s in highlight_genes.split(",")]
         if highlight_genes else None

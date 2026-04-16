@@ -88,12 +88,15 @@ mokume features2proteins [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--de` | off | Enable differential expression analysis |
-| `--de-contrasts` | all pairs | Comma-separated contrasts (e.g., "A-B,A-C") |
+| `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
+| `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
 | `--de-method` | `auto` | Method: auto, limrots, deqms, or proda |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
 | `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
 | `--de-output` | auto | Output file for DE results |
+
+Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrasts-file`. Both can be combined.
 
 `--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods.
 
@@ -103,7 +106,7 @@ mokume features2proteins [OPTIONS]
 |--------|---------|-------------|
 | `--plot-dir` | none | Output directory for plots |
 | `--plot-volcano` | off | Generate volcano plots |
-| `--plot-heatmap` | off | Generate heatmaps |
+| `--plot-heatmap` | off | Generate per-contrast DE heatmaps (top 50 by \|log2FC\|) |
 | `--plot-pca` | off | Generate PCA plots |
 | `--highlight-genes` | none | Comma-separated gene names to highlight |
 | `--interactive-report` | off | Generate interactive HTML QC report |
