@@ -318,7 +318,7 @@ def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
     Detect sample-to-condition mapping from SDRF factor value columns.
 
     Looks for the first ``factor value[*]`` column and maps each source name
-    to its condition.
+    (and each run file name, if available) to its condition.
 
     Parameters
     ----------
@@ -328,7 +328,11 @@ def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
     Returns
     -------
     dict[str, str]
-        Mapping from sample name (source name) to condition.
+        Mapping from sample/run name to condition.  Keys include source
+        names and, when ``comment[data file]`` is present, run file names
+        (with and without extension, both original and upper-cased) so that
+        the mapping works regardless of whether downstream code uses source
+        names or run identifiers as column headers.
     """
     sdrf = load_sdrf(sdrf_path)
 
@@ -342,5 +346,16 @@ def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
     for _, row in sdrf.drop_duplicates(subset=["source name"]).iterrows():
         sample_to_condition[row["source name"]] = str(row[factor_col])
 
-    logger.info(f"Condition mapping from '{factor_col}': {len(sample_to_condition)} samples")
+    # Also map run file names to conditions for run-level protein matrices
+    data_file_col = "comment[data file]"
+    if data_file_col in sdrf.columns:
+        for _, row in sdrf.iterrows():
+            condition = str(row[factor_col])
+            raw_name = str(row[data_file_col])
+            stem = re.sub(r"\.(raw|mzML|d)$", "", raw_name, flags=re.IGNORECASE)
+            for variant in (raw_name, stem, raw_name.upper(), stem.upper()):
+                if variant and variant not in sample_to_condition:
+                    sample_to_condition[variant] = condition
+
+    logger.info(f"Condition mapping from '{factor_col}': {len(sample_to_condition)} entries")
     return sample_to_condition

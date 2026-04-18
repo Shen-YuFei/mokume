@@ -17,7 +17,7 @@ The easiest way to generate plots is through the unified pipeline:
 mokume features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
-    --de --de-contrasts "NASH-HL" \
+    --de --de-contrasts "NASH vs HL,NASH vs Control" \
     --plot-dir plots/ \
     --plot-volcano \
     --plot-heatmap \
@@ -28,8 +28,8 @@ mokume features2proteins \
 This generates:
 
 - `plots/volcano_NASH-HL.png` -- Volcano plot for each contrast
-- `plots/heatmap_NASH-HL.png` -- Heatmap of top DE proteins
-- `plots/pca_conditions.png` -- PCA colored by experimental condition
+- `plots/heatmap_NASH-HL.png` -- Per-contrast heatmap showing top 50 significant proteins (by |log2FC|) and only the two compared conditions. Skipped if no significant proteins exist for that contrast.
+- `plots/pca_conditions.png` -- PCA colored by experimental condition (all samples)
 
 ## Interactive HTML Reports
 
@@ -179,10 +179,11 @@ fig = plot_volcano(
     output_file="volcano.png",
 )
 
-# Heatmap of top DE proteins
+# Heatmap of top variable proteins
 fig = plot_heatmap(
     protein_df, sample_to_condition,
-    top_n=50,
+    top_n=50,              # top N most variable if proteins=None
+    proteins=["P12345"],   # or pass specific protein list
     output_file="heatmap.png",
 )
 

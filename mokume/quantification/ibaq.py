@@ -18,21 +18,22 @@ from pyopenms import AASequence, ProteaseDigestion, FASTAFile
 
 from mokume.model.organism import OrganismDescription
 from mokume.core.constants import (
-    CONDITION,
-    IBAQ,
-    IBAQ_LOG,
-    IBAQ_NORMALIZED,
-    IBAQ_PPB,
-    NORM_INTENSITY,
     PROTEIN_NAME,
     SAMPLE_ID,
-    TPA,
-    MOLECULARWEIGHT,
+    NORM_INTENSITY,
+    IBAQ,
+    IBAQ_NORMALIZED,
+    IBAQ_LOG,
+    IBAQ_PPB,
+    CONDITION,
     COPYNUMBER,
     CONCENTRATION_NM,
+    MOLECULARWEIGHT,
     MOLES_NMOL,
     WEIGHT_NG,
+    TPA,
     is_parquet,
+    build_accession_map,
     get_accession,
 )
 from mokume.core.logger import get_logger, log_execution_time, log_function_call
@@ -147,6 +148,8 @@ def extract_fasta(fasta: str, enzyme: str, proteins: List, min_aa: int, max_aa: 
     ValueError
         If none of the specified proteins are found in the FASTA file.
     """
+    acc_to_originals, protein_accessions = build_accession_map(proteins)
+
     fasta_proteins = list()
     FASTAFile().load(fasta, fasta_proteins)
     found_proteins = set()
@@ -156,23 +159,25 @@ def extract_fasta(fasta: str, enzyme: str, proteins: List, min_aa: int, max_aa: 
     mw_dict = dict()
     for entry in fasta_proteins:
         accession = get_accession(entry.identifier)
-        if accession in proteins:
-            found_proteins.add(accession)
+        if accession in protein_accessions:
+            originals = acc_to_originals[accession]
+            found_proteins.update(originals)
             digest = list()
             digestor.digest(AASequence().fromString(entry.sequence), digest, min_aa, max_aa)
             digestuniq = set(digest)
-            uniquepepcounts[accession] = len(digestuniq)
+            for orig in originals:
+                uniquepepcounts[orig] = len(digestuniq)
             if tpa:
                 try:
                     mw = AASequence().fromString(entry.sequence).getMonoWeight()
-                    mw_dict[accession] = mw
                 except ValueError:
                     error_aa, seq = handle_nonstandard_aa(entry.sequence)
                     mw = AASequence().fromString(seq).getMonoWeight()
-                    mw_dict[accession] = mw
                     logger.error(
                         "Nonstandard amino acids found in %s: %s, ignored!", accession, error_aa
                     )
+                for orig in originals:
+                    mw_dict[orig] = mw
     if not found_proteins:
         raise ValueError(f"None of the {len(proteins)} proteins were found in the FASTA file")
     return uniquepepcounts, mw_dict, found_proteins

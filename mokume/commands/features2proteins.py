@@ -150,6 +150,54 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     type=click.Path(),
     default=None,
 )
+@click.option(
+    "--batch-correction",
+    "batch_correction",
+    help="Enable ComBat batch correction after quantification",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--batch-method",
+    "batch_method",
+    help="Batch detection method",
+    type=click.Choice(["sample_prefix", "run", "column"], case_sensitive=False),
+    default="sample_prefix",
+    show_default=True,
+)
+@click.option(
+    "--batch-column",
+    "batch_column",
+    help="SDRF column to use when --batch-method=column",
+    default=None,
+)
+@click.option(
+    "--batch-covariates",
+    "batch_covariates",
+    help="Comma-separated SDRF columns to preserve as biological covariates",
+    default=None,
+)
+@click.option(
+    "--batch-parametric/--batch-nonparametric",
+    "batch_parametric",
+    help="Use parametric or non-parametric ComBat estimation",
+    default=True,
+    show_default=True,
+)
+@click.option(
+    "--batch-mean-only",
+    "batch_mean_only",
+    help="Only adjust batch means, not individual effects",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--batch-ref",
+    "batch_ref",
+    help="Reference batch ID for ComBat",
+    type=int,
+    default=None,
+)
 # IRS normalization options
 @click.option(
     "--irs",
@@ -226,15 +274,22 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--de-contrasts",
     "de_contrasts",
-    help="Comma-separated contrasts (e.g., 'NASH-HL,GroupA-GroupB')",
+    help="Comma-separated contrasts (e.g., 'A vs B,A vs C' or 'A-B,A-C')",
+    default=None,
+)
+@click.option(
+    "--de-contrasts-file",
+    "de_contrasts_file",
+    help="TSV file with contrasts (columns: group1, group2)",
+    type=click.Path(exists=True),
     default=None,
 )
 @click.option(
     "--de-method",
     "de_method",
     help="DE statistical method",
-    type=click.Choice(["ttest", "limma"], case_sensitive=False),
-    default="ttest",
+    type=click.Choice(["auto", "limrots", "deqms", "proda"], case_sensitive=False),
+    default="auto",
     show_default=True,
 )
 @click.option(
@@ -251,6 +306,14 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     help="Maximum adjusted p-value (FDR) for significance",
     type=float,
     default=0.05,
+    show_default=True,
+)
+@click.option(
+    "--de-fdr-method",
+    "de_fdr_method",
+    help="FDR correction method",
+    type=click.Choice(["bh", "ihw"], case_sensitive=False),
+    default="bh",
     show_default=True,
 )
 @click.option(
@@ -330,6 +393,14 @@ def features2proteins(
     directlfq_min_nonan: int,
     export_peptides: str,
     export_ions: str,
+    # Batch correction
+    batch_correction: bool,
+    batch_method: str,
+    batch_column: str,
+    batch_covariates: str,
+    batch_parametric: bool,
+    batch_mean_only: bool,
+    batch_ref: int,
     # IRS
     irs: bool,
     irs_reference_samples: str,
@@ -345,9 +416,11 @@ def features2proteins(
     # DE
     differential_expression: bool,
     de_contrasts: str,
+    de_contrasts_file: str,
     de_method: str,
     de_log2fc_threshold: float,
     de_fdr_threshold: float,
+    de_fdr_method: str,
     de_output: str,
     # Plots
     plot_output_dir: str,
@@ -393,8 +466,8 @@ def features2proteins(
 
     \b
     DIFFERENTIAL EXPRESSION:
-      Use --de to enable DE analysis. Contrasts are auto-detected or
-      specified via --de-contrasts (e.g., 'NASH-HL').
+      Use --de to enable DE analysis. Contrasts must be specified
+      via --de-contrasts (e.g., 'NASH vs HL') or --de-contrasts-file (TSV).
 
     \b
     EXAMPLES:
@@ -414,7 +487,7 @@ def features2proteins(
       # Ratio quantification (PS protocol) with coverage filter + DE
       mokume features2proteins -p data.parquet -o proteins.csv -s sdrf.tsv \\
         --quant-method ratio --coverage-threshold 0.65 \\
-        --de --de-method limma --de-contrasts NASH-HL
+        --de --de-method deqms --de-contrasts NASH-HL
     """
     from mokume.pipeline import features_to_proteins as run_pipeline
 
@@ -425,6 +498,29 @@ def features2proteins(
     # Validate ratio requires sdrf
     if quant_method.lower() == "ratio" and not sdrf:
         raise click.UsageError("Ratio quantification requires --sdrf option")
+
+    if batch_correction and batch_method.lower() == "column" and not batch_column:
+        raise click.UsageError(
+            "Batch correction with method 'column' requires --batch-column option"
+        )
+
+    if batch_correction and (batch_column or batch_covariates) and not sdrf:
+        raise click.UsageError(
+            "Batch correction with --batch-column or --batch-covariates requires --sdrf option"
+        )
+
+    if not batch_correction and (
+        batch_column
+        or batch_covariates
+        or batch_method != "sample_prefix"
+        or not batch_parametric
+        or batch_mean_only
+        or batch_ref is not None
+    ):
+        click.echo(
+            "Note: batch correction options are ignored unless --batch-correction is enabled.",
+            err=True,
+        )
 
     # Info about DirectLFQ ignoring normalization settings
     if quant_method.lower() == "directlfq":
@@ -459,10 +555,33 @@ def features2proteins(
         [s.strip() for s in irs_sdrf_values.split(",")]
         if irs_sdrf_values else None
     )
+    parsed_batch_covariates = (
+        [s.strip() for s in batch_covariates.split(",")]
+        if batch_covariates else None
+    )
     parsed_de_contrasts = (
         [s.strip() for s in de_contrasts.split(",")]
-        if de_contrasts else None
+        if de_contrasts else []
     )
+    if de_contrasts_file:
+        import csv
+        with open(de_contrasts_file, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            if not reader.fieldnames or not {"group1", "group2"}.issubset(reader.fieldnames):
+                raise click.UsageError(
+                    f"Contrasts file '{de_contrasts_file}' must have 'group1' and 'group2' "
+                    f"columns. Found: {reader.fieldnames}"
+                )
+            for row in reader:
+                g1 = row.get("group1", "").strip()
+                g2 = row.get("group2", "").strip()
+                if g1 and g2:
+                    parsed_de_contrasts.append(f"{g1} vs {g2}")
+        click.echo(
+            f"Loaded {len(parsed_de_contrasts)} contrasts "
+            f"(inline + file: {de_contrasts_file})"
+        )
+    parsed_de_contrasts = parsed_de_contrasts or None
     parsed_highlight_genes = (
         [s.strip() for s in highlight_genes.split(",")]
         if highlight_genes else None
@@ -483,8 +602,17 @@ def features2proteins(
         fasta_file=fasta_file,
         ion_alignment=ion_alignment,
         directlfq_num_cores=directlfq_cores,
+        directlfq_min_nonan=directlfq_min_nonan,
         export_peptides=export_peptides,
         export_ions=export_ions,
+        # Batch correction
+        batch_correction=batch_correction,
+        batch_method=batch_method,
+        batch_column=batch_column,
+        batch_covariates=parsed_batch_covariates,
+        batch_parametric=batch_parametric,
+        batch_mean_only=batch_mean_only,
+        batch_ref=batch_ref,
         # IRS
         irs=irs,
         irs_reference_samples=parsed_irs_ref_samples,
@@ -499,6 +627,7 @@ def features2proteins(
         de_method=de_method,
         de_log2fc_threshold=de_log2fc_threshold,
         de_fdr_threshold=de_fdr_threshold,
+        de_fdr_method=de_fdr_method,
         de_output=de_output,
         # Coverage filter
         coverage_threshold=coverage_threshold,

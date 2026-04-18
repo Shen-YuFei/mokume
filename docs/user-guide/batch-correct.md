@@ -1,9 +1,11 @@
-# batch-correct: Batch Correction
+# correct-batches: Batch Correction
 
 The `correct-batches` command applies ComBat batch correction to already-quantified protein data. It reads multiple TSV files from a folder, combines them, and removes batch effects.
 
 !!! tip "Prefer the integrated pipeline"
     For most use cases, batch correction is easier to apply via `features2proteins --batch-correction`. Use this standalone command when you have pre-existing protein quantification files that need correction.
+
+This page documents the standalone CLI command `mokume correct-batches`.
 
 ## Basic Usage
 

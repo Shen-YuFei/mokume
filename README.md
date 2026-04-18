@@ -71,7 +71,8 @@ mokume/
 ├── normalization/           # Normalization implementations
 │   ├── feature.py           # Feature-level normalization
 │   ├── peptide.py           # Peptide-level normalization pipeline
-│   └── protein.py           # Protein-level normalization
+│   ├── protein.py           # Protein-level normalization
+│   └── loess.py             # LOESS regression normalization
 │
 ├── preprocessing/           # Preprocessing filters
 │   └── filters/             # Quality control filters
@@ -99,8 +100,15 @@ mokume/
 │   ├── mean.py              # Mean summarization
 │   └── sum.py               # Sum summarization
 │
+├── analysis/                # Differential expression analysis
+│   ├── differential_expression.py  # Main DE orchestrator (LimROTS, DEqMS, proDA)
+│   ├── limrots.py           # LimROTS: limma + ROTS bootstrap-optimized test
+│   ├── deqms.py             # DEqMS peptide-count-weighted eBayes
+│   └── proda.py             # proDA probabilistic dropout-aware DE
+│
 ├── imputation/              # Missing value handling
-│   └── methods.py           # Imputation implementations
+│   ├── methods.py           # Standard imputation (KNN, etc.)
+│   └── censored.py          # Censored-aware imputation (MinProb, MinDet, KNN)
 │
 ├── postprocessing/          # Data reshaping and correction
 │   ├── reshape.py           # Pivot operations (wide/long format)
@@ -172,6 +180,107 @@ The `MaxLFQQuantification` class provides two implementations:
 
 Use `force_builtin=True` to always use the built-in implementation, or check `maxlfq.using_directlfq` to see which backend is active.
 
+## Differential Expression Analysis
+
+mokume provides modern empirical Bayes and bootstrap-based statistical methods for identifying differentially expressed proteins with high sensitivity while controlling false positives.
+
+### DE Methods
+
+- **LimROTS** — Combines limma empirical Bayes variance stabilization with ROTS bootstrap-optimized test statistic and permutation-based FDR. Best overall sensitivity; recommended for MaxLFQ data.
+- **DEqMS** — Extends limma with peptide-count weighting via spectra count eBayes. Better false-positive control on noisy data; recommended for DirectLFQ data.
+- **proDA** — Probabilistic dropout-aware analysis that models missing values as informative dropout events rather than discarding them.
+
+FDR correction: **BH** (Benjamini-Hochberg, default) or **IHW** (Independent Hypothesis Weighting).
+
+### Python API
+
+```python
+from mokume.analysis import DifferentialExpression
+
+import pandas as pd
+protein_df = pd.read_csv("maxlfq_proteins.csv")
+sample_to_condition = {
+    "Control_R1": "Control", "Control_R2": "Control", "Control_R3": "Control",
+    "Treatment_R1": "Treatment", "Treatment_R2": "Treatment", "Treatment_R3": "Treatment",
+}
+
+# LimROTS (recommended for MaxLFQ)
+de = DifferentialExpression(method="limrots", log2fc_threshold=1.0, fdr_threshold=0.05)
+result = de.run(protein_df, sample_to_condition, ("Treatment", "Control"))
+
+# DEqMS (recommended for DirectLFQ, requires peptide counts)
+de = DifferentialExpression(method="deqms", peptide_counts=peptide_counts)
+result = de.run(protein_df, sample_to_condition, ("Treatment", "Control"))
+
+# Multiple contrasts
+contrasts = [("Treatment", "Control"), ("Drug", "Control")]
+results = de.run_comparisons(protein_df, sample_to_condition, contrasts)
+# Returns dict: {"Treatment-Control": DataFrame, "Drug-Control": DataFrame}
+```
+
+Output columns: `ProteinName`, `log2FC`, `pvalue`, `adj_pvalue`, `significance` (`UP` / `DOWN` / `Unchanged`).
+
+### Missing Value Imputation
+
+```python
+from mokume.imputation.censored import impute_censored
+
+# MinProb: draw from left-shifted normal (recommended for MNAR)
+imputed = impute_censored(log2_matrix, method="minprob", quantile=0.01, shift=1.6, scale=0.3)
+
+# MinDet: replace NaN with per-column quantile
+imputed = impute_censored(log2_matrix, method="mindet", quantile=0.01)
+
+# KNN: k-nearest neighbor imputation
+imputed = impute_censored(log2_matrix, method="knn", n_neighbors=10)
+```
+
+### LOESS Normalization
+
+```python
+from mokume.normalization import loess_normalize
+
+# Correct intensity-dependent biases via locally-weighted regression
+normalized = loess_normalize(log2_matrix)
+```
+
+## End-to-End Pipeline (`features2proteins`)
+
+The `features2proteins` command runs the complete workflow from quantms feature files to protein quantification with optional differential expression:
+
+```bash
+# MaxLFQ quantification + automatic DE (LimROTS)
+mokume features2proteins \
+    -p features.parquet \
+    -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --de \
+    --de-contrasts "Treatment-Control,Drug-Control" \
+    -o output_dir/
+
+# DirectLFQ quantification + automatic DE (DEqMS)
+mokume features2proteins \
+    -p features.parquet \
+    -s experiment.sdrf.tsv \
+    --quant-method directlfq \
+    --de \
+    --de-contrasts "Treatment-Control" \
+    --de-log2fc 1.0 \
+    --de-fdr 0.05 \
+    -o output_dir/
+
+# Explicit DE method override
+mokume features2proteins \
+    -p features.parquet \
+    -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --de \
+    --de-method deqms \
+    --de-fdr-method ihw \
+    --de-contrasts "Treatment-Control" \
+    -o output_dir/
+```
+
 ## CLI Usage
 
 ### Peptides to Protein Quantification
@@ -241,8 +350,8 @@ mokume features2peptides \
     -s experiment.sdrf.tsv \
     --remove_decoy_contaminants \
     --remove_low_frequency_peptides \
-    --nmethod median \
-    --pnmethod globalMedian \
+    --run-normalization median \
+    --sample-normalization globalMedian \
     --output peptides-norm.csv
 ```
 
@@ -470,8 +579,8 @@ peptide_normalization(
     remove_low_frequency_peptides=True,
     output="peptides-norm.csv",
     skip_normalization=False,
-    nmethod="median",      # Feature normalization: mean, median, iqr, none
-    pnmethod="globalMedian",  # Peptide normalization: globalMedian, conditionMedian, none
+    nmethod="median",      # Feature normalization: mean, median, max, global, max_min, iqr, none
+    pnmethod="globalMedian",  # Sample normalization: globalMedian, conditionMedian, hierarchical, tmm, none
     log2=True,
     save_parquet=False,
 )
@@ -576,19 +685,22 @@ With covariates:     Batch effect removed, tissue signal preserved
 
 ```python
 from mokume.pipeline import QuantificationPipeline, PipelineConfig
+from mokume.pipeline.config import (
+    InputConfig, QuantificationConfig, BatchCorrectionConfig,
+)
 
 # Batch correction with covariates from SDRF
 config = PipelineConfig(
-    parquet="data.parquet",
-    sdrf="experiment.sdrf.tsv",
-    quant_method="maxlfq",
-    # Batch correction options
-    batch_correction=True,
-    batch_method="sample_prefix",  # Detect batches from sample names
-    batch_covariates=[             # Preserve biological signal from SDRF
-        "characteristics[sex]",
-        "characteristics[organism part]",
-    ],
+    input=InputConfig(
+        parquet="data.parquet",
+        sdrf="experiment.sdrf.tsv",
+    ),
+    quantification=QuantificationConfig(method="maxlfq"),
+    batch=BatchCorrectionConfig(
+        enabled=True,
+        method="sample_prefix",
+        covariates=["characteristics[sex]", "characteristics[organism part]"],
+    ),
 )
 
 pipeline = QuantificationPipeline(config)
@@ -770,22 +882,27 @@ print(human.histone_entries)  # List of histone protein accessions
 
 ## Normalization Methods
 
-### Feature-Level Normalization (`--nmethod`)
+### Feature-Level Normalization (`--run-normalization`)
 
 | Method | Description |
 |--------|-------------|
 | `median` | Normalize by median across MS runs |
 | `mean` | Normalize by mean across MS runs |
+| `max` | Normalize by maximum intensity within each run |
+| `global` | Normalize by total intensity within each run |
+| `max_min` | Apply min-max scaling |
 | `iqr` | Normalize by interquartile range |
 | `none` | Skip feature normalization |
 
-### Peptide-Level Normalization (`--pnmethod`)
+### Sample-Level Normalization (`--sample-normalization`)
 
 | Method | Description |
 |--------|-------------|
 | `globalMedian` | Adjust all samples to global median |
 | `conditionMedian` | Adjust samples within each condition to median |
-| `none` | Skip peptide normalization |
+| `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
+| `tmm` | Trimmed Mean of M-values normalization |
+| `none` | Skip sample normalization |
 
 ## Preprocessing Filters
 

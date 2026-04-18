@@ -10,8 +10,8 @@ The `features2peptides` command normalizes feature-level mass spectrometry data 
     mokume features2peptides \
         -p features.parquet \
         -s experiment.sdrf.tsv \
-        --nmethod median \
-        --pnmethod globalMedian \
+        --run-normalization median \
+        --sample-normalization globalMedian \
         --output peptides.csv
     ```
 
@@ -38,32 +38,40 @@ The command performs these steps in order:
 3. Filter peptides by minimum amino acid length
 4. Remove low-confidence proteins (< min unique peptides)
 5. Optionally remove decoys, contaminants, and specified proteins
-6. Normalize at feature level between MS runs (`--nmethod`)
+6. Normalize at feature level between MS runs (`--run-normalization`)
 7. Merge peptidoforms across fractions and technical replicates
-8. Normalize at sample level (`--pnmethod`)
+8. Normalize at sample level (`--sample-normalization`)
 9. Remove low-frequency peptides (optional)
 10. Assemble peptidoforms to peptides
 11. Optional log2 transformation
 
 ## Normalization Methods
 
-### Feature-Level (`--nmethod`)
+### Feature-Level (`--run-normalization`)
 
 | Method | Description |
 |--------|-------------|
 | `median` | Normalize by median across MS runs (default) |
 | `mean` | Normalize by mean across MS runs |
+| `max` | Normalize by the maximum intensity within each run |
+| `global` | Normalize by total intensity within each run |
+| `max_min` | Apply min-max scaling |
 | `iqr` | Normalize by interquartile range |
 | `none` | Skip feature normalization |
 
-### Sample-Level (`--pnmethod`)
+### Sample-Level (`--sample-normalization`)
 
 | Method | Description |
 |--------|-------------|
 | `globalMedian` | Adjust all samples to global median (default) |
 | `conditionMedian` | Adjust samples within each condition |
 | `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
+| `tmm` | Trimmed Mean of M-values normalization |
 | `none` | Skip sample normalization |
+
+!!! note
+    The CLI now uses `--run-normalization` and `--sample-normalization`.
+    The underlying Python function `peptide_normalization()` still uses the older parameter names `nmethod` and `pnmethod`.
 
 ## Filtering Options
 
@@ -85,6 +93,18 @@ mokume features2peptides \
 | `--remove_decoy_contaminants` | off | Remove decoys and contaminants |
 | `--remove_low_frequency_peptides` | off | Remove peptides in <20% of samples |
 | `--remove_ids` | none | File with protein IDs to exclude |
+
+## TMT / ITRAQ Options
+
+For labeled datasets, `features2peptides` also supports IRS-style scaling and control over aggregation level:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--irs_channel` | none | Explicit pooled/reference channel label |
+| `--irs_autodetect_regex` | none | Regex to detect pooled samples from SDRF |
+| `--irs_stat` | `median` | IRS per-run statistic: median or mean |
+| `--irs_scope` | `global` | IRS scaling scope: global, by_mixture, or two_stage |
+| `--aggregation_level` | `sample` | Aggregate intensities at sample or run level |
 
 ## Preprocessing Filters
 

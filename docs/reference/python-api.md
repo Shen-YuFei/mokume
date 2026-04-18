@@ -10,11 +10,11 @@ from mokume.quantification import get_quantification_method, list_quantification
 # Create method by name
 method = get_quantification_method("top3")        # TopNQuantification(n=3)
 method = get_quantification_method("top10")       # TopNQuantification(n=10)
-method = get_quantification_method("maxlfq", min_peptides=2, threads=4)
+method = get_quantification_method("maxlfq", min_peptides=2, n_jobs=4)
 
 # List available methods
 available = list_quantification_methods()
-# {'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
+# {'top3': True, 'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
 ```
 
 ### TopNQuantification
@@ -155,6 +155,46 @@ proteins = features_to_proteins(
 
 ---
 
+## Differential Expression
+
+```python
+from mokume.analysis import DifferentialExpression
+
+sample_to_condition = {
+    "S1": "HL",
+    "S2": "HL",
+    "S3": "NASH",
+    "S4": "NASH",
+}
+
+de = DifferentialExpression(
+    method="limrots",
+    fdr_method="ihw",
+    log2fc_threshold=0.5,
+    fdr_threshold=0.05,
+)
+
+result = de.run(protein_df, sample_to_condition, ("NASH", "HL"))
+```
+
+```python
+from mokume.analysis import DifferentialExpression
+
+deqms = DifferentialExpression(
+    method="deqms",
+    peptide_counts=peptide_counts,
+    fdr_method="bh",
+)
+
+results = deqms.run_comparisons(
+    protein_df,
+    sample_to_condition,
+    [("NASH", "HL"), ("NASH", "Control")],
+)
+```
+
+---
+
 ## Normalization
 
 ### Peptide Normalization Pipeline
@@ -172,12 +212,14 @@ peptide_normalization(
     remove_low_frequency_peptides=True,
     output="peptides.csv",
     skip_normalization=False,
-    nmethod="median",          # Feature-level: mean, median, iqr, none
-    pnmethod="globalMedian",   # Sample-level: globalMedian, conditionMedian, hierarchical, none
+    nmethod="median",          # Feature-level: median, mean, max, global, max_min, iqr, none
+    pnmethod="globalMedian",   # Sample-level: globalMedian, conditionMedian, hierarchical, tmm, none
     log2=True,
     save_parquet=False,
 )
 ```
+
+The Python function keeps the historical parameter names `nmethod` and `pnmethod`, even though the CLI now uses `--run-normalization` and `--sample-normalization`.
 
 ### IRS Normalization
 
@@ -193,6 +235,74 @@ sample_to_plex = detect_plexes_from_sdrf("experiment.sdrf.tsv")
 
 normalizer = IRSNormalizer(reference_samples=ref_samples, stat="median")
 protein_df = normalizer.fit_transform(protein_df, sample_to_plex)
+```
+
+### LOESS Normalization
+
+```python
+from mokume.normalization import LOESSNormalizer, loess_normalize
+
+# Apply to a sample x protein matrix on log2 scale
+loess_df = loess_normalize(log2_df, frac=0.75, reference="median")
+
+normalizer = LOESSNormalizer(frac=0.75, reference="median")
+loess_df = normalizer.fit_transform(log2_df)
+```
+
+### Imputation Utilities
+
+```python
+from mokume.imputation import classify_missing, impute_censored
+
+missing_type = classify_missing(data, quantile_threshold=0.01)
+
+minprob_df = impute_censored(
+    data,
+    method="minprob",
+    quantile=0.01,
+    shift=1.6,
+    scale=0.3,
+)
+
+mindet_df = impute_censored(data, method="mindet", quantile=0.01)
+knn_df = impute_censored(data, method="knn", n_neighbors=5)
+```
+
+---
+
+## TissueMap Pipeline
+
+```python
+from pathlib import Path
+
+from mokume.tissuemap.config import InputConfig, OutputConfig, TissueMapConfig, load_config
+from mokume.tissuemap.pipeline import TissueMapPipeline
+
+config = TissueMapConfig(
+    n_jobs=8,
+    input=InputConfig(scan_dir=Path("QPX_data/tissues-mq/PXD016999")),
+    output=OutputConfig(output_dir=Path("./tissuemap_results")),
+)
+
+TissueMapPipeline(config).run()
+```
+
+```python
+from pathlib import Path
+
+from mokume.tissuemap.config import load_config
+from mokume.tissuemap.pipeline import TissueMapPipeline
+
+config = load_config(
+    Path("tissuemap.yaml"),
+    overrides={
+        "input.scan_dir": "QPX_data/tissues-mq",
+        "output.output_dir": "./tissuemap_results",
+        "n_jobs": 8,
+    },
+)
+
+TissueMapPipeline(config).run()
 ```
 
 ---

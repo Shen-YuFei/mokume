@@ -26,6 +26,12 @@ For multi-plex TMT experiments, Internal Reference Scaling uses shared reference
 
 [:octicons-arrow-right-24: IRS Normalization](irs.md)
 
+## Differential Expression
+
+Differential expression analysis identifies proteins whose abundance changes significantly between conditions. mokume offers LimROTS, DEqMS, and proDA — each suited to different priorities.
+
+[:octicons-arrow-right-24: Differential Expression](differential-expression.md)
+
 ## Preprocessing Filters
 
 Quality control filters remove low-quality features before quantification. mokume provides a comprehensive, configurable filter system.

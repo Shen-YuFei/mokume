@@ -7,7 +7,7 @@ from typing import Dict, List, Set, Tuple
 
 from pyopenms import AASequence, FASTAFile, ProteaseDigestion
 
-from mokume.core.constants import get_accession
+from mokume.core.constants import build_accession_map, get_accession
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -65,6 +65,16 @@ def digest_protein(
     return [str(pep.toString()) for pep in digest]
 
 
+_NONSTANDARD_AA = {"X", "B", "Z", "J", "U", "O"}
+
+
+def _strip_nonstandard_aa(sequence: str) -> str:
+    """Remove non-standard amino acids from a protein sequence."""
+    for aa in _NONSTANDARD_AA:
+        sequence = sequence.replace(aa, "")
+    return sequence
+
+
 def extract_fasta(
     fasta: str,
     enzyme: str,
@@ -109,6 +119,8 @@ def extract_fasta(
     ValueError
         If none of the specified proteins are found in the FASTA file.
     """
+    acc_to_originals, protein_accessions = build_accession_map(proteins)
+
     fasta_proteins = load_fasta(fasta)
     found_proteins: Set[str] = set()
     uniquepepcounts: Dict[str, int] = {}
@@ -119,29 +131,26 @@ def extract_fasta(
 
     for entry in fasta_proteins:
         accession = get_accession(entry.identifier)
-        if accession in proteins:
-            found_proteins.add(accession)
-            sequence = entry.sequence
-
-            # Handle non-standard amino acids
-            nonstandard = {"X", "B", "Z", "J", "U", "O"}
-            has_nonstandard = any(aa in sequence for aa in nonstandard)
-            if has_nonstandard:
-                for aa in nonstandard:
-                    sequence = sequence.replace(aa, "")
-
-            aa_sequence = AASequence.fromString(sequence)
+        if accession in protein_accessions:
+            originals = acc_to_originals[accession]
+            found_proteins.update(originals)
+            aa_sequence = AASequence.fromString(
+                _strip_nonstandard_aa(entry.sequence)
+            )
 
             # Perform digestion
             digest = []
             digestor.digest(aa_sequence, digest, min_aa, max_aa)
 
-            uniquepepcounts[accession] = len(digest)
+            unique_digest = set(digest)
+            for orig in originals:
+                uniquepepcounts[orig] = len(unique_digest)
 
             # Calculate molecular weight if needed for TPA
             if tpa:
                 mw = aa_sequence.getMonoWeight()
-                mw_dict[accession] = mw
+                for orig in originals:
+                    mw_dict[orig] = mw
 
     if len(found_proteins) == 0:
         raise ValueError(
@@ -172,19 +181,19 @@ def get_protein_molecular_weights(
     Dict[str, float]
         Dictionary mapping protein accessions to molecular weights.
     """
+    acc_to_originals, protein_accessions = build_accession_map(proteins)
+
     fasta_proteins = load_fasta(fasta)
     mw_dict: Dict[str, float] = {}
 
     for entry in fasta_proteins:
         accession = get_accession(entry.identifier)
-        if accession in proteins:
-            sequence = entry.sequence
-            # Handle non-standard amino acids
-            nonstandard = {"X", "B", "Z", "J", "U", "O"}
-            for aa in nonstandard:
-                sequence = sequence.replace(aa, "")
-
-            aa_sequence = AASequence.fromString(sequence)
-            mw_dict[accession] = aa_sequence.getMonoWeight()
+        if accession in protein_accessions:
+            aa_sequence = AASequence.fromString(
+                _strip_nonstandard_aa(entry.sequence)
+            )
+            mw = aa_sequence.getMonoWeight()
+            for orig in acc_to_originals[accession]:
+                mw_dict[orig] = mw
 
     return mw_dict

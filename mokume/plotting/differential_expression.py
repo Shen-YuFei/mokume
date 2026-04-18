@@ -152,6 +152,12 @@ def plot_heatmap(
 
     # Filter to samples with conditions
     valid_samples = [s for s in sample_cols if s in sample_to_condition]
+    if not valid_samples:
+        raise ValueError(
+            "Heatmap: no protein matrix columns matched the condition mapping. "
+            f"Protein columns (first 5): {sample_cols[:5]}, "
+            f"Condition keys (first 5): {list(sample_to_condition.keys())[:5]}."
+        )
     intensity = protein_df.set_index(protein_col)[valid_samples]
 
     # Log2 transform
@@ -180,10 +186,28 @@ def plot_heatmap(
         return fig
 
     # Row-scale (z-score per protein)
+    # Drop proteins with zero std (constant) or all-NaN before z-scoring
+    row_std = intensity.std(axis=1)
+    intensity = intensity[row_std.notna() & (row_std > 0)]
     intensity_z = intensity.subtract(intensity.mean(axis=1), axis=0).divide(
         intensity.std(axis=1), axis=0
     )
-    intensity_z = intensity_z.dropna()
+    # Fill remaining per-sample NaN with 0 (neutral in z-score) for clustering
+    intensity_z = intensity_z.fillna(0)
+
+    if intensity_z.shape[0] < 2 or intensity_z.shape[1] < 2:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(
+            0.5, 0.5,
+            f"Not enough data for heatmap clustering\n"
+            f"({intensity_z.shape[0]} proteins × {intensity_z.shape[1]} samples after filtering)",
+            ha="center", va="center",
+        )
+        ax.set_title(title)
+        if output_file:
+            plt.savefig(output_file, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+        return fig
 
     # Create condition color annotation
     conditions = [sample_to_condition.get(s, "Unknown") for s in valid_samples]
@@ -259,6 +283,14 @@ def plot_pca_conditions(
 
     # Filter samples with conditions
     valid_samples = [s for s in sample_cols if s in sample_to_condition]
+    if not valid_samples:
+        raise ValueError(
+            "PCA: no protein matrix columns matched the condition mapping. "
+            f"Protein columns (first 5): {sample_cols[:5]}, "
+            f"Condition keys (first 5): {list(sample_to_condition.keys())[:5]}. "
+            "Check that detect_condition_from_sdrf maps run file names correctly."
+        )
+
     intensity = protein_df.set_index(protein_col)[valid_samples]
 
     # Log2 transform
@@ -301,16 +333,6 @@ def plot_pca_conditions(
         s=100,
         ax=ax,
     )
-
-    # Label samples
-    for idx, row in pca_df.iterrows():
-        ax.annotate(
-            idx,
-            xy=(row["PC1"], row.get("PC2", row["PC1"])),
-            xytext=(5, 5),
-            textcoords="offset points",
-            fontsize=7,
-        )
 
     var_explained = pca.explained_variance_ratio_ * 100
     ax.set_xlabel(f"PC1 ({var_explained[0]:.1f}%)", fontsize=12)

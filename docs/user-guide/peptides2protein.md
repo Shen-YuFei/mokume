@@ -105,17 +105,17 @@ peptides_to_protein(
 
 ### TopN
 
-Averages the N most intense peptides per protein per sample. Supports any N value.
+Averages the N most intense peptides per protein per sample.
 
 ```bash
 # Top3 (most common)
 mokume peptides2protein --method top3 -p peptides.csv -o out.tsv
 
 # Top5
-mokume peptides2protein --method top5 -p peptides.csv -o out.tsv
+mokume peptides2protein --method topn --topn_n 5 -p peptides.csv -o out.tsv
 
 # Top10
-mokume peptides2protein --method top10 -p peptides.csv -o out.tsv
+mokume peptides2protein --method topn --topn_n 10 -p peptides.csv -o out.tsv
 ```
 
 ```python
@@ -194,7 +194,7 @@ method = get_quantification_method("maxlfq", min_peptides=2, threads=-1)
 # Check available methods
 from mokume.quantification import list_quantification_methods
 print(list_quantification_methods())
-# {'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
+# {'top3': True, 'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
 ```
 
 ## CLI Options Reference
@@ -203,7 +203,7 @@ print(list_quantification_methods())
 |--------|---------|-------------|
 | `-f/--fasta` | none | FASTA file (required for iBAQ) |
 | `-p/--peptides` | required | Input peptide intensity file |
-| `--method` | `ibaq` | Quantification method |
+| `--method` | `ibaq` | Quantification method: ibaq, top3, topn, maxlfq, sum, directlfq |
 | `-e/--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
 | `-n/--normalize` | off | Normalize quantification values |
 | `--min_aa` | 7 | Minimum amino acid length |
@@ -216,6 +216,8 @@ print(list_quantification_methods())
 | `--topn_n` | 3 | N for TopN quantification |
 | `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
 | `--min_nonan` | 1 | Min non-NaN values (DirectLFQ) |
-| `-o/--output` | required | Output file path |
+| `-o/--output` | none | Output file path |
 | `--verbose` | off | Print distribution info |
 | `--qc_report` | QCprofile.pdf | Path for QC report PDF |
+
+`-o/--output` is effectively required for `--method ibaq`; for the other methods, omitting it prints the result table to stdout.

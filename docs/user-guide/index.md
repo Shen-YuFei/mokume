@@ -16,9 +16,13 @@ Normalizes and filters feature-level data into peptide intensities. Use this whe
 
 Quantifies proteins from normalized peptide data. Supports iBAQ (with TPA and ProteomicRuler), TopN, MaxLFQ, DirectLFQ, and Sum.
 
-### [batch-correct: Batch Correction](batch-correct.md)
+### [correct-batches: Batch Correction](batch-correct.md)
 
 Standalone batch correction for already-quantified protein data. Combines multiple files and applies ComBat correction.
+
+### [tissuemap: Tissue Proteome Atlas](tissuemap.md)
+
+Builds a per-dataset tissue proteome atlas from QPX outputs, including AdaTiSS tissue-specificity scoring, AnnData exports, and atlas-style plots.
 
 ### [Visualization & Reports](visualization.md)
 
