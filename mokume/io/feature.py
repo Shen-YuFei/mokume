@@ -168,9 +168,13 @@ class Feature:
         self._pg_accessions_is_struct = False
         if "pg_accessions" in cols:
             try:
-                type_str = self.parquet_db.execute(
-                    "SELECT typeof(pg_accessions) FROM parquet_db_raw LIMIT 1"
-                ).fetchone()[0].lower()
+                type_str = (
+                    self.parquet_db.execute(
+                        "SELECT typeof(pg_accessions) FROM parquet_db_raw LIMIT 1"
+                    )
+                    .fetchone()[0]
+                    .lower()
+                )
                 self._pg_accessions_is_struct = "struct" in type_str
             except Exception as exc:
                 logger.debug("Could not detect pg_accessions type: %s", exc)
@@ -211,21 +215,39 @@ class Feature:
         if self._has_anchor_protein:
             extra_cols += ",\n                    anchor_protein"
 
-        self.parquet_db.execute("".join([
-            "CREATE VIEW parquet_db AS SELECT",
-            " sequence, peptidoform, ", pg_expr, ",",
-            " ", charge_col, " as charge,",
-            " ", run_col, " as run_file_name,",
-            ' "unique",',
-            " ", unnest_sql, ",",
-            " ", run_col, " as run,",
-            " ", sa_default, " as condition,",
-            " 1 as biological_replicate, '1' as fraction,",
-            " split_part(", sa_default, ", '_', 1) as mixture",
-            extra_cols,
-            " FROM parquet_db_raw, UNNEST(intensities) as unnest",
-            " WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0",
-        ]))
+        self.parquet_db.execute(
+            "".join(
+                [
+                    "CREATE VIEW parquet_db AS SELECT",
+                    " sequence, peptidoform, ",
+                    pg_expr,
+                    ",",
+                    " ",
+                    charge_col,
+                    " as charge,",
+                    " ",
+                    run_col,
+                    " as run_file_name,",
+                    ' "unique",',
+                    " ",
+                    unnest_sql,
+                    ",",
+                    " ",
+                    run_col,
+                    " as run,",
+                    " ",
+                    sa_default,
+                    " as condition,",
+                    " 1 as biological_replicate, '1' as fraction,",
+                    " split_part(",
+                    sa_default,
+                    ", '_', 1) as mixture",
+                    extra_cols,
+                    " FROM parquet_db_raw, UNNEST(intensities) as unnest",
+                    " WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0",
+                ]
+            )
+        )
 
     def enrich_with_sdrf(self, sdrf_path: str) -> None:
         """Enrich parquet data with SDRF metadata (condition, biological_replicate, etc.).
@@ -312,18 +334,33 @@ class Feature:
             opt_cols_raw += ",\n                    anchor_protein"
 
         # Create intermediate view for unnested data
-        self.parquet_db.execute("".join([
-            "CREATE OR REPLACE VIEW parquet_db_unnested AS SELECT",
-            " sequence, peptidoform, ", pg_expr, ",",
-            " ", charge_col, " as charge,",
-            " ", run_col, " as run_file_name,",
-            ' "unique",',
-            " ", unnest_cols, ",",
-            " ", run_col, " as run",
-            extra_cols, opt_cols_raw,
-            " FROM parquet_db_raw, UNNEST(intensities) as unnest",
-            " WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0",
-        ]))
+        self.parquet_db.execute(
+            "".join(
+                [
+                    "CREATE OR REPLACE VIEW parquet_db_unnested AS SELECT",
+                    " sequence, peptidoform, ",
+                    pg_expr,
+                    ",",
+                    " ",
+                    charge_col,
+                    " as charge,",
+                    " ",
+                    run_col,
+                    " as run_file_name,",
+                    ' "unique",',
+                    " ",
+                    unnest_cols,
+                    ",",
+                    " ",
+                    run_col,
+                    " as run",
+                    extra_cols,
+                    opt_cols_raw,
+                    " FROM parquet_db_raw, UNNEST(intensities) as unnest",
+                    " WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0",
+                ]
+            )
+        )
 
         # Optional new QPX columns for final view
         opt_cols_final = ""
@@ -334,21 +371,31 @@ class Feature:
 
         # Recreate main view with SDRF data joined
         self.parquet_db.execute("DROP VIEW IF EXISTS parquet_db")
-        self.parquet_db.execute("".join([
-            "CREATE VIEW parquet_db AS SELECT",
-            " p.sequence, p.peptidoform, p.pg_accessions,",
-            " p.charge, p.run_file_name,",
-            ' p."unique",',
-            " COALESCE(s.sdrf_sample_accession, ", sa_fallback, ") as sample_accession,",
-            " p.channel, p.intensity, p.run,",
-            " COALESCE(s.sdrf_condition, ", sa_fallback, ") as condition,",
-            " COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,",
-            " COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,",
-            " split_part(COALESCE(s.sdrf_sample_accession, ", sa_fallback, "), '_', 1) as mixture",
-            opt_cols_final,
-            " FROM parquet_db_unnested p LEFT JOIN sdrf_mapping s ",
-            join_clause,
-        ]))
+        self.parquet_db.execute(
+            "".join(
+                [
+                    "CREATE VIEW parquet_db AS SELECT",
+                    " p.sequence, p.peptidoform, p.pg_accessions,",
+                    " p.charge, p.run_file_name,",
+                    ' p."unique",',
+                    " COALESCE(s.sdrf_sample_accession, ",
+                    sa_fallback,
+                    ") as sample_accession,",
+                    " p.channel, p.intensity, p.run,",
+                    " COALESCE(s.sdrf_condition, ",
+                    sa_fallback,
+                    ") as condition,",
+                    " COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,",
+                    " COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,",
+                    " split_part(COALESCE(s.sdrf_sample_accession, ",
+                    sa_fallback,
+                    "), '_', 1) as mixture",
+                    opt_cols_final,
+                    " FROM parquet_db_unnested p LEFT JOIN sdrf_mapping s ",
+                    join_clause,
+                ]
+            )
+        )
 
         logger.info("Enriched parquet data with SDRF metadata from %s", sdrf_path)
 
@@ -392,25 +439,33 @@ class Feature:
 
         # Use anchor_protein directly when available (new QPX), otherwise parse pg_accessions
         if self._has_anchor_protein:
-            sql = "".join([
-                'SELECT "sequence", anchor_protein as protein,',
-                ' COUNT(DISTINCT sample_accession) as "count"',
-                " FROM parquet_db WHERE ", where_clause,
-                ' GROUP BY "sequence", anchor_protein',
-            ])
+            sql = "".join(
+                [
+                    'SELECT "sequence", anchor_protein as protein,',
+                    ' COUNT(DISTINCT sample_accession) as "count"',
+                    " FROM parquet_db WHERE ",
+                    where_clause,
+                    ' GROUP BY "sequence", anchor_protein',
+                ]
+            )
             f_table = self.parquet_db.execute(sql, where_params).df()
             f_table.dropna(subset=["protein"], inplace=True)
         else:
-            sql = "".join([
-                'SELECT "sequence", "pg_accessions",',
-                ' COUNT(DISTINCT sample_accession) as "count"',
-                " FROM parquet_db WHERE ", where_clause,
-                ' GROUP BY "sequence", "pg_accessions"',
-            ])
+            sql = "".join(
+                [
+                    'SELECT "sequence", "pg_accessions",',
+                    ' COUNT(DISTINCT sample_accession) as "count"',
+                    " FROM parquet_db WHERE ",
+                    where_clause,
+                    ' GROUP BY "sequence", "pg_accessions"',
+                ]
+            )
             f_table = self.parquet_db.execute(sql, where_params).df()
             f_table.dropna(subset=["pg_accessions"], inplace=True)
             try:
-                f_table["protein"] = f_table["pg_accessions"].apply(lambda x: x[0].split("|")[1])
+                f_table["protein"] = f_table["pg_accessions"].apply(
+                    lambda x: x[0].split("|")[1]
+                )
             except IndexError:
                 f_table["protein"] = f_table["pg_accessions"].apply(lambda x: x[0])
             except Exception as e:
@@ -446,7 +501,15 @@ class Feature:
         """Retrieves a standardized report from the database for specified samples."""
         cols = self._validate_columns(columns) if columns is not None else "*"
         placeholders = ",".join(["?"] * len(samples))
-        sql = "".join(["SELECT ", cols, " FROM parquet_db WHERE sample_accession IN (", placeholders, ")"])
+        sql = "".join(
+            [
+                "SELECT ",
+                cols,
+                " FROM parquet_db WHERE sample_accession IN (",
+                placeholders,
+                ")",
+            ]
+        )
         database = self.parquet_db.execute(sql, samples)
         report = database.df()
         return Feature.standardize_df(report)
@@ -456,7 +519,8 @@ class Feature:
     ) -> Iterator[tuple[list[str], pd.DataFrame]]:
         """Iterates over samples in batches."""
         ref_list = [
-            self.samples[i : i + sample_num] for i in range(0, len(self.samples), sample_num)
+            self.samples[i : i + sample_num]
+            for i in range(0, len(self.samples), sample_num)
         ]
         for refs in ref_list:
             batch_df = self.get_report_from_database(refs, columns)
@@ -464,7 +528,9 @@ class Feature:
 
     def get_unique_samples(self) -> list[str]:
         """Retrieves a list of unique sample accessions from the Parquet database."""
-        unique = self.parquet_db.sql("SELECT DISTINCT sample_accession FROM parquet_db").df()
+        unique = self.parquet_db.sql(
+            "SELECT DISTINCT sample_accession FROM parquet_db"
+        ).df()
         return unique["sample_accession"].tolist()
 
     def get_unique_labels(self) -> list[str]:
@@ -516,11 +582,14 @@ class Feature:
             where_clause, where_params = "1=1", []
 
         # Use SQL aggregation with filtering for efficiency
-        sql = "".join([
-            "SELECT sample_accession, MEDIAN(intensity) as median_intensity",
-            " FROM parquet_db WHERE ", where_clause,
-            " GROUP BY sample_accession",
-        ])
+        sql = "".join(
+            [
+                "SELECT sample_accession, MEDIAN(intensity) as median_intensity",
+                " FROM parquet_db WHERE ",
+                where_clause,
+                " GROUP BY sample_accession",
+            ]
+        )
         result = self.parquet_db.execute(sql, where_params).df()
 
         med_map = dict(zip(result["sample_accession"], result["median_intensity"]))
@@ -531,11 +600,21 @@ class Feature:
 
         return med_map
 
-    def get_report_condition_from_database(self, cons: list, columns: list = None) -> pd.DataFrame:
+    def get_report_condition_from_database(
+        self, cons: list, columns: list = None
+    ) -> pd.DataFrame:
         """Retrieves a standardized report from the database for specified conditions."""
         cols = self._validate_columns(columns) if columns is not None else "*"
         placeholders = ",".join(["?"] * len(cons))
-        sql = "".join(["SELECT ", cols, " FROM parquet_db WHERE condition IN (", placeholders, ")"])
+        sql = "".join(
+            [
+                "SELECT ",
+                cols,
+                " FROM parquet_db WHERE condition IN (",
+                placeholders,
+                ")",
+            ]
+        )
         database = self.parquet_db.execute(sql, cons)
         report = database.df()
         return Feature.standardize_df(report)
@@ -546,7 +625,8 @@ class Feature:
         """Iterates over experimental conditions in batches."""
         condition_list = self.get_unique_conditions()
         ref_list = [
-            condition_list[i : i + conditions] for i in range(0, len(condition_list), conditions)
+            condition_list[i : i + conditions]
+            for i in range(0, len(condition_list), conditions)
         ]
         for refs in ref_list:
             batch_df = self.get_report_condition_from_database(refs, columns)
@@ -576,11 +656,14 @@ class Feature:
             where_clause, where_params = "1=1", []
 
         # Use SQL aggregation with filtering for efficiency
-        sql = "".join([
-            "SELECT condition, sample_accession, MEDIAN(intensity) as median_intensity",
-            " FROM parquet_db WHERE ", where_clause,
-            " GROUP BY condition, sample_accession",
-        ])
+        sql = "".join(
+            [
+                "SELECT condition, sample_accession, MEDIAN(intensity) as median_intensity",
+                " FROM parquet_db WHERE ",
+                where_clause,
+                " GROUP BY condition, sample_accession",
+            ]
+        )
         result = self.parquet_db.execute(sql, where_params).df()
 
         med_map = {}
@@ -641,16 +724,21 @@ class Feature:
         irs_params.append(irs_channel)
         where_clause = " AND ".join(filter_conditions)
 
-        sql = "".join([
-            "SELECT run, ", stat_fn, "(intensity) as irs_value,",
-            " mixture, techreplicate as techrep_guess FROM (",
-            " SELECT *,",
-            " CASE WHEN position('_' in run) > 0",
-            " THEN CAST(split_part(run, '_', 2) AS INTEGER)",
-            " ELSE CAST(run AS INTEGER) END AS techreplicate",
-            " FROM parquet_db WHERE ", where_clause,
-            ") GROUP BY run, mixture, techrep_guess",
-        ])
+        sql = "".join(
+            [
+                "SELECT run, ",
+                stat_fn,
+                "(intensity) as irs_value,",
+                " mixture, techreplicate as techrep_guess FROM (",
+                " SELECT *,",
+                " CASE WHEN position('_' in run) > 0",
+                " THEN CAST(split_part(run, '_', 2) AS INTEGER)",
+                " ELSE CAST(run AS INTEGER) END AS techreplicate",
+                " FROM parquet_db WHERE ",
+                where_clause,
+                ") GROUP BY run, mixture, techrep_guess",
+            ]
+        )
         irs_df = self.parquet_db.execute(sql, irs_params).df()
 
         irs_scale_by_techrep: dict[int, float] = {}
@@ -660,17 +748,19 @@ class Feature:
 
             if irs_scope.lower() == "by_mixture":
                 transform_fn = "median" if stat_fn == "median" else "mean"
-                irs_df["mixture_center"] = irs_df.groupby("mixture")["irs_value"].transform(
-                    transform_fn
-                )
+                irs_df["mixture_center"] = irs_df.groupby("mixture")[
+                    "irs_value"
+                ].transform(transform_fn)
                 irs_df["scale"] = irs_df["mixture_center"] / irs_df["irs_value"]
             elif irs_scope.lower() == "two_stage":
                 transform_fn = "median" if stat_fn == "median" else "mean"
-                irs_df["mixture_center"] = irs_df.groupby("mixture")["irs_value"].transform(
-                    transform_fn
-                )
+                irs_df["mixture_center"] = irs_df.groupby("mixture")[
+                    "irs_value"
+                ].transform(transform_fn)
                 irs_df["scale_stage1"] = irs_df["mixture_center"] / irs_df["irs_value"]
-                mixture_center_df = irs_df[["mixture", "mixture_center"]].drop_duplicates()
+                mixture_center_df = irs_df[
+                    ["mixture", "mixture_center"]
+                ].drop_duplicates()
                 if stat_fn == "median":
                     global_center = mixture_center_df["mixture_center"].median()
                 else:

@@ -37,8 +37,15 @@ logger = logging.getLogger(__name__)
 _UNS_KEYS_TO_REMOVE = {"proteomic_groups", "tissue_colors"}
 
 _RECOVERABLE_ERRORS = (
-    ValueError, TypeError, RuntimeError, OSError, KeyError,
-    IndexError, ArithmeticError, ImportError, AttributeError,
+    ValueError,
+    TypeError,
+    RuntimeError,
+    OSError,
+    KeyError,
+    IndexError,
+    ArithmeticError,
+    ImportError,
+    AttributeError,
 )
 
 
@@ -116,7 +123,10 @@ class TissueMapPipeline:
         return result
 
     def _load_and_normalize(
-        self, ds_id: str, ds_dir: Path, tmt_set: frozenset[str],
+        self,
+        ds_id: str,
+        ds_dir: Path,
+        tmt_set: frozenset[str],
     ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
         """Load, normalize, harmonize, and filter a dataset.
 
@@ -125,7 +135,8 @@ class TissueMapPipeline:
         is_tmt = ds_id in tmt_set
         logger.info("Loading dataset %s", ds_id)
         mat, meta = load_dataset(
-            ds_dir, ds_id,
+            ds_dir,
+            ds_id,
             is_tmt=is_tmt if self.config.input.tmt_datasets else None,
             feature_prefix=self.config.input.feature_prefix,
             min_tissue_samples=self.config.input.min_tissue_samples,
@@ -141,24 +152,34 @@ class TissueMapPipeline:
         mat_norm, meta = mat_norm[common], meta.loc[common]
         logger.info(
             "After harmonization: %d proteins x %d samples, %d tissues",
-            mat_norm.shape[0], mat_norm.shape[1], meta["tissue"].nunique(),
+            mat_norm.shape[0],
+            mat_norm.shape[1],
+            meta["tissue"].nunique(),
         )
 
         if mat_norm.shape[1] < 5:
-            logger.warning("Too few samples (%d), skipping dataset %s", mat_norm.shape[1], ds_id)
+            logger.warning(
+                "Too few samples (%d), skipping dataset %s", mat_norm.shape[1], ds_id
+            )
             return None
 
         logger.info("Protein selection")
         mat_filt = filter_proteins(mat_norm, self.config.filtering)
         if mat_filt.shape[0] < 10:
-            logger.warning("Too few proteins (%d), skipping dataset %s", mat_filt.shape[0], ds_id)
+            logger.warning(
+                "Too few proteins (%d), skipping dataset %s", mat_filt.shape[0], ds_id
+            )
             return None
 
         return mat_filt, meta
 
     def _save_outputs(
-        self, ds_id: str, ds_out: Path,
-        adata: ad.AnnData, ts_adata: ad.AnnData, ts_df: pd.DataFrame,
+        self,
+        ds_id: str,
+        ds_out: Path,
+        adata: ad.AnnData,
+        ts_adata: ad.AnnData,
+        ts_df: pd.DataFrame,
     ) -> None:
         """Write h5ad and CSV outputs to disk."""
         ds_out.mkdir(parents=True, exist_ok=True)
@@ -177,7 +198,11 @@ class TissueMapPipeline:
         logger.info("Saved: %s", ts_csv_path)
 
     def _run_one(
-        self, ds_id: str, ds_dir: Path, out_dir: Path, tmt_set: frozenset[str],
+        self,
+        ds_id: str,
+        ds_dir: Path,
+        out_dir: Path,
+        tmt_set: frozenset[str],
     ) -> None:
         """Process a single dataset."""
         result = self._load_and_normalize(ds_id, ds_dir, tmt_set)
@@ -188,7 +213,9 @@ class TissueMapPipeline:
         logger.info("Batch correction")
         log2_arr = mat_filt.T.values.astype(np.float32)
         sample_ids = np.array(mat_filt.columns)
-        corrected = batch_correct(log2_arr, sample_ids, meta.loc[sample_ids, "batch"].values)
+        corrected = batch_correct(
+            log2_arr, sample_ids, meta.loc[sample_ids, "batch"].values
+        )
 
         adata = ad.AnnData(
             X=corrected.astype(np.float32),
@@ -200,8 +227,10 @@ class TissueMapPipeline:
 
         logger.info("Computing tissue specificity scores")
         ts_df = compute_ts_scores(
-            corrected, adata.obs["tissue"].values,
-            np.array(adata.var.index), self.config.tissue_specificity,
+            corrected,
+            adata.obs["tissue"].values,
+            np.array(adata.var.index),
+            self.config.tissue_specificity,
         )
         unique_tissues = sorted(adata.obs["tissue"].unique())
         ts_adata = build_ts_anndata(ts_df, unique_tissues)
@@ -223,7 +252,9 @@ class TissueMapPipeline:
         logger.info("Dataset %s completed", ds_id)
 
     def _plot_embedding_group(
-        self, adata: ad.AnnData, plot_dir: Path,
+        self,
+        adata: ad.AnnData,
+        plot_dir: Path,
     ) -> None:
         """Generate embedding-dependent plots (PCA scree, atlas)."""
         cfg = self.config.plotting
@@ -233,41 +264,61 @@ class TissueMapPipeline:
             logger.error("PCA plotting failed: %s", exc, exc_info=True)
         try:
             plot_slide_atlas_dendrogram(
-                adata, plot_dir, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+                adata,
+                plot_dir,
+                dpi=cfg.dpi,
+                save_pdf=cfg.save_pdf,
             )
         except _RECOVERABLE_ERRORS as exc:
             logger.error("Atlas plotting failed: %s", exc, exc_info=True)
 
     def _plot_marker_group(
-        self, adata: ad.AnnData, unique_tissues: list[str],
-        plot_dir: Path, has_embedding: bool,
+        self,
+        adata: ad.AnnData,
+        unique_tissues: list[str],
+        plot_dir: Path,
+        has_embedding: bool,
     ) -> None:
         """Generate marker-related plots (heatmap, t-SNE, dotplot, CSV)."""
         cfg = self.config.plotting
         adata = compute_markers(adata)
         plot_marker_heatmap(
-            adata, unique_tissues, plot_dir,
-            n_top=5, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+            adata,
+            unique_tissues,
+            plot_dir,
+            n_top=5,
+            dpi=cfg.dpi,
+            save_pdf=cfg.save_pdf,
         )
         if has_embedding:
             plot_marker_tsne(
-                adata, unique_tissues, plot_dir,
-                n_showcase=8, dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+                adata,
+                unique_tissues,
+                plot_dir,
+                n_showcase=8,
+                dpi=cfg.dpi,
+                save_pdf=cfg.save_pdf,
             )
         plot_dotplot(adata, unique_tissues, plot_dir, n_top=3, dpi=cfg.dpi)
         save_markers_csv(adata, unique_tissues, plot_dir, n_top=cfg.n_marker_top)
 
     def _plot_ts_group(
-        self, ts_df: pd.DataFrame, unique_tissues: list[str], plot_dir: Path,
+        self,
+        ts_df: pd.DataFrame,
+        unique_tissues: list[str],
+        plot_dir: Path,
     ) -> None:
         """Generate tissue specificity distribution plot."""
         cfg = self.config.plotting
         plot_ts_distribution(
-            ts_df, unique_tissues, plot_dir,
+            ts_df,
+            unique_tissues,
+            plot_dir,
             ts_enriched=ts_df.attrs.get("ts_enriched_threshold", 2.5),
             ts_specific=ts_df.attrs.get("ts_specific_threshold", 4.0),
             ts_housekeeping=ts_df.attrs.get("ts_housekeeping_threshold"),
-            dpi=cfg.dpi, save_pdf=cfg.save_pdf,
+            dpi=cfg.dpi,
+            save_pdf=cfg.save_pdf,
         )
 
     def _generate_plots(

@@ -68,8 +68,16 @@ def generate_de_report(
     # Conditions and colors
     conditions = sorted(set(sample_to_condition[s] for s in exp_samples))
     cond_colors = {}
-    palette = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd",
-               "#8c564b", "#e377c2", "#7f7f7f"]
+    palette = [
+        "#1f77b4",
+        "#d62728",
+        "#2ca02c",
+        "#ff7f0e",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+    ]
     for i, c in enumerate(conditions):
         cond_colors[c] = palette[i % len(palette)]
 
@@ -94,14 +102,16 @@ def generate_de_report(
     # Build DE table data as JSON
     table_rows = []
     for _, row in de.iterrows():
-        table_rows.append({
-            "protein": str(row["ProteinName"]),
-            "log2FC": round(float(row["log2FC"]), 4),
-            "pvalue": f"{float(row['adj_pvalue']):.2e}",
-            "pvalue_raw": float(row["adj_pvalue"]),
-            "sig": str(row["significance"]),
-            "highlighted": str(row["ProteinName"]) in highlight_genes,
-        })
+        table_rows.append(
+            {
+                "protein": str(row["ProteinName"]),
+                "log2FC": round(float(row["log2FC"]), 4),
+                "pvalue": f"{float(row['adj_pvalue']):.2e}",
+                "pvalue_raw": float(row["adj_pvalue"]),
+                "sig": str(row["significance"]),
+                "highlighted": str(row["ProteinName"]) in highlight_genes,
+            }
+        )
 
     # Build volcano plot traces
     volcano_traces = []
@@ -113,17 +123,24 @@ def generate_de_report(
         subset = de[de["significance"] == sig_class]
         if subset.empty:
             continue
-        volcano_traces.append({
-            "x": subset["log2FC"].tolist(),
-            "y": subset["neg_log10_p"].tolist(),
-            "text": subset["ProteinName"].tolist(),
-            "customdata": [
-                [r["ProteinName"], f"{r['log2FC']:.3f}", f"{r['adj_pvalue']:.2e}", r["significance"]]
-                for _, r in subset.iterrows()
-            ],
-            "color": color,
-            "name": f"{name} ({len(subset)})",
-        })
+        volcano_traces.append(
+            {
+                "x": subset["log2FC"].tolist(),
+                "y": subset["neg_log10_p"].tolist(),
+                "text": subset["ProteinName"].tolist(),
+                "customdata": [
+                    [
+                        r["ProteinName"],
+                        f"{r['log2FC']:.3f}",
+                        f"{r['adj_pvalue']:.2e}",
+                        r["significance"],
+                    ]
+                    for _, r in subset.iterrows()
+                ],
+                "color": color,
+                "name": f"{name} ({len(subset)})",
+            }
+        )
 
     # Highlight genes annotations
     annotations = []
@@ -131,11 +148,13 @@ def generate_de_report(
         match = de[de["ProteinName"] == acc]
         if not match.empty:
             r = match.iloc[0]
-            annotations.append({
-                "x": float(r["log2FC"]),
-                "y": float(r["neg_log10_p"]),
-                "text": str(acc),
-            })
+            annotations.append(
+                {
+                    "x": float(r["log2FC"]),
+                    "y": float(r["neg_log10_p"]),
+                    "text": str(acc),
+                }
+            )
 
     import json
 
@@ -146,7 +165,9 @@ def generate_de_report(
         annotations=annotations,
         intensity_data=json.dumps(intensity_data),
         table_rows=json.dumps(table_rows),
-        sample_to_condition=json.dumps({s: sample_to_condition[s] for s in exp_samples}),
+        sample_to_condition=json.dumps(
+            {s: sample_to_condition[s] for s in exp_samples}
+        ),
         cond_colors=json.dumps(cond_colors),
         exp_samples=json.dumps(exp_samples),
         n_total=n_total,
@@ -165,9 +186,20 @@ def generate_de_report(
 
 
 def _build_html(
-    title, volcano_traces, annotations, intensity_data, table_rows,
-    sample_to_condition, cond_colors, exp_samples,
-    n_total, n_up, n_down, n_unchanged, log2fc_threshold, fdr_threshold,
+    title,
+    volcano_traces,
+    annotations,
+    intensity_data,
+    table_rows,
+    sample_to_condition,
+    cond_colors,
+    exp_samples,
+    n_total,
+    n_up,
+    n_down,
+    n_unchanged,
+    log2fc_threshold,
+    fdr_threshold,
 ):
     """Build the complete HTML report string."""
     import json
@@ -175,22 +207,24 @@ def _build_html(
     # Build plotly volcano trace JSON
     plotly_traces = []
     for t in volcano_traces:
-        plotly_traces.append({
-            "type": "scatter",
-            "mode": "markers",
-            "x": t["x"],
-            "y": t["y"],
-            "text": t["text"],
-            "customdata": t["customdata"],
-            "marker": {"color": t["color"], "size": 5, "opacity": 0.7},
-            "name": t["name"],
-            "hovertemplate": (
-                "<b>%{customdata[0]}</b><br>"
-                "log2FC: %{customdata[1]}<br>"
-                "adj p-value: %{customdata[2]}<br>"
-                "Significance: %{customdata[3]}<extra></extra>"
-            ),
-        })
+        plotly_traces.append(
+            {
+                "type": "scatter",
+                "mode": "markers",
+                "x": t["x"],
+                "y": t["y"],
+                "text": t["text"],
+                "customdata": t["customdata"],
+                "marker": {"color": t["color"], "size": 5, "opacity": 0.7},
+                "name": t["name"],
+                "hovertemplate": (
+                    "<b>%{customdata[0]}</b><br>"
+                    "log2FC: %{customdata[1]}<br>"
+                    "adj p-value: %{customdata[2]}<br>"
+                    "Significance: %{customdata[3]}<extra></extra>"
+                ),
+            }
+        )
 
     volcano_layout = {
         "title": {"text": f"Volcano Plot: {title}", "font": {"size": 16}},
@@ -199,20 +233,46 @@ def _build_html(
         "hovermode": "closest",
         "legend": {"x": 0.01, "y": 0.99},
         "shapes": [
-            {"type": "line", "x0": log2fc_threshold, "x1": log2fc_threshold,
-             "y0": 0, "y1": 1, "yref": "paper",
-             "line": {"dash": "dash", "color": "grey", "width": 1}},
-            {"type": "line", "x0": -log2fc_threshold, "x1": -log2fc_threshold,
-             "y0": 0, "y1": 1, "yref": "paper",
-             "line": {"dash": "dash", "color": "grey", "width": 1}},
-            {"type": "line", "y0": -np.log10(fdr_threshold), "y1": -np.log10(fdr_threshold),
-             "x0": 0, "x1": 1, "xref": "paper",
-             "line": {"dash": "dash", "color": "grey", "width": 1}},
+            {
+                "type": "line",
+                "x0": log2fc_threshold,
+                "x1": log2fc_threshold,
+                "y0": 0,
+                "y1": 1,
+                "yref": "paper",
+                "line": {"dash": "dash", "color": "grey", "width": 1},
+            },
+            {
+                "type": "line",
+                "x0": -log2fc_threshold,
+                "x1": -log2fc_threshold,
+                "y0": 0,
+                "y1": 1,
+                "yref": "paper",
+                "line": {"dash": "dash", "color": "grey", "width": 1},
+            },
+            {
+                "type": "line",
+                "y0": -np.log10(fdr_threshold),
+                "y1": -np.log10(fdr_threshold),
+                "x0": 0,
+                "x1": 1,
+                "xref": "paper",
+                "line": {"dash": "dash", "color": "grey", "width": 1},
+            },
         ],
         "annotations": [
-            {"x": a["x"], "y": a["y"], "text": a["text"],
-             "showarrow": True, "arrowhead": 2, "arrowsize": 0.8,
-             "ax": 20, "ay": -25, "font": {"size": 10, "color": "darkgreen"}}
+            {
+                "x": a["x"],
+                "y": a["y"],
+                "text": a["text"],
+                "showarrow": True,
+                "arrowhead": 2,
+                "arrowsize": 0.8,
+                "ax": 20,
+                "ay": -25,
+                "font": {"size": 10, "color": "darkgreen"},
+            }
             for a in annotations
         ],
     }
@@ -221,6 +281,7 @@ def _build_html(
     volcano_layout_json = json.dumps(volcano_layout)
 
     from string import Template
+
     return Template("""<!DOCTYPE html>
 <html>
 <head>

@@ -110,13 +110,15 @@ class TestFilterConfigurations:
         """Test that CLI overrides work correctly."""
         config = PreprocessingFilterConfig(name="test")
 
-        config.apply_overrides({
-            "min_intensity": 500.0,
-            "cv_threshold": 0.25,
-            "charge_states": [2, 3],
-            "min_unique_peptides": 3,
-            "max_missing_rate": 0.4,
-        })
+        config.apply_overrides(
+            {
+                "min_intensity": 500.0,
+                "cv_threshold": 0.25,
+                "charge_states": [2, 3],
+                "min_unique_peptides": 3,
+                "max_missing_rate": 0.4,
+            }
+        )
 
         assert config.intensity.min_intensity == 500.0
         assert config.intensity.cv_threshold == 0.25

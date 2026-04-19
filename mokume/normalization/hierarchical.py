@@ -56,7 +56,9 @@ class DistanceMetric(Enum):
         for member in cls:
             if member.name.lower() == name_lower:
                 return member
-        raise ValueError(f"Unknown distance metric: {name}. Options: median, variance, overlap")
+        raise ValueError(
+            f"Unknown distance metric: {name}. Options: median, variance, overlap"
+        )
 
 
 class HierarchicalSampleNormalizer:
@@ -164,7 +166,9 @@ class HierarchicalSampleNormalizer:
                 )
 
         if len(df) == 0:
-            raise ValueError("No features remaining after filtering. Check selected_proteins.")
+            raise ValueError(
+                "No features remaining after filtering. Check selected_proteins."
+            )
 
         n_samples = len(df.columns)
         logger.info(f"Computing normalization factors for {n_samples} samples")
@@ -282,9 +286,7 @@ class HierarchicalSampleNormalizer:
 
         for i in range(n_samples):
             for j in range(i + 1, n_samples):
-                dist = self._sample_distance(
-                    df.iloc[:, i].values, df.iloc[:, j].values
-                )
+                dist = self._sample_distance(df.iloc[:, i].values, df.iloc[:, j].values)
                 dist_matrix[i, j] = dist
                 dist_matrix[j, i] = dist
 
@@ -325,9 +327,8 @@ class HierarchicalSampleNormalizer:
             min_max = min(np.max(s1_overlap), np.max(s2_overlap))
             max_min = max(np.min(s1_overlap), np.min(s2_overlap))
             overlap = max(0, min_max - max_min)
-            total_range = (
-                max(np.max(s1_overlap), np.max(s2_overlap))
-                - min(np.min(s1_overlap), np.min(s2_overlap))
+            total_range = max(np.max(s1_overlap), np.max(s2_overlap)) - min(
+                np.min(s1_overlap), np.min(s2_overlap)
             )
             if total_range == 0:
                 return 0.0
@@ -340,10 +341,14 @@ class HierarchicalSampleNormalizer:
         n_samples = len(df.columns)
 
         if n_samples <= self.num_samples_quadratic:
-            logger.debug(f"Using quadratic optimization ({n_samples} <= {self.num_samples_quadratic})")
+            logger.debug(
+                f"Using quadratic optimization ({n_samples} <= {self.num_samples_quadratic})"
+            )
             return self._compute_shifts_quadratic(df, leaf_order)
         else:
-            logger.debug(f"Using linear optimization ({n_samples} > {self.num_samples_quadratic})")
+            logger.debug(
+                f"Using linear optimization ({n_samples} > {self.num_samples_quadratic})"
+            )
             return self._compute_shifts_linear(df, leaf_order)
 
     def _compute_shifts_linear(
@@ -423,7 +428,9 @@ class HierarchicalSampleNormalizer:
 
         # Initial guess from linear method
         linear_shifts = self._compute_shifts_linear(df, leaf_order)
-        x0 = np.array([linear_shifts[c] for c in cols[1:]])  # Exclude first (fixed at 0)
+        x0 = np.array(
+            [linear_shifts[c] for c in cols[1:]]
+        )  # Exclude first (fixed at 0)
 
         # Optimize
         try:

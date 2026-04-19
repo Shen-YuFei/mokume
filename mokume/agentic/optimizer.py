@@ -89,29 +89,43 @@ def _run_round(
     for cfg in configs:
         try:
             de_df = run_experiment(
-                cfg, ctx.protein_df, ctx.sample_to_condition,
-                ctx.contrast, ctx.peptide_counts,
+                cfg,
+                ctx.protein_df,
+                ctx.sample_to_condition,
+                ctx.contrast,
+                ctx.peptide_counts,
             )
             result = evaluate(
-                cfg, de_df, ctx.protein_df,
-                ctx.sample_to_condition, ctx.ground_truth,
+                cfg,
+                de_df,
+                ctx.protein_df,
+                ctx.sample_to_condition,
+                ctx.ground_truth,
             )
             results.append(result)
         except (ValueError, KeyError, RuntimeError, ArithmeticError) as exc:
             logger.error("Experiment %s failed: %s", cfg.name, exc)
-            results.append(EvaluationResult(
-                config_name=cfg.name, config=cfg.to_dict(), score=-1.0,
-            ))
+            results.append(
+                EvaluationResult(
+                    config_name=cfg.name,
+                    config=cfg.to_dict(),
+                    score=-1.0,
+                )
+            )
 
     results = _score_results(
-        results, ctx.ground_truth is not None, ctx.config,
+        results,
+        ctx.ground_truth is not None,
+        ctx.config,
     )
     results.sort(key=lambda r: r.score, reverse=True)
 
     best_name = results[0].config_name if results else ""
     return RoundResult(
-        round_num=round_num, configs=configs,
-        results=results, best_config_name=best_name,
+        round_num=round_num,
+        configs=configs,
+        results=results,
+        best_config_name=best_name,
     )
 
 
@@ -152,15 +166,20 @@ def optimize_contrast(
         if candidates is None:
             break
         candidates = _trim_to_budget(
-            candidates, state, ctx.config.max_experiments,
+            candidates,
+            state,
+            ctx.config.max_experiments,
         )
         if not candidates:
             break
 
-        state.audit_trail.append(AuditEntry(
-            step="propose", round_num=round_num,
-            data=[c.name for c in candidates],
-        ))
+        state.audit_trail.append(
+            AuditEntry(
+                step="propose",
+                round_num=round_num,
+                data=[c.name for c in candidates],
+            )
+        )
 
         rnd = _run_round(round_num, candidates, ctx)
         state.rounds.append(rnd)
@@ -185,16 +204,22 @@ def optimize(
 ) -> dict[str, AgenticState]:
     """Run optimization for all contrasts in config."""
     profile = profile_data(protein_df, sample_to_condition, peptide_counts)
-    logger.info("Data profile: %d proteins, %d samples, %.1f%% missing",
-                profile.n_proteins, profile.n_samples, profile.missing_rate * 100)
+    logger.info(
+        "Data profile: %d proteins, %d samples, %.1f%% missing",
+        profile.n_proteins,
+        profile.n_samples,
+        profile.missing_rate * 100,
+    )
 
     all_states = {}
     for contrast in config.contrasts or []:
         ctx = RoundContext(
             protein_df=protein_df,
             sample_to_condition=sample_to_condition,
-            contrast=contrast, ground_truth=ground_truth,
-            peptide_counts=peptide_counts, config=config,
+            contrast=contrast,
+            ground_truth=ground_truth,
+            peptide_counts=peptide_counts,
+            config=config,
         )
         key = f"{contrast[0]}_vs_{contrast[1]}"
         state = optimize_contrast(ctx, profile)

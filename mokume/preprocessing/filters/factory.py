@@ -60,7 +60,9 @@ def create_intensity_filters(config: IntensityFilterConfig) -> List[BaseFilter]:
     filters = []
 
     if config.remove_zero_intensity or config.min_intensity > 0:
-        min_val = max(config.min_intensity, 1e-10 if config.remove_zero_intensity else 0)
+        min_val = max(
+            config.min_intensity, 1e-10 if config.remove_zero_intensity else 0
+        )
         filters.append(MinIntensityFilter(min_intensity=min_val))
 
     if config.cv_threshold is not None:

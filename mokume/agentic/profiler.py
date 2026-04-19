@@ -119,9 +119,7 @@ def profile_data(
     missing_count = int(matrix.isna().sum().sum())
     missing_rate = missing_count / total_cells if total_cells > 0 else 0.0
 
-    missing_per_sample = {
-        col: float(matrix[col].isna().mean()) for col in sample_cols
-    }
+    missing_per_sample = {col: float(matrix[col].isna().mean()) for col in sample_cols}
 
     return DataProfile(
         n_proteins=len(matrix),

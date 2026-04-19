@@ -24,7 +24,8 @@ def test_ibaq_compute():
     """
     args = {
         "fasta": str(
-            TESTS_DIR / "example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta"
+            TESTS_DIR
+            / "example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta"
         ),
         "peptides": str(TESTS_DIR / "example/PXD017834-peptides.csv"),
         "enzyme": "Trypsin",

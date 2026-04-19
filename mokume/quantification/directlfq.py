@@ -38,6 +38,7 @@ def _check_directlfq_available():
     global _DIRECTLFQ_AVAILABLE
     if _DIRECTLFQ_AVAILABLE is None:
         import importlib.util
+
         _DIRECTLFQ_AVAILABLE = importlib.util.find_spec("directlfq") is not None
     return _DIRECTLFQ_AVAILABLE
 
@@ -51,6 +52,7 @@ def _import_directlfq():
             "Or: pip install directlfq"
         )
     import directlfq.lfq_manager as lfq_manager
+
     return lfq_manager
 
 
@@ -170,18 +172,17 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
             index=[protein_column, peptide_column],
             columns=sample_column,
             values=intensity_column,
-            aggfunc='sum'  # Sum if multiple measurements per peptide/sample
+            aggfunc="sum",  # Sum if multiple measurements per peptide/sample
         ).reset_index()
 
         # Rename columns to DirectLFQ expected format
-        pivot_df = pivot_df.rename(columns={
-            protein_column: 'protein',
-            peptide_column: 'ion'
-        })
+        pivot_df = pivot_df.rename(
+            columns={protein_column: "protein", peptide_column: "ion"}
+        )
 
         # Save to temporary file
         input_path = os.path.join(temp_dir, "directlfq_input.aq_reformat.tsv")
-        pivot_df.to_csv(input_path, sep='\t', index=False)
+        pivot_df.to_csv(input_path, sep="\t", index=False)
 
         return input_path
 
@@ -209,26 +210,25 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
             Results in long format with protein, sample, and intensity columns.
         """
         # Read DirectLFQ output (wide format: protein x samples)
-        result_wide = pd.read_csv(output_path, sep='\t')
+        result_wide = pd.read_csv(output_path, sep="\t")
 
         # Get sample columns (all columns except 'protein')
-        sample_cols = [c for c in result_wide.columns if c != 'protein']
+        sample_cols = [c for c in result_wide.columns if c != "protein"]
 
         # Melt to long format
         result_long = result_wide.melt(
-            id_vars=['protein'],
+            id_vars=["protein"],
             value_vars=sample_cols,
             var_name=sample_column,
-            value_name='Intensity'
+            value_name="Intensity",
         )
 
         # Rename protein column
-        result_long = result_long.rename(columns={'protein': protein_column})
+        result_long = result_long.rename(columns={"protein": protein_column})
 
         # Remove rows with NaN or zero intensity
         result_long = result_long[
-            result_long['Intensity'].notna() &
-            (result_long['Intensity'] > 0)
+            result_long["Intensity"].notna() & (result_long["Intensity"] > 0)
         ]
 
         return result_long
@@ -299,13 +299,16 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
             # Find and parse output file
             # DirectLFQ may use different naming conventions, search for the output
             import glob
-            possible_outputs = glob.glob(os.path.join(temp_dir, "*protein_intensities*.tsv"))
+
+            possible_outputs = glob.glob(
+                os.path.join(temp_dir, "*protein_intensities*.tsv")
+            )
 
             if not possible_outputs:
                 # Try the expected naming patterns
-                output_path = input_path.replace('.tsv', '.protein_intensities.tsv')
+                output_path = input_path.replace(".tsv", ".protein_intensities.tsv")
                 if not os.path.exists(output_path):
-                    base_path = input_path.rsplit('.', 1)[0]
+                    base_path = input_path.rsplit(".", 1)[0]
                     output_path = f"{base_path}.protein_intensities.tsv"
             else:
                 output_path = possible_outputs[0]
@@ -321,7 +324,9 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
             # Parse output
             result_df = self._parse_output(output_path, protein_column, sample_column)
 
-        logger.info(f"DirectLFQ complete: {result_df[protein_column].nunique()} proteins")
+        logger.info(
+            f"DirectLFQ complete: {result_df[protein_column].nunique()} proteins"
+        )
 
         return result_df
 

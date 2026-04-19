@@ -93,7 +93,11 @@ class FilterPipeline:
         results = []
         current_df = df
 
-        logger.debug("Starting filter pipeline '%s' with %d filters", self.name, len(self.filters))
+        logger.debug(
+            "Starting filter pipeline '%s' with %d filters",
+            self.name,
+            len(self.filters),
+        )
 
         for filter_obj in self.filters:
             if stop_on_empty and len(current_df) == 0:

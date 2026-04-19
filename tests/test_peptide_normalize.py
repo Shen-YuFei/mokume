@@ -210,7 +210,14 @@ class TestFeatureNewQPXFormat:
         """Test that unnested view has expected column names."""
         feature = Feature(feature_path)
         df = feature.parquet_db.sql("SELECT * FROM parquet_db LIMIT 1").df()
-        for col in ["charge", "run_file_name", "sample_accession", "channel", "intensity", "condition"]:
+        for col in [
+            "charge",
+            "run_file_name",
+            "sample_accession",
+            "channel",
+            "intensity",
+            "condition",
+        ]:
             assert col in df.columns, f"Missing column: {col}"
 
     def test_enrich_with_sdrf_maps_sample_accession(self, feature_path, sdrf_path):
@@ -220,8 +227,12 @@ class TestFeatureNewQPXFormat:
 
         samples = feature.get_unique_samples()
         # After SDRF enrichment, samples should be SDRF source names
-        assert "Sample_A_126" in samples, f"'Sample_A_126' not found in samples: {samples}"
-        assert "Sample_A_127N" in samples, f"'Sample_A_127N' not found in samples: {samples}"
+        assert "Sample_A_126" in samples, (
+            f"'Sample_A_126' not found in samples: {samples}"
+        )
+        assert "Sample_A_127N" in samples, (
+            f"'Sample_A_127N' not found in samples: {samples}"
+        )
 
     def test_enrich_with_sdrf_maps_condition(self, feature_path, sdrf_path):
         """Test that enrich_with_sdrf maps conditions from SDRF factor values."""
@@ -230,7 +241,9 @@ class TestFeatureNewQPXFormat:
 
         conditions = feature.get_unique_conditions()
         assert "normal" in conditions, f"'normal' not found in conditions: {conditions}"
-        assert "disease" in conditions, f"'disease' not found in conditions: {conditions}"
+        assert "disease" in conditions, (
+            f"'disease' not found in conditions: {conditions}"
+        )
 
     def test_get_median_map(self, feature_path):
         """Test get_median_map works with new QPX format."""

@@ -70,11 +70,7 @@ class AllPeptidesQuantification(ProteinQuantificationMethod):
         else:
             group_cols = [protein_column, sample_column]
 
-        result = (
-            peptide_df.groupby(group_cols)[intensity_column]
-            .sum()
-            .reset_index()
-        )
+        result = peptide_df.groupby(group_cols)[intensity_column].sum().reset_index()
 
         # Rename intensity column
         result = result.rename(columns={intensity_column: "Intensity"})

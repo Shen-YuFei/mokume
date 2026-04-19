@@ -66,7 +66,9 @@ def cli(log_level: str = "debug", log_file: Optional[Path] = None):
                 log_file.parent.mkdir(parents=True, exist_ok=True)
         handler = logging.FileHandler(log_file)
         handler.setLevel(LOG_LEVELS_TO_LEVELS[log_level.lower()])
-        handler.setFormatter(logging.Formatter("%(asctime)s [%(funcName)s] - %(message)s"))
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(funcName)s] - %(message)s")
+        )
         logging.getLogger().addHandler(handler)
 
 

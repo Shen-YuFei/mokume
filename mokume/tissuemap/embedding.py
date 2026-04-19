@@ -44,7 +44,8 @@ def _resolve_nan_threshold(
 
     logger.info(
         "Auto NaN threshold for PCA: %.0f%% (target >= %d proteins)",
-        threshold * 100, target,
+        threshold * 100,
+        target,
     )
     return threshold
 
@@ -59,25 +60,34 @@ def _select_low_nan_proteins(
 
 
 def _run_pca(
-    adata: ad.AnnData, x_sub: np.ndarray, config: EmbeddingConfig,
+    adata: ad.AnnData,
+    x_sub: np.ndarray,
+    config: EmbeddingConfig,
 ) -> tuple[np.ndarray, float]:
     """Fit PCA and store results in adata. Return (pca_emb, var_explained)."""
     n_components = min(config.pca_components, x_sub.shape[0] - 1, x_sub.shape[1])
-    pca = PCA(n_components=n_components, svd_solver="randomized", random_state=config.random_state)
+    pca = PCA(
+        n_components=n_components,
+        svd_solver="randomized",
+        random_state=config.random_state,
+    )
     pca_emb = pca.fit_transform(x_sub)
     adata.obsm["X_pca"] = pca_emb
     adata.uns["pca_variance_ratio"] = pca.explained_variance_ratio_.copy()
     var_explained = pca.explained_variance_ratio_.sum()
     logger.info(
         "PCA: %d components, variance explained: %.1f%%",
-        n_components, var_explained * 100,
+        n_components,
+        var_explained * 100,
     )
     return pca_emb, var_explained
 
 
 def _run_tsne(
-    adata: ad.AnnData, pca_emb: np.ndarray,
-    config: EmbeddingConfig, n_jobs: int,
+    adata: ad.AnnData,
+    pca_emb: np.ndarray,
+    config: EmbeddingConfig,
+    n_jobs: int,
 ) -> None:
     """Fit t-SNE on PCA embedding and store in adata."""
     perplexity = min(config.tsne_perplexity, (adata.n_obs - 1) / 3.0)
@@ -124,7 +134,9 @@ def embed(
     n_kept = keep_mask.sum()
     logger.info(
         "Embedding: using %d / %d proteins (NaN <= %.0f%%)",
-        n_kept, x_data.shape[1], nan_threshold * 100,
+        n_kept,
+        x_data.shape[1],
+        nan_threshold * 100,
     )
     if n_kept < 10:
         logger.warning("Too few proteins for embedding (%d), skipping", n_kept)

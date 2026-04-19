@@ -69,24 +69,41 @@ def get_available_methods():
     help="Normalize quantification values",
     is_flag=True,
 )
-@click.option("--min_aa", help="Minimum number of amino acids to consider a peptide", default=7)
-@click.option("--max_aa", help="Maximum number of amino acids to consider a peptide", default=30)
-@click.option("-t", "--tpa", help="Whether calculate TPA (iBAQ method only)", is_flag=True)
-@click.option("-r", "--ruler", help="Whether to use ProteomicRuler (iBAQ method only)", is_flag=True)
+@click.option(
+    "--min_aa", help="Minimum number of amino acids to consider a peptide", default=7
+)
+@click.option(
+    "--max_aa", help="Maximum number of amino acids to consider a peptide", default=30
+)
+@click.option(
+    "-t", "--tpa", help="Whether calculate TPA (iBAQ method only)", is_flag=True
+)
+@click.option(
+    "-r",
+    "--ruler",
+    help="Whether to use ProteomicRuler (iBAQ method only)",
+    is_flag=True,
+)
 @click.option("-i", "--ploidy", help="Ploidy number (default: 2)", default=2)
 @click.option(
     "-m",
     "--organism",
     help="Organism source of the data (default: human)",
     type=click.Choice(
-        sorted(map(str.lower, OrganismDescription.registered_organisms())), case_sensitive=False
+        sorted(map(str.lower, OrganismDescription.registered_organisms())),
+        case_sensitive=False,
     ),
     default="human",
 )
 @click.option(
-    "-c", "--cpc", help="Cellular protein concentration(g/L) (default: 200)", default=200
+    "-c",
+    "--cpc",
+    help="Cellular protein concentration(g/L) (default: 200)",
+    default=200,
 )
-@click.option("-o", "--output", help="Output file with the proteins and quantification values")
+@click.option(
+    "-o", "--output", help="Output file with the proteins and quantification values"
+)
 @click.option(
     "--verbose",
     help="Print additional information about the distributions of the intensities",
@@ -214,22 +231,34 @@ def peptides2protein(
                 method, threads=threads, min_peptides=2
             )
         elif method_lower == "directlfq":
-            quant_method = get_quantification_method(
-                method, min_nonan=min_nonan
-            )
+            quant_method = get_quantification_method(method, min_nonan=min_nonan)
         else:
             quant_method = get_quantification_method(method)
 
         # Determine column names (try to auto-detect)
-        protein_col = PROTEIN_NAME if PROTEIN_NAME in peptide_df.columns else "ProteinName"
+        protein_col = (
+            PROTEIN_NAME if PROTEIN_NAME in peptide_df.columns else "ProteinName"
+        )
         sample_col = SAMPLE_ID if SAMPLE_ID in peptide_df.columns else "SampleID"
-        intensity_col = NORM_INTENSITY if NORM_INTENSITY in peptide_df.columns else "NormIntensity"
-        peptide_col = PEPTIDE_CANONICAL if PEPTIDE_CANONICAL in peptide_df.columns else "PeptideSequence"
+        intensity_col = (
+            NORM_INTENSITY if NORM_INTENSITY in peptide_df.columns else "NormIntensity"
+        )
+        peptide_col = (
+            PEPTIDE_CANONICAL
+            if PEPTIDE_CANONICAL in peptide_df.columns
+            else "PeptideSequence"
+        )
 
         # Check for required columns
-        for col, name in [(protein_col, "protein"), (sample_col, "sample"), (intensity_col, "intensity")]:
+        for col, name in [
+            (protein_col, "protein"),
+            (sample_col, "sample"),
+            (intensity_col, "intensity"),
+        ]:
             if col not in peptide_df.columns:
-                raise click.UsageError(f"Could not find {name} column '{col}' in peptide file")
+                raise click.UsageError(
+                    f"Could not find {name} column '{col}' in peptide file"
+                )
 
         # Run quantification
         click.echo(f"Quantifying {peptide_df[protein_col].nunique()} proteins...")
@@ -243,18 +272,22 @@ def peptides2protein(
 
         # Add condition if available
         if CONDITION in peptide_df.columns:
-            condition_map = peptide_df[[sample_col, CONDITION]].drop_duplicates().set_index(sample_col)[CONDITION]
+            condition_map = (
+                peptide_df[[sample_col, CONDITION]]
+                .drop_duplicates()
+                .set_index(sample_col)[CONDITION]
+            )
             result_df[CONDITION] = result_df[sample_col].map(condition_map)
 
         # Normalize if requested
         if normalize:
             # Find the intensity column (last column that contains 'Intensity')
-            intensity_cols = [c for c in result_df.columns if 'Intensity' in c]
+            intensity_cols = [c for c in result_df.columns if "Intensity" in c]
             if intensity_cols:
                 intensity_col_out = intensity_cols[-1]
-                result_df[f"{intensity_col_out}Norm"] = result_df.groupby(sample_col)[intensity_col_out].transform(
-                    lambda x: x / x.sum()
-                )
+                result_df[f"{intensity_col_out}Norm"] = result_df.groupby(sample_col)[
+                    intensity_col_out
+                ].transform(lambda x: x / x.sum())
 
         # Save output
         if output:

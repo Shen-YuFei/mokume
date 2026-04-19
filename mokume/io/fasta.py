@@ -134,9 +134,7 @@ def extract_fasta(
         if accession in protein_accessions:
             originals = acc_to_originals[accession]
             found_proteins.update(originals)
-            aa_sequence = AASequence.fromString(
-                _strip_nonstandard_aa(entry.sequence)
-            )
+            aa_sequence = AASequence.fromString(_strip_nonstandard_aa(entry.sequence))
 
             # Perform digestion
             digest = []
@@ -189,9 +187,7 @@ def get_protein_molecular_weights(
     for entry in fasta_proteins:
         accession = get_accession(entry.identifier)
         if accession in protein_accessions:
-            aa_sequence = AASequence.fromString(
-                _strip_nonstandard_aa(entry.sequence)
-            )
+            aa_sequence = AASequence.fromString(_strip_nonstandard_aa(entry.sequence))
             mw = aa_sequence.getMonoWeight()
             for orig in acc_to_originals[accession]:
                 mw_dict[orig] = mw

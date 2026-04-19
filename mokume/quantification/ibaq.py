@@ -90,7 +90,9 @@ def normalize_ibaq(res: DataFrame) -> DataFrame:
     """
     res = res.groupby([SAMPLE_ID, CONDITION]).apply(normalize)
     # Normalization method used by Proteomics DB 10 + log10(ibaq/sum(ibaq))
-    res[IBAQ_LOG] = np.where(res[IBAQ_NORMALIZED] > 0, np.log10(res[IBAQ_NORMALIZED]) + 10, 0)
+    res[IBAQ_LOG] = np.where(
+        res[IBAQ_NORMALIZED] > 0, np.log10(res[IBAQ_NORMALIZED]) + 10, 0
+    )
     # Normalization used by PRIDE Team (no log transformation) (ibaq/total_ibaq) * 100'000'000
     res[IBAQ_PPB] = res[IBAQ_NORMALIZED] * 100_000_000
     return res
@@ -118,7 +120,9 @@ def handle_nonstandard_aa(aa_seq: str):
 
 
 @log_function_call(logger)
-def extract_fasta(fasta: str, enzyme: str, proteins: List, min_aa: int, max_aa: int, tpa: bool):
+def extract_fasta(
+    fasta: str, enzyme: str, proteins: List, min_aa: int, max_aa: int, tpa: bool
+):
     """
     Extract protein information from a FASTA file using a specified enzyme for digestion.
 
@@ -163,7 +167,9 @@ def extract_fasta(fasta: str, enzyme: str, proteins: List, min_aa: int, max_aa: 
             originals = acc_to_originals[accession]
             found_proteins.update(originals)
             digest = list()
-            digestor.digest(AASequence().fromString(entry.sequence), digest, min_aa, max_aa)
+            digestor.digest(
+                AASequence().fromString(entry.sequence), digest, min_aa, max_aa
+            )
             digestuniq = set(digest)
             for orig in originals:
                 uniquepepcounts[orig] = len(digestuniq)
@@ -174,12 +180,16 @@ def extract_fasta(fasta: str, enzyme: str, proteins: List, min_aa: int, max_aa: 
                     error_aa, seq = handle_nonstandard_aa(entry.sequence)
                     mw = AASequence().fromString(seq).getMonoWeight()
                     logger.error(
-                        "Nonstandard amino acids found in %s: %s, ignored!", accession, error_aa
+                        "Nonstandard amino acids found in %s: %s, ignored!",
+                        accession,
+                        error_aa,
                     )
                 for orig in originals:
                     mw_dict[orig] = mw
     if not found_proteins:
-        raise ValueError(f"None of the {len(proteins)} proteins were found in the FASTA file")
+        raise ValueError(
+            f"None of the {len(proteins)} proteins were found in the FASTA file"
+        )
     return uniquepepcounts, mw_dict, found_proteins
 
 
@@ -197,16 +207,22 @@ class ConcentrationWeightByProteomicRuler:
     concentration_per_cell: float
     dna_mass: float
 
-    def __init__(self, organism: OrganismDescription, ploidy: int, concentration_per_cell: float):
+    def __init__(
+        self, organism: OrganismDescription, ploidy: int, concentration_per_cell: float
+    ):
         self.organism = organism
         self.ploidy = ploidy
         self.concentration_per_cell = concentration_per_cell
-        self.dna_mass = self.ploidy * self.organism.genome_size * AVERAGE_BASE_PAIR_MASS / AVAGADRO
+        self.dna_mass = (
+            self.ploidy * self.organism.genome_size * AVERAGE_BASE_PAIR_MASS / AVAGADRO
+        )
 
     def total_histone_intensities(self, protein_intensities: pd.DataFrame) -> float:
         histones = set(self.organism.histone_entries)
         is_histone_mask = protein_intensities[PROTEIN_NAME].isin(histones)
-        histone_intensities = max(protein_intensities[is_histone_mask][NORM_INTENSITY].sum(), 1.0)
+        histone_intensities = max(
+            protein_intensities[is_histone_mask][NORM_INTENSITY].sum(), 1.0
+        )
         return histone_intensities
 
     def apply_ruler(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
@@ -220,12 +236,16 @@ class ConcentrationWeightByProteomicRuler:
             / protein_intensities[MOLECULARWEIGHT]
         )
 
-        protein_intensities[MOLES_NMOL] = protein_intensities[COPYNUMBER] * (1e9 / AVAGADRO)
+        protein_intensities[MOLES_NMOL] = protein_intensities[COPYNUMBER] * (
+            1e9 / AVAGADRO
+        )
         protein_intensities[WEIGHT_NG] = (
             protein_intensities[MOLES_NMOL] * protein_intensities[MOLECULARWEIGHT]
         )
 
-        volume = protein_intensities[WEIGHT_NG].sum() / 1e-9 / self.concentration_per_cell
+        volume = (
+            protein_intensities[WEIGHT_NG].sum() / 1e-9 / self.concentration_per_cell
+        )
         protein_intensities[CONCENTRATION_NM] = volume * protein_intensities[MOLES_NMOL]
         return protein_intensities
 
@@ -268,15 +288,23 @@ class PeptideProteinMapper:
         if not proteins_list:
             val = self._peptide_protein_ratio[protein_group] = 0
         else:
-            val = self._peptide_protein_ratio[protein_group] = total / len(proteins_list)
+            val = self._peptide_protein_ratio[protein_group] = total / len(
+                proteins_list
+            )
         return val
 
-    def get_average_nr_peptides_unique_by_group(self, pdrow: Series) -> Union[float, Series]:
+    def get_average_nr_peptides_unique_by_group(
+        self, pdrow: Series
+    ) -> Union[float, Series]:
         """Calculate the average number of unique peptides per protein group."""
         average_peptides_per_protein = self.peptide_protein_ratio(pdrow.name[0])
 
         if average_peptides_per_protein > 0:
-            return pdrow.NormIntensity / self.map_size[pdrow.name] / average_peptides_per_protein
+            return (
+                pdrow.NormIntensity
+                / self.map_size[pdrow.name]
+                / average_peptides_per_protein
+            )
 
         return np.nan
 
@@ -373,7 +401,9 @@ def peptides_to_protein(
     logger.info("Processing data with %d rows", len(data))
     logger.debug("Data sample: \n%s", data.head().to_string())
     map_size = data.groupby([PROTEIN_NAME, SAMPLE_ID, CONDITION]).size().to_dict()
-    res = pd.DataFrame(data.groupby([PROTEIN_NAME, SAMPLE_ID, CONDITION])[NORM_INTENSITY].sum())
+    res = pd.DataFrame(
+        data.groupby([PROTEIN_NAME, SAMPLE_ID, CONDITION])[NORM_INTENSITY].sum()
+    )
 
     protein_mapper = PeptideProteinMapper(
         unique_peptide_counts=unique_peptide_counts,
@@ -408,7 +438,9 @@ def peptides_to_protein(
 
     # calculate protein weight and concentration
     if ruler:
-        concentration_by_ruler = ConcentrationWeightByProteomicRuler(organism_descr, ploidy, cpc)
+        concentration_by_ruler = ConcentrationWeightByProteomicRuler(
+            organism_descr, ploidy, cpc
+        )
         res = concentration_by_ruler.apply_by_condition(res)
 
     # Print the distribution of the protein IBAQ values
@@ -444,7 +476,12 @@ def peptides_to_protein(
             pdf.savefig(box1, bbox_inches="tight")
             if tpa:
                 density2 = plot_distributions(
-                    res, TPA, SAMPLE_ID, log2=True, width=plot_width, title="TPA Distribution"
+                    res,
+                    TPA,
+                    SAMPLE_ID,
+                    log2=True,
+                    width=plot_width,
+                    title="TPA Distribution",
                 )
                 box2 = plot_box_plot(
                     res,

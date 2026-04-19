@@ -60,7 +60,9 @@ def test_remove_missing_values():
     )
     number_samples = len(new_ibaq[SAMPLE_ID].unique())
     logging.info(
-        "The number of samples with less than 1% of missing values is {}".format(number_samples)
+        "The number of samples with less than 1% of missing values is {}".format(
+            number_samples
+        )
     )
 
 

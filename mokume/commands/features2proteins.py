@@ -7,14 +7,19 @@ files to protein intensities, supporting multiple quantification methods.
 
 import click
 
-from mokume.model.normalization import FeatureNormalizationMethod, PeptideNormalizationMethod
+from mokume.model.normalization import (
+    FeatureNormalizationMethod,
+    PeptideNormalizationMethod,
+)
 
 
 # Build choices for sample normalization (including hierarchical)
 SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 
 
-@click.command("features2proteins", short_help="Quantify proteins from feature parquet file.")
+@click.command(
+    "features2proteins", short_help="Quantify proteins from feature parquet file."
+)
 @click.option(
     "-p",
     "--parquet",
@@ -84,7 +89,9 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     "--run-normalization",
     "run_normalization",
     help="Run/technical replicate normalization (ignored for directlfq)",
-    type=click.Choice([f.name.lower() for f in FeatureNormalizationMethod], case_sensitive=False),
+    type=click.Choice(
+        [f.name.lower() for f in FeatureNormalizationMethod], case_sensitive=False
+    ),
     default="median",
     show_default=True,
 )
@@ -92,7 +99,7 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     "--sample-normalization",
     "sample_normalization",
     help="Sample normalization method (ignored for directlfq). "
-         "Use 'hierarchical' for DirectLFQ-style clustering-based normalization.",
+    "Use 'hierarchical' for DirectLFQ-style clustering-based normalization.",
     type=click.Choice(SAMPLE_NORM_CHOICES, case_sensitive=False),
     default="globalmedian",
     show_default=True,
@@ -549,25 +556,26 @@ def features2proteins(
     # Parse comma-separated CLI values
     parsed_irs_ref_samples = (
         [s.strip() for s in irs_reference_samples.split(",")]
-        if irs_reference_samples else None
+        if irs_reference_samples
+        else None
     )
     parsed_irs_sdrf_values = (
-        [s.strip() for s in irs_sdrf_values.split(",")]
-        if irs_sdrf_values else None
+        [s.strip() for s in irs_sdrf_values.split(",")] if irs_sdrf_values else None
     )
     parsed_batch_covariates = (
-        [s.strip() for s in batch_covariates.split(",")]
-        if batch_covariates else None
+        [s.strip() for s in batch_covariates.split(",")] if batch_covariates else None
     )
     parsed_de_contrasts = (
-        [s.strip() for s in de_contrasts.split(",")]
-        if de_contrasts else []
+        [s.strip() for s in de_contrasts.split(",")] if de_contrasts else []
     )
     if de_contrasts_file:
         import csv
+
         with open(de_contrasts_file, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f, delimiter="\t")
-            if not reader.fieldnames or not {"group1", "group2"}.issubset(reader.fieldnames):
+            if not reader.fieldnames or not {"group1", "group2"}.issubset(
+                reader.fieldnames
+            ):
                 raise click.UsageError(
                     f"Contrasts file '{de_contrasts_file}' must have 'group1' and 'group2' "
                     f"columns. Found: {reader.fieldnames}"
@@ -583,8 +591,7 @@ def features2proteins(
         )
     parsed_de_contrasts = parsed_de_contrasts or None
     parsed_highlight_genes = (
-        [s.strip() for s in highlight_genes.split(",")]
-        if highlight_genes else None
+        [s.strip() for s in highlight_genes.split(",")] if highlight_genes else None
     )
 
     # Run the pipeline

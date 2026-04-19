@@ -27,7 +27,9 @@ def test_combine_ibaq_tsv_files():
     """
     ibaq_dir = TESTS_DIR / "ibaq-raw-hela"
     files_pattern = "*ibaq.tsv"
-    df_ibaq = combine_ibaq_tsv_files(dir_path=str(ibaq_dir), pattern=files_pattern, sep="\t")
+    df_ibaq = combine_ibaq_tsv_files(
+        dir_path=str(ibaq_dir), pattern=files_pattern, sep="\t"
+    )
     logging.info(df_ibaq.head())
     if df_ibaq.shape != (83725, 14):
         raise AssertionError(f"Expected shape (83725, 14), got {df_ibaq.shape}")
@@ -61,8 +63,12 @@ def test_create_anndata():
     if adata.shape != (12, 3096):
         raise AssertionError(f"Expected shape (12, 3096), got {adata.shape}")
     if adata.layers[IBAQ_NORMALIZED].shape != (12, 3096):
-        raise AssertionError(f"Expected IBAQ_NORMALIZED shape (12, 3096), got {adata.layers[IBAQ_NORMALIZED].shape}")
+        raise AssertionError(
+            f"Expected IBAQ_NORMALIZED shape (12, 3096), got {adata.layers[IBAQ_NORMALIZED].shape}"
+        )
     if adata.layers[IBAQ_LOG].shape != (12, 3096):
-        raise AssertionError(f"Expected IBAQ_LOG shape (12, 3096), got {adata.layers[IBAQ_LOG].shape}")
+        raise AssertionError(
+            f"Expected IBAQ_LOG shape (12, 3096), got {adata.layers[IBAQ_LOG].shape}"
+        )
     if "HeLa" not in adata.obs["Condition"].values:
         raise AssertionError("'HeLa' not found in adata.obs['Condition'].values")

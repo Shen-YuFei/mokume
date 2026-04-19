@@ -33,7 +33,12 @@ from mokume.core.constants import (
     PARQUET_COLUMNS,
     parquet_map,
 )
-from mokume.core.logger import get_logger, configure_logging, log_execution_time, log_function_call
+from mokume.core.logger import (
+    get_logger,
+    configure_logging,
+    log_execution_time,
+    log_function_call,
+)
 from mokume.core.write_queue import WriteCSVTask, WriteParquetTask
 
 __all__ = [

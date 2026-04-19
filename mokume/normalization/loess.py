@@ -24,7 +24,6 @@ logger = get_logger("mokume.normalization.loess")
 
 
 class LOESSNormalizer:
-
     """LOESS regression-based normalization."""
 
     def __init__(self, frac: float = 0.75, reference: str = "median"):
@@ -56,7 +55,8 @@ class LOESSNormalizer:
 
             # Fit LOWESS: M ~ A
             fitted = lowess(
-                m_values, a_values,
+                m_values,
+                a_values,
                 frac=self.frac,
                 return_sorted=False,
             )
@@ -67,7 +67,8 @@ class LOESSNormalizer:
 
         logger.info(
             "LOESS normalization: %d samples corrected (frac=%.2f)",
-            n_corrected, self.frac,
+            n_corrected,
+            self.frac,
         )
         return result
 

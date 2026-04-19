@@ -88,22 +88,29 @@ def tissuemap_cmd(
         return
 
     if scan_dir is None:
-        raise click.UsageError("--scan-dir is required when not using --generate-config.")
+        raise click.UsageError(
+            "--scan-dir is required when not using --generate-config."
+        )
 
     config = _build_config(scan_dir, output_dir, config_path, tmt_datasets, n_jobs, dpi)
     TissueMapPipeline(config).run()
 
 
 def _build_config(
-    scan_dir: Path, output_dir: Path,
+    scan_dir: Path,
+    output_dir: Path,
     config_path: Optional[Path],
     tmt_datasets: tuple[str, ...],
-    n_jobs: int, dpi: Optional[int],
+    n_jobs: int,
+    dpi: Optional[int],
 ):
     """Build TissueMapConfig from CLI arguments."""
     from mokume.tissuemap.config import (
-        InputConfig, OutputConfig, PlottingConfig,
-        TissueMapConfig, load_config,
+        InputConfig,
+        OutputConfig,
+        PlottingConfig,
+        TissueMapConfig,
+        load_config,
     )
 
     if config_path is not None:

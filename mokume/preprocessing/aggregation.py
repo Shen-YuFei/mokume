@@ -129,7 +129,9 @@ def remove_protein_by_ids(
 
 
 def reformat_quantms_feature_table_quant_labels(
-    data_df: pd.DataFrame, label: QuantificationCategory, choice: Optional[IsobaricLabel]
+    data_df: pd.DataFrame,
+    label: QuantificationCategory,
+    choice: Optional[IsobaricLabel],
 ) -> pd.DataFrame:
     """
     Reformats a DataFrame containing quantification labels for QuantMS features.
@@ -185,13 +187,15 @@ def apply_initial_filtering(
     # Remove 0 intensity signals from the data
     data_df = data_df[data_df[INTENSITY] > 0]
 
-    data_df = data_df[(data_df["Condition"] != "Empty") | (data_df["Condition"].isnull())]
+    data_df = data_df[
+        (data_df["Condition"] != "Empty") | (data_df["Condition"].isnull())
+    ]
 
     # "Run" is NA for reference files not found in the SDRF file.
     if data_df[RUN].isna().any():
-        missing_files = data_df.loc[
-            data_df[RUN].isna(), "Reference"
-        ].drop_duplicates().tolist()
+        missing_files = (
+            data_df.loc[data_df[RUN].isna(), "Reference"].drop_duplicates().tolist()
+        )
 
         logger.warning(
             f"Reference files {missing_files} are not present in the SDRF file. Skipping calculation."

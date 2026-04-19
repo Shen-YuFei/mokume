@@ -49,7 +49,9 @@ def plot_distributions(
         normalize[field] = np.log2(normalize[field])
     normalize.dropna(subset=[field], inplace=True)
     plt.figure(dpi=500, figsize=(width, 8))
-    fig = sns.kdeplot(data=normalize, x=field, hue=class_field, palette="Paired", linewidth=2)
+    fig = sns.kdeplot(
+        data=normalize, x=field, hue=class_field, palette="Paired", linewidth=2
+    )
     sns.despine(ax=fig, top=True, right=True)
     plt.title(title)
     pd.set_option("mode.chained_assignment", "warn")

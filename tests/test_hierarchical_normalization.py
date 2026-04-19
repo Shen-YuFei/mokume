@@ -47,12 +47,14 @@ class TestHierarchicalSampleNormalizer:
         n_features = 100
         base = np.linspace(15, 25, n_features)  # Base intensities from 15 to 25
 
-        return pd.DataFrame({
-            "sample1": base,
-            "sample2": base + 0.5,  # Shifted up by 0.5
-            "sample3": base - 0.3,  # Shifted down by 0.3
-            "sample4": base + 1.0,  # Shifted up by 1.0
-        })
+        return pd.DataFrame(
+            {
+                "sample1": base,
+                "sample2": base + 0.5,  # Shifted up by 0.5
+                "sample3": base - 0.3,  # Shifted down by 0.3
+                "sample4": base + 1.0,  # Shifted up by 1.0
+            }
+        )
 
     @pytest.fixture
     def df_with_nans(self):
@@ -61,11 +63,13 @@ class TestHierarchicalSampleNormalizer:
         n_features = 100
         base = np.random.randn(n_features) * 2 + 20
 
-        df = pd.DataFrame({
-            "sample1": base,
-            "sample2": base + 0.5,
-            "sample3": base - 0.3,
-        })
+        df = pd.DataFrame(
+            {
+                "sample1": base,
+                "sample2": base + 0.5,
+                "sample3": base - 0.3,
+            }
+        )
 
         # Add some NaNs
         df.iloc[10:20, 0] = np.nan  # sample1
@@ -83,13 +87,15 @@ class TestHierarchicalSampleNormalizer:
         for protein in ["P1", "P2", "P3"]:
             for peptide in ["pep1", "pep2", "pep3"]:
                 base = np.random.randn() * 2 + 20
-                data.append({
-                    "protein": protein,
-                    "peptide": peptide,
-                    "sample1": base,
-                    "sample2": base + 0.5,
-                    "sample3": base - 0.3,
-                })
+                data.append(
+                    {
+                        "protein": protein,
+                        "peptide": peptide,
+                        "sample1": base,
+                        "sample2": base + 0.5,
+                        "sample3": base - 0.3,
+                    }
+                )
 
         df = pd.DataFrame(data)
         df = df.set_index(["protein", "peptide"])
@@ -180,13 +186,11 @@ class TestHierarchicalSampleNormalizer:
         assert len(normalizer_quad.normalization_factors_) == 4
 
         # The shift ranges should be similar (within a factor of 2)
-        linear_range = (
-            max(normalizer_linear.normalization_factors_.values()) -
-            min(normalizer_linear.normalization_factors_.values())
+        linear_range = max(normalizer_linear.normalization_factors_.values()) - min(
+            normalizer_linear.normalization_factors_.values()
         )
-        quad_range = (
-            max(normalizer_quad.normalization_factors_.values()) -
-            min(normalizer_quad.normalization_factors_.values())
+        quad_range = max(normalizer_quad.normalization_factors_.values()) - min(
+            normalizer_quad.normalization_factors_.values()
         )
 
         # Both should capture roughly the same shift range (1.0 - (-0.3) = 1.3)
@@ -235,10 +239,12 @@ class TestHierarchicalSampleNormalizer:
         """Test normalization with just two samples."""
         # Use enough data points to exceed min_overlap
         n = 20
-        df = pd.DataFrame({
-            "sample1": np.linspace(10.0, 15.0, n),
-            "sample2": np.linspace(10.5, 15.5, n),  # Shifted by 0.5
-        })
+        df = pd.DataFrame(
+            {
+                "sample1": np.linspace(10.0, 15.0, n),
+                "sample2": np.linspace(10.5, 15.5, n),  # Shifted by 0.5
+            }
+        )
 
         normalizer = HierarchicalSampleNormalizer(min_overlap=5)
         normalized = normalizer.fit_transform(df)
@@ -252,9 +258,7 @@ class TestHierarchicalSampleNormalizer:
 
     def test_empty_after_protein_filter_raises(self, multiindex_df):
         """Test that empty DataFrame after filtering raises error."""
-        normalizer = HierarchicalSampleNormalizer(
-            selected_proteins=["NONEXISTENT"]
-        )
+        normalizer = HierarchicalSampleNormalizer(selected_proteins=["NONEXISTENT"])
 
         with pytest.raises(ValueError, match="No features remaining"):
             normalizer.fit(multiindex_df)
@@ -267,11 +271,14 @@ class TestHierarchicalIonAligner:
     def protein_df(self):
         """DataFrame representing ions for a single protein."""
         np.random.seed(42)
-        return pd.DataFrame({
-            "sample1": [10.0, 10.5, 11.0, 11.5],
-            "sample2": [10.2, 10.7, np.nan, 11.7],
-            "sample3": [9.8, 10.3, 10.8, 11.3],
-        }, index=["ion1", "ion2", "ion3", "ion4"])
+        return pd.DataFrame(
+            {
+                "sample1": [10.0, 10.5, 11.0, 11.5],
+                "sample2": [10.2, 10.7, np.nan, 11.7],
+                "sample3": [9.8, 10.3, 10.8, 11.3],
+            },
+            index=["ion1", "ion2", "ion3", "ion4"],
+        )
 
     def test_align_protein_ions(self, protein_df):
         """Test basic ion alignment."""
@@ -284,10 +291,13 @@ class TestHierarchicalIonAligner:
 
     def test_single_ion_unchanged(self):
         """Test that single ion returns unchanged."""
-        df = pd.DataFrame({
-            "sample1": [10.0],
-            "sample2": [10.5],
-        }, index=["ion1"])
+        df = pd.DataFrame(
+            {
+                "sample1": [10.0],
+                "sample2": [10.5],
+            },
+            index=["ion1"],
+        )
 
         aligner = HierarchicalIonAligner()
         aligned = aligner.align_protein_ions(df)
@@ -299,16 +309,25 @@ class TestHierarchicalIonAligner:
         np.random.seed(42)
 
         # Create MultiIndex DataFrame
-        index = pd.MultiIndex.from_tuples([
-            ("P1", "ion1"), ("P1", "ion2"), ("P1", "ion3"),
-            ("P2", "ion1"), ("P2", "ion2"),
-        ], names=["protein", "ion"])
+        index = pd.MultiIndex.from_tuples(
+            [
+                ("P1", "ion1"),
+                ("P1", "ion2"),
+                ("P1", "ion3"),
+                ("P2", "ion1"),
+                ("P2", "ion2"),
+            ],
+            names=["protein", "ion"],
+        )
 
-        df = pd.DataFrame({
-            "sample1": [10.0, 10.5, 11.0, 20.0, 20.5],
-            "sample2": [10.2, 10.7, 11.2, 20.2, 20.7],
-            "sample3": [9.8, 10.3, 10.8, 19.8, 20.3],
-        }, index=index)
+        df = pd.DataFrame(
+            {
+                "sample1": [10.0, 10.5, 11.0, 20.0, 20.5],
+                "sample2": [10.2, 10.7, 11.2, 20.2, 20.7],
+                "sample3": [9.8, 10.3, 10.8, 19.8, 20.3],
+            },
+            index=index,
+        )
 
         aligner = HierarchicalIonAligner()
         aligned = aligner.align_all_proteins(df)
@@ -325,17 +344,25 @@ class TestIntegration:
         np.random.seed(42)
 
         # Create test data
-        index = pd.MultiIndex.from_tuples([
-            ("P1", "ion1"), ("P1", "ion2"),
-            ("P2", "ion1"), ("P2", "ion2"),
-        ], names=["protein", "ion"])
+        index = pd.MultiIndex.from_tuples(
+            [
+                ("P1", "ion1"),
+                ("P1", "ion2"),
+                ("P2", "ion1"),
+                ("P2", "ion2"),
+            ],
+            names=["protein", "ion"],
+        )
 
         base = np.array([10.0, 10.5, 20.0, 20.5])
-        df = pd.DataFrame({
-            "sample1": base,
-            "sample2": base + 0.5,
-            "sample3": base - 0.3,
-        }, index=index)
+        df = pd.DataFrame(
+            {
+                "sample1": base,
+                "sample2": base + 0.5,
+                "sample3": base - 0.3,
+            },
+            index=index,
+        )
 
         # Step 1: Sample normalization
         sample_normalizer = HierarchicalSampleNormalizer()
@@ -350,11 +377,13 @@ class TestIntegration:
     def test_reproducibility(self):
         """Test that normalization is deterministic."""
         np.random.seed(42)
-        df = pd.DataFrame({
-            "s1": np.random.randn(50) + 10,
-            "s2": np.random.randn(50) + 10.5,
-            "s3": np.random.randn(50) + 9.5,
-        })
+        df = pd.DataFrame(
+            {
+                "s1": np.random.randn(50) + 10,
+                "s2": np.random.randn(50) + 10.5,
+                "s3": np.random.randn(50) + 9.5,
+            }
+        )
 
         normalizer1 = HierarchicalSampleNormalizer()
         normalizer2 = HierarchicalSampleNormalizer()

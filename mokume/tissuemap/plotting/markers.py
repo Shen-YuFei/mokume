@@ -28,7 +28,6 @@ _EXPR_CMAP = LinearSegmentedColormap.from_list(
 )
 
 
-
 def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
     """Run Wilcoxon rank-sum test for tissue markers.
 
@@ -44,7 +43,9 @@ def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
         n_single = (tissue_counts < min_group_size).sum()
         logger.warning(
             "Wilcoxon markers skipped: %d / %d tissues have < %d samples",
-            n_single, len(tissue_counts), min_group_size,
+            n_single,
+            len(tissue_counts),
+            min_group_size,
         )
         return adata
 
@@ -53,7 +54,10 @@ def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
         dropped = tissue_counts[tissue_counts < min_group_size]
         logger.info(
             "Wilcoxon: using %d / %d tissues (dropped %d with < %d samples)",
-            len(valid), len(tissue_counts), len(dropped), min_group_size,
+            len(valid),
+            len(tissue_counts),
+            len(dropped),
+            min_group_size,
         )
         mask = adata.obs["tissue"].isin(valid.index)
         adata_sub = adata[mask].copy()
@@ -68,8 +72,11 @@ def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
         warnings.simplefilter("ignore", RuntimeWarning)
         warnings.simplefilter("ignore", PerformanceWarning)
         sc.tl.rank_genes_groups(
-            adata_sub, groupby="tissue", method="wilcoxon",
-            key_added="tissue_markers", use_raw=False,
+            adata_sub,
+            groupby="tissue",
+            method="wilcoxon",
+            key_added="tissue_markers",
+            use_raw=False,
         )
     adata_sub.X = x_backup
 
@@ -79,9 +86,10 @@ def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
     return adata
 
 
-
 def _collect_top_markers(
-    adata: ad.AnnData, tissue_order: list[str], n_top: int,
+    adata: ad.AnnData,
+    tissue_order: list[str],
+    n_top: int,
 ) -> list[tuple[str, str]]:
     """Collect top *n_top* unique markers per tissue from Wilcoxon results."""
     heat_proteins: list[tuple[str, str]] = []
@@ -109,7 +117,9 @@ def _compute_zscore_matrix(
     available_tissues: list[str],
 ) -> np.ndarray:
     """Compute row-wise z-scored matrix clipped to [-3, 3]."""
-    heat_mat = tissue_means.loc[available_proteins, available_tissues].values.astype(float)
+    heat_mat = tissue_means.loc[available_proteins, available_tissues].values.astype(
+        float
+    )
     row_mean = np.nanmean(heat_mat, axis=1, keepdims=True)
     row_std = np.nanstd(heat_mat, axis=1, keepdims=True)
     row_std[row_std == 0] = 1
@@ -119,12 +129,22 @@ def _compute_zscore_matrix(
 
 
 def _draw_heatmap(
-    ax, heat_z, available_proteins, available_tissues,
-    protein_names, protein_tissues, tissue_colors, title,
+    ax,
+    heat_z,
+    available_proteins,
+    available_tissues,
+    protein_names,
+    protein_tissues,
+    tissue_colors,
+    title,
 ) -> None:
     """Render the heatmap image with annotations."""
     im = ax.imshow(
-        heat_z, aspect="auto", cmap=_HEATMAP_CMAP, vmin=-3, vmax=3,
+        heat_z,
+        aspect="auto",
+        cmap=_HEATMAP_CMAP,
+        vmin=-3,
+        vmax=3,
         interpolation="nearest",
     )
     ax.set_yticks(range(len(available_proteins)))
@@ -157,7 +177,8 @@ def _draw_heatmap(
 
 
 def _compute_tissue_means(
-    adata: ad.AnnData, tissue_order: list[str],
+    adata: ad.AnnData,
+    tissue_order: list[str],
 ) -> pd.DataFrame:
     """Per-tissue mean expression for each protein."""
     tissues = adata.obs["tissue"].values
@@ -173,7 +194,8 @@ def _compute_tissue_means(
 
 def _prepare_heatmap_data(
     heat_proteins: list[tuple[str, str]],
-    tissue_means: pd.DataFrame, tissue_order: list[str],
+    tissue_means: pd.DataFrame,
+    tissue_order: list[str],
 ) -> tuple[list[str], list[str], list[str], list[str], np.ndarray] | None:
     """Filter markers to available proteins/tissues and compute z-scores.
 
@@ -186,7 +208,13 @@ def _prepare_heatmap_data(
     if not (available_proteins and available_tissues):
         return None
     heat_z = _compute_zscore_matrix(tissue_means, available_proteins, available_tissues)
-    return list(protein_names), list(protein_tissues), available_tissues, available_proteins, heat_z
+    return (
+        list(protein_names),
+        list(protein_tissues),
+        available_tissues,
+        available_proteins,
+        heat_z,
+    )
 
 
 def plot_marker_heatmap(
@@ -214,7 +242,9 @@ def plot_marker_heatmap(
     prepared = _prepare_heatmap_data(heat_proteins, tissue_means, tissue_order)
     if prepared is None:
         return
-    protein_names, protein_tissues, available_tissues, available_proteins, heat_z = prepared
+    protein_names, protein_tissues, available_tissues, available_proteins, heat_z = (
+        prepared
+    )
 
     fig_height = max(12, len(available_proteins) * 0.14)
     fig, ax = plt.subplots(figsize=(14, fig_height))
@@ -224,8 +254,14 @@ def plot_marker_heatmap(
         f"{adata.n_vars:,} proteins, {adata.n_obs} samples"
     )
     _draw_heatmap(
-        ax, heat_z, available_proteins, available_tissues,
-        protein_names, protein_tissues, tissue_colors, heatmap_title,
+        ax,
+        heat_z,
+        available_proteins,
+        available_tissues,
+        protein_names,
+        protein_tissues,
+        tissue_colors,
+        heatmap_title,
     )
 
     plt.tight_layout()
@@ -236,18 +272,17 @@ def plot_marker_heatmap(
     logger.info("Saved marker_heatmap.png")
 
 
-
 def _select_showcase_markers(
-    adata: ad.AnnData, tissue_order: list[str], n_showcase: int,
+    adata: ad.AnnData,
+    tissue_order: list[str],
+    n_showcase: int,
 ) -> list[tuple[str, str]]:
     """Pick one top marker per tissue (up to *n_showcase*)."""
     showcase: list[tuple[str, str]] = []
     seen_prots: set[str] = set()
     for t in tissue_order:
         try:
-            result = sc.get.rank_genes_groups_df(
-                adata, group=t, key="tissue_markers"
-            )
+            result = sc.get.rank_genes_groups_df(adata, group=t, key="tissue_markers")
         except (KeyError, ValueError):
             continue
         for _, row in result.iterrows():
@@ -269,9 +304,15 @@ def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
     vmin = float(np.percentile(expr, 5))
     vmax = float(np.percentile(expr, 95))
     scat = ax.scatter(
-        tsne[order, 0], tsne[order, 1], c=expr[order],
-        cmap=_EXPR_CMAP, s=18, alpha=0.85, edgecolors="none",
-        vmin=vmin, vmax=vmax,
+        tsne[order, 0],
+        tsne[order, 1],
+        c=expr[order],
+        cmap=_EXPR_CMAP,
+        s=18,
+        alpha=0.85,
+        edgecolors="none",
+        vmin=vmin,
+        vmax=vmax,
     )
     plt.colorbar(scat, ax=ax, shrink=0.6, aspect=15, pad=0.02)
     ts_val = ""
@@ -285,7 +326,8 @@ def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
 
 
 def _create_subplot_grid(
-    n_items: int, n_cols: int = 4,
+    n_items: int,
+    n_cols: int = 4,
 ) -> tuple[plt.Figure, list]:
     """Create a subplot grid and return (fig, flat_axes_list)."""
     n_rows = (n_items + n_cols - 1) // n_cols
@@ -326,7 +368,9 @@ def plot_marker_tsne(
 
     fig.suptitle(
         "t-SNE — Top tissue marker expression",
-        fontsize=14, fontweight="bold", y=1.01,
+        fontsize=14,
+        fontweight="bold",
+        y=1.01,
     )
     plt.tight_layout()
     fig.savefig(out_dir / "marker_tsne.png", dpi=dpi, bbox_inches="tight")
@@ -336,9 +380,10 @@ def plot_marker_tsne(
     logger.info("Saved marker_tsne.png")
 
 
-
 def _collect_dotplot_genes(
-    adata: ad.AnnData, available: list[str], n_top: int,
+    adata: ad.AnnData,
+    available: list[str],
+    n_top: int,
 ) -> list[str]:
     """Collect top marker genes for dotplot (max 60)."""
     genes: list[str] = []
@@ -387,11 +432,17 @@ def plot_dotplot(
     try:
         adata.X = np.nan_to_num(adata.X, nan=0.0).astype(np.float32)
         adata.obs["tissue"] = pd.Categorical(
-            adata.obs["tissue"], categories=available, ordered=True,
+            adata.obs["tissue"],
+            categories=available,
+            ordered=True,
         )
         dp = sc.pl.dotplot(
-            adata, var_names=dotplot_genes, groupby="tissue",
-            standard_scale="var", show=False, return_fig=True,
+            adata,
+            var_names=dotplot_genes,
+            groupby="tissue",
+            standard_scale="var",
+            show=False,
+            return_fig=True,
             figsize=(20, 10),
         )
         dp.savefig(out_dir / "marker_dotplot.png", dpi=dpi, bbox_inches="tight")
@@ -402,7 +453,6 @@ def plot_dotplot(
     finally:
         adata.X = x_backup
         adata.obs["tissue"] = tissue_backup
-
 
 
 def save_markers_csv(

@@ -24,12 +24,15 @@ class TestTMMNormalizer:
         np.random.seed(42)
         n_proteins = 50
         base = np.linspace(100, 1000, n_proteins)
-        return pd.DataFrame({
-            'S1': base * (1 + np.random.randn(n_proteins) * 0.1),
-            'S2': base * (1 + np.random.randn(n_proteins) * 0.1),
-            'S3': base * (1 + np.random.randn(n_proteins) * 0.1),
-            'S4': base * (1 + np.random.randn(n_proteins) * 0.1),
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        return pd.DataFrame(
+            {
+                "S1": base * (1 + np.random.randn(n_proteins) * 0.1),
+                "S2": base * (1 + np.random.randn(n_proteins) * 0.1),
+                "S3": base * (1 + np.random.randn(n_proteins) * 0.1),
+                "S4": base * (1 + np.random.randn(n_proteins) * 0.1),
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
     @pytest.fixture
     def biased_data(self):
@@ -46,11 +49,14 @@ class TestTMMNormalizer:
         s3 = base.copy()
         s3[-5:] = 10000  # Last 5 proteins are 100x higher
 
-        return pd.DataFrame({
-            'S1': s1,
-            'S2': s2,
-            'S3': s3,
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        return pd.DataFrame(
+            {
+                "S1": s1,
+                "S2": s2,
+                "S3": s3,
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
     def test_fit_creates_factors(self, simple_data):
         """TMM fit should create normalization factors for each sample."""
@@ -87,14 +93,14 @@ class TestTMMNormalizer:
 
     def test_custom_reference_sample(self, simple_data):
         """Should use custom reference sample if provided."""
-        tmm = TMMNormalizer(ref_sample='S2')
+        tmm = TMMNormalizer(ref_sample="S2")
         tmm.fit(simple_data)
 
-        assert tmm.ref_sample_ == 'S2'
+        assert tmm.ref_sample_ == "S2"
 
     def test_invalid_reference_raises(self, simple_data):
         """Should raise error for invalid reference sample."""
-        tmm = TMMNormalizer(ref_sample='InvalidSample')
+        tmm = TMMNormalizer(ref_sample="InvalidSample")
 
         with pytest.raises(ValueError, match="not found"):
             tmm.fit(simple_data)
@@ -105,11 +111,14 @@ class TestTMMNormalizer:
         n_proteins = 50
         base = np.linspace(100, 1000, n_proteins)
 
-        data = pd.DataFrame({
-            'S1': base.copy(),
-            'S2': base.copy(),
-            'S3': base.copy(),
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        data = pd.DataFrame(
+            {
+                "S1": base.copy(),
+                "S2": base.copy(),
+                "S3": base.copy(),
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
         # Add some zeros
         data.iloc[0, 0] = 0
@@ -127,11 +136,14 @@ class TestTMMNormalizer:
         n_proteins = 50
         base = np.linspace(100, 1000, n_proteins)
 
-        data = pd.DataFrame({
-            'S1': base.copy(),
-            'S2': base.copy(),
-            'S3': base.copy(),
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        data = pd.DataFrame(
+            {
+                "S1": base.copy(),
+                "S2": base.copy(),
+                "S3": base.copy(),
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
         # Add some NaN values
         data.iloc[0, 0] = np.nan
@@ -153,9 +165,9 @@ class TestTMMNormalizer:
         factors = tmm.get_norm_factors()
 
         # S1 and S2 should have similar factors, S3 should be different
-        assert np.isclose(factors['S1'], factors['S2'], atol=0.1)
+        assert np.isclose(factors["S1"], factors["S2"], atol=0.1)
         # S3 factor should be notably different due to outlier
-        assert not np.isclose(factors['S3'], factors['S1'], atol=0.2)
+        assert not np.isclose(factors["S3"], factors["S1"], atol=0.2)
 
     def test_trim_parameters(self, simple_data):
         """Different trim parameters should affect results."""
@@ -207,15 +219,18 @@ class TestTMMNormalizer:
 
     def test_single_sample(self):
         """Single sample should return unchanged (cannot normalize)."""
-        data = pd.DataFrame({
-            'S1': [100, 200, 300],
-        }, index=['P1', 'P2', 'P3'])
+        data = pd.DataFrame(
+            {
+                "S1": [100, 200, 300],
+            },
+            index=["P1", "P2", "P3"],
+        )
 
         tmm = TMMNormalizer()
         _ = tmm.fit_transform(data)
 
         # Factor should be 1.0
-        assert np.isclose(tmm.norm_factors_['S1'], 1.0)
+        assert np.isclose(tmm.norm_factors_["S1"], 1.0)
 
 
 class TestTMMConvenienceFunction:
@@ -227,11 +242,14 @@ class TestTMMConvenienceFunction:
         n_proteins = 50
         base = np.linspace(100, 1000, n_proteins)
 
-        data = pd.DataFrame({
-            'S1': base * (1 + np.random.randn(n_proteins) * 0.1),
-            'S2': base * (1 + np.random.randn(n_proteins) * 0.1),
-            'S3': base * (1 + np.random.randn(n_proteins) * 0.1),
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        data = pd.DataFrame(
+            {
+                "S1": base * (1 + np.random.randn(n_proteins) * 0.1),
+                "S2": base * (1 + np.random.randn(n_proteins) * 0.1),
+                "S3": base * (1 + np.random.randn(n_proteins) * 0.1),
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
         result = tmm_normalize(data)
 
@@ -244,12 +262,15 @@ class TestTMMConvenienceFunction:
         n_proteins = 50
         base = np.linspace(100, 1000, n_proteins)
 
-        data = pd.DataFrame({
-            'S1': base * (1 + np.random.randn(n_proteins) * 0.1),
-            'S2': base * (1 + np.random.randn(n_proteins) * 0.1),
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        data = pd.DataFrame(
+            {
+                "S1": base * (1 + np.random.randn(n_proteins) * 0.1),
+                "S2": base * (1 + np.random.randn(n_proteins) * 0.1),
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
-        result = tmm_normalize(data, m_trim=0.2, a_trim=0.1, ref_sample='S1')
+        result = tmm_normalize(data, m_trim=0.2, a_trim=0.1, ref_sample="S1")
 
         assert result is not None
 
@@ -263,11 +284,14 @@ class TestTMMNumericalAccuracy:
         n_proteins = 50
         base = np.linspace(100, 1000, n_proteins)
 
-        data = pd.DataFrame({
-            'S1': base,
-            'S2': base,
-            'S3': base,
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        data = pd.DataFrame(
+            {
+                "S1": base,
+                "S2": base,
+                "S3": base,
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
         tmm = TMMNormalizer()
         tmm.fit(data)
@@ -288,11 +312,14 @@ class TestTMMNumericalAccuracy:
         s2[-5:] = s2[-5:] * 10  # Last 5 proteins are 10x higher (composition bias)
         s3 = base.copy()
 
-        data = pd.DataFrame({
-            'S1': s1,
-            'S2': s2,
-            'S3': s3,
-        }, index=[f'P{i}' for i in range(n_proteins)])
+        data = pd.DataFrame(
+            {
+                "S1": s1,
+                "S2": s2,
+                "S3": s3,
+            },
+            index=[f"P{i}" for i in range(n_proteins)],
+        )
 
         tmm = TMMNormalizer()
         tmm.fit(data)
@@ -302,7 +329,7 @@ class TestTMMNumericalAccuracy:
         factors = tmm.get_norm_factors()
 
         # S1 and S3 should have similar factors
-        assert np.isclose(factors['S1'], factors['S3'], atol=0.1)
+        assert np.isclose(factors["S1"], factors["S3"], atol=0.1)
 
         # After normalization, the non-outlier proteins in S2 should be adjusted
         result = tmm.transform(data)

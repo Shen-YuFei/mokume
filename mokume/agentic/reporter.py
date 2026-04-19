@@ -61,14 +61,16 @@ def _template_report(
     ]
 
     if best:
-        lines.extend([
-            "## Best Configuration",
-            f"- **Name**: {best.config_name}",
-            f"- **Score**: {best.score:.4f}",
-            f"- **TP**: {best.tp}, **FP**: {best.fp}, **AUC**: {best.auc}",
-            f"- **DE UP**: {best.n_de_up}, **DE DOWN**: {best.n_de_down}",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Best Configuration",
+                f"- **Name**: {best.config_name}",
+                f"- **Score**: {best.score:.4f}",
+                f"- **TP**: {best.tp}, **FP**: {best.fp}, **AUC**: {best.auc}",
+                f"- **DE UP**: {best.n_de_up}, **DE DOWN**: {best.n_de_down}",
+                "",
+            ]
+        )
 
     lines.append("## All Results")
     lines.append("")
@@ -137,12 +139,14 @@ def save_outputs(
 
     # 3. all_results.tsv
     (out / "all_results.tsv").write_text(
-        _results_to_tsv(results), encoding="utf-8",
+        _results_to_tsv(results),
+        encoding="utf-8",
     )
 
     # 4. data_profile.json
     (out / "data_profile.json").write_text(
-        json.dumps(profile.to_dict(), indent=2), encoding="utf-8",
+        json.dumps(profile.to_dict(), indent=2),
+        encoding="utf-8",
     )
 
     # 5. audit_trail.json
@@ -151,7 +155,8 @@ def save_outputs(
         for e in state.audit_trail
     ]
     (out / "audit_trail.json").write_text(
-        json.dumps(audit, indent=2), encoding="utf-8",
+        json.dumps(audit, indent=2),
+        encoding="utf-8",
     )
 
     logger.info("Outputs saved to %s", out)

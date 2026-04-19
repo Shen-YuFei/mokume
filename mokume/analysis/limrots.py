@@ -47,12 +47,12 @@ class _ResampledStats(NamedTuple):
 def _limma_moderated_ds(stats_df: pd.DataFrame):
     """Compute limma moderated d (|logFC|) and s (posterior SE)."""
     d0, s0_sq = _fit_f_prior(
-        stats_df["s2"].values, stats_df["df_residual"].values,
+        stats_df["s2"].values,
+        stats_df["df_residual"].values,
     )
     df_post = stats_df["df_residual"].values + d0
     s2_post = (
-        d0 * s0_sq
-        + stats_df["df_residual"].values * stats_df["s2"].values
+        d0 * s0_sq + stats_df["df_residual"].values * stats_df["s2"].values
     ) / df_post
     stdev_unscaled = np.sqrt(
         1.0 / stats_df["n_a"].values + 1.0 / stats_df["n_b"].values,
@@ -184,7 +184,9 @@ def _run_parallel_iterations(
         initializer=_init_worker,
         initargs=(shared_dict,),
     ) as pool:
-        for b, d_col, s_col, pd_col, ps_col in pool.map(_worker_bootstrap, range(n_boot)):
+        for b, d_col, s_col, pd_col, ps_col in pool.map(
+            _worker_bootstrap, range(n_boot)
+        ):
             d_mat[:, b] = d_col
             s_mat[:, b] = s_col
             pd_mat[:, b] = pd_col
@@ -338,7 +340,9 @@ def _prepare_limrots_run(
         s_orig,
         df_post,
         options["n_threads"] or os.cpu_count() or 4,
-        _build_shared_state(log2_matrix, sample_groups, contrast, prot_index, sampling_plan),
+        _build_shared_state(
+            log2_matrix, sample_groups, contrast, prot_index, sampling_plan
+        ),
     )
 
 
@@ -353,7 +357,9 @@ def _final_limrots_outputs(
     logger.info("LimROTS: optimal s0 = %.4f", best_ssq)
     t_final = d_orig / (best_ssq + s_orig)
     perm_t = resampled.pd / (best_ssq + resampled.ps)
-    return 2.0 * stats.t.sf(np.abs(t_final), df=df_post), _permutation_fdr(t_final, perm_t)
+    return 2.0 * stats.t.sf(np.abs(t_final), df=df_post), _permutation_fdr(
+        t_final, perm_t
+    )
 
 
 def run_limrots(
@@ -370,13 +376,19 @@ def run_limrots(
         raise TypeError(f"Unexpected LimROTS options: {unknown_args}")
 
     settings = {**_LIMROTS_OPTION_DEFAULTS, **options}
-    prepared = _prepare_limrots_run(log2_matrix, (samples_a, samples_b), contrast, settings)
+    prepared = _prepare_limrots_run(
+        log2_matrix, (samples_a, samples_b), contrast, settings
+    )
     if prepared is None:
         return pd.DataFrame()
 
     stats_df, prot_index, d_orig, s_orig, df_post, n_threads, shared_dict = prepared
 
-    logger.info("LimROTS: %d bootstrap iterations (%d workers)", settings["n_boot"], n_threads)
-    resampled = _run_parallel_iterations(shared_dict["n_prot"], settings["n_boot"], n_threads, shared_dict)
+    logger.info(
+        "LimROTS: %d bootstrap iterations (%d workers)", settings["n_boot"], n_threads
+    )
+    resampled = _run_parallel_iterations(
+        shared_dict["n_prot"], settings["n_boot"], n_threads, shared_dict
+    )
     pvalues, fdr = _final_limrots_outputs(d_orig, s_orig, df_post, resampled)
     return _build_limrots_result(stats_df, prot_index, pvalues, fdr)

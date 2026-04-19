@@ -28,6 +28,7 @@ from mokume.normalization.loess import LOESSNormalizer, loess_normalize
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_protein_matrix(n_proteins=50, n_samples_per_group=3, seed=42):
     """Create a synthetic protein intensity matrix with known DE proteins."""
     rng = np.random.default_rng(seed)
@@ -68,12 +69,16 @@ def _make_wide_df(matrix, samples_a, samples_b):
 # DifferentialExpression — LimROTS
 # ---------------------------------------------------------------------------
 
+
 class TestDELimROTS:
     def test_limrots_returns_results(self):
         mat, sa, sb, _ = _make_protein_matrix()
         wide, s2c = _make_wide_df(mat, sa, sb)
         de = DifferentialExpression(
-            method="limrots", log2fc_threshold=1.0, skip_log2=True, n_boot=20,
+            method="limrots",
+            log2fc_threshold=1.0,
+            skip_log2=True,
+            n_boot=20,
         )
         result = de.run(wide, s2c, ("A", "B"))
         assert len(result) > 0
@@ -83,7 +88,10 @@ class TestDELimROTS:
         mat, sa, sb, _de_proteins = _make_protein_matrix(n_samples_per_group=5)
         wide, s2c = _make_wide_df(mat, sa, sb)
         res_lr = DifferentialExpression(
-            method="limrots", log2fc_threshold=1.0, skip_log2=True, n_boot=20,
+            method="limrots",
+            log2fc_threshold=1.0,
+            skip_log2=True,
+            n_boot=20,
         ).run(wide, s2c, ("A", "B"))
         sig = res_lr[res_lr["significance"] == "UP"]["ProteinName"].tolist()
         assert len(sig) > 0
@@ -100,12 +108,15 @@ class TestDELimROTS:
 # DifferentialExpression — DEqMS
 # ---------------------------------------------------------------------------
 
+
 class TestDEDEqMS:
     def test_deqms_returns_results(self):
         mat, sa, sb, _ = _make_protein_matrix()
         wide, s2c = _make_wide_df(mat, sa, sb)
         de = DifferentialExpression(
-            method="deqms", log2fc_threshold=1.0, skip_log2=True,
+            method="deqms",
+            log2fc_threshold=1.0,
+            skip_log2=True,
         )
         result = de.run(wide, s2c, ("A", "B"))
         assert len(result) > 0
@@ -125,10 +136,7 @@ class TestDEDEqMS:
             warnings.simplefilter("always")
             result = run_deqms(log2_mat, sa, sb, ("A", "B"))
         assert len(result) > 0
-        runtime_warnings = [
-            w for w in caught
-            if issubclass(w.category, RuntimeWarning)
-        ]
+        runtime_warnings = [w for w in caught if issubclass(w.category, RuntimeWarning)]
         assert runtime_warnings == []
 
 
@@ -136,11 +144,14 @@ class TestDEDEqMS:
 # DifferentialExpression — proDA
 # ---------------------------------------------------------------------------
 
+
 class TestDEProDA:
     def test_proda_returns_results(self):
         mat, sa, sb, _ = _make_protein_matrix()
         wide, s2c = _make_wide_df(mat, sa, sb)
-        de = DifferentialExpression(method="proda", log2fc_threshold=1.0, skip_log2=True)
+        de = DifferentialExpression(
+            method="proda", log2fc_threshold=1.0, skip_log2=True
+        )
         result = de.run(wide, s2c, ("A", "B"))
         assert len(result) > 0
         assert "adj_pvalue" in result.columns
@@ -161,15 +172,22 @@ class TestDEProDA:
 # IHW correction
 # ---------------------------------------------------------------------------
 
+
 class TestIHW:
     def test_ihw_differs_from_bh(self):
         mat, sa, sb, _ = _make_protein_matrix()
         wide, s2c = _make_wide_df(mat, sa, sb)
         res_bh = DifferentialExpression(
-            method="deqms", log2fc_threshold=1.0, fdr_method="bh", skip_log2=True,
+            method="deqms",
+            log2fc_threshold=1.0,
+            fdr_method="bh",
+            skip_log2=True,
         ).run(wide, s2c, ("A", "B"))
         res_ihw = DifferentialExpression(
-            method="deqms", log2fc_threshold=1.0, fdr_method="ihw", skip_log2=True,
+            method="deqms",
+            log2fc_threshold=1.0,
+            fdr_method="ihw",
+            skip_log2=True,
         ).run(wide, s2c, ("A", "B"))
         assert len(res_ihw) > 0
         assert "adj_pvalue" in res_ihw.columns
@@ -186,10 +204,16 @@ class TestIHW:
         mat, sa, sb, _ = _make_protein_matrix(n_proteins=5)
         wide, s2c = _make_wide_df(mat, sa, sb)
         res_bh = DifferentialExpression(
-            method="deqms", log2fc_threshold=1.0, fdr_method="bh", skip_log2=True,
+            method="deqms",
+            log2fc_threshold=1.0,
+            fdr_method="bh",
+            skip_log2=True,
         ).run(wide, s2c, ("A", "B"))
         res_ihw = DifferentialExpression(
-            method="deqms", log2fc_threshold=1.0, fdr_method="ihw", skip_log2=True,
+            method="deqms",
+            log2fc_threshold=1.0,
+            fdr_method="ihw",
+            skip_log2=True,
         ).run(wide, s2c, ("A", "B"))
         assert len(res_ihw) > 0
         # With too few proteins, IHW falls back to BH → same results
@@ -204,6 +228,7 @@ class TestIHW:
 # ---------------------------------------------------------------------------
 # Censored imputation
 # ---------------------------------------------------------------------------
+
 
 class TestCensoredImputation:
     def test_minprob_fills_nan(self):
@@ -242,10 +267,10 @@ class TestCensoredImputation:
             impute_censored(data, method="invalid")
 
 
-
 # ---------------------------------------------------------------------------
 # LOESS normalization
 # ---------------------------------------------------------------------------
+
 
 class TestLOESS:
     def test_loess_normalize_shape(self):
@@ -286,11 +311,14 @@ class TestLOESS:
 # run_comparisons
 # ---------------------------------------------------------------------------
 
+
 class TestRunComparisons:
     def test_multiple_contrasts(self):
         mat, sa, sb, _ = _make_protein_matrix()
         wide, s2c = _make_wide_df(mat, sa, sb)
-        de = DifferentialExpression(method="deqms", log2fc_threshold=1.0, skip_log2=True)
+        de = DifferentialExpression(
+            method="deqms", log2fc_threshold=1.0, skip_log2=True
+        )
         results = de.run_comparisons(wide, s2c, [("A", "B")])
         assert "A-B" in results
         assert len(results["A-B"]) > 0

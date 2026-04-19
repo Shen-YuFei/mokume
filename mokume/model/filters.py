@@ -303,7 +303,9 @@ class PreprocessingFilterConfig:
             "min_replicate_agreement" in overrides
             and overrides["min_replicate_agreement"] is not None
         ):
-            self.intensity.min_replicate_agreement = overrides["min_replicate_agreement"]
+            self.intensity.min_replicate_agreement = overrides[
+                "min_replicate_agreement"
+            ]
 
         # Peptide overrides
         if "charge_states" in overrides and overrides["charge_states"] is not None:
@@ -343,5 +345,8 @@ class PreprocessingFilterConfig:
         # Run QC overrides
         if "min_features" in overrides and overrides["min_features"] is not None:
             self.run_qc.min_identified_features = overrides["min_features"]
-        if "max_missing_rate" in overrides and overrides["max_missing_rate"] is not None:
+        if (
+            "max_missing_rate" in overrides
+            and overrides["max_missing_rate"] is not None
+        ):
             self.run_qc.max_missing_rate = overrides["max_missing_rate"]

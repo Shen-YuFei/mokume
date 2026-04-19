@@ -89,7 +89,9 @@ def _fit_dropout_curve(intensities: np.ndarray) -> tuple[float, float]:
 
 
 def _mean_or_rho(
-    obs: np.ndarray, dropout_rho: np.ndarray, fallback_shift: float = -3.0,
+    obs: np.ndarray,
+    dropout_rho: np.ndarray,
+    fallback_shift: float = -3.0,
 ) -> float:
     """Return mean of observed values, or dropout rho if all missing."""
     if len(obs) > 0:
@@ -100,7 +102,8 @@ def _mean_or_rho(
 
 
 def _dropout_se(
-    obs: np.ndarray, n_total: int,
+    obs: np.ndarray,
+    n_total: int,
 ) -> float:
     """Compute dropout-inflated standard error for one condition."""
     n_obs = len(obs)
@@ -147,7 +150,10 @@ def _fit_dropouts(
     samples_b: list[str],
 ) -> tuple[DropoutParams, DropoutParams]:
     """Fit per-sample dropout curves and pack into per-condition params."""
-    def _pack_dropouts(sample_names: list[str], dropout_params: dict[str, tuple[float, float]]) -> DropoutParams:
+
+    def _pack_dropouts(
+        sample_names: list[str], dropout_params: dict[str, tuple[float, float]]
+    ) -> DropoutParams:
         return DropoutParams(
             rho=np.array([dropout_params[s][0] for s in sample_names]),
             zeta=np.array([dropout_params[s][1] for s in sample_names]),
@@ -177,14 +183,20 @@ def _test_all_proteins(
         if np.isnan(pval):
             continue
         oa, ob = va[np.isfinite(va)], vb[np.isfinite(vb)]
-        results.append({
-            "ProteinName": protein, "log2FC": log2fc, "pvalue": pval,
-            "t_stat": t_stat,
-            f"mean_{cond_a}": np.mean(oa) if len(oa) else np.nan,
-            f"mean_{cond_b}": np.mean(ob) if len(ob) else np.nan,
-            "n_a": len(oa), "n_b": len(ob),
-            "n_total_a": len(samples_a), "n_total_b": len(samples_b),
-        })
+        results.append(
+            {
+                "ProteinName": protein,
+                "log2FC": log2fc,
+                "pvalue": pval,
+                "t_stat": t_stat,
+                f"mean_{cond_a}": np.mean(oa) if len(oa) else np.nan,
+                f"mean_{cond_b}": np.mean(ob) if len(ob) else np.nan,
+                "n_a": len(oa),
+                "n_b": len(ob),
+                "n_total_a": len(samples_a),
+                "n_total_b": len(samples_b),
+            }
+        )
     return results
 
 

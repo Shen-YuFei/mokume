@@ -10,7 +10,9 @@ import numpy as np
 from mokume.core.constants import NORM_INTENSITY
 
 
-def quantile_normalize(df: pd.DataFrame, value_column: str = NORM_INTENSITY) -> pd.DataFrame:
+def quantile_normalize(
+    df: pd.DataFrame, value_column: str = NORM_INTENSITY
+) -> pd.DataFrame:
     """
     Apply quantile normalization to protein intensities.
 
@@ -30,10 +32,16 @@ def quantile_normalize(df: pd.DataFrame, value_column: str = NORM_INTENSITY) -> 
     ranked = df.rank(method="average")
 
     # Get the mean of each rank across all columns
-    rank_mean = ranked.stack().groupby(ranked.rank(method="first").stack().values).mean()
+    rank_mean = (
+        ranked.stack().groupby(ranked.rank(method="first").stack().values).mean()
+    )
 
     # Map the rank means back to the original positions
-    normalized = ranked.stack().map(lambda x: rank_mean[x] if not pd.isna(x) else np.nan).unstack()
+    normalized = (
+        ranked.stack()
+        .map(lambda x: rank_mean[x] if not pd.isna(x) else np.nan)
+        .unstack()
+    )
 
     return normalized
 

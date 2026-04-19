@@ -63,12 +63,14 @@ def rule_propose(
     space = _apply_condition_rules(space, profile)
 
     thresholds = [0.5, 1.0]
-    combos = list(product(
-        space["de_methods"],
-        space["fdr_methods"],
-        space["imputations"],
-        thresholds,
-    ))
+    combos = list(
+        product(
+            space["de_methods"],
+            space["fdr_methods"],
+            space["imputations"],
+            thresholds,
+        )
+    )
 
     # Trim to budget
     if len(combos) > max_configs:
@@ -77,14 +79,16 @@ def rule_propose(
     configs = []
     for de, fdr, imp, thr in combos:
         name = f"{de}_{fdr}_{imp}_fc{thr}"
-        configs.append(CandidateConfig(
-            name=name,
-            de_method=de,
-            fdr_method=fdr,
-            imputation=imp,
-            log2fc_threshold=thr,
-            reasoning=f"Rule-based: {profile.data_type} prior",
-        ))
+        configs.append(
+            CandidateConfig(
+                name=name,
+                de_method=de,
+                fdr_method=fdr,
+                imputation=imp,
+                log2fc_threshold=thr,
+                reasoning=f"Rule-based: {profile.data_type} prior",
+            )
+        )
 
     logger.info("Rule engine generated %d candidate configs", len(configs))
     return configs

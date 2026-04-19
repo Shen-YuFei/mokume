@@ -71,14 +71,17 @@ def download_pride_dataset():
             if urllib.parse.urlparse(PRIDE_DATASET_URL).scheme not in ("http", "https"):
                 raise ValueError(f"URL scheme not allowed: {PRIDE_DATASET_URL}")
             _opener = urllib.request.build_opener()
-            with _opener.open(PRIDE_DATASET_URL, timeout=30) as response, open(zip_path, "wb") as out_file:
+            with (
+                _opener.open(PRIDE_DATASET_URL, timeout=30) as response,
+                open(zip_path, "wb") as out_file,
+            ):
                 shutil.copyfileobj(response, out_file)
         except Exception as e:
             pytest.skip(f"Failed to download PRIDE dataset: {e}")
 
     # Extract
     try:
-        with zipfile.ZipFile(zip_path, 'r') as zf:
+        with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(PRIDE_CACHE_DIR)
     except Exception as e:
         pytest.skip(f"Failed to extract PRIDE dataset: {e}")
@@ -105,13 +108,17 @@ def prepare_peptide_data(diann_df: pd.DataFrame) -> pd.DataFrame:
     - Precursor.Id -> PeptideSequence (using precursor as unique peptide identifier)
     - Precursor.Quantity -> NormIntensity
     """
-    peptide_df = diann_df[["Protein.Group", "Run", "Precursor.Id", "Precursor.Quantity"]].copy()
-    peptide_df = peptide_df.rename(columns={
-        "Protein.Group": "ProteinName",
-        "Run": "SampleID",
-        "Precursor.Id": "PeptideSequence",
-        "Precursor.Quantity": "NormIntensity",
-    })
+    peptide_df = diann_df[
+        ["Protein.Group", "Run", "Precursor.Id", "Precursor.Quantity"]
+    ].copy()
+    peptide_df = peptide_df.rename(
+        columns={
+            "Protein.Group": "ProteinName",
+            "Run": "SampleID",
+            "Precursor.Id": "PeptideSequence",
+            "Precursor.Quantity": "NormIntensity",
+        }
+    )
 
     # Remove rows with missing intensity
     peptide_df = peptide_df[peptide_df["NormIntensity"].notna()]
@@ -132,20 +139,26 @@ def extract_diann_maxlfq(diann_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["ProteinName", "SampleID", "DIANNMaxLFQ"])
 
     maxlfq_df = diann_df[["Protein.Group", "Run", "PG.MaxLFQ"]].drop_duplicates()
-    maxlfq_df = maxlfq_df.rename(columns={
-        "Protein.Group": "ProteinName",
-        "Run": "SampleID",
-        "PG.MaxLFQ": "DIANNMaxLFQ",
-    })
+    maxlfq_df = maxlfq_df.rename(
+        columns={
+            "Protein.Group": "ProteinName",
+            "Run": "SampleID",
+            "PG.MaxLFQ": "DIANNMaxLFQ",
+        }
+    )
     maxlfq_df = maxlfq_df[maxlfq_df["DIANNMaxLFQ"].notna()]
     maxlfq_df = maxlfq_df[maxlfq_df["DIANNMaxLFQ"] > 0]
     return maxlfq_df
 
 
-def compute_correlation(df1: pd.DataFrame, df2: pd.DataFrame,
-                        col1: str, col2: str,
-                        protein_col: str = "ProteinName",
-                        sample_col: str = "SampleID") -> dict:
+def compute_correlation(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    col1: str,
+    col2: str,
+    protein_col: str = "ProteinName",
+    sample_col: str = "SampleID",
+) -> dict:
     """
     Compute correlation between two quantification results.
     """
@@ -187,9 +200,15 @@ def compute_correlation(df1: pd.DataFrame, df2: pd.DataFrame,
     }
 
 
-def print_comparison_table(results: dict, intensity_cols: dict, dataset_name: str,
-                           peptide_count: int, protein_count: int, sample_count: int,
-                           precursor_count: int):
+def print_comparison_table(
+    results: dict,
+    intensity_cols: dict,
+    dataset_name: str,
+    peptide_count: int,
+    protein_count: int,
+    sample_count: int,
+    precursor_count: int,
+):
     """Print a formatted comparison table of all methods."""
     print("\n" + "=" * 90)
     print(f"QUANTIFICATION METHOD COMPARISON - {dataset_name}")
@@ -220,10 +239,12 @@ def print_comparison_table(results: dict, intensity_cols: dict, dataset_name: st
                 print(f"{'1.000':>15}", end="")
             else:
                 corr = compute_correlation(
-                    results[name1], results[name2],
-                    intensity_cols[name1], intensity_cols[name2]
+                    results[name1],
+                    results[name2],
+                    intensity_cols[name1],
+                    intensity_cols[name2],
                 )
-                if np.isnan(corr['spearman']):
+                if np.isnan(corr["spearman"]):
                     print(f"{'N/A':>15}", end="")
                 else:
                     print(f"{corr['spearman']:>15.3f}", end="")
@@ -232,7 +253,9 @@ def print_comparison_table(results: dict, intensity_cols: dict, dataset_name: st
     print("=" * 90)
 
 
-def run_all_quantification_methods(peptide_df: pd.DataFrame, diann_maxlfq: pd.DataFrame = None):
+def run_all_quantification_methods(
+    peptide_df: pd.DataFrame, diann_maxlfq: pd.DataFrame = None
+):
     """
     Run all quantification methods and return results dict.
 
@@ -292,6 +315,7 @@ def run_all_quantification_methods(peptide_df: pd.DataFrame, diann_maxlfq: pd.Da
     if is_directlfq_available():
         try:
             from mokume.quantification import DirectLFQQuantification
+
             directlfq = DirectLFQQuantification(min_nonan=1)
             results["DirectLFQ"] = directlfq.quantify(
                 peptide_df,
@@ -360,7 +384,9 @@ class TestSmallDiannSubset:
 
         print("\n[Small DIA-NN Subset] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
-        print(f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}")
+        print(
+            f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}"
+        )
 
     def test_small_diann_maxlfq_parallelization(self):
         """Test that parallel MaxLFQ produces same results as single-threaded."""
@@ -385,15 +411,16 @@ class TestSmallDiannSubset:
         )
 
         corr = compute_correlation(
-            result_single, result_parallel,
-            "Intensity", "Intensity"
+            result_single, result_parallel, "Intensity", "Intensity"
         )
 
         print("\n[Small DIA-NN Subset] Single-threaded vs Parallel MaxLFQ:")
         print(f"  Pearson correlation: {corr['pearson']:.4f}")
 
         if not (corr["pearson"] > 0.9999):
-            raise AssertionError("Parallel should produce same results as single-threaded")
+            raise AssertionError(
+                "Parallel should produce same results as single-threaded"
+            )
 
     def test_small_diann_full_comparison(self):
         """
@@ -407,12 +434,13 @@ class TestSmallDiannSubset:
 
         # Print comparison table
         print_comparison_table(
-            results, intensity_cols,
+            results,
+            intensity_cols,
             dataset_name="Small DIA-NN Subset (directLFQ test data)",
             peptide_count=len(self.peptide_df),
-            protein_count=self.peptide_df['ProteinName'].nunique(),
-            sample_count=self.peptide_df['SampleID'].nunique(),
-            precursor_count=self.peptide_df['PeptideSequence'].nunique(),
+            protein_count=self.peptide_df["ProteinName"].nunique(),
+            sample_count=self.peptide_df["SampleID"].nunique(),
+            precursor_count=self.peptide_df["PeptideSequence"].nunique(),
         )
 
         print("\nNOTE: DIA-NN MaxLFQ shows lower correlation (~0.55-0.61) because:")
@@ -422,16 +450,23 @@ class TestSmallDiannSubset:
 
         # Validate that computed methods correlate well with each other
         corr_maxlfq_top3 = compute_correlation(
-            results["Mokume MaxLFQ"], results["Top3"],
-            intensity_cols["Mokume MaxLFQ"], intensity_cols["Top3"]
+            results["Mokume MaxLFQ"],
+            results["Top3"],
+            intensity_cols["Mokume MaxLFQ"],
+            intensity_cols["Top3"],
         )
         if not (corr_maxlfq_top3["spearman"] > 0.9):
-            raise AssertionError(f"MaxLFQ and Top3 should correlate >0.9, got {corr_maxlfq_top3['spearman']:.3f}")
+            raise AssertionError(
+                f"MaxLFQ and Top3 should correlate >0.9, got {corr_maxlfq_top3['spearman']:.3f}"
+            )
 
     def test_small_diann_directlfq_comparison(self):
         """Compare DirectLFQ with mokume MaxLFQ on small subset."""
         try:
-            from mokume.quantification import DirectLFQQuantification, is_directlfq_available
+            from mokume.quantification import (
+                DirectLFQQuantification,
+                is_directlfq_available,
+            )
         except ImportError:
             pytest.skip("DirectLFQ import not available")
 
@@ -463,8 +498,7 @@ class TestSmallDiannSubset:
         )
 
         corr = compute_correlation(
-            result_directlfq, result_maxlfq,
-            "Intensity", "Intensity"
+            result_directlfq, result_maxlfq, "Intensity", "Intensity"
         )
 
         print("\n[Small DIA-NN Subset] DirectLFQ vs Mokume MaxLFQ:")
@@ -481,7 +515,9 @@ class TestSmallDiannSubset:
         from mokume.quantification import MaxLFQQuantification
 
         # Force built-in implementation
-        maxlfq_builtin = MaxLFQQuantification(min_peptides=1, threads=1, force_builtin=True)
+        maxlfq_builtin = MaxLFQQuantification(
+            min_peptides=1, threads=1, force_builtin=True
+        )
         if maxlfq_builtin.using_directlfq:
             raise AssertionError("Should use built-in when forced")
         if not (maxlfq_builtin.name == "MaxLFQ (built-in)"):
@@ -502,7 +538,9 @@ class TestSmallDiannSubset:
 
         print("\n[Small DIA-NN Subset] Built-in MaxLFQ fallback:")
         print(f"  Protein-sample combinations: {len(result_builtin):,}")
-        print(f"  Intensity range: {result_builtin['Intensity'].min():.2f} - {result_builtin['Intensity'].max():.2f}")
+        print(
+            f"  Intensity range: {result_builtin['Intensity'].min():.2f} - {result_builtin['Intensity'].max():.2f}"
+        )
 
 
 class TestDiannWithSdrf:
@@ -561,7 +599,9 @@ class TestDiannWithSdrf:
 
         print("\n[PRIDE PXD063291] MaxLFQ results:")
         print(f"  Protein-sample combinations: {len(result):,}")
-        print(f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}")
+        print(
+            f"  Intensity range: {result['Intensity'].min():.2f} - {result['Intensity'].max():.2f}"
+        )
 
     def test_pride_full_comparison(self):
         """
@@ -577,32 +617,43 @@ class TestDiannWithSdrf:
 
         # Print comparison table
         print_comparison_table(
-            results, intensity_cols,
+            results,
+            intensity_cols,
             dataset_name="PRIDE PXD063291 (Full DIA-NN Report with SDRF)",
             peptide_count=len(self.peptide_df),
-            protein_count=self.peptide_df['ProteinName'].nunique(),
-            sample_count=self.peptide_df['SampleID'].nunique(),
-            precursor_count=self.peptide_df['PeptideSequence'].nunique(),
+            protein_count=self.peptide_df["ProteinName"].nunique(),
+            sample_count=self.peptide_df["SampleID"].nunique(),
+            precursor_count=self.peptide_df["PeptideSequence"].nunique(),
         )
 
         # Validate that computed methods correlate well with each other
         corr_maxlfq_top3 = compute_correlation(
-            results["Mokume MaxLFQ"], results["Top3"],
-            intensity_cols["Mokume MaxLFQ"], intensity_cols["Top3"]
+            results["Mokume MaxLFQ"],
+            results["Top3"],
+            intensity_cols["Mokume MaxLFQ"],
+            intensity_cols["Top3"],
         )
 
-        print(f"\nValidation: MaxLFQ vs Top3 Spearman = {corr_maxlfq_top3['spearman']:.3f}")
+        print(
+            f"\nValidation: MaxLFQ vs Top3 Spearman = {corr_maxlfq_top3['spearman']:.3f}"
+        )
 
         if not (corr_maxlfq_top3["spearman"] > 0.85):
-            raise AssertionError(f"MaxLFQ and Top3 should correlate >0.85, got {corr_maxlfq_top3['spearman']:.3f}")
+            raise AssertionError(
+                f"MaxLFQ and Top3 should correlate >0.85, got {corr_maxlfq_top3['spearman']:.3f}"
+            )
 
         # If DIA-NN MaxLFQ is available, check correlation
         if "DIA-NN MaxLFQ" in results and len(results["DIA-NN MaxLFQ"]) > 0:
             corr_diann = compute_correlation(
-                results["DIA-NN MaxLFQ"], results["Mokume MaxLFQ"],
-                intensity_cols["DIA-NN MaxLFQ"], intensity_cols["Mokume MaxLFQ"]
+                results["DIA-NN MaxLFQ"],
+                results["Mokume MaxLFQ"],
+                intensity_cols["DIA-NN MaxLFQ"],
+                intensity_cols["Mokume MaxLFQ"],
             )
-            print(f"Validation: DIA-NN MaxLFQ vs Mokume MaxLFQ Spearman = {corr_diann['spearman']:.3f}")
+            print(
+                f"Validation: DIA-NN MaxLFQ vs Mokume MaxLFQ Spearman = {corr_diann['spearman']:.3f}"
+            )
 
 
 def prepare_peptide_data_with_runs(diann_df: pd.DataFrame) -> pd.DataFrame:
@@ -619,18 +670,23 @@ def prepare_peptide_data_with_runs(diann_df: pd.DataFrame) -> pd.DataFrame:
     - Precursor.Id -> PeptideSequence
     - Precursor.Quantity -> NormIntensity
     """
-    peptide_df = diann_df[["Protein.Group", "Run", "Precursor.Id", "Precursor.Quantity"]].copy()
-    peptide_df = peptide_df.rename(columns={
-        "Protein.Group": "ProteinName",
-        "Precursor.Id": "PeptideSequence",
-        "Precursor.Quantity": "NormIntensity",
-    })
+    peptide_df = diann_df[
+        ["Protein.Group", "Run", "Precursor.Id", "Precursor.Quantity"]
+    ].copy()
+    peptide_df = peptide_df.rename(
+        columns={
+            "Protein.Group": "ProteinName",
+            "Precursor.Id": "PeptideSequence",
+            "Precursor.Quantity": "NormIntensity",
+        }
+    )
 
     # Extract sample/condition from run name
     # Pattern: ...HeLa_100ng_Yeast_XXXng_S2-...
     def extract_sample(run_name):
         import re
-        match = re.search(r'(Yeast_\d+ng)', run_name)
+
+        match = re.search(r"(Yeast_\d+ng)", run_name)
         if match:
             return match.group(1)
         return "Unknown"
@@ -688,6 +744,7 @@ def run_quantification_at_level(peptide_df: pd.DataFrame, run_column: str = None
     if is_directlfq_available() and run_column is None:
         try:
             from mokume.quantification import DirectLFQQuantification
+
             directlfq = DirectLFQQuantification(min_nonan=1)
             results[f"DirectLFQ ({level_suffix})"] = directlfq.quantify(
                 peptide_df,
@@ -768,7 +825,9 @@ def compute_correlation_for_level(
                 # Get available join columns that exist in both dataframes
                 df1 = results[name1]
                 df2 = results[name2]
-                available_cols = [c for c in join_cols if c in df1.columns and c in df2.columns]
+                available_cols = [
+                    c for c in join_cols if c in df1.columns and c in df2.columns
+                ]
 
                 if not available_cols:
                     corr_matrix[i, j] = np.nan
@@ -776,13 +835,17 @@ def compute_correlation_for_level(
                     continue
 
                 corr = compute_correlation(
-                    df1, df2,
-                    intensity_cols[name1], intensity_cols[name2],
+                    df1,
+                    df2,
+                    intensity_cols[name1],
+                    intensity_cols[name2],
                     protein_col=available_cols[0],
-                    sample_col=available_cols[1] if len(available_cols) > 1 else available_cols[0]
+                    sample_col=available_cols[1]
+                    if len(available_cols) > 1
+                    else available_cols[0],
                 )
-                corr_matrix[i, j] = corr['spearman']
-                corr_matrix[j, i] = corr['spearman']
+                corr_matrix[i, j] = corr["spearman"]
+                corr_matrix[j, i] = corr["spearman"]
 
     return pd.DataFrame(corr_matrix, index=method_names, columns=method_names)
 
@@ -829,7 +892,9 @@ def print_aggregation_comparison_table(
     # Print summary of each method's results
     print("\nRESULT COUNTS:")
     print("-" * 100)
-    print(f"{'Method':<25} {'Level':<10} {'Protein-Level Rows':>20} {'Unique Proteins':>18} {'Unique Samples/Runs':>20}")
+    print(
+        f"{'Method':<25} {'Level':<10} {'Protein-Level Rows':>20} {'Unique Proteins':>18} {'Unique Samples/Runs':>20}"
+    )
     print("-" * 100)
 
     method_bases = ["MaxLFQ", "DirectLFQ", "Top3", "Top5", "Sum"]
@@ -840,14 +905,20 @@ def print_aggregation_comparison_table(
         if sample_key in sample_results:
             df = sample_results[sample_key]
             n_rows = len(df)
-            n_proteins = df["ProteinName"].nunique() if "ProteinName" in df.columns else 0
+            n_proteins = (
+                df["ProteinName"].nunique() if "ProteinName" in df.columns else 0
+            )
             n_samples = df["SampleID"].nunique() if "SampleID" in df.columns else 0
-            print(f"{method_base:<25} {'Sample':<10} {n_rows:>20,} {n_proteins:>18} {n_samples:>20}")
+            print(
+                f"{method_base:<25} {'Sample':<10} {n_rows:>20,} {n_proteins:>18} {n_samples:>20}"
+            )
 
         if run_key in run_results:
             df = run_results[run_key]
             n_rows = len(df)
-            n_proteins = df["ProteinName"].nunique() if "ProteinName" in df.columns else 0
+            n_proteins = (
+                df["ProteinName"].nunique() if "ProteinName" in df.columns else 0
+            )
             # For run-level, count runs
             if "Run" in df.columns:
                 n_runs = df["Run"].nunique()
@@ -862,7 +933,9 @@ def print_aggregation_comparison_table(
     # Print intensity statistics
     print("\nINTENSITY STATISTICS (log2 scale):")
     print("-" * 100)
-    print(f"{'Method':<25} {'Level':<10} {'Mean':>12} {'Median':>12} {'Std':>12} {'Min':>12} {'Max':>12}")
+    print(
+        f"{'Method':<25} {'Level':<10} {'Mean':>12} {'Median':>12} {'Std':>12} {'Min':>12} {'Max':>12}"
+    )
     print("-" * 100)
 
     for method_base in method_bases:
@@ -874,24 +947,32 @@ def print_aggregation_comparison_table(
             col = sample_intensity_cols.get(sample_key)
             if col and col in df.columns:
                 vals = np.log2(df[col].dropna() + 1)
-                print(f"{method_base:<25} {'Sample':<10} {vals.mean():>12.2f} {vals.median():>12.2f} "
-                      f"{vals.std():>12.2f} {vals.min():>12.2f} {vals.max():>12.2f}")
+                print(
+                    f"{method_base:<25} {'Sample':<10} {vals.mean():>12.2f} {vals.median():>12.2f} "
+                    f"{vals.std():>12.2f} {vals.min():>12.2f} {vals.max():>12.2f}"
+                )
 
         if run_key in run_results:
             df = run_results[run_key]
             col = run_intensity_cols.get(run_key)
             if col and col in df.columns:
                 vals = np.log2(df[col].dropna() + 1)
-                print(f"{'':<25} {'Run':<10} {vals.mean():>12.2f} {vals.median():>12.2f} "
-                      f"{vals.std():>12.2f} {vals.min():>12.2f} {vals.max():>12.2f}")
+                print(
+                    f"{'':<25} {'Run':<10} {vals.mean():>12.2f} {vals.median():>12.2f} "
+                    f"{vals.std():>12.2f} {vals.min():>12.2f} {vals.max():>12.2f}"
+                )
 
     # Print correlation matrices
     if sample_results:
-        sample_corr = compute_correlation_for_level(sample_results, sample_intensity_cols, run_column=None)
+        sample_corr = compute_correlation_for_level(
+            sample_results, sample_intensity_cols, run_column=None
+        )
         print_correlation_matrix(sample_corr, "SAMPLE-LEVEL CORRELATIONS (Spearman)")
 
     if run_results:
-        run_corr = compute_correlation_for_level(run_results, run_intensity_cols, run_column="Run")
+        run_corr = compute_correlation_for_level(
+            run_results, run_intensity_cols, run_column="Run"
+        )
         print_correlation_matrix(run_corr, "RUN-LEVEL CORRELATIONS (Spearman)")
 
     print("=" * 100)
@@ -940,8 +1021,14 @@ class TestAggregationLevels:
             if "SampleID" not in df.columns:
                 raise AssertionError("'SampleID' not in df.columns")
             # Run column should NOT be in results for sample-level
-            if not ("Run" not in df.columns or df["Run"].isna().all() or method_name.endswith("(Run)")):
-                raise AssertionError("Run column should not be in results for sample-level")
+            if not (
+                "Run" not in df.columns
+                or df["Run"].isna().all()
+                or method_name.endswith("(Run)")
+            ):
+                raise AssertionError(
+                    "Run column should not be in results for sample-level"
+                )
 
         print("\n[Sample Level] Quantification results:")
         for method_name, df in results.items():
@@ -965,11 +1052,15 @@ class TestAggregationLevels:
         print("\n[Run Level] Quantification results:")
         for method_name, df in results.items():
             n_runs = df["Run"].nunique() if "Run" in df.columns else 0
-            print(f"  {method_name}: {len(df)} protein-run combinations ({n_runs} runs)")
+            print(
+                f"  {method_name}: {len(df)} protein-run combinations ({n_runs} runs)"
+            )
 
     def test_run_level_has_more_rows_than_sample_level(self):
         """Run-level should produce more rows than sample-level when multiple runs per sample."""
-        sample_results, _ = run_quantification_at_level(self.peptide_df, run_column=None)
+        sample_results, _ = run_quantification_at_level(
+            self.peptide_df, run_column=None
+        )
         run_results, _ = run_quantification_at_level(self.peptide_df, run_column="Run")
 
         for method_base in ["MaxLFQ", "Top3", "Top5", "Sum"]:
@@ -979,11 +1070,15 @@ class TestAggregationLevels:
             n_sample = len(sample_results[sample_key])
             n_run = len(run_results[run_key])
 
-            print(f"\n[{method_base}] Sample-level: {n_sample} rows, Run-level: {n_run} rows")
+            print(
+                f"\n[{method_base}] Sample-level: {n_sample} rows, Run-level: {n_run} rows"
+            )
 
             # Run-level should have >= sample-level rows (more granular)
             if not (n_run >= n_sample):
-                raise AssertionError(f"{method_base}: Run-level ({n_run}) should have >= rows than sample-level ({n_sample})")
+                raise AssertionError(
+                    f"{method_base}: Run-level ({n_run}) should have >= rows than sample-level ({n_sample})"
+                )
 
     def test_full_comparison_sample_vs_run(self):
         """
@@ -1050,22 +1145,26 @@ class TestAggregationLevels:
         # Aggregate run-level to sample-level (mean) for comparison
         # First, we need to map runs back to samples
         run_to_sample = self.peptide_df[["Run", "SampleID"]].drop_duplicates()
-        result_run_with_sample = result_run.merge(run_to_sample, on="Run", how="left", suffixes=("_x", ""))
+        result_run_with_sample = result_run.merge(
+            run_to_sample, on="Run", how="left", suffixes=("_x", "")
+        )
 
         # Handle column naming after merge
         if "SampleID_x" in result_run_with_sample.columns:
             result_run_with_sample = result_run_with_sample.drop(columns=["SampleID_x"])
 
-        result_run_aggregated = result_run_with_sample.groupby(
-            ["ProteinName", "SampleID"]
-        )["Intensity"].mean().reset_index()
+        result_run_aggregated = (
+            result_run_with_sample.groupby(["ProteinName", "SampleID"])["Intensity"]
+            .mean()
+            .reset_index()
+        )
 
         # Compute correlation
         merged = pd.merge(
             result_sample[["ProteinName", "SampleID", "Intensity"]],
             result_run_aggregated,
             on=["ProteinName", "SampleID"],
-            suffixes=("_sample", "_run_agg")
+            suffixes=("_sample", "_run_agg"),
         )
 
         if len(merged) > 0:
@@ -1079,14 +1178,18 @@ class TestAggregationLevels:
                 pearson_r, _ = stats.pearsonr(x, y)
                 spearman_r, _ = stats.spearmanr(x, y)
 
-                print("\n[MaxLFQ] Sample-level vs Run-level (aggregated to sample) correlation:")
+                print(
+                    "\n[MaxLFQ] Sample-level vs Run-level (aggregated to sample) correlation:"
+                )
                 print(f"  Pearson:  {pearson_r:.4f}")
                 print(f"  Spearman: {spearman_r:.4f}")
                 print(f"  N comparisons: {len(x)}")
 
                 # They should correlate reasonably well
                 if not (spearman_r > 0.7):
-                    raise AssertionError(f"Sample vs aggregated run-level should correlate > 0.7, got {spearman_r:.3f}")
+                    raise AssertionError(
+                        f"Sample vs aggregated run-level should correlate > 0.7, got {spearman_r:.3f}"
+                    )
 
 
 # Standalone test function for quick runs
@@ -1105,12 +1208,13 @@ def test_small_diann_summary():
     results, intensity_cols = run_all_quantification_methods(peptide_df, diann_maxlfq)
 
     print_comparison_table(
-        results, intensity_cols,
+        results,
+        intensity_cols,
         dataset_name="Small DIA-NN Subset (directLFQ test data)",
         peptide_count=len(peptide_df),
-        protein_count=peptide_df['ProteinName'].nunique(),
-        sample_count=peptide_df['SampleID'].nunique(),
-        precursor_count=peptide_df['PeptideSequence'].nunique(),
+        protein_count=peptide_df["ProteinName"].nunique(),
+        sample_count=peptide_df["SampleID"].nunique(),
+        precursor_count=peptide_df["PeptideSequence"].nunique(),
     )
 
 
@@ -1152,8 +1256,12 @@ def test_comprehensive_aggregation_comparison():
     print("Running quantification methods...")
     print("-" * 100)
 
-    sample_results, sample_intensity_cols = run_quantification_at_level(peptide_df, run_column=None)
-    run_results, run_intensity_cols = run_quantification_at_level(peptide_df, run_column="Run")
+    sample_results, sample_intensity_cols = run_quantification_at_level(
+        peptide_df, run_column=None
+    )
+    run_results, run_intensity_cols = run_quantification_at_level(
+        peptide_df, run_column="Run"
+    )
 
     # Print comprehensive comparison table
     print_aggregation_comparison_table(
@@ -1189,16 +1297,22 @@ def test_pride_aggregation_comparison():
         pytest.skip(f"Failed to load PRIDE dataset: {e}")
 
     # Prepare data with both sample and run columns
-    peptide_df = diann_df[["Protein.Group", "Run", "Precursor.Id", "Precursor.Quantity"]].copy()
-    peptide_df = peptide_df.rename(columns={
-        "Protein.Group": "ProteinName",
-        "Precursor.Id": "PeptideSequence",
-        "Precursor.Quantity": "NormIntensity",
-    })
+    peptide_df = diann_df[
+        ["Protein.Group", "Run", "Precursor.Id", "Precursor.Quantity"]
+    ].copy()
+    peptide_df = peptide_df.rename(
+        columns={
+            "Protein.Group": "ProteinName",
+            "Precursor.Id": "PeptideSequence",
+            "Precursor.Quantity": "NormIntensity",
+        }
+    )
 
     # Use Run as both sample and run for this dataset (each run is a sample)
     peptide_df["SampleID"] = peptide_df["Run"]
-    peptide_df = peptide_df[peptide_df["NormIntensity"].notna() & (peptide_df["NormIntensity"] > 0)]
+    peptide_df = peptide_df[
+        peptide_df["NormIntensity"].notna() & (peptide_df["NormIntensity"] > 0)
+    ]
 
     print("\nDATASET: PRIDE PXD063291")
     print(f"  Source: {report_path}")
@@ -1211,11 +1325,17 @@ def test_pride_aggregation_comparison():
     print("Running quantification methods at sample level...")
     print("-" * 100)
 
-    sample_results, sample_intensity_cols = run_quantification_at_level(peptide_df, run_column=None)
+    sample_results, sample_intensity_cols = run_quantification_at_level(
+        peptide_df, run_column=None
+    )
 
     # Print correlation matrix
-    sample_corr = compute_correlation_for_level(sample_results, sample_intensity_cols, run_column=None)
-    print_correlation_matrix(sample_corr, "PRIDE PXD063291 - SAMPLE-LEVEL CORRELATIONS (Spearman)")
+    sample_corr = compute_correlation_for_level(
+        sample_results, sample_intensity_cols, run_column=None
+    )
+    print_correlation_matrix(
+        sample_corr, "PRIDE PXD063291 - SAMPLE-LEVEL CORRELATIONS (Spearman)"
+    )
 
     # Also compare with DIA-NN MaxLFQ if available
     diann_maxlfq = extract_diann_maxlfq(diann_df)
@@ -1223,12 +1343,16 @@ def test_pride_aggregation_comparison():
         print("\nComparison with DIA-NN MaxLFQ:")
         for method_name in sample_results:
             corr = compute_correlation(
-                sample_results[method_name], diann_maxlfq,
-                sample_intensity_cols[method_name], "DIANNMaxLFQ"
+                sample_results[method_name],
+                diann_maxlfq,
+                sample_intensity_cols[method_name],
+                "DIANNMaxLFQ",
             )
-            if not np.isnan(corr['spearman']):
+            if not np.isnan(corr["spearman"]):
                 short_name = method_name.split(" (")[0]
-                print(f"  {short_name} vs DIA-NN MaxLFQ: Spearman = {corr['spearman']:.3f} (n={corr['n']})")
+                print(
+                    f"  {short_name} vs DIA-NN MaxLFQ: Spearman = {corr['spearman']:.3f} (n={corr['n']})"
+                )
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from mokume.io.fasta import _strip_nonstandard_aa
 # get_accession
 # ---------------------------------------------------------------------------
 
+
 class TestGetAccession:
     """Tests for get_accession with standard and non-standard formats."""
 
@@ -51,6 +52,7 @@ class TestGetAccession:
 # ---------------------------------------------------------------------------
 # build_accession_map
 # ---------------------------------------------------------------------------
+
 
 class TestBuildAccessionMap:
     """Tests for build_accession_map normalization helper."""
@@ -97,6 +99,7 @@ class TestBuildAccessionMap:
 # ---------------------------------------------------------------------------
 # _strip_nonstandard_aa
 # ---------------------------------------------------------------------------
+
 
 class TestStripNonstandardAA:
     """Tests for _strip_nonstandard_aa helper in io.fasta."""

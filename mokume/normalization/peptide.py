@@ -17,7 +17,10 @@ from typing import Optional, TYPE_CHECKING
 import numpy as np
 
 from mokume.model.labeling import QuantificationCategory
-from mokume.model.normalization import FeatureNormalizationMethod, PeptideNormalizationMethod
+from mokume.model.normalization import (
+    FeatureNormalizationMethod,
+    PeptideNormalizationMethod,
+)
 from mokume.core.constants import (
     FRACTION,
     INTENSITY,
@@ -48,11 +51,17 @@ from mokume.preprocessing.aggregation import (
 )
 
 __all__ = [
-    "Feature", "SQLFilterBuilder", "analyse_sdrf",
-    "parse_uniprot_accession", "get_canonical_peptide",
-    "remove_contaminants_entrapments_decoys", "remove_protein_by_ids",
-    "reformat_quantms_feature_table_quant_labels", "apply_initial_filtering",
-    "merge_fractions", "get_peptidoform_normalize_intensities",
+    "Feature",
+    "SQLFilterBuilder",
+    "analyse_sdrf",
+    "parse_uniprot_accession",
+    "get_canonical_peptide",
+    "remove_contaminants_entrapments_decoys",
+    "remove_protein_by_ids",
+    "reformat_quantms_feature_table_quant_labels",
+    "apply_initial_filtering",
+    "merge_fractions",
+    "get_peptidoform_normalize_intensities",
     "sum_peptidoform_intensities",
 ]
 
@@ -168,16 +177,22 @@ def peptide_normalization(
         feature.enrich_with_sdrf(sdrf)
         technical_repetitions, label, sample_names, choice = analyse_sdrf(sdrf)
     else:
-        technical_repetitions, label, sample_names, choice = feature.experimental_inference
+        technical_repetitions, label, sample_names, choice = (
+            feature.experimental_inference
+        )
 
     if remove_low_frequency_peptides:
         low_frequency_peptides = feature.get_low_frequency_peptides()
 
     med_map = {}
-    if not skip_normalization and peptide_normalized == PeptideNormalizationMethod.GlobalMedian:
+    if (
+        not skip_normalization
+        and peptide_normalized == PeptideNormalizationMethod.GlobalMedian
+    ):
         med_map = feature.get_median_map()
     elif (
-        not skip_normalization and peptide_normalized == PeptideNormalizationMethod.ConditionMedian
+        not skip_normalization
+        and peptide_normalized == PeptideNormalizationMethod.ConditionMedian
     ):
         med_map = feature.get_median_map_to_condition()
 
@@ -200,12 +215,17 @@ def peptide_normalization(
                 from mokume.core.constants import load_sdrf as _load_sdrf
 
                 sdrf_df = _load_sdrf(sdrf)
-                ref_mask = sdrf_df["source name"].str.contains(irs_autodetect_regex, case=False, na=False)
+                ref_mask = sdrf_df["source name"].str.contains(
+                    irs_autodetect_regex, case=False, na=False
+                )
                 ref_labels = sdrf_df.loc[ref_mask, "comment[label]"]
                 if not ref_labels.empty:
                     irs_channel = ref_labels.mode().iloc[0]
                 else:
-                    logger.warning("IRS autodetect regex '%s' found no pooled sample; skipping IRS.", irs_autodetect_regex)
+                    logger.warning(
+                        "IRS autodetect regex '%s' found no pooled sample; skipping IRS.",
+                        irs_autodetect_regex,
+                    )
 
             if irs_channel is not None:
                 irs_scale_by_techrep = feature.get_irs_scaling_factors(
@@ -243,7 +263,9 @@ def peptide_normalization(
             dataset_df = dataset_df[dataset_df["unique"] == 1]
             dataset_df = dataset_df[PARQUET_COLUMNS]
 
-            dataset_df = reformat_quantms_feature_table_quant_labels(dataset_df, label, choice)
+            dataset_df = reformat_quantms_feature_table_quant_labels(
+                dataset_df, label, choice
+            )
 
             dataset_df = apply_initial_filtering(dataset_df, min_aa, aggregation_level)
 
@@ -303,8 +325,12 @@ def peptide_normalization(
 
             if irs_scale_by_techrep:
                 if TECHREPLICATE in dataset_df.columns:
-                    scale_series = dataset_df[TECHREPLICATE].map(irs_scale_by_techrep).fillna(1.0)
-                    dataset_df.loc[:, NORM_INTENSITY] = dataset_df[NORM_INTENSITY] * scale_series
+                    scale_series = (
+                        dataset_df[TECHREPLICATE].map(irs_scale_by_techrep).fillna(1.0)
+                    )
+                    dataset_df.loc[:, NORM_INTENSITY] = (
+                        dataset_df[NORM_INTENSITY] * scale_series
+                    )
                 else:
                     logger.warning(
                         "%s: TECHREPLICATE column not present; cannot apply IRS scaling to sample %s",
@@ -321,7 +347,9 @@ def peptide_normalization(
 
             if len(dataset_df[FRACTION].unique().tolist()) > 1:
                 start_time = time.time()
-                logger.info("%s: Merging features across fractions...", str(sample).upper())
+                logger.info(
+                    "%s: Merging features across fractions...", str(sample).upper()
+                )
                 dataset_df = merge_fractions(dataset_df)
                 elapsed = time.time() - start_time
                 logger.info(
@@ -335,7 +363,9 @@ def peptide_normalization(
                 dataset_df = peptide_normalized(dataset_df, sample, med_map)
 
             if remove_low_frequency_peptides and len(sample_names) > 1:
-                dataset_df.set_index([PROTEIN_NAME, PEPTIDE_CANONICAL], drop=True, inplace=True)
+                dataset_df.set_index(
+                    [PROTEIN_NAME, PEPTIDE_CANONICAL], drop=True, inplace=True
+                )
                 dataset_df = dataset_df[
                     ~dataset_df.index.isin(low_frequency_peptides)
                 ].reset_index()
@@ -346,7 +376,11 @@ def peptide_normalization(
                 )
 
             start_time = time.time()
-            logger.info("%s: Summing all peptidoforms per %s...", str(sample).upper(), aggregation_level)
+            logger.info(
+                "%s: Summing all peptidoforms per %s...",
+                str(sample).upper(),
+                aggregation_level,
+            )
             dataset_df = sum_peptidoform_intensities(dataset_df, aggregation_level)
             elapsed = time.time() - start_time
             logger.info(
@@ -359,7 +393,9 @@ def peptide_normalization(
             if log2:
                 dataset_df[NORM_INTENSITY] = np.log2(dataset_df[NORM_INTENSITY])
 
-            logger.info("%s: Saving the normalized peptide intensities...", str(sample).upper())
+            logger.info(
+                "%s: Saving the normalized peptide intensities...", str(sample).upper()
+            )
 
             if save_parquet:
                 writer_parquet_task.write(dataset_df)

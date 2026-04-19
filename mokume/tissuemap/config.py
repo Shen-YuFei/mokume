@@ -128,7 +128,8 @@ def _parse_sections(raw: dict[str, Any]) -> dict[str, Any]:
         if unknown:
             logger.warning(
                 "Unknown keys in '%s' section (ignored): %s",
-                section_name, ", ".join(sorted(unknown)),
+                section_name,
+                ", ".join(sorted(unknown)),
             )
         sections[section_name] = cls(**kwargs)
     return sections
@@ -152,7 +153,9 @@ def _apply_overrides(cfg: TissueMapConfig, overrides: dict[str, Any]) -> None:
             object.__setattr__(sub, field_name, coerced)
 
 
-def load_config(yaml_path: Path, overrides: dict[str, Any] | None = None) -> TissueMapConfig:
+def load_config(
+    yaml_path: Path, overrides: dict[str, Any] | None = None
+) -> TissueMapConfig:
     """Load a :class:`TissueMapConfig` from a YAML file.
 
     Parameters

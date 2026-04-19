@@ -35,10 +35,12 @@ def _classify_enrichment(
     n_above_enriched = np.nansum(ts_matrix >= ts_enriched, axis=1)
     n_above_specific = np.nansum(ts_matrix >= ts_specific, axis=1)
     n_in_gap = np.nansum(
-        (ts_matrix >= ts_enriched) & (ts_matrix < ts_specific), axis=1,
+        (ts_matrix >= ts_enriched) & (ts_matrix < ts_specific),
+        axis=1,
     )
     all_below_hk = np.all(
-        np.isnan(ts_matrix) | (np.abs(ts_matrix) < ts_housekeeping), axis=1,
+        np.isnan(ts_matrix) | (np.abs(ts_matrix) < ts_housekeeping),
+        axis=1,
     )
 
     # Pre-compute per-tissue detection mask (vectorized)
@@ -98,7 +100,9 @@ def build_ts_anndata(
     tissue_cols = [c for c in ts_df.columns if c in unique_tissues]
     ts_matrix = ts_df[tissue_cols].values.T  # tissues x proteins
 
-    var_df = ts_df[["mu", "sigma", "pi", "enrichment_category", "max_tissue", "max_ts"]].copy()
+    var_df = ts_df[
+        ["mu", "sigma", "pi", "enrichment_category", "max_tissue", "max_ts"]
+    ].copy()
     var_df.index = ts_df.index
     var_df.index.name = "protein"
 

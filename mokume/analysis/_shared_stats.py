@@ -48,7 +48,8 @@ def _collect_protein_stats(
 
 
 def _fit_f_prior(
-    s2: np.ndarray, df: np.ndarray,
+    s2: np.ndarray,
+    df: np.ndarray,
 ) -> tuple[float, float]:
     valid = np.isfinite(s2) & (s2 > 0) & np.isfinite(df) & (df > 0)
     s2, df = s2[valid], df[valid]
@@ -67,7 +68,8 @@ def _fit_f_prior(
 
 
 def _fit_f_prior_balanced(
-    s2: np.ndarray, d: float,
+    s2: np.ndarray,
+    d: float,
 ) -> tuple[float, float]:
     z = np.log(s2)
     z_mean, z_var = np.mean(z), np.var(z, ddof=1)
@@ -75,14 +77,17 @@ def _fit_f_prior_balanced(
     d0 = 1e6 if target <= 0 else _solve_trigamma(target) * 2.0
     log_s0 = (
         z_mean
-        - digamma(d / 2.0) + np.log(d / 2.0)
-        + digamma(d0 / 2.0) - np.log(d0 / 2.0)
+        - digamma(d / 2.0)
+        + np.log(d / 2.0)
+        + digamma(d0 / 2.0)
+        - np.log(d0 / 2.0)
     )
     return d0, np.exp(log_s0)
 
 
 def _fit_f_prior_unbalanced(
-    s2: np.ndarray, df: np.ndarray,
+    s2: np.ndarray,
+    df: np.ndarray,
 ) -> tuple[float, float]:
     z = np.log(s2)
     e_z = digamma(df / 2.0) - np.log(df / 2.0)

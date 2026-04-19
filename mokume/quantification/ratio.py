@@ -17,7 +17,12 @@ import numpy as np
 import pandas as pd
 import duckdb
 
-from mokume.core.constants import PROTEIN_NAME, PEPTIDE_CANONICAL, PEPTIDE_CHARGE, SAMPLE_ID
+from mokume.core.constants import (
+    PROTEIN_NAME,
+    PEPTIDE_CANONICAL,
+    PEPTIDE_CHARGE,
+    SAMPLE_ID,
+)
 from mokume.core.logger import get_logger
 from mokume.io.feature import SQLFilterBuilder
 
@@ -107,7 +112,9 @@ class RatioQuantification:
 
         n_proteins = len(wide)
         n_samples = len(wide.columns)
-        logger.info(f"Ratio quantification complete: {n_proteins} proteins, {n_samples} samples")
+        logger.info(
+            f"Ratio quantification complete: {n_proteins} proteins, {n_samples} samples"
+        )
 
         return wide.reset_index()
 
@@ -155,12 +162,16 @@ class RatioQuantification:
 
         plexes = sorted(ref_intensity["_plex"].unique())
         for plex in plexes:
-            plex_refs = [s for s in self.reference_samples if self.sample_to_plex.get(s) == plex]
+            plex_refs = [
+                s for s in self.reference_samples if self.sample_to_plex.get(s) == plex
+            ]
             logger.info(f"  Plex '{plex}': reference channels = {plex_refs}")
 
         return ref_intensity
 
-    def _compute_log2_ratios(self, df: pd.DataFrame, ref_df: pd.DataFrame) -> pd.DataFrame:
+    def _compute_log2_ratios(
+        self, df: pd.DataFrame, ref_df: pd.DataFrame
+    ) -> pd.DataFrame:
         """Compute log2(sample_intensity / reference_intensity) per PSM per plex."""
         df["_plex"] = df[SAMPLE_ID].map(self.sample_to_plex)
 
@@ -319,15 +330,17 @@ def load_psm_data(
 
     def _strip_raw_ext(name: str) -> str:
         return _re.sub(
-            r'\.(raw|mzML|mzml|d|wiff|RAW)$',
-            '', str(name).replace('\\', '/').split('/')[-1],
+            r"\.(raw|mzML|mzml|d|wiff|RAW)$",
+            "",
+            str(name).replace("\\", "/").split("/")[-1],
         )
 
     conn = duckdb.connect()
     try:
         # Detect QPX format using parameterized read_parquet
         cols = [
-            r[0] for r in conn.execute(
+            r[0]
+            for r in conn.execute(
                 "SELECT column_name FROM (DESCRIBE SELECT * FROM read_parquet(?))",
                 [parquet_path],
             ).fetchall()
@@ -343,10 +356,14 @@ def load_psm_data(
         pg_is_struct = False
         if "pg_accessions" in cols:
             try:
-                type_str = conn.execute(
-                    "SELECT typeof(pg_accessions) FROM read_parquet(?) LIMIT 1",
-                    [parquet_path],
-                ).fetchone()[0].lower()
+                type_str = (
+                    conn.execute(
+                        "SELECT typeof(pg_accessions) FROM read_parquet(?) LIMIT 1",
+                        [parquet_path],
+                    )
+                    .fetchone()[0]
+                    .lower()
+                )
                 pg_is_struct = "struct" in type_str
             except Exception as exc:
                 logger.debug("Could not detect pg_accessions type: %s", exc)
@@ -357,25 +374,33 @@ def load_psm_data(
         )
 
         # Predefined query templates (no user-controlled data)
-        _QUERY_NEW_QPX = "".join([
-            "SELECT ", pg_col, ", sequence,",
-            " charge as precursor_charge,",
-            " run_file_name as run_file_name,",
-            " unnest.label as label,",
-            " unnest.intensity as intensity",
-            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
-            " WHERE unnest.intensity IS NOT NULL AND ",
-        ])
-        _QUERY_OLD_QPX = "".join([
-            "SELECT ", pg_col, ", sequence,",
-            " precursor_charge as precursor_charge,",
-            " unnest.sample_accession as sample_accession,",
-            " reference_file_name as run_file_name,",
-            " unnest.channel as label,",
-            " unnest.intensity as intensity",
-            " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
-            " WHERE unnest.intensity IS NOT NULL AND ",
-        ])
+        _QUERY_NEW_QPX = "".join(
+            [
+                "SELECT ",
+                pg_col,
+                ", sequence,",
+                " charge as precursor_charge,",
+                " run_file_name as run_file_name,",
+                " unnest.label as label,",
+                " unnest.intensity as intensity",
+                " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
+                " WHERE unnest.intensity IS NOT NULL AND ",
+            ]
+        )
+        _QUERY_OLD_QPX = "".join(
+            [
+                "SELECT ",
+                pg_col,
+                ", sequence,",
+                " precursor_charge as precursor_charge,",
+                " unnest.sample_accession as sample_accession,",
+                " reference_file_name as run_file_name,",
+                " unnest.channel as label,",
+                " unnest.intensity as intensity",
+                " FROM read_parquet(?) AS parquet_raw, UNNEST(intensities) as unnest",
+                " WHERE unnest.intensity IS NOT NULL AND ",
+            ]
+        )
 
         base_query = _QUERY_NEW_QPX if is_new_qpx else _QUERY_OLD_QPX
         query = "".join((base_query, where_clause))
@@ -388,24 +413,34 @@ def load_psm_data(
         raise ValueError("No PSM data after filtering. Check parquet file and filters.")
 
     # Build SDRF mapping: (run_file, label) -> source name, fraction
-    sdrf_run_file = sdrf_df['comment[data file]'].apply(_strip_raw_ext) if 'comment[data file]' in sdrf_df.columns else sdrf_df.get('source name', pd.Series())
-    sdrf_label = sdrf_df.get('comment[label]', pd.Series(dtype=str))
-    sdrf_source = sdrf_df['source name']
-    sdrf_fraction = sdrf_df.get('comment[fraction identifier]', pd.Series('1', index=sdrf_df.index))
+    sdrf_run_file = (
+        sdrf_df["comment[data file]"].apply(_strip_raw_ext)
+        if "comment[data file]" in sdrf_df.columns
+        else sdrf_df.get("source name", pd.Series())
+    )
+    sdrf_label = sdrf_df.get("comment[label]", pd.Series(dtype=str))
+    sdrf_source = sdrf_df["source name"]
+    sdrf_fraction = sdrf_df.get(
+        "comment[fraction identifier]", pd.Series("1", index=sdrf_df.index)
+    )
 
     if is_new_qpx:
         # Map (run_file_name, label) -> source name via SDRF
-        sdrf_map = pd.DataFrame({
-            'run_file_name': sdrf_run_file.values,
-            'label': sdrf_label.values if len(sdrf_label) > 0 else '',
-            'source_name': sdrf_source.values,
-            'fraction': sdrf_fraction.values,
-        })
-        df = df.merge(
-            sdrf_map, on=['run_file_name', 'label'], how='left',
+        sdrf_map = pd.DataFrame(
+            {
+                "run_file_name": sdrf_run_file.values,
+                "label": sdrf_label.values if len(sdrf_label) > 0 else "",
+                "source_name": sdrf_source.values,
+                "fraction": sdrf_fraction.values,
+            }
         )
-        df['sample_accession'] = df['source_name'].fillna(df['run_file_name'])
-        df['Fraction'] = df['fraction'].fillna('1')
+        df = df.merge(
+            sdrf_map,
+            on=["run_file_name", "label"],
+            how="left",
+        )
+        df["sample_accession"] = df["source_name"].fillna(df["run_file_name"])
+        df["Fraction"] = df["fraction"].fillna("1")
     else:
         # Legacy: sample_accession already extracted from unnest
         if has_fraction:
@@ -413,7 +448,9 @@ def load_psm_data(
             for _, row in sdrf_df.iterrows():
                 for col in ["comment[data file]", "comment[spectrum file]"]:
                     if col in sdrf_df.columns and pd.notna(row.get(col)):
-                        sdrf_fraction_map[row[col]] = str(row["comment[fraction identifier]"])
+                        sdrf_fraction_map[row[col]] = str(
+                            row["comment[fraction identifier]"]
+                        )
                         break
             df["Fraction"] = df["run_file_name"].map(sdrf_fraction_map).fillna("1")
         else:
@@ -434,7 +471,16 @@ def load_psm_data(
     df["Intensity"] = df["intensity"]
 
     # Keep only needed columns
-    df = df[[PROTEIN_NAME, PEPTIDE_CANONICAL, PEPTIDE_CHARGE, SAMPLE_ID, "Fraction", "Intensity"]]
+    df = df[
+        [
+            PROTEIN_NAME,
+            PEPTIDE_CANONICAL,
+            PEPTIDE_CHARGE,
+            SAMPLE_ID,
+            "Fraction",
+            "Intensity",
+        ]
+    ]
 
     # Filter multi-protein groups (keep only single-protein entries)
     df = df[~df[PROTEIN_NAME].str.contains(";")]

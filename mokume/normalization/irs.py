@@ -86,7 +86,9 @@ class IRSNormalizer:
         for plex, refs in plex_ref_samples.items():
             ref_cols = [r for r in refs if r in intensity_matrix.columns]
             if not ref_cols:
-                raise ValueError(f"Reference samples {refs} not found in protein matrix columns")
+                raise ValueError(
+                    f"Reference samples {refs} not found in protein matrix columns"
+                )
             ref_data = intensity_matrix[ref_cols]
             if self.stat == "median":
                 plex_ref_intensity[plex] = ref_data.median(axis=1)
@@ -212,7 +214,9 @@ def detect_reference_by_column(
     column_lower = column.lower()
 
     if column_lower not in sdrf.columns:
-        raise ValueError(f"Column '{column}' not found in SDRF. Available: {list(sdrf.columns)}")
+        raise ValueError(
+            f"Column '{column}' not found in SDRF. Available: {list(sdrf.columns)}"
+        )
 
     values_lower = [v.lower() for v in values]
     mask = sdrf[column_lower].str.lower().isin(values_lower)
@@ -247,7 +251,8 @@ def detect_reference_by_regex(
 
     # Scan all factor value[*] and characteristics[*] columns
     scan_cols = [
-        c for c in sdrf.columns
+        c
+        for c in sdrf.columns
         if c.startswith("factor value[") or c.startswith("characteristics[")
     ]
 
@@ -357,5 +362,7 @@ def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
                 if variant and variant not in sample_to_condition:
                     sample_to_condition[variant] = condition
 
-    logger.info(f"Condition mapping from '{factor_col}': {len(sample_to_condition)} entries")
+    logger.info(
+        f"Condition mapping from '{factor_col}': {len(sample_to_condition)} entries"
+    )
     return sample_to_condition

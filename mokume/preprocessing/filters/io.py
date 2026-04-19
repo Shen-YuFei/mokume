@@ -173,7 +173,7 @@ def generate_example_config(
 
     if format == "yaml":
         # Generate YAML with comments
-        yaml_content = '''# Mokume Preprocessing Filter Configuration
+        yaml_content = """# Mokume Preprocessing Filter Configuration
 # This file defines quality filters applied during peptide normalization
 
 name: example_config
@@ -226,7 +226,7 @@ run_qc:
   min_identified_proteins: 0    # Min proteins per run
   min_sample_correlation: null  # Min correlation between samples (null = no filter)
   max_missing_rate: 1.0         # Max missing value rate (0-1)
-'''
+"""
         with open(output_path, "w") as f:
             f.write(yaml_content)
     else:

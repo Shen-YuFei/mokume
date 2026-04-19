@@ -31,7 +31,7 @@ def _apply_imputation(
 
     # Convert back if we transformed
     if matrix.max().max() > 40:
-        imputed = 2 ** imputed
+        imputed = 2**imputed
 
     return imputed.reset_index()
 
@@ -61,6 +61,7 @@ def run_experiment(
     result = de.run(imputed_df, sample_to_condition, contrast)
     logger.info(
         "Experiment %s complete: %d proteins tested",
-        config.name, len(result),
+        config.name,
+        len(result),
     )
     return result

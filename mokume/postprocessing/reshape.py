@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def remove_samples_low_protein_number(ibaq_df: pd.DataFrame, min_protein_num: int) -> pd.DataFrame:
+def remove_samples_low_protein_number(
+    ibaq_df: pd.DataFrame, min_protein_num: int
+) -> pd.DataFrame:
     """Remove samples with a low number of unique proteins."""
     protein_num = ibaq_df.groupby(SAMPLE_ID)[PROTEIN_NAME].nunique()
     samples_to_keep = protein_num[protein_num >= min_protein_num].index
@@ -45,12 +47,16 @@ def remove_missing_values(
     if not isinstance(ibaq_df, pd.DataFrame):
         raise ValueError("The input ibaq_df must be a pandas DataFrame.")
     if expression_column not in ibaq_df.columns:
-        raise ValueError(f"The expression column '{expression_column}' is not in the DataFrame.")
+        raise ValueError(
+            f"The expression column '{expression_column}' is not in the DataFrame."
+        )
 
     initial_sample_count = ibaq_df["SampleID"].nunique()
     logger.info(f"Initial number of samples: {initial_sample_count}")
 
-    pivot_df = ibaq_df.pivot_table(index=PROTEIN_NAME, columns=SAMPLE_ID, values=expression_column)
+    pivot_df = ibaq_df.pivot_table(
+        index=PROTEIN_NAME, columns=SAMPLE_ID, values=expression_column
+    )
     non_missing_samples = pivot_df.columns[pivot_df.notna().any(axis=0)]
     missingness = pivot_df[non_missing_samples].isna().sum() / len(pivot_df) * 100
     valid_samples = missingness[missingness <= missingness_percentage].index
@@ -58,15 +64,26 @@ def remove_missing_values(
 
     final_sample_count = filtered_df[SAMPLE_ID].nunique()
     logger.info(f"Final number of samples: {final_sample_count}")
-    logger.info(f"Number of samples removed: {initial_sample_count - final_sample_count}")
+    logger.info(
+        f"Number of samples removed: {initial_sample_count - final_sample_count}"
+    )
 
     return filtered_df
 
 
 def describe_expression_metrics(ibaq_df: pd.DataFrame) -> pd.DataFrame:
     """Generate descriptive statistics for expression metrics."""
-    possible_expression_values = [IBAQ, IBAQ_NORMALIZED, IBAQ_LOG, IBAQ_PPB, TPA, COPYNUMBER]
-    expression_columns = [col for col in ibaq_df.columns if col in possible_expression_values]
+    possible_expression_values = [
+        IBAQ,
+        IBAQ_NORMALIZED,
+        IBAQ_LOG,
+        IBAQ_PPB,
+        TPA,
+        COPYNUMBER,
+    ]
+    expression_columns = [
+        col for col in ibaq_df.columns if col in possible_expression_values
+    ]
     metrics = ibaq_df.groupby(SAMPLE_ID)[expression_columns].describe()
     return metrics
 
@@ -90,7 +107,9 @@ def pivot_wider(
             "Use an aggregation function to handle duplicates."
         )
 
-    matrix = df.pivot_table(index=row_name, columns=col_name, values=values, aggfunc="first")
+    matrix = df.pivot_table(
+        index=row_name, columns=col_name, values=values, aggfunc="first"
+    )
 
     if fillna is True:
         matrix = matrix.fillna(0)
@@ -100,7 +119,9 @@ def pivot_wider(
     return matrix
 
 
-def pivot_longer(df: pd.DataFrame, row_name: str, col_name: str, values: str) -> pd.DataFrame:
+def pivot_longer(
+    df: pd.DataFrame, row_name: str, col_name: str, values: str
+) -> pd.DataFrame:
     """Transforms a wide-format DataFrame into a long-format DataFrame."""
     if not isinstance(df, pd.DataFrame):
         raise ValueError("Input must be a pandas DataFrame")
@@ -108,9 +129,13 @@ def pivot_longer(df: pd.DataFrame, row_name: str, col_name: str, values: str) ->
         raise ValueError(f"Row name '{row_name}' not found in DataFrame")
 
     matrix_reset = df.reset_index()
-    long_df = pd.melt(matrix_reset, id_vars=[row_name], var_name=col_name, value_name=values)
+    long_df = pd.melt(
+        matrix_reset, id_vars=[row_name], var_name=col_name, value_name=values
+    )
 
     if long_df[values].isna().any():
-        logging.warning(f"Found {long_df[values].isna().sum()} missing values in the result")
+        logging.warning(
+            f"Found {long_df[values].isna().sum()} missing values in the result"
+        )
 
     return long_df

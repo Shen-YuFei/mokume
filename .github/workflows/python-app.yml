@@ -6,8 +6,23 @@ on:
   pull_request:
     branches: [ main, dev ]
 
+permissions:
+  contents: read
+
 jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1
+
   build:
+    needs: pre-commit
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,14 +47,6 @@ jobs:
         pip install pytest pytest-cov flake8
         # Install with directlfq extra for complete quantification testing
         pip install -e ".[directlfq]"
-
-    - name: Lint with flake8
-      shell: bash -l {0}
-      run: |
-        # Stop the build if there are Python syntax errors or undefined names
-        flake8 mokume --count --select=E9,F63,F7,F82 --show-source --statistics
-        # Exit-zero treats all errors as warnings
-        flake8 mokume --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
     - name: Test with pytest
       shell: bash -l {0}

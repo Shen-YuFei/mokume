@@ -76,10 +76,14 @@ def compute_qc_metrics(
     metrics = {}
 
     # 1. PCA
-    metrics["pca"] = _compute_pca(log2_matrix, exp_samples, sample_to_condition, sample_to_plex)
+    metrics["pca"] = _compute_pca(
+        log2_matrix, exp_samples, sample_to_condition, sample_to_plex
+    )
 
     # 2. t-SNE
-    metrics["tsne"] = _compute_tsne(log2_matrix, exp_samples, sample_to_condition, sample_to_plex)
+    metrics["tsne"] = _compute_tsne(
+        log2_matrix, exp_samples, sample_to_condition, sample_to_plex
+    )
 
     # 3. Sample correlation matrix
     metrics["correlation"] = _compute_sample_correlation(log2_matrix, exp_samples)
@@ -87,32 +91,44 @@ def compute_qc_metrics(
     # 4. Per-condition CV
     metrics["condition_cv"] = _compute_condition_cv(
         intensity if not is_log2 else 2**log2_matrix,
-        exp_samples, sample_to_condition,
+        exp_samples,
+        sample_to_condition,
     )
 
     # 5. Intra-condition correlation
     metrics["intra_condition_corr"] = _compute_intra_condition_correlation(
-        log2_matrix, exp_samples, sample_to_condition,
+        log2_matrix,
+        exp_samples,
+        sample_to_condition,
     )
 
     # 6. Missing value analysis
     metrics["missing"] = _compute_missing_values(
-        log2_matrix, exp_samples, sample_to_condition,
+        log2_matrix,
+        exp_samples,
+        sample_to_condition,
     )
 
     # 7. Per-sample distribution stats
     metrics["distributions"] = _compute_distribution_stats(
-        log2_matrix, exp_samples, sample_to_condition,
+        log2_matrix,
+        exp_samples,
+        sample_to_condition,
     )
 
     # 8. Silhouette score (condition clustering)
     metrics["silhouette"] = _compute_silhouette(
-        log2_matrix, exp_samples, sample_to_condition,
+        log2_matrix,
+        exp_samples,
+        sample_to_condition,
     )
 
     # 9. Variance decomposition (condition vs plex)
     metrics["pvca"] = _compute_variance_decomposition(
-        log2_matrix, exp_samples, sample_to_condition, sample_to_plex,
+        log2_matrix,
+        exp_samples,
+        sample_to_condition,
+        sample_to_plex,
     )
 
     # 10. DE quality metrics
@@ -301,7 +317,10 @@ def _compute_silhouette(log2_matrix, samples, sample_to_condition):
 
 
 def _compute_variance_decomposition(
-    log2_matrix, samples, sample_to_condition, sample_to_plex,
+    log2_matrix,
+    samples,
+    sample_to_condition,
+    sample_to_plex,
 ):
     """
     PVCA-like variance decomposition: what fraction of variance
@@ -484,7 +503,11 @@ def generate_qc_report(
         Path to the generated HTML file.
     """
     metrics = compute_qc_metrics(
-        protein_df, sample_to_condition, sample_to_plex, de_results, is_log2,
+        protein_df,
+        sample_to_condition,
+        sample_to_plex,
+        de_results,
+        is_log2,
     )
 
     html = _build_qc_html(title, metrics, highlight_genes, de_results)
@@ -549,27 +572,27 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
             <h3>DE Quality</h3>
             <div class="metric-grid">
                 <div class="metric-item">
-                    <div class="metric-value">{de_quality['n_proteins_tested']}</div>
+                    <div class="metric-value">{de_quality["n_proteins_tested"]}</div>
                     <div class="metric-label">Tested</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-value" style="color:#d62728">{de_quality['n_up']}</div>
+                    <div class="metric-value" style="color:#d62728">{de_quality["n_up"]}</div>
                     <div class="metric-label">UP</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-value" style="color:#1f77b4">{de_quality['n_down']}</div>
+                    <div class="metric-value" style="color:#1f77b4">{de_quality["n_down"]}</div>
                     <div class="metric-label">DOWN</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-value">{de_quality['pi1_estimate']:.2f}</div>
+                    <div class="metric-value">{de_quality["pi1_estimate"]:.2f}</div>
                     <div class="metric-label">&pi;1 (true +)</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-value">{de_quality['effect_size']['median']:.2f}</div>
+                    <div class="metric-value">{de_quality["effect_size"]["median"]:.2f}</div>
                     <div class="metric-label">Median |log2FC|</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-value">{de_quality['direction_balance']:.2f}</div>
+                    <div class="metric-value">{de_quality["direction_balance"]:.2f}</div>
                     <div class="metric-label">Direction balance</div>
                 </div>
             </div>
@@ -634,37 +657,43 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
     <h1>{html_module.escape(title)}</h1>
     <div class="header-stats">
         <div class="header-stat">
-            <div class="number">{summary['n_proteins']}</div>
+            <div class="number">{summary["n_proteins"]}</div>
             <div class="label">Proteins</div>
         </div>
         <div class="header-stat">
-            <div class="number">{summary['n_samples']}</div>
+            <div class="number">{summary["n_samples"]}</div>
             <div class="label">Samples</div>
         </div>
         <div class="header-stat">
-            <div class="number">{summary['n_conditions']}</div>
+            <div class="number">{summary["n_conditions"]}</div>
             <div class="label">Conditions</div>
         </div>
         <div class="header-stat">
-            <div class="number">{summary['n_plexes']}</div>
+            <div class="number">{summary["n_plexes"]}</div>
             <div class="label">Plexes</div>
         </div>
         <div class="header-stat">
             <div class="number {
-                'good' if silhouette['score'] > 0.25 else
-                'warning' if silhouette['score'] > 0 else 'bad'
-            }">{silhouette['score']:.3f}</div>
+        "good"
+        if silhouette["score"] > 0.25
+        else "warning"
+        if silhouette["score"] > 0
+        else "bad"
+    }">{silhouette["score"]:.3f}</div>
             <div class="label">Silhouette</div>
         </div>
         <div class="header-stat">
-            <div class="number">{pvca['condition_pct']:.1f}%</div>
+            <div class="number">{pvca["condition_pct"]:.1f}%</div>
             <div class="label">Var: Condition</div>
         </div>
         <div class="header-stat">
             <div class="number {
-                'good' if pvca['plex_pct'] < 10 else
-                'warning' if pvca['plex_pct'] < 25 else 'bad'
-            }">{pvca['plex_pct']:.1f}%</div>
+        "good"
+        if pvca["plex_pct"] < 10
+        else "warning"
+        if pvca["plex_pct"] < 25
+        else "bad"
+    }">{pvca["plex_pct"]:.1f}%</div>
             <div class="label">Var: Plex</div>
         </div>
     </div>
@@ -699,13 +728,21 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
                         <table>
                             <tr><th>Source</th><th>% Variance</th><th>Interpretation</th></tr>
                             <tr><td>Condition (biology)</td>
-                                <td><b>{pvca['condition_pct']:.1f}%</b></td>
-                                <td>{'Good' if pvca['condition_pct'] > 30 else 'Low'} biological signal</td></tr>
+                                <td><b>{pvca["condition_pct"]:.1f}%</b></td>
+                                <td>{
+        "Good" if pvca["condition_pct"] > 30 else "Low"
+    } biological signal</td></tr>
                             <tr><td>Plex (batch)</td>
-                                <td><b>{pvca['plex_pct']:.1f}%</b></td>
-                                <td>{'Good' if pvca['plex_pct'] < 10 else 'Warning' if pvca['plex_pct'] < 25 else 'High'} batch effect</td></tr>
+                                <td><b>{pvca["plex_pct"]:.1f}%</b></td>
+                                <td>{
+        "Good"
+        if pvca["plex_pct"] < 10
+        else "Warning"
+        if pvca["plex_pct"] < 25
+        else "High"
+    } batch effect</td></tr>
                             <tr><td>Residual</td>
-                                <td>{pvca['residual_pct']:.1f}%</td>
+                                <td>{pvca["residual_pct"]:.1f}%</td>
                                 <td>Individual variation + noise</td></tr>
                         </table>
                     </div>
@@ -745,7 +782,11 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
 
         <!-- Tab 3: DE Quality -->
         <div id="tab-de-quality" class="tab-content">
-            {de_section if de_section else '<div class="card"><h3>No DE results provided</h3></div>'}
+            {
+        de_section
+        if de_section
+        else '<div class="card"><h3>No DE results provided</h3></div>'
+    }
         </div>
     </div>
 
@@ -857,9 +898,11 @@ const symbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
 Plotly.newPlot('pvca-plot', [{{
     type: 'bar',
     x: ['Condition', 'Plex', 'Residual'],
-    y: [{pvca['condition_pct']:.1f}, {pvca['plex_pct']:.1f}, {pvca['residual_pct']:.1f}],
+    y: [{pvca["condition_pct"]:.1f}, {pvca["plex_pct"]:.1f}, {
+        pvca["residual_pct"]:.1f}],
     marker: {{ color: ['#27ae60', '#e74c3c', '#95a5a6'] }},
-    text: ['{pvca["condition_pct"]:.1f}%', '{pvca["plex_pct"]:.1f}%', '{pvca["residual_pct"]:.1f}%'],
+    text: ['{pvca["condition_pct"]:.1f}%', '{pvca["plex_pct"]:.1f}%', '{
+        pvca["residual_pct"]:.1f}%'],
     textposition: 'auto',
 }}], {{
     title: {{ text: 'Variance Decomposition', font: {{ size: 14 }} }},
@@ -926,7 +969,9 @@ Plotly.newPlot('pvca-plot', [{{
     Plotly.newPlot('boxplot', boxTraces, {{
         title: {{ text: 'Per-Sample Distribution (median + IQR)', font: {{ size: 14 }} }},
         xaxis: {{ tickangle: 45, tickfont: {{ size: 9 }} }},
-        yaxis: {{ title: '{"log2 ratio" if summary["is_log2"] else "log2 intensity"}' }},
+        yaxis: {{ title: '{
+        "log2 ratio" if summary["is_log2"] else "log2 intensity"
+    }' }},
         barmode: 'group',
         margin: {{ t: 50, b: 100, l: 60, r: 20 }},
     }}, {{responsive: true}});
@@ -934,7 +979,7 @@ Plotly.newPlot('pvca-plot', [{{
 
 // CV violin/box by condition
 (function() {{
-    const cvData = {json.dumps({k: v['cv_values'] for k, v in condition_cv.items()})};
+    const cvData = {json.dumps({k: v["cv_values"] for k, v in condition_cv.items()})};
     const traces = [];
     Object.keys(cvData).sort().forEach(cond => {{
         traces.push({{
@@ -956,7 +1001,7 @@ Plotly.newPlot('pvca-plot', [{{
 
 // Missing values per sample
 (function() {{
-    const missing = {json.dumps(missing['per_sample'])};
+    const missing = {json.dumps(missing["per_sample"])};
     const samples = Object.keys(missing).sort();
     Plotly.newPlot('missing-plot', [{{
         type: 'bar',
@@ -974,7 +1019,7 @@ Plotly.newPlot('pvca-plot', [{{
 }})();
 
 // DE quality plots
-{_build_de_quality_js(de_quality) if de_quality else ''}
+{_build_de_quality_js(de_quality) if de_quality else ""}
 
 </script>
 
@@ -994,13 +1039,16 @@ def _build_de_quality_js(de_quality):
     # P-value histogram
     if de_quality.get("pvalue_histogram"):
         hist = de_quality["pvalue_histogram"]
-        bin_centers = [(hist["edges"][i] + hist["edges"][i+1])/2 for i in range(len(hist["counts"]))]
+        bin_centers = [
+            (hist["edges"][i] + hist["edges"][i + 1]) / 2
+            for i in range(len(hist["counts"]))
+        ]
         js += f"""
 (function() {{
     Plotly.newPlot('pval-hist', [{{
         type: 'bar',
         x: {json.dumps(bin_centers)},
-        y: {json.dumps(hist['counts'])},
+        y: {json.dumps(hist["counts"])},
         marker: {{ color: '#3498db' }},
         width: 0.045,
     }}], {{
@@ -1010,11 +1058,11 @@ def _build_de_quality_js(de_quality):
         margin: {{ t: 40, b: 50, l: 50, r: 20 }},
         shapes: [{{
             type: 'line', x0: 0, x1: 1,
-            y0: {sum(hist['counts'])/20}, y1: {sum(hist['counts'])/20},
+            y0: {sum(hist["counts"]) / 20}, y1: {sum(hist["counts"]) / 20},
             line: {{ dash: 'dash', color: 'red', width: 1 }}
         }}],
         annotations: [{{
-            x: 0.75, y: {max(hist['counts']) * 0.9},
+            x: 0.75, y: {max(hist["counts"]) * 0.9},
             text: 'Expected under null',
             showarrow: false, font: {{ size: 10, color: 'red' }}
         }}],
@@ -1028,7 +1076,7 @@ def _build_de_quality_js(de_quality):
 (function() {{
     Plotly.newPlot('effect-hist', [{{
         type: 'histogram',
-        x: {json.dumps(de_quality['effect_size']['values'])},
+        x: {json.dumps(de_quality["effect_size"]["values"])},
         nbinsx: 30,
         marker: {{ color: '#e67e22' }},
     }}], {{

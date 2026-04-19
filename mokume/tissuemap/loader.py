@@ -23,7 +23,6 @@ _GIS_PATTERNS = re.compile(
 )
 
 
-
 def _parse_samples_col(samples_val) -> list[dict]:
     """Parse the ``run.samples`` column (list/ndarray of dicts) into a list."""
     if samples_val is None:
@@ -35,9 +34,7 @@ def _parse_samples_col(samples_val) -> list[dict]:
 
 def build_run_to_sample_map(ds_dir: Path, ds_id: str) -> pd.DataFrame:
     """Return DataFrame: run_file_name, tmt_label, sample_accession, fraction, batch."""
-    run = pq.read_table(
-        ds_dir / "qpx_output" / f"{ds_id}.run.parquet"
-    ).to_pandas()
+    run = pq.read_table(ds_dir / "qpx_output" / f"{ds_id}.run.parquet").to_pandas()
     rows: list[dict] = []
     for _, r in run.iterrows():
         for s in _parse_samples_col(r["samples"]):
@@ -68,9 +65,7 @@ def _detect_gis_accessions(
     known GIS patterns (e.g. "global internal standard", "reference", "pool").
     Returns the set of sample_accession strings that are GIS channels.
     """
-    smp = pq.read_table(
-        ds_dir / "qpx_output" / f"{ds_id}.sample.parquet"
-    ).to_pandas()
+    smp = pq.read_table(ds_dir / "qpx_output" / f"{ds_id}.sample.parquet").to_pandas()
     if "organism_part" not in smp.columns:
         return set()
 
@@ -83,14 +78,16 @@ def _detect_gis_accessions(
     if gis_accessions:
         logger.info(
             "[%s] GIS auto-detect: %d reference accessions found",
-            ds_id, len(gis_accessions),
+            ds_id,
+            len(gis_accessions),
         )
     return gis_accessions
 
 
-
 def _read_and_explode_features(
-    ds_dir: Path, ds_id: str, feature_prefix: str | None,
+    ds_dir: Path,
+    ds_id: str,
+    feature_prefix: str | None,
 ) -> pd.DataFrame:
     """Read feature parquet, filter decoys, explode intensities."""
     prefix = feature_prefix or ds_id
@@ -103,9 +100,7 @@ def _read_and_explode_features(
     ).to_pandas()
     feat = feat[~feat["is_decoy"].fillna(False)]
     feat = feat.dropna(subset=["intensities"])
-    feat = feat[
-        feat["intensities"].map(lambda x: x is not None and len(x) > 0)
-    ]
+    feat = feat[feat["intensities"].map(lambda x: x is not None and len(x) > 0)]
     long = feat[["anchor_protein", "run_file_name", "intensities"]].explode(
         "intensities"
     )
@@ -113,14 +108,8 @@ def _read_and_explode_features(
 
     # Extract label and intensity from dicts — single-pass list comprehension
     raw = long["intensities"].tolist()
-    labels = [
-        d.get("label", "LFQ") if isinstance(d, dict) else str(d)
-        for d in raw
-    ]
-    values = [
-        d.get("intensity", 0.0) if isinstance(d, dict) else 0.0
-        for d in raw
-    ]
+    labels = [d.get("label", "LFQ") if isinstance(d, dict) else str(d) for d in raw]
+    values = [d.get("intensity", 0.0) if isinstance(d, dict) else 0.0 for d in raw]
     long["tmt_label"] = labels
     long["intensity"] = values
     long = long.drop(columns=["intensities"])
@@ -133,7 +122,10 @@ def _read_and_explode_features(
 
 
 def _normalize_tmt(
-    long: pd.DataFrame, run_map: pd.DataFrame, ds_dir: Path, ds_id: str,
+    long: pd.DataFrame,
+    run_map: pd.DataFrame,
+    ds_dir: Path,
+    ds_id: str,
 ) -> pd.DataFrame:
     """Merge with run map and apply GIS normalization for TMT data."""
     long = long.merge(run_map, on=["run_file_name", "tmt_label"], how="left")
@@ -147,7 +139,9 @@ def _normalize_tmt(
         logger.warning(
             "[%s] GIS auto-detect found nothing, falling back to "
             "labels %s (%d accessions)",
-            ds_id, fallback_labels, len(gis_accessions),
+            ds_id,
+            fallback_labels,
+            len(gis_accessions),
         )
 
     is_gis = long["sample_accession"].isin(gis_accessions)
@@ -164,32 +158,30 @@ def _normalize_tmt(
         .reset_index()
         .rename(columns={"intensity": "gis_intensity"})
     )
-    bio_data = bio_data.merge(
-        gis_mean, on=["protein", "run_file_name"], how="inner"
-    )
+    bio_data = bio_data.merge(gis_mean, on=["protein", "run_file_name"], how="inner")
     bio_data = bio_data[bio_data["gis_intensity"] > 0].copy()
     bio_data["intensity"] = bio_data["intensity"] / bio_data["gis_intensity"]
     bio_data = bio_data.drop(columns=["gis_intensity"])
     logger.info(
         "[%s] TMT GIS norm: %d GIS accessions, %d bio rows",
-        ds_id, len(gis_accessions), len(bio_data),
+        ds_id,
+        len(gis_accessions),
+        len(bio_data),
     )
     return bio_data
 
 
 def _pivot_and_annotate(
-    merged: pd.DataFrame, ds_dir: Path, ds_id: str,
+    merged: pd.DataFrame,
+    ds_dir: Path,
+    ds_id: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Annotate tissues, pivot to matrix, and build sample metadata."""
     prot_samp = (
-        merged.groupby(["protein", "sample_accession"])["intensity"]
-        .sum()
-        .reset_index()
+        merged.groupby(["protein", "sample_accession"])["intensity"].sum().reset_index()
     )
 
-    smp = pq.read_table(
-        ds_dir / "qpx_output" / f"{ds_id}.sample.parquet"
-    ).to_pandas()
+    smp = pq.read_table(ds_dir / "qpx_output" / f"{ds_id}.sample.parquet").to_pandas()
     smp = smp[["sample_accession", "organism_part"]].rename(
         columns={"organism_part": "tissue"}
     )
@@ -230,7 +222,9 @@ def _filter_low_sample_tissues(
         if len(dropped) > 0:
             logger.warning(
                 "[%s] Dropped %d tissues with < %d samples: %s",
-                ds_id, len(dropped), min_tissue_samples,
+                ds_id,
+                len(dropped),
+                min_tissue_samples,
                 ", ".join(dropped.index[:5]),
             )
         valid_samples = meta[meta["tissue"].isin(valid_tissues)].index
@@ -242,14 +236,17 @@ def _filter_low_sample_tissues(
         if len(low_sample) > 0:
             logger.warning(
                 "[%s] %d tissues have < %d samples (TS scores may be unreliable): %s",
-                ds_id, len(low_sample), low_sample_warning_threshold,
+                ds_id,
+                len(low_sample),
+                low_sample_warning_threshold,
                 ", ".join(f"{t}({c})" for t, c in low_sample.items()),
             )
     return mat, meta
 
 
 def _detect_quant_type(
-    long: pd.DataFrame, is_tmt: bool | None,
+    long: pd.DataFrame,
+    is_tmt: bool | None,
 ) -> tuple[bool, str]:
     """Auto-detect quantification type from TMT labels."""
     labels_unique = long["tmt_label"].unique()
@@ -260,8 +257,11 @@ def _detect_quant_type(
 
 
 def _merge_quant_data(
-    long: pd.DataFrame, run_map: pd.DataFrame,
-    ds_dir: Path, ds_id: str, is_tmt: bool,
+    long: pd.DataFrame,
+    run_map: pd.DataFrame,
+    ds_dir: Path,
+    ds_id: str,
+    is_tmt: bool,
 ) -> pd.DataFrame:
     """Merge feature data with sample mapping (TMT or LFQ path)."""
     if is_tmt:
@@ -275,14 +275,15 @@ def _merge_quant_data(
 
 
 def _attach_metadata(
-    tissue_meta: pd.DataFrame, run_map: pd.DataFrame,
-    quant_type: str, ds_id: str,
+    tissue_meta: pd.DataFrame,
+    run_map: pd.DataFrame,
+    quant_type: str,
+    ds_id: str,
 ) -> None:
     """Attach batch, quant_type, and dataset columns to tissue metadata."""
-    batch_map = (
-        run_map.drop_duplicates("sample_accession")
-        .set_index("sample_accession")["batch"]
-    )
+    batch_map = run_map.drop_duplicates("sample_accession").set_index(
+        "sample_accession"
+    )["batch"]
     tissue_meta["batch"] = tissue_meta.index.map(batch_map).fillna("unknown")
     tissue_meta["quant_type"] = quant_type
     tissue_meta["dataset"] = ds_id
@@ -328,12 +329,19 @@ def load_dataset(
     _attach_metadata(tissue_meta, run_map, quant_type, ds_id)
 
     mat, tissue_meta = _filter_low_sample_tissues(
-        mat, tissue_meta, ds_id, min_tissue_samples, low_sample_warning_threshold,
+        mat,
+        tissue_meta,
+        ds_id,
+        min_tissue_samples,
+        low_sample_warning_threshold,
     )
 
     logger.info(
         "[%s] Loaded: %d proteins x %d samples, %d tissues (%s)",
-        ds_id, mat.shape[0], mat.shape[1],
-        tissue_meta["tissue"].nunique(), quant_type,
+        ds_id,
+        mat.shape[0],
+        mat.shape[1],
+        tissue_meta["tissue"].nunique(),
+        quant_type,
     )
     return mat, tissue_meta

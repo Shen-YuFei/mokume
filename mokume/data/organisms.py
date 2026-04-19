@@ -511,7 +511,15 @@ histones = {
     "SCHPO": {
         "name": "schpo",
         "genome_size": 14100000,
-        "histone_proteins": ["P48003", "P04909", "P04910", "P04913", "P09988", "P10651", "P09322"],
+        "histone_proteins": [
+            "P48003",
+            "P04909",
+            "P04910",
+            "P04913",
+            "P09988",
+            "P10651",
+            "P09322",
+        ],
         "histone_entries": [
             "H2AZ_SCHPO",
             "H2A1_SCHPO",

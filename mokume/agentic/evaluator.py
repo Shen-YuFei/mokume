@@ -136,8 +136,10 @@ def evaluate(
     missing = float(matrix.isna().sum().sum() / matrix.size) if matrix.size else 0.0
 
     result = EvaluationResult(
-        config_name=config.name, config=config.to_dict(),
-        n_de_up=n_up, n_de_down=n_down,
+        config_name=config.name,
+        config=config.to_dict(),
+        n_de_up=n_up,
+        n_de_down=n_down,
         median_cv=_median_cv_from_matrix(protein_df, sample_to_condition),
         missing_rate=missing,
     )
@@ -147,6 +149,11 @@ def evaluate(
 
     logger.info(
         "Evaluated %s: UP=%d DOWN=%d TP=%s FP=%s AUC=%s",
-        config.name, n_up, n_down, result.tp, result.fp, result.auc,
+        config.name,
+        n_up,
+        n_down,
+        result.tp,
+        result.fp,
+        result.auc,
     )
     return result

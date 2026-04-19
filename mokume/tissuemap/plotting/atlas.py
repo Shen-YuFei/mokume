@@ -27,8 +27,14 @@ _GROUP_PALETTE = {
     "Muscle/Cardiac": {"base": "#D32F2F", "cmap": matplotlib.colormaps["Reds"]},
     "Neural": {"base": "#1565C0", "cmap": matplotlib.colormaps["Blues"]},
     "Hepato-renal": {"base": "#8D6E63", "cmap": matplotlib.colormaps["copper"]},
-    "Immune/Gut-associated": {"base": "#2E7D32", "cmap": matplotlib.colormaps["Greens"]},
-    "Gonadal/Reproductive": {"base": "#7B1FA2", "cmap": matplotlib.colormaps["Purples"]},
+    "Immune/Gut-associated": {
+        "base": "#2E7D32",
+        "cmap": matplotlib.colormaps["Greens"],
+    },
+    "Gonadal/Reproductive": {
+        "base": "#7B1FA2",
+        "cmap": matplotlib.colormaps["Purples"],
+    },
     "Oropharyngeal": {"base": "#00838F", "cmap": matplotlib.colormaps["GnBu"]},
     "Pituitary": {"base": "#F57F17", "cmap": matplotlib.colormaps["YlOrBr"]},
     "Mucosal/Epithelial": {"base": "#E65100", "cmap": matplotlib.colormaps["Oranges"]},
@@ -67,17 +73,31 @@ def _draw_convex_hull(ax, points, color, label=None, pad=2.5):
     norms = np.linalg.norm(hull_pts - centroid, axis=1, keepdims=True).clip(1e-6)
     expanded = centroid + (hull_pts - centroid) * (1 + pad / norms)
     ax.plot(
-        expanded[:, 0], expanded[:, 1],
-        color=color, linestyle="--", linewidth=1.8, alpha=0.7, zorder=1,
+        expanded[:, 0],
+        expanded[:, 1],
+        color=color,
+        linestyle="--",
+        linewidth=1.8,
+        alpha=0.7,
+        zorder=1,
     )
     if label:
         top_idx = np.argmax(expanded[:, 1])
         ax.text(
-            expanded[top_idx, 0], expanded[top_idx, 1] + 1.5, label,
-            fontsize=7, fontweight="bold", color=color, ha="center", va="bottom",
+            expanded[top_idx, 0],
+            expanded[top_idx, 1] + 1.5,
+            label,
+            fontsize=7,
+            fontweight="bold",
+            color=color,
+            ha="center",
+            va="bottom",
             bbox={
-                "boxstyle": "round,pad=0.2", "facecolor": "white",
-                "edgecolor": color, "alpha": 0.85, "linewidth": 0.8,
+                "boxstyle": "round,pad=0.2",
+                "facecolor": "white",
+                "edgecolor": color,
+                "alpha": 0.85,
+                "linewidth": 0.8,
             },
         )
 
@@ -89,24 +109,41 @@ def _draw_ellipse(ax, points, color, label=None):
     sx = max(points[:, 0].std() * 2.5, 3)
     sy = max(points[:, 1].std() * 2.5, 3)
     ellipse = Ellipse(
-        (cx, cy), width=sx * 2, height=sy * 2,
-        fill=False, edgecolor=color, linestyle=":",
-        linewidth=1.5, alpha=0.7, zorder=1,
+        (cx, cy),
+        width=sx * 2,
+        height=sy * 2,
+        fill=False,
+        edgecolor=color,
+        linestyle=":",
+        linewidth=1.5,
+        alpha=0.7,
+        zorder=1,
     )
     ax.add_patch(ellipse)
     if label:
         ax.text(
-            cx, cy + sy + 1.5, label,
-            fontsize=6.5, fontweight="bold", color=color, ha="center", va="bottom",
+            cx,
+            cy + sy + 1.5,
+            label,
+            fontsize=6.5,
+            fontweight="bold",
+            color=color,
+            ha="center",
+            va="bottom",
             bbox={
-                "boxstyle": "round,pad=0.15", "facecolor": "white",
-                "edgecolor": color, "alpha": 0.8, "linewidth": 0.6,
+                "boxstyle": "round,pad=0.15",
+                "facecolor": "white",
+                "edgecolor": color,
+                "alpha": 0.8,
+                "linewidth": 0.6,
             },
         )
 
 
 def _name_cluster(
-    members: list[str], cluster_id: int, used_names: set[str],
+    members: list[str],
+    cluster_id: int,
+    used_names: set[str],
 ) -> str:
     """Assign a human-readable name to a cluster using heuristics."""
     member_set = set(members)
@@ -187,15 +224,25 @@ def _build_tissue_colors(
 
 
 def _draw_tsne_panel(
-    ax, tsne_emb, tissues, tissue_order, tissue_colors, proteomic_groups,
+    ax,
+    tsne_emb,
+    tissues,
+    tissue_order,
+    tissue_colors,
+    proteomic_groups,
 ) -> None:
     """Scatter t-SNE points and draw group hulls / ellipses."""
     for t in tissue_order:
         mask = tissues == t
         ax.scatter(
-            tsne_emb[mask, 0], tsne_emb[mask, 1],
-            c=[tissue_colors.get(t, "#999")], s=45, alpha=0.88,
-            edgecolors="white", linewidths=0.4, zorder=2,
+            tsne_emb[mask, 0],
+            tsne_emb[mask, 1],
+            c=[tissue_colors.get(t, "#999")],
+            s=45,
+            alpha=0.88,
+            edgecolors="white",
+            linewidths=0.4,
+            zorder=2,
         )
 
     for group_name, members in proteomic_groups.items():
@@ -212,15 +259,21 @@ def _draw_tsne_panel(
 
 
 def _build_legend_elements(
-    tissues, proteomic_groups, tissue_colors,
+    tissues,
+    proteomic_groups,
+    tissue_colors,
 ) -> list[Line2D]:
     """Build legend handles for tissue groups."""
     elements: list[Line2D] = []
     for group_name, members in proteomic_groups.items():
         elements.append(
             Line2D(
-                [0], [0], marker="none", label=f"  {group_name}",
-                color="none", markerfacecolor="none",
+                [0],
+                [0],
+                marker="none",
+                label=f"  {group_name}",
+                color="none",
+                markerfacecolor="none",
             )
         )
         for t in members:
@@ -228,23 +281,35 @@ def _build_legend_elements(
             if n > 0:
                 elements.append(
                     Line2D(
-                        [0], [0], marker="o", color="none",
+                        [0],
+                        [0],
+                        marker="o",
+                        color="none",
                         markerfacecolor=tissue_colors.get(t, "#999"),
-                        markeredgecolor="white", markeredgewidth=0.3,
-                        markersize=8, label=f"    {t} ({n})",
+                        markeredgecolor="white",
+                        markeredgewidth=0.3,
+                        markersize=8,
+                        label=f"    {t} ({n})",
                     )
                 )
     return elements
 
 
 def _draw_dendrogram_panel(
-    ax, z_linkage, unique_tissues, tissue_to_group,
+    ax,
+    z_linkage,
+    unique_tissues,
+    tissue_to_group,
 ) -> None:
     """Render dendrogram and style labels by group color."""
     scipy_dendro(
-        z_linkage, labels=unique_tissues, ax=ax,
-        orientation="right", leaf_font_size=8,
-        above_threshold_color="#BDBDBD", color_threshold=0,
+        z_linkage,
+        labels=unique_tissues,
+        ax=ax,
+        orientation="right",
+        leaf_font_size=8,
+        above_threshold_color="#BDBDBD",
+        color_threshold=0,
     )
     for coll in ax.collections:
         coll.set_linewidth(0.8)
@@ -257,7 +322,9 @@ def _draw_dendrogram_panel(
         lbl.set_color(color)
         lbl.set_fontweight("bold")
         lbl.set_fontsize(8)
-    ax.set_title("B  Tissue Dendrogram", fontsize=16, fontweight="bold", loc="left", pad=8)
+    ax.set_title(
+        "B  Tissue Dendrogram", fontsize=16, fontweight="bold", loc="left", pad=8
+    )
     ax.set_xlabel("Ward distance (correlation)", fontsize=9, labelpad=5)
     ax.tick_params(axis="x", labelsize=7)
     ax.spines["top"].set_visible(False)
@@ -267,17 +334,25 @@ def _draw_dendrogram_panel(
 
 
 def _save_atlas_figures(
-    fig, ax_tsne, ax_dend, out_dir: Path, dpi: int, save_pdf: bool,
+    fig,
+    ax_tsne,
+    ax_dend,
+    out_dir: Path,
+    dpi: int,
+    save_pdf: bool,
 ) -> None:
     """Save combined figure and individual sub-plots."""
     fig.savefig(
         out_dir / "slide_atlas_dendrogram.png",
-        dpi=dpi, bbox_inches="tight", facecolor="white",
+        dpi=dpi,
+        bbox_inches="tight",
+        facecolor="white",
     )
     if save_pdf:
         fig.savefig(
             out_dir / "slide_atlas_dendrogram.pdf",
-            bbox_inches="tight", facecolor="white",
+            bbox_inches="tight",
+            facecolor="white",
         )
     for ax, name in [(ax_tsne, "tissue_atlas"), (ax_dend, "tissue_dendrogram")]:
         extent = ax.get_tightbbox(fig.canvas.get_renderer()).transformed(
@@ -285,12 +360,15 @@ def _save_atlas_figures(
         )
         fig.savefig(
             out_dir / f"{name}.png",
-            dpi=dpi, bbox_inches=extent, facecolor="white",
+            dpi=dpi,
+            bbox_inches=extent,
+            facecolor="white",
         )
         if save_pdf:
             fig.savefig(
                 out_dir / f"{name}.pdf",
-                bbox_inches=extent, facecolor="white",
+                bbox_inches=extent,
+                facecolor="white",
             )
     plt.close()
     logger.info("Saved slide_atlas_dendrogram.png")
@@ -298,7 +376,8 @@ def _save_atlas_figures(
 
 def _store_group_metadata(
     adata: ad.AnnData,
-    proteomic_groups: dict, tissue_colors: dict,
+    proteomic_groups: dict,
+    tissue_colors: dict,
 ) -> None:
     """Store proteomic groups and hex tissue colors in adata.uns."""
     adata.uns["proteomic_groups"] = proteomic_groups
@@ -309,12 +388,15 @@ def _store_group_metadata(
 
 
 def _build_tissue_order(
-    proteomic_groups: dict, tissues: np.ndarray,
+    proteomic_groups: dict,
+    tissues: np.ndarray,
 ) -> list[str]:
     """Ordered tissue list from proteomic groups, filtered to present tissues."""
     return [
-        t for members in proteomic_groups.values()
-        for t in members if (tissues == t).sum() > 0
+        t
+        for members in proteomic_groups.values()
+        for t in members
+        if (tissues == t).sum() > 0
     ]
 
 
@@ -335,11 +417,19 @@ def _configure_tsne_axes(ax, adata: ad.AnnData) -> None:
         f" | PCA variance = {pca_str}"
     )
     ax.text(
-        0.01, 0.01, stats, transform=ax.transAxes,
-        fontsize=8.5, fontfamily="monospace", verticalalignment="bottom",
+        0.01,
+        0.01,
+        stats,
+        transform=ax.transAxes,
+        fontsize=8.5,
+        fontfamily="monospace",
+        verticalalignment="bottom",
         bbox={
-            "boxstyle": "round,pad=0.5", "facecolor": "#F5F5F5",
-            "edgecolor": "#BDBDBD", "alpha": 0.95, "linewidth": 1,
+            "boxstyle": "round,pad=0.5",
+            "facecolor": "#F5F5F5",
+            "edgecolor": "#BDBDBD",
+            "alpha": 0.95,
+            "linewidth": 1,
         },
     )
 
@@ -375,20 +465,40 @@ def plot_slide_atlas_dendrogram(
 
     fig = plt.figure(figsize=(_compute_fig_width(proteomic_groups, tissues), 11))
     gs = GridSpec(
-        1, 2, width_ratios=[1.4, 0.8], wspace=0.01,
-        left=0.01, right=0.99, bottom=0.05, top=0.90,
+        1,
+        2,
+        width_ratios=[1.4, 0.8],
+        wspace=0.01,
+        left=0.01,
+        right=0.99,
+        bottom=0.05,
+        top=0.90,
     )
 
     ax_tsne = fig.add_subplot(gs[0])
-    _draw_tsne_panel(ax_tsne, adata.obsm["X_tsne"], tissues,
-                     tissue_order, tissue_colors, proteomic_groups)
+    _draw_tsne_panel(
+        ax_tsne,
+        adata.obsm["X_tsne"],
+        tissues,
+        tissue_order,
+        tissue_colors,
+        proteomic_groups,
+    )
 
     legend_elements = _build_legend_elements(tissues, proteomic_groups, tissue_colors)
     leg = ax_tsne.legend(
-        handles=legend_elements, loc="center left", bbox_to_anchor=(1.01, 0.5),
-        fontsize=7, frameon=True, framealpha=0.95, edgecolor="#ddd",
-        handletextpad=0.5, labelspacing=0.2, borderpad=0.6,
-        title="Proteomic group", title_fontsize=8,
+        handles=legend_elements,
+        loc="center left",
+        bbox_to_anchor=(1.01, 0.5),
+        fontsize=7,
+        frameon=True,
+        framealpha=0.95,
+        edgecolor="#ddd",
+        handletextpad=0.5,
+        labelspacing=0.2,
+        borderpad=0.6,
+        title="Proteomic group",
+        title_fontsize=8,
     )
     leg.set_alignment("left")
     _configure_tsne_axes(ax_tsne, adata)

@@ -43,9 +43,7 @@ def filter_proteins(
     # 2. Contaminant filter
     if config.remove_contaminants and config.contaminant_pattern:
         pattern = re.compile(config.contaminant_pattern)
-        is_contam = mat.index.to_series().apply(
-            lambda x: bool(pattern.search(str(x)))
-        )
+        is_contam = mat.index.to_series().apply(lambda x: bool(pattern.search(str(x))))
         keep_clean = ~is_contam.values
         n_contam = is_contam.sum()
     else:

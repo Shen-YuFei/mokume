@@ -8,7 +8,6 @@ Legacy QPX format columns:
   - precursor_charge, reference_file_name, intensities[{sample_accession, channel, intensity}]
 """
 
-
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -18,18 +17,29 @@ _NEW_INTENSITIES_TYPE = pa.list_(
     pa.struct([("label", pa.string()), ("intensity", pa.float32())])
 )
 _PG_PROTEIN_TYPE = pa.list_(
-    pa.struct([
-        ("accession", pa.string()), ("start", pa.int32()),
-        ("end", pa.int32()), ("pre", pa.string()), ("post", pa.string()),
-    ])
+    pa.struct(
+        [
+            ("accession", pa.string()),
+            ("start", pa.int32()),
+            ("end", pa.int32()),
+            ("pre", pa.string()),
+            ("post", pa.string()),
+        ]
+    )
 )
-_NEW_QPX_SCHEMA = pa.schema([
-    ("sequence", pa.string()), ("peptidoform", pa.string()),
-    ("pg_accessions", _PG_PROTEIN_TYPE), ("anchor_protein", pa.string()),
-    ("charge", pa.int16()), ("run_file_name", pa.string()),
-    ("unique", pa.bool_()), ("is_decoy", pa.bool_()),
-    ("intensities", _NEW_INTENSITIES_TYPE),
-])
+_NEW_QPX_SCHEMA = pa.schema(
+    [
+        ("sequence", pa.string()),
+        ("peptidoform", pa.string()),
+        ("pg_accessions", _PG_PROTEIN_TYPE),
+        ("anchor_protein", pa.string()),
+        ("charge", pa.int16()),
+        ("run_file_name", pa.string()),
+        ("unique", pa.bool_()),
+        ("is_decoy", pa.bool_()),
+        ("intensities", _NEW_INTENSITIES_TYPE),
+    ]
+)
 
 
 def _make_new_qpx_parquet(path: str) -> None:
@@ -49,19 +59,56 @@ def _make_new_qpx_parquet(path: str) -> None:
         "sequence": ["PEPTIDEK", "ANOTHERPEPTIDE", "PEPTIDEK"],
         "peptidoform": ["PEPTIDEK", "ANOTHERPEPTIDE", "PEPTIDEK"],
         "pg_accessions": [
-            [{"accession": "sp|P12345|PROT_HUMAN", "start": 10, "end": 18, "pre": "K", "post": "A"}],
-            [{"accession": "sp|P67890|PROT2_HUMAN", "start": 5, "end": 19, "pre": "R", "post": "L"}],
-            [{"accession": "sp|P12345|PROT_HUMAN", "start": 10, "end": 18, "pre": "K", "post": "A"}],
+            [
+                {
+                    "accession": "sp|P12345|PROT_HUMAN",
+                    "start": 10,
+                    "end": 18,
+                    "pre": "K",
+                    "post": "A",
+                }
+            ],
+            [
+                {
+                    "accession": "sp|P67890|PROT2_HUMAN",
+                    "start": 5,
+                    "end": 19,
+                    "pre": "R",
+                    "post": "L",
+                }
+            ],
+            [
+                {
+                    "accession": "sp|P12345|PROT_HUMAN",
+                    "start": 10,
+                    "end": 18,
+                    "pre": "K",
+                    "post": "A",
+                }
+            ],
         ],
-        "anchor_protein": ["sp|P12345|PROT_HUMAN", "sp|P67890|PROT2_HUMAN", "sp|P12345|PROT_HUMAN"],
+        "anchor_protein": [
+            "sp|P12345|PROT_HUMAN",
+            "sp|P67890|PROT2_HUMAN",
+            "sp|P12345|PROT_HUMAN",
+        ],
         "charge": [2, 3, 2],
         "run_file_name": ["run1", "run1", "run2"],
         "unique": [True, True, True],
         "is_decoy": [False, False, False],
         "intensities": [
-            [{"label": "TMT126", "intensity": 1000.0}, {"label": "TMT127", "intensity": 2000.0}],
-            [{"label": "TMT126", "intensity": 3000.0}, {"label": "TMT127", "intensity": 4000.0}],
-            [{"label": "TMT126", "intensity": 1500.0}, {"label": "TMT127", "intensity": 2500.0}],
+            [
+                {"label": "TMT126", "intensity": 1000.0},
+                {"label": "TMT127", "intensity": 2000.0},
+            ],
+            [
+                {"label": "TMT126", "intensity": 3000.0},
+                {"label": "TMT127", "intensity": 4000.0},
+            ],
+            [
+                {"label": "TMT126", "intensity": 1500.0},
+                {"label": "TMT127", "intensity": 2500.0},
+            ],
         ],
     }
     table = pa.table(data, schema=_NEW_QPX_SCHEMA)
@@ -71,11 +118,13 @@ def _make_new_qpx_parquet(path: str) -> None:
 def _make_legacy_qpx_parquet(path: str) -> None:
     """Create a mock parquet file in legacy QPX format."""
     intensities_type = pa.list_(
-        pa.struct([
-            ("sample_accession", pa.string()),
-            ("channel", pa.string()),
-            ("intensity", pa.float64()),
-        ])
+        pa.struct(
+            [
+                ("sample_accession", pa.string()),
+                ("channel", pa.string()),
+                ("intensity", pa.float64()),
+            ]
+        )
     )
     schema = pa.schema(
         [
@@ -123,6 +172,7 @@ class TestNewQPXFormat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         assert feat._is_new_qpx is True
@@ -134,11 +184,18 @@ class TestNewQPXFormat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
         assert len(df) > 0
-        for col in ["charge", "run_file_name", "intensity", "channel", "sample_accession"]:
+        for col in [
+            "charge",
+            "run_file_name",
+            "intensity",
+            "channel",
+            "sample_accession",
+        ]:
             assert col in df.columns, f"Missing column: {col}"
 
     def test_feature_samples_new_format(self, tmp_path):
@@ -146,6 +203,7 @@ class TestNewQPXFormat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         samples = feat.get_unique_samples()
@@ -160,6 +218,7 @@ class TestLegacyQPXFormat:
         _make_legacy_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         assert feat._is_new_qpx is False
@@ -171,11 +230,18 @@ class TestLegacyQPXFormat:
         _make_legacy_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
         assert len(df) > 0
-        for col in ["charge", "run_file_name", "intensity", "channel", "sample_accession"]:
+        for col in [
+            "charge",
+            "run_file_name",
+            "intensity",
+            "channel",
+            "sample_accession",
+        ]:
             assert col in df.columns, f"Missing column: {col}"
 
     def test_feature_samples_legacy_format(self, tmp_path):
@@ -183,6 +249,7 @@ class TestLegacyQPXFormat:
         _make_legacy_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         samples = feat.get_unique_samples()
@@ -198,6 +265,7 @@ class TestNewQPXDeepCompat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         df = feat.parquet_db.execute("SELECT pg_accessions FROM parquet_db").df()
@@ -223,12 +291,11 @@ class TestNewQPXDeepCompat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         # SQLFilterBuilder generates: "unique" = 1
-        df = feat.parquet_db.execute(
-            'SELECT * FROM parquet_db WHERE "unique" = 1'
-        ).df()
+        df = feat.parquet_db.execute('SELECT * FROM parquet_db WHERE "unique" = 1').df()
         assert len(df) > 0, "unique=1 filter on bool column returned no rows"
 
     def test_unique_bool_filter_pandas(self, tmp_path):
@@ -237,12 +304,15 @@ class TestNewQPXDeepCompat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
         # stages.py and peptide.py do: dataset_df[dataset_df["unique"] == 1]
         filtered = df[df["unique"] == 1]
-        assert len(filtered) > 0, "unique==1 filter on bool column returned no rows in Pandas"
+        assert len(filtered) > 0, (
+            "unique==1 filter on bool column returned no rows in Pandas"
+        )
 
     def test_get_low_frequency_peptides(self, tmp_path):
         """Test get_low_frequency_peptides with struct pg_accessions."""
@@ -250,6 +320,7 @@ class TestNewQPXDeepCompat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(parquet_file)
 
         result = feat.get_low_frequency_peptides(percentage=0.2)
@@ -261,6 +332,7 @@ class TestNewQPXDeepCompat:
         _make_new_qpx_parquet(parquet_file)
 
         from mokume.io.feature import Feature, SQLFilterBuilder
+
         fb = SQLFilterBuilder(remove_contaminants=True)
         feat = Feature(parquet_file, filter_builder=fb)
 
@@ -268,7 +340,9 @@ class TestNewQPXDeepCompat:
         sql = "".join(["SELECT * FROM parquet_db WHERE ", where_clause])
         df = feat.parquet_db.execute(sql, where_params).df()
         # Should still return rows since our test data has no contaminants
-        assert len(df) > 0, "Contaminant filter on struct pg_accessions returned no rows"
+        assert len(df) > 0, (
+            "Contaminant filter on struct pg_accessions returned no rows"
+        )
 
 
 class TestBothFormatsProduceSameSchema:
@@ -282,6 +356,7 @@ class TestBothFormatsProduceSameSchema:
         _make_legacy_qpx_parquet(legacy_file)
 
         from mokume.io.feature import Feature
+
         feat_new = Feature(new_file)
         feat_legacy = Feature(legacy_file)
 
@@ -289,15 +364,27 @@ class TestBothFormatsProduceSameSchema:
         df_legacy = feat_legacy.parquet_db.execute("SELECT * FROM parquet_db").df()
 
         core_columns = {
-            "sequence", "peptidoform", "pg_accessions", "charge",
-            "run_file_name", "unique", "sample_accession", "channel",
-            "intensity", "run", "condition", "biological_replicate",
-            "fraction", "mixture",
+            "sequence",
+            "peptidoform",
+            "pg_accessions",
+            "charge",
+            "run_file_name",
+            "unique",
+            "sample_accession",
+            "channel",
+            "intensity",
+            "run",
+            "condition",
+            "biological_replicate",
+            "fraction",
+            "mixture",
         }
-        assert core_columns.issubset(set(df_new.columns)), \
+        assert core_columns.issubset(set(df_new.columns)), (
             f"New format missing core columns: {core_columns - set(df_new.columns)}"
-        assert core_columns.issubset(set(df_legacy.columns)), \
+        )
+        assert core_columns.issubset(set(df_legacy.columns)), (
             f"Legacy format missing core columns: {core_columns - set(df_legacy.columns)}"
+        )
 
     def test_new_format_has_extra_columns(self, tmp_path):
         """New QPX format should expose is_decoy and anchor_protein."""
@@ -305,6 +392,7 @@ class TestBothFormatsProduceSameSchema:
         _make_new_qpx_parquet(new_file)
 
         from mokume.io.feature import Feature
+
         feat = Feature(new_file)
         df = feat.parquet_db.execute("SELECT * FROM parquet_db").df()
 

@@ -82,16 +82,29 @@ class QuantificationPipeline:
     def _validate_config(self):
         """Validate configuration and check for required parameters."""
         if not Path(self.config.input.parquet).exists():
-            raise FileNotFoundError(f"Parquet file not found: {self.config.input.parquet}")
+            raise FileNotFoundError(
+                f"Parquet file not found: {self.config.input.parquet}"
+            )
 
-        if self.config.quantification.method.lower() == "ibaq" and not self.config.input.fasta_file:
+        if (
+            self.config.quantification.method.lower() == "ibaq"
+            and not self.config.input.fasta_file
+        ):
             raise ValueError("iBAQ quantification requires --fasta-file")
 
-        if self.config.quantification.method.lower() == "ratio" and not self.config.input.sdrf:
+        if (
+            self.config.quantification.method.lower() == "ratio"
+            and not self.config.input.sdrf
+        ):
             raise ValueError("Ratio quantification requires an SDRF file (--sdrf)")
 
-        if self.config.input.fasta_file and not Path(self.config.input.fasta_file).exists():
-            raise FileNotFoundError(f"FASTA file not found: {self.config.input.fasta_file}")
+        if (
+            self.config.input.fasta_file
+            and not Path(self.config.input.fasta_file).exists()
+        ):
+            raise FileNotFoundError(
+                f"FASTA file not found: {self.config.input.fasta_file}"
+            )
 
     def run(self) -> pd.DataFrame:
         """
@@ -131,11 +144,13 @@ class QuantificationPipeline:
             de_results = self.postprocessing.run_differential_expression(protein_df)
 
         # Generate plots if configured
-        if self.config.output.plot_dir and any([
-            self.config.output.plot_volcano,
-            self.config.output.plot_heatmap,
-            self.config.output.plot_pca,
-        ]):
+        if self.config.output.plot_dir and any(
+            [
+                self.config.output.plot_volcano,
+                self.config.output.plot_heatmap,
+                self.config.output.plot_pca,
+            ]
+        ):
             self.postprocessing.generate_plots(protein_df, de_results)
 
         # Generate interactive report if configured
@@ -207,7 +222,9 @@ class QuantificationPipeline:
             peptide_df.to_csv(self.config.output.export_peptides, index=False)
 
         # Quantify proteins
-        logger.info(f"Quantifying proteins with method: {self.config.quantification.method}")
+        logger.info(
+            f"Quantifying proteins with method: {self.config.quantification.method}"
+        )
         protein_df = self.quantification.quantify(peptide_df)
         logger.info(f"Quantification complete: {len(protein_df)} proteins")
 
@@ -232,8 +249,7 @@ class QuantificationPipeline:
         # Remove reference samples from output columns (log2(ref/ref) = 0)
         protein_col = protein_df.columns[0]
         cols_to_keep = [protein_col] + [
-            c for c in protein_df.columns
-            if c == protein_col or c not in ref_samples
+            c for c in protein_df.columns if c == protein_col or c not in ref_samples
         ]
         # Deduplicate while preserving order
         seen = set()

@@ -12,7 +12,9 @@ import pandas as pd
 
 from mokume.core.constants import CONDITION, NORM_INTENSITY, SAMPLE_ID, TECHREPLICATE
 
-_method_registry: dict["FeatureNormalizationMethod", Callable[[pd.Series], pd.Series]] = {}
+_method_registry: dict[
+    "FeatureNormalizationMethod", Callable[[pd.Series], pd.Series]
+] = {}
 
 
 class FeatureNormalizationMethod(Enum):
@@ -118,7 +120,9 @@ class FeatureNormalizationMethod(Enum):
         fn = _method_registry[self]
         return fn(df, *args, **kwargs)
 
-    def normalize_sample(self, df, runs: list[str]) -> tuple[dict[str, pd.Series], float]:
+    def normalize_sample(
+        self, df, runs: list[str]
+    ) -> tuple[dict[str, pd.Series], float]:
         """
         Normalize replicate intensities for a given sample across multiple runs.
 
@@ -139,7 +143,9 @@ class FeatureNormalizationMethod(Enum):
         total = 0
         for run in runs:
             run = str(run)
-            run_m = self.normalize_replicates(df.loc[df[TECHREPLICATE] == run, NORM_INTENSITY])
+            run_m = self.normalize_replicates(
+                df.loc[df[TECHREPLICATE] == run, NORM_INTENSITY]
+            )
             map_[run] = run_m
             total += run_m
         sample_average_metric = total / len(runs)
@@ -184,7 +190,9 @@ class FeatureNormalizationMethod(Enum):
                         df.loc[
                             (df[SAMPLE_ID] == sample) & (df[TECHREPLICATE] == run),
                             NORM_INTENSITY,
-                        ] = run_intensity / (replicate_metric_map[run] / sample_average_metric)
+                        ] = run_intensity / (
+                            replicate_metric_map[run] / sample_average_metric
+                        )
             return df
         else:
             return df
@@ -367,7 +375,9 @@ def global_median(dataset_df, sample: str, med_map: dict):
 def condition_median(dataset_df, sample: str, med_map: dict):
     """Condition median normalization of the data."""
     con = dataset_df[CONDITION].unique()[0]
-    dataset_df.loc[:, NORM_INTENSITY] = dataset_df[NORM_INTENSITY] / med_map[con][sample]
+    dataset_df.loc[:, NORM_INTENSITY] = (
+        dataset_df[NORM_INTENSITY] / med_map[con][sample]
+    )
     return dataset_df
 
 

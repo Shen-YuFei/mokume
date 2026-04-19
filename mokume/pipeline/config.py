@@ -11,7 +11,6 @@ from typing import Optional
 
 @dataclass
 class InputConfig:
-
     """Input file paths."""
 
     parquet: str
@@ -21,7 +20,6 @@ class InputConfig:
 
 @dataclass
 class FilterConfig:
-
     """Peptide/protein filtering parameters."""
 
     min_aa: int = 7
@@ -31,7 +29,6 @@ class FilterConfig:
 
 @dataclass
 class NormalizationConfig:
-
     """Normalization method parameters."""
 
     run_method: str = "median"
@@ -41,7 +38,6 @@ class NormalizationConfig:
 
 @dataclass
 class QuantificationConfig:
-
     """Quantification method parameters."""
 
     method: str = "maxlfq"
@@ -56,7 +52,6 @@ class QuantificationConfig:
 
 @dataclass
 class IRSConfig:
-
     """IRS (Internal Reference Scaling) normalization parameters."""
 
     enabled: bool = False
@@ -70,7 +65,6 @@ class IRSConfig:
 
 @dataclass
 class BatchCorrectionConfig:
-
     """Batch correction parameters."""
 
     enabled: bool = False
@@ -98,7 +92,6 @@ class ImputationConfig:
 
 @dataclass
 class DEConfig:
-
     """Differential expression analysis parameters."""
 
     enabled: bool = False
@@ -112,7 +105,6 @@ class DEConfig:
 
 @dataclass
 class OutputConfig:
-
     """Output and export parameters."""
 
     export_peptides: Optional[str] = None

@@ -11,7 +11,9 @@ import pandas as pd
 from mokume.core.constants import load_feature, load_sdrf
 from mokume.postprocessing.batch_correction import get_batch_info_from_sample_names
 
-logging.basicConfig(format="%(asctime)s [%(funcName)s] - %(message)s", level=logging.DEBUG)
+logging.basicConfig(
+    format="%(asctime)s [%(funcName)s] - %(message)s", level=logging.DEBUG
+)
 logger = logging.getLogger(__name__)
 
 
@@ -56,14 +58,18 @@ def generate_meta(sdrf_df: pd.DataFrame) -> pd.DataFrame:
     sdrf_df.columns = [col.lower() for col in sdrf_df.columns]
     pxd = sdrf_df["source name"].values[0].split("-")[0]
     organism_part = [
-        col for col in sdrf_df.columns if col.startswith("characteristics[organism part]")
+        col
+        for col in sdrf_df.columns
+        if col.startswith("characteristics[organism part]")
     ]
     if len(organism_part) > 2:
         raise ValueError(
             f"{pxd} Please provide a maximum of 2 characteristics[organism part]"
         )
     elif len(organism_part) == 0:
-        raise ValueError("Missing characteristics[organism part], please check your SDRF!")
+        raise ValueError(
+            "Missing characteristics[organism part], please check your SDRF!"
+        )
 
     meta_df = sdrf_df[["source name"] + organism_part]
     meta_df = meta_df.drop_duplicates()
@@ -77,7 +83,11 @@ def generate_meta(sdrf_df: pd.DataFrame) -> pd.DataFrame:
         else:
             a, b = "tissue", "tissue_part"
         meta_df.rename(
-            columns={"source name": "sample_id", organism_part[0]: a, organism_part[1]: b},
+            columns={
+                "source name": "sample_id",
+                organism_part[0]: a,
+                organism_part[1]: b,
+            },
             inplace=True,
         )
 
@@ -90,7 +100,9 @@ def generate_meta(sdrf_df: pd.DataFrame) -> pd.DataFrame:
 class Combiner:
     """Combine and process SDRF and iBAQ data from multiple datasets."""
 
-    def __init__(self, data_folder: os.PathLike, covariate: str = None, organism: str = "HUMAN"):
+    def __init__(
+        self, data_folder: os.PathLike, covariate: str = None, organism: str = "HUMAN"
+    ):
         self.df_pca = None
         self.df_corrected = None
         self.df_filtered_outliers = None

@@ -48,15 +48,17 @@ def _parse_configs_from_json(raw: str) -> list[CandidateConfig]:
     items = json.loads(text[start:end])
     configs = []
     for item in items:
-        configs.append(CandidateConfig(
-            name=item.get("name", "llm_config"),
-            de_method=item.get("de_method", "deqms"),
-            fdr_method=item.get("fdr_method", "bh"),
-            imputation=item.get("imputation", "none"),
-            log2fc_threshold=float(item.get("log2fc_threshold", 0.5)),
-            reasoning=item.get("reasoning", ""),
-            expected_outcome=item.get("expected_outcome", ""),
-        ))
+        configs.append(
+            CandidateConfig(
+                name=item.get("name", "llm_config"),
+                de_method=item.get("de_method", "deqms"),
+                fdr_method=item.get("fdr_method", "bh"),
+                imputation=item.get("imputation", "none"),
+                log2fc_threshold=float(item.get("log2fc_threshold", 0.5)),
+                reasoning=item.get("reasoning", ""),
+                expected_outcome=item.get("expected_outcome", ""),
+            )
+        )
     return configs
 
 
@@ -70,7 +72,8 @@ def _build_proposal_prompt(profile: DataProfile) -> str:
     priors = heuristics.get("data_type_priors", {}).get(dt, {})
     rules = heuristics.get("condition_rules", [])
     heuristic_text = json.dumps(
-        {"priors": priors, "rules": rules}, indent=2,
+        {"priors": priors, "rules": rules},
+        indent=2,
     )
 
     return prompts["proposal"].format(

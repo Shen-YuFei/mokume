@@ -11,7 +11,13 @@ import click
 import pandas as pd
 
 from mokume.io.parquet import create_anndata, combine_ibaq_tsv_files
-from mokume.core.constants import SAMPLE_ID_REGEX, SAMPLE_ID, PROTEIN_NAME, IBAQ, IBAQ_BEC
+from mokume.core.constants import (
+    SAMPLE_ID_REGEX,
+    SAMPLE_ID,
+    PROTEIN_NAME,
+    IBAQ,
+    IBAQ_BEC,
+)
 from mokume.postprocessing.reshape import pivot_wider, pivot_longer
 from mokume.postprocessing.batch_correction import apply_batch_correction
 
@@ -31,7 +37,9 @@ def is_valid_sample_id(
     elif isinstance(samples, pd.Series):
         samples = samples.tolist()
 
-    invalid_samples = [sample for sample in samples if not sample_pattern.fullmatch(sample)]
+    invalid_samples = [
+        sample for sample in samples if not sample_pattern.fullmatch(sample)
+    ]
 
     if invalid_samples:
         logger.error("The following sample IDs are invalid:")
@@ -71,7 +79,9 @@ def run_batch_correction(
     logger.info(f"Loading iBAQ data from TSV files in folder '{folder}'")
 
     try:
-        df_ibaq = combine_ibaq_tsv_files(folder, pattern=pattern, comment=comment, sep=sep)
+        df_ibaq = combine_ibaq_tsv_files(
+            folder, pattern=pattern, comment=comment, sep=sep
+        )
     except Exception as e:
         raise ValueError(f"Failed to load input files: {str(e)}")
 
@@ -174,7 +184,11 @@ def run_batch_correction(
     default=PROTEIN_NAME,
 )
 @click.option(
-    "-ibaq", "--ibaq_raw_column", help="Name of the raw iBAQ column", required=False, default=IBAQ
+    "-ibaq",
+    "--ibaq_raw_column",
+    help="Name of the raw iBAQ column",
+    required=False,
+    default=IBAQ,
 )
 @click.option(
     "--ibaq_corrected_column",

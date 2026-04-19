@@ -47,9 +47,7 @@ def canonicalize_tissue(raw: str) -> str | None:
     return _TISSUE_SYNONYMS.get(canonical, canonical)
 
 
-def harmonize_tissues(
-    meta: pd.DataFrame, *, min_samples: int = 2
-) -> pd.DataFrame:
+def harmonize_tissues(meta: pd.DataFrame, *, min_samples: int = 2) -> pd.DataFrame:
     """Canonicalize tissue labels and drop rare tissues.
 
     Parameters
@@ -85,7 +83,6 @@ def harmonize_tissues(
             list(dropped),
         )
     return meta[meta["tissue"].isin(keep)].copy()
-
 
 
 def log2_median_normalize(mat: pd.DataFrame) -> pd.DataFrame:

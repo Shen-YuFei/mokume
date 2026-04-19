@@ -37,7 +37,9 @@ def analyse_sdrf(
     label, channel_set = QuantificationCategory.classify(labels)
     if label in (QuantificationCategory.TMT, QuantificationCategory.ITRAQ):
         choice_df = (
-            pd.DataFrame.from_dict(channel_set.channels(), orient="index", columns=[CHANNEL])
+            pd.DataFrame.from_dict(
+                channel_set.channels(), orient="index", columns=[CHANNEL]
+            )
             .reset_index()
             .rename(columns={"index": "comment[label]"})
         )

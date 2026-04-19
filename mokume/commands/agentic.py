@@ -37,27 +37,59 @@ def agentic_cmd():
 
 
 @agentic_cmd.command("optimize")
-@click.option("--protein-matrix", required=True, type=click.Path(exists=True),
-              help="Protein intensity matrix (TSV/CSV, first col = protein ID).")
-@click.option("--sdrf", required=True, type=click.Path(exists=True),
-              help="SDRF file for condition mapping.")
-@click.option("--contrasts", required=True,
-              help="Contrasts to test, comma-separated (e.g. 'A vs B,A vs C').")
-@click.option("--ground-truth", default=None, type=click.Path(exists=True),
-              help="File with ground truth protein IDs (one per line).")
-@click.option("--expected-fc", default=None, type=click.Path(exists=True),
-              help="YAML file with expected log2FC per contrast.")
+@click.option(
+    "--protein-matrix",
+    required=True,
+    type=click.Path(exists=True),
+    help="Protein intensity matrix (TSV/CSV, first col = protein ID).",
+)
+@click.option(
+    "--sdrf",
+    required=True,
+    type=click.Path(exists=True),
+    help="SDRF file for condition mapping.",
+)
+@click.option(
+    "--contrasts",
+    required=True,
+    help="Contrasts to test, comma-separated (e.g. 'A vs B,A vs C').",
+)
+@click.option(
+    "--ground-truth",
+    default=None,
+    type=click.Path(exists=True),
+    help="File with ground truth protein IDs (one per line).",
+)
+@click.option(
+    "--expected-fc",
+    default=None,
+    type=click.Path(exists=True),
+    help="YAML file with expected log2FC per contrast.",
+)
 @click.option("--max-rounds", default=5, type=int, help="Max optimization rounds.")
 @click.option("--max-experiments", default=30, type=int, help="Max total experiments.")
-@click.option("--llm-base-url", default=None, envvar="OPENAI_BASE_URL",
-              help="OpenAI-compatible API base URL (e.g. https://api.deepseek.com).")
-@click.option("--llm-api-key", default=None, envvar="OPENAI_API_KEY",
-              help="API key for the LLM service. Also reads OPENAI_API_KEY env var.")
+@click.option(
+    "--llm-base-url",
+    default=None,
+    envvar="OPENAI_BASE_URL",
+    help="OpenAI-compatible API base URL (e.g. https://api.deepseek.com).",
+)
+@click.option(
+    "--llm-api-key",
+    default=None,
+    envvar="OPENAI_API_KEY",
+    help="API key for the LLM service. Also reads OPENAI_API_KEY env var.",
+)
 @click.option("--llm-model", default="deepseek-chat", help="LLM model name.")
-@click.option("--no-llm", is_flag=True, default=False,
-              help="Disable LLM, use rule-based mode only.")
-@click.option("--output-dir", "-o", default="./optimization",
-              help="Output directory for results.")
+@click.option(
+    "--no-llm",
+    is_flag=True,
+    default=False,
+    help="Disable LLM, use rule-based mode only.",
+)
+@click.option(
+    "--output-dir", "-o", default="./optimization", help="Output directory for results."
+)
 def optimize_cmd(**kwargs):
     """Run agentic optimization for differential expression analysis."""
     pm = kwargs["protein_matrix"]
@@ -68,7 +100,8 @@ def optimize_cmd(**kwargs):
     gt_set = _load_ground_truth(kwargs["ground_truth"])
 
     config = AgenticConfig(
-        sdrf=kwargs["sdrf"], protein_matrix=pm,
+        sdrf=kwargs["sdrf"],
+        protein_matrix=pm,
         ground_truth=kwargs["ground_truth"],
         expected_fc=kwargs["expected_fc"],
         max_rounds=kwargs["max_rounds"],

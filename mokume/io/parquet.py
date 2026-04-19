@@ -62,7 +62,9 @@ def create_anndata(
     if missing:
         raise ValueError(f"The following required columns are missing: {missing}")
 
-    df_matrix = pivot_wider(df, row_name=obs_col, col_name=var_col, values=value_col, fillna=True)
+    df_matrix = pivot_wider(
+        df, row_name=obs_col, col_name=var_col, values=value_col, fillna=True
+    )
     if df_matrix.empty:
         raise ValueError("Pivot operation resulted in an empty DataFrame")
     if df_matrix.shape[0] == 0 or df_matrix.shape[1] == 0:
@@ -74,7 +76,9 @@ def create_anndata(
         var=df_matrix.columns.to_frame(),
     )
 
-    def add_metadata(metadata_df: pd.DataFrame, key: str, cols: List[str]) -> pd.DataFrame:
+    def add_metadata(
+        metadata_df: pd.DataFrame, key: str, cols: List[str]
+    ) -> pd.DataFrame:
         for col in cols:
             if col not in df.columns:
                 warnings.warn(f"Column '{col}' not found. Skipping.")

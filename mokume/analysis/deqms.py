@@ -129,9 +129,12 @@ def spectra_count_ebayes(inputs: _DEqMSInputs) -> dict:
     sca_p = 2.0 * stats.t.sf(np.abs(sca_t), df=post_df)
 
     return {
-        "sca_t": sca_t, "sca_p": sca_p,
-        "post_var": post_var, "prior_var": s02,
-        "d0": d0, "post_df": post_df,
+        "sca_t": sca_t,
+        "sca_p": sca_p,
+        "post_var": post_var,
+        "prior_var": s02,
+        "d0": d0,
+        "post_df": post_df,
     }
 
 
@@ -157,19 +160,28 @@ def _collect_deqms_stats(
         count = 1
         if peptide_counts is not None and protein in peptide_counts.index:
             count = peptide_counts.loc[protein]
-        rows.append({
-            "ProteinName": protein, "log2FC": ma - mb,
-            f"mean_{cond_a}": ma, f"mean_{cond_b}": mb,
-            "n_a": na, "n_b": nb,
-            "s2": ss / df_res, "df_residual": df_res,
-            "stdev_unscaled": np.sqrt(1.0 / na + 1.0 / nb),
-            "peptide_count": count,
-        })
+        rows.append(
+            {
+                "ProteinName": protein,
+                "log2FC": ma - mb,
+                f"mean_{cond_a}": ma,
+                f"mean_{cond_b}": mb,
+                "n_a": na,
+                "n_b": nb,
+                "s2": ss / df_res,
+                "df_residual": df_res,
+                "stdev_unscaled": np.sqrt(1.0 / na + 1.0 / nb),
+                "peptide_count": count,
+            }
+        )
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
 def _finalize_deqms(
-    stats_df: pd.DataFrame, result: dict, cond_a: str, cond_b: str,
+    stats_df: pd.DataFrame,
+    result: dict,
+    cond_a: str,
+    cond_b: str,
 ) -> pd.DataFrame:
     """Attach eBayes results and apply BH correction."""
     for key in ("sca_t", "post_var", "prior_var", "d0", "post_df"):
@@ -179,21 +191,36 @@ def _finalize_deqms(
     valid = np.isfinite(stats_df["sca_pvalue"])
     adj = np.full(len(stats_df), np.nan)
     if valid.any():
-        adj[valid] = multipletests(stats_df.loc[valid, "sca_pvalue"].values, method="fdr_bh")[1]
+        adj[valid] = multipletests(
+            stats_df.loc[valid, "sca_pvalue"].values, method="fdr_bh"
+        )[1]
     stats_df["sca_adj_pvalue"] = adj
     stats_df["pvalue"] = stats_df["sca_pvalue"]
     stats_df["adj_pvalue"] = stats_df["sca_adj_pvalue"]
 
     cols = [
-        "ProteinName", "log2FC", "pvalue", "adj_pvalue",
-        "sca_t", "sca_pvalue", "sca_adj_pvalue",
-        f"mean_{cond_a}", f"mean_{cond_b}",
-        "n_a", "n_b", "peptide_count",
-        "post_var", "prior_var", "d0", "post_df",
+        "ProteinName",
+        "log2FC",
+        "pvalue",
+        "adj_pvalue",
+        "sca_t",
+        "sca_pvalue",
+        "sca_adj_pvalue",
+        f"mean_{cond_a}",
+        f"mean_{cond_b}",
+        "n_a",
+        "n_b",
+        "peptide_count",
+        "post_var",
+        "prior_var",
+        "d0",
+        "post_df",
     ]
-    return stats_df[[c for c in cols if c in stats_df.columns]].sort_values(
-        "adj_pvalue"
-    ).reset_index(drop=True)
+    return (
+        stats_df[[c for c in cols if c in stats_df.columns]]
+        .sort_values("adj_pvalue")
+        .reset_index(drop=True)
+    )
 
 
 def run_deqms(

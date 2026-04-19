@@ -24,17 +24,35 @@ def _overlay_gmm_curves(ax, gmm, x_upper: float) -> None:
     x_grid = np.linspace(0, x_upper, 500)
     p_bg = gmm.bg_weight * _norm.pdf(x_grid, gmm.bg_mean, gmm.bg_std)
     p_sp = gmm.sp_weight * _norm.pdf(x_grid, gmm.sp_mean, gmm.sp_std)
-    ax.plot(x_grid, p_bg, "--", color="#1565C0", lw=1.5,
-            label=f"Background (\u03bc={gmm.bg_mean:.2f})")
-    ax.plot(x_grid, p_sp, "--", color="#C62828", lw=1.5,
-            label=f"Specific (\u03bc={gmm.sp_mean:.2f})")
-    ax.plot(x_grid, p_bg + p_sp, "-", color="#222", lw=2,
-            label="GMM mixture", alpha=0.7)
+    ax.plot(
+        x_grid,
+        p_bg,
+        "--",
+        color="#1565C0",
+        lw=1.5,
+        label=f"Background (\u03bc={gmm.bg_mean:.2f})",
+    )
+    ax.plot(
+        x_grid,
+        p_sp,
+        "--",
+        color="#C62828",
+        lw=1.5,
+        label=f"Specific (\u03bc={gmm.sp_mean:.2f})",
+    )
+    ax.plot(
+        x_grid, p_bg + p_sp, "-", color="#222", lw=2, label="GMM mixture", alpha=0.7
+    )
 
 
 def _plot_histogram_panel(
-    ax, max_ts, categories,
-    ts_enriched, ts_specific, ts_housekeeping, gmm,
+    ax,
+    max_ts,
+    categories,
+    ts_enriched,
+    ts_specific,
+    ts_housekeeping,
+    gmm,
 ) -> None:
     """Panel A: TS score histogram with threshold lines and optional GMM."""
     n_specific = int((categories == "tissue-specific").sum())
@@ -46,22 +64,35 @@ def _plot_histogram_panel(
 
     use_density = gmm is not None
     ax.hist(
-        max_ts.clip(upper=x_upper).values, bins=50,
-        color="#5C6BC0", edgecolor="white", linewidth=0.5, alpha=0.6,
+        max_ts.clip(upper=x_upper).values,
+        bins=50,
+        color="#5C6BC0",
+        edgecolor="white",
+        linewidth=0.5,
+        alpha=0.6,
         density=use_density,
     )
     ax.axvline(
-        ts_specific, color="#E53935", linestyle="--", linewidth=1.5,
+        ts_specific,
+        color="#E53935",
+        linestyle="--",
+        linewidth=1.5,
         label=f"Tissue-specific TS≥{ts_specific:.2f} (n={n_specific})",
     )
     ax.axvline(
-        ts_enriched, color="#FF9800", linestyle="--", linewidth=1.5,
+        ts_enriched,
+        color="#FF9800",
+        linestyle="--",
+        linewidth=1.5,
         label=f"Tissue-enriched TS≥{ts_enriched:.2f} (n={n_enriched})",
     )
     if ts_housekeeping is not None:
         n_hk = int((categories == "house-keeping").sum())
         ax.axvline(
-            ts_housekeeping, color="#43A047", linestyle="-.", linewidth=1.5,
+            ts_housekeeping,
+            color="#43A047",
+            linestyle="-.",
+            linewidth=1.5,
             label=f"House-keeping |TS|<{ts_housekeeping:.2f} (n={n_hk})",
         )
     if gmm is not None:
@@ -71,15 +102,23 @@ def _plot_histogram_panel(
     ax.set_xlim(left=left_bound, right=x_upper * 1.05)
     if n_outliers > 0:
         ax.text(
-            0.97, 0.95, f"{n_outliers} proteins with TS > {x_upper:.1f}\n(clipped)",
-            transform=ax.transAxes, ha="right", va="top",
-            fontsize=8, color="#777", style="italic",
+            0.97,
+            0.95,
+            f"{n_outliers} proteins with TS > {x_upper:.1f}\n(clipped)",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color="#777",
+            style="italic",
         )
     ax.set_xlabel("AdaTiSS max TS score", fontsize=11)
     ax.set_ylabel("Density" if use_density else "Number of proteins", fontsize=11)
     ax.set_title(
         "A. AdaTiSS tissue specificity score distribution",
-        fontsize=12, fontweight="bold", loc="left",
+        fontsize=12,
+        fontweight="bold",
+        loc="left",
     )
     ax.legend(fontsize=9, frameon=True)
     ax.spines["top"].set_visible(False)
@@ -87,7 +126,8 @@ def _plot_histogram_panel(
 
 
 def _compute_specific_counts(
-    ts_df: pd.DataFrame, unique_tissues: list[str],
+    ts_df: pd.DataFrame,
+    unique_tissues: list[str],
 ) -> pd.Series:
     """Count tissue-specific proteins per tissue."""
     categories = ts_df.get("enrichment_category", pd.Series(dtype=str))
@@ -104,22 +144,30 @@ def _compute_specific_counts(
 
 
 def _plot_bar_panel(
-    ax, specific_per_tissue: pd.Series, ts_specific: float,
+    ax,
+    specific_per_tissue: pd.Series,
+    ts_specific: float,
 ) -> None:
     """Panel B: horizontal bar chart of tissue-specific protein counts."""
     spt = specific_per_tissue.iloc[::-1]
     ax.barh(
-        range(len(spt)), spt.values,
-        color="#5C6BC0", edgecolor="white", linewidth=0.5,
+        range(len(spt)),
+        spt.values,
+        color="#5C6BC0",
+        edgecolor="white",
+        linewidth=0.5,
     )
     ax.set_yticks(range(len(spt)))
     ax.set_yticklabels(spt.index, fontsize=7)
     ax.set_xlabel(
-        f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})", fontsize=9,
+        f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})",
+        fontsize=9,
     )
     ax.set_title(
         "B. Tissue-specific proteins per tissue",
-        fontsize=12, fontweight="bold", loc="left",
+        fontsize=12,
+        fontweight="bold",
+        loc="left",
     )
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -162,11 +210,18 @@ def plot_ts_distribution(
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
     _plot_histogram_panel(
-        axes[0], max_ts, categories,
-        ts_enriched, ts_specific, ts_housekeeping, gmm,
+        axes[0],
+        max_ts,
+        categories,
+        ts_enriched,
+        ts_specific,
+        ts_housekeeping,
+        gmm,
     )
     _plot_bar_panel(
-        axes[1], _compute_specific_counts(ts_df, unique_tissues), ts_specific,
+        axes[1],
+        _compute_specific_counts(ts_df, unique_tissues),
+        ts_specific,
     )
 
     plt.tight_layout()
@@ -197,17 +252,22 @@ def plot_specific_per_tissue(
 
     spt = specific_per_tissue.iloc[::-1]
     ax.barh(
-        range(len(spt)), spt.values,
-        color="#5C6BC0", edgecolor="white", linewidth=0.5,
+        range(len(spt)),
+        spt.values,
+        color="#5C6BC0",
+        edgecolor="white",
+        linewidth=0.5,
     )
     ax.set_yticks(range(len(spt)))
     ax.set_yticklabels(spt.index, fontsize=8)
     ax.set_xlabel(
-        f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})", fontsize=10,
+        f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})",
+        fontsize=10,
     )
     ax.set_title(
         "Tissue-specific proteins per tissue (AdaTiSS)",
-        fontsize=13, fontweight="bold",
+        fontsize=13,
+        fontweight="bold",
     )
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -218,11 +278,14 @@ def plot_specific_per_tissue(
 
     plt.tight_layout()
     fig.savefig(
-        out_dir / "specific_per_tissue.png", dpi=dpi, bbox_inches="tight",
+        out_dir / "specific_per_tissue.png",
+        dpi=dpi,
+        bbox_inches="tight",
     )
     if save_pdf:
         fig.savefig(
-            out_dir / "specific_per_tissue.pdf", bbox_inches="tight",
+            out_dir / "specific_per_tissue.pdf",
+            bbox_inches="tight",
         )
     plt.close()
     logger.info("Saved specific_per_tissue.png")

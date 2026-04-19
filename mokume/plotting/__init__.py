@@ -48,7 +48,10 @@ def __getattr__(name):
         _require_plotting()
         from mokume.plotting.distributions import plot_distributions, plot_box_plot
 
-        return {"plot_distributions": plot_distributions, "plot_box_plot": plot_box_plot}[name]
+        return {
+            "plot_distributions": plot_distributions,
+            "plot_box_plot": plot_box_plot,
+        }[name]
 
     if name in (
         "plot_pca",

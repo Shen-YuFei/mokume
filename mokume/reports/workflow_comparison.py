@@ -63,11 +63,13 @@ def generate_comparison_report(
             de_results=wf.get("de_results"),
             is_log2=wf.get("is_log2", False),
         )
-        workflow_metrics.append({
-            "name": wf["name"],
-            "metrics": metrics,
-            "de_results": wf.get("de_results"),
-        })
+        workflow_metrics.append(
+            {
+                "name": wf["name"],
+                "metrics": metrics,
+                "de_results": wf.get("de_results"),
+            }
+        )
 
     # Compute cross-workflow concordance
     concordance = _compute_concordance(workflow_metrics)
@@ -79,7 +81,11 @@ def generate_comparison_report(
 
     # Build HTML
     html = _build_comparison_html(
-        title, workflow_metrics, concordance, marker_results, marker_genes,
+        title,
+        workflow_metrics,
+        concordance,
+        marker_results,
+        marker_genes,
     )
 
     with open(output_html, "w") as f:
@@ -116,11 +122,14 @@ def _compute_concordance(workflow_metrics):
             if shared_proteins:
                 merged = de_a[["ProteinName", "log2FC"]].merge(
                     de_b[["ProteinName", "log2FC"]],
-                    on="ProteinName", suffixes=("_a", "_b"),
+                    on="ProteinName",
+                    suffixes=("_a", "_b"),
                 )
                 fc_corr = float(merged["log2FC_a"].corr(merged["log2FC_b"]))
                 # Rank correlation
-                fc_rank_corr = float(merged["log2FC_a"].corr(merged["log2FC_b"], method="spearman"))
+                fc_rank_corr = float(
+                    merged["log2FC_a"].corr(merged["log2FC_b"], method="spearman")
+                )
                 fc_data = {
                     "proteins": merged["ProteinName"].tolist(),
                     "fc_a": merged["log2FC_a"].tolist(),
@@ -137,11 +146,18 @@ def _compute_concordance(workflow_metrics):
 
             # Direction concordance: of shared DE genes, how many agree on direction?
             if overlap:
-                merged_sig = de_a[de_a["ProteinName"].isin(overlap)][["ProteinName", "significance"]].merge(
-                    de_b[de_b["ProteinName"].isin(overlap)][["ProteinName", "significance"]],
-                    on="ProteinName", suffixes=("_a", "_b"),
+                merged_sig = de_a[de_a["ProteinName"].isin(overlap)][
+                    ["ProteinName", "significance"]
+                ].merge(
+                    de_b[de_b["ProteinName"].isin(overlap)][
+                        ["ProteinName", "significance"]
+                    ],
+                    on="ProteinName",
+                    suffixes=("_a", "_b"),
                 )
-                direction_agree = (merged_sig["significance_a"] == merged_sig["significance_b"]).sum()
+                direction_agree = (
+                    merged_sig["significance_a"] == merged_sig["significance_b"]
+                ).sum()
                 direction_concordance = float(direction_agree / len(merged_sig))
             else:
                 direction_concordance = float("nan")
@@ -152,7 +168,9 @@ def _compute_concordance(workflow_metrics):
                 "overlap": len(overlap),
                 "only_a": len(only_a),
                 "only_b": len(only_b),
-                "jaccard": float(len(overlap) / len(sig_a | sig_b)) if (sig_a | sig_b) else 0,
+                "jaccard": float(len(overlap) / len(sig_a | sig_b))
+                if (sig_a | sig_b)
+                else 0,
                 "fc_pearson": fc_corr,
                 "fc_spearman": fc_rank_corr,
                 "direction_concordance": direction_concordance,
@@ -221,7 +239,9 @@ def _compute_marker_results(workflow_metrics, marker_genes):
     return results
 
 
-def _build_comparison_html(title, workflow_metrics, concordance, marker_results, marker_genes):
+def _build_comparison_html(
+    title, workflow_metrics, concordance, marker_results, marker_genes
+):
     """Build the comparison report HTML."""
     n_workflows = len(workflow_metrics)
 
@@ -242,21 +262,23 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
         all_corrs = list(m["intra_condition_corr"].values())
         median_corr = float(np.nanmedian(all_corrs)) if all_corrs else float("nan")
 
-        summary_rows.append({
-            "name": wf["name"],
-            "n_proteins": s["n_proteins"],
-            "silhouette": sil["score"],
-            "var_condition": pvca["condition_pct"],
-            "var_plex": pvca["plex_pct"],
-            "median_cv": median_cv,
-            "replicate_corr": median_corr,
-            "n_de": de_q.get("n_de", 0),
-            "n_up": de_q.get("n_up", 0),
-            "n_down": de_q.get("n_down", 0),
-            "pi1": de_q.get("pi1_estimate", float("nan")),
-            "effect_size": de_q.get("effect_size", {}).get("median", 0),
-            "direction_balance": de_q.get("direction_balance", float("nan")),
-        })
+        summary_rows.append(
+            {
+                "name": wf["name"],
+                "n_proteins": s["n_proteins"],
+                "silhouette": sil["score"],
+                "var_condition": pvca["condition_pct"],
+                "var_plex": pvca["plex_pct"],
+                "median_cv": median_cv,
+                "replicate_corr": median_corr,
+                "n_de": de_q.get("n_de", 0),
+                "n_up": de_q.get("n_up", 0),
+                "n_down": de_q.get("n_down", 0),
+                "pi1": de_q.get("pi1_estimate", float("nan")),
+                "effect_size": de_q.get("effect_size", {}).get("median", 0),
+                "direction_balance": de_q.get("direction_balance", float("nan")),
+            }
+        )
 
     # Build PCA data per workflow
     pca_data = {}
@@ -267,7 +289,8 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
     concordance_json = {}
     for key, data in concordance.items():
         concordance_json[key] = {
-            k: v for k, v in data.items()
+            k: v
+            for k, v in data.items()
             if k != "fc_scatter"  # exclude large data from main JSON
         }
 
@@ -280,7 +303,9 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
     # Marker gene table
     marker_html = ""
     if marker_results and marker_genes:
-        marker_html = _build_marker_table(marker_results, marker_genes, workflow_metrics)
+        marker_html = _build_marker_table(
+            marker_results, marker_genes, workflow_metrics
+        )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -326,7 +351,9 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
 
 <div class="header">
     <h1>{html.escape(title)}</h1>
-    <p>Comparing {n_workflows} quantification workflows. Higher silhouette, higher condition variance,
+    <p>Comparing {
+        n_workflows
+    } quantification workflows. Higher silhouette, higher condition variance,
        lower plex variance, and lower CV indicate better performance.</p>
 </div>
 
@@ -396,7 +423,8 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
     </div>
 
     <!-- Section 4: Known Markers -->
-    {f'''
+    {
+        f'''
     <div class="section">
         <h2 class="section-title">Known Marker Gene Panel</h2>
         <div class="card">
@@ -407,7 +435,10 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_results,
             {marker_html}
         </div>
     </div>
-    ''' if marker_html else ''}
+    '''
+        if marker_html
+        else ""
+    }
 
 </div>
 
@@ -627,7 +658,11 @@ def _build_marker_table(marker_results, marker_genes, workflow_metrics):
             if r.get("log2FC") is not None:
                 fc = f"{r['log2FC']:.2f}"
                 sig = r["significance"]
-                css = "good" if r.get("correct_direction") else ("bad" if r.get("detected") else "neutral")
+                css = (
+                    "good"
+                    if r.get("correct_direction")
+                    else ("bad" if r.get("detected") else "neutral")
+                )
                 row += f"<td>{fc}</td><td class='{css}'>{sig}</td>"
             else:
                 row += "<td>-</td><td class='neutral'>NOT FOUND</td>"

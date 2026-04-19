@@ -43,7 +43,6 @@ from mokume.tissuemap.enrichment import (
 logger = logging.getLogger(__name__)
 
 
-
 @dataclass
 class PopulationParams:
     """Fitted population parameters for one protein."""
@@ -138,7 +137,6 @@ _SIGMA_FLOOR_ABSOLUTE_MIN = 0.01
 _SIGMA_FLOOR_PERCENTILE = 5
 
 
-
 def _resolve_sigma_floor(
     log2_matrix: np.ndarray,
     configured: float | None,
@@ -183,7 +181,9 @@ def _resolve_sigma_floor(
 
     floor = float(np.percentile(mads, _SIGMA_FLOOR_PERCENTILE))
     floor = max(floor, _SIGMA_FLOOR_ABSOLUTE_MIN)
-    logger.info("Auto sigma_floor: %.4f (5th percentile of %d protein MADs)", floor, len(mads))
+    logger.info(
+        "Auto sigma_floor: %.4f (5th percentile of %d protein MADs)", floor, len(mads)
+    )
     return floor
 
 
@@ -207,12 +207,16 @@ _GMM_POSTERIOR_CUTOFF = 0.95
 
 
 def _fallback_gmm(
-    fallback_enriched: float, fallback_specific: float,
-    means=None, stds=None, weights=None,
+    fallback_enriched: float,
+    fallback_specific: float,
+    means=None,
+    stds=None,
+    weights=None,
 ) -> GMMThresholds:
     """Return GMMThresholds with fixed fallback values."""
     return GMMThresholds(
-        ts_enriched=fallback_enriched, ts_specific=fallback_specific,
+        ts_enriched=fallback_enriched,
+        ts_specific=fallback_specific,
         bg_mean=float(means[0]) if means is not None else 0.0,
         bg_std=float(stds[0]) if stds is not None else 1.0,
         bg_weight=float(weights[0]) if weights is not None else 0.5,
@@ -223,7 +227,10 @@ def _fallback_gmm(
 
 
 def _derive_gmm_thresholds(
-    valid: np.ndarray, means, stds, weights,
+    valid: np.ndarray,
+    means,
+    stds,
+    weights,
 ) -> tuple[float, float]:
     """Compute enriched/specific thresholds from GMM components."""
     bg_idx = int(np.argmin(means))
@@ -238,9 +245,14 @@ def _derive_gmm_thresholds(
     sign_changes = np.where(np.diff(np.sign(diff)))[0]
     intersections = x_grid[sign_changes]
     between = intersections[
-        (intersections > means[bg_idx]) & (intersections < means[sp_idx] + 3 * stds[sp_idx])
+        (intersections > means[bg_idx])
+        & (intersections < means[sp_idx] + 3 * stds[sp_idx])
     ]
-    ts_enriched = float(between[0]) if len(between) > 0 else float(means[bg_idx] + 2 * stds[bg_idx])
+    ts_enriched = (
+        float(between[0])
+        if len(between) > 0
+        else float(means[bg_idx] + 2 * stds[bg_idx])
+    )
 
     # Specific: posterior P(specific|x) > cutoff
     posterior_sp = p_sp / (p_bg + p_sp + 1e-12)
@@ -260,7 +272,9 @@ def _auto_thresholds_gmm(
     """Fit a 2-component GMM and derive enriched/specific thresholds."""
     valid = max_ts[np.isfinite(max_ts)]
     if len(valid) < _GMM_MIN_PROTEINS:
-        logger.warning("Too few proteins (%d) for GMM, using fixed thresholds", len(valid))
+        logger.warning(
+            "Too few proteins (%d) for GMM, using fixed thresholds", len(valid)
+        )
         return _fallback_gmm(fallback_enriched, fallback_specific)
 
     gmm = GaussianMixture(n_components=2, random_state=42, max_iter=_GMM_MAX_ITER)
@@ -280,18 +294,26 @@ def _auto_thresholds_gmm(
     ts_enriched, ts_specific = _derive_gmm_thresholds(valid, means, stds, weights)
 
     result = GMMThresholds(
-        ts_enriched=ts_enriched, ts_specific=ts_specific,
-        bg_mean=float(means[bg_idx]), bg_std=float(stds[bg_idx]),
+        ts_enriched=ts_enriched,
+        ts_specific=ts_specific,
+        bg_mean=float(means[bg_idx]),
+        bg_std=float(stds[bg_idx]),
         bg_weight=float(weights[bg_idx]),
-        sp_mean=float(means[sp_idx]), sp_std=float(stds[sp_idx]),
+        sp_mean=float(means[sp_idx]),
+        sp_std=float(stds[sp_idx]),
         sp_weight=float(weights[sp_idx]),
     )
     logger.info(
         "GMM auto thresholds: enriched=%.3f, specific=%.3f "
         "(bg: mu=%.2f, sigma=%.2f, w=%.1f%%; sp: mu=%.2f, sigma=%.2f, w=%.1f%%)",
-        result.ts_enriched, result.ts_specific,
-        result.bg_mean, result.bg_std, result.bg_weight * 100,
-        result.sp_mean, result.sp_std, result.sp_weight * 100,
+        result.ts_enriched,
+        result.ts_specific,
+        result.bg_mean,
+        result.bg_std,
+        result.bg_weight * 100,
+        result.sp_mean,
+        result.sp_std,
+        result.sp_weight * 100,
     )
     return result
 
@@ -315,7 +337,8 @@ def _compute_ts_vectorized_mad(
         warnings.simplefilter("ignore", RuntimeWarning)
         mu = np.nanmedian(log2_matrix, axis=0)  # (n_proteins,)
         mad = np.nanmedian(
-            np.abs(log2_matrix - mu[np.newaxis, :]), axis=0,
+            np.abs(log2_matrix - mu[np.newaxis, :]),
+            axis=0,
         )  # (n_proteins,)
     sigma = np.maximum(mad, sigma_floor)  # (n_proteins,)
 
@@ -428,23 +451,36 @@ def _resolve_thresholds(
         ts_enriched = config.ts_enriched_threshold
     else:
         ts_enriched = max(gmm_result.ts_enriched, FLOOR_ENRICHED)
-        logger.info("Auto enriched threshold: %.3f (GMM=%.3f, floor=%.1f)",
-                     ts_enriched, gmm_result.ts_enriched, FLOOR_ENRICHED)
+        logger.info(
+            "Auto enriched threshold: %.3f (GMM=%.3f, floor=%.1f)",
+            ts_enriched,
+            gmm_result.ts_enriched,
+            FLOOR_ENRICHED,
+        )
 
     if config.ts_specific_threshold is not None:
         ts_specific = config.ts_specific_threshold
     else:
         ts_specific = max(gmm_result.ts_specific, FLOOR_SPECIFIC)
-        logger.info("Auto specific threshold: %.3f (GMM=%.3f, floor=%.1f)",
-                     ts_specific, gmm_result.ts_specific, FLOOR_SPECIFIC)
+        logger.info(
+            "Auto specific threshold: %.3f (GMM=%.3f, floor=%.1f)",
+            ts_specific,
+            gmm_result.ts_specific,
+            FLOOR_SPECIFIC,
+        )
 
     if config.ts_housekeeping_threshold is not None:
         ts_housekeeping = config.ts_housekeeping_threshold
     else:
         ts_hk_raw = gmm_result.bg_mean + gmm_result.bg_std
         ts_housekeeping = max(ts_hk_raw, FLOOR_HOUSEKEEPING)
-        logger.info("Auto housekeeping threshold: %.3f (bg_mean=%.2f + bg_std=%.2f, floor=%.1f)",
-                     ts_housekeeping, gmm_result.bg_mean, gmm_result.bg_std, FLOOR_HOUSEKEEPING)
+        logger.info(
+            "Auto housekeeping threshold: %.3f (bg_mean=%.2f + bg_std=%.2f, floor=%.1f)",
+            ts_housekeeping,
+            gmm_result.bg_mean,
+            gmm_result.bg_std,
+            FLOOR_HOUSEKEEPING,
+        )
 
     return ts_enriched, ts_specific, ts_housekeeping, gmm_result
 
@@ -475,8 +511,10 @@ def _finalize_ts_df(
     unique_tissues: list[str],
     tissue_labels: np.ndarray,
     log2_matrix: np.ndarray,
-    ts_enriched: float, ts_specific: float,
-    ts_housekeeping: float, gmm_result,
+    ts_enriched: float,
+    ts_specific: float,
+    ts_housekeeping: float,
+    gmm_result,
 ) -> None:
     """Add enrichment categories and threshold attrs to ts_df (in-place)."""
     ts_df["enrichment_category"] = _classify_enrichment(
@@ -513,27 +551,44 @@ def compute_ts_scores(
 
     if config.use_pure_mad:
         ts_matrix, pop_params = _compute_ts_vectorized_mad(
-            log2_matrix, tissue_labels, unique_tissues, sigma_floor,
+            log2_matrix,
+            tissue_labels,
+            unique_tissues,
+            sigma_floor,
         )
     else:
         ts_matrix, pop_params = _compute_ts_loop(
-            log2_matrix, tissue_labels, unique_tissues, sigma_floor,
+            log2_matrix,
+            tissue_labels,
+            unique_tissues,
+            sigma_floor,
         )
 
     ts_df = _build_ts_dataframe(
-        ts_matrix, protein_ids, unique_tissues, pop_params,
+        ts_matrix,
+        protein_ids,
+        unique_tissues,
+        pop_params,
     )
     ts_enriched, ts_specific, ts_housekeeping, gmm_result = _resolve_thresholds(
-        config, ts_df["max_ts"].dropna().values,
+        config,
+        ts_df["max_ts"].dropna().values,
     )
     _finalize_ts_df(
-        ts_df, unique_tissues, tissue_labels, log2_matrix,
-        ts_enriched, ts_specific, ts_housekeeping, gmm_result,
+        ts_df,
+        unique_tissues,
+        tissue_labels,
+        log2_matrix,
+        ts_enriched,
+        ts_specific,
+        ts_housekeeping,
+        gmm_result,
     )
 
     cats = ts_df["enrichment_category"].value_counts()
-    summary = ", ".join(f"{c}: {cats.get(c, 0)}" for c in
-                        ["tissue-specific", "tissue-enriched", "house-keeping", "other"])
+    summary = ", ".join(
+        f"{c}: {cats.get(c, 0)}"
+        for c in ["tissue-specific", "tissue-enriched", "house-keeping", "other"]
+    )
     logger.info("AdaTiSS TS scores (%d proteins): %s", n_proteins, summary)
     return ts_df
-

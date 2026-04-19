@@ -11,13 +11,15 @@ from mokume.agentic.profiler import profile_data
 
 def _mock_de_result(n=30):
     """Create a fake DE result DataFrame."""
-    return pd.DataFrame({
-        "protein": [f"P{i:05d}" for i in range(n)],
-        "pvalue": [0.001] * 5 + [0.5] * (n - 5),
-        "adj_pvalue": [0.01] * 5 + [0.8] * (n - 5),
-        "log2fc": [3.0] * 5 + [0.1] * (n - 5),
-        "significance": ["UP"] * 5 + ["Not Sig"] * (n - 5),
-    })
+    return pd.DataFrame(
+        {
+            "protein": [f"P{i:05d}" for i in range(n)],
+            "pvalue": [0.001] * 5 + [0.5] * (n - 5),
+            "adj_pvalue": [0.01] * 5 + [0.8] * (n - 5),
+            "log2fc": [3.0] * 5 + [0.1] * (n - 5),
+            "significance": ["UP"] * 5 + ["Not Sig"] * (n - 5),
+        }
+    )
 
 
 def test_optimize_contrast_no_llm(synthetic_protein_df, sample_to_condition):
@@ -35,7 +37,8 @@ def test_optimize_contrast_no_llm(synthetic_protein_df, sample_to_condition):
         sample_to_condition=sample_to_condition,
         contrast=("A", "B"),
         ground_truth={f"P{i:05d}" for i in range(5)},
-        peptide_counts=None, config=config,
+        peptide_counts=None,
+        config=config,
     )
     with patch("mokume.agentic.runner.run_experiment", return_value=_mock_de_result()):
         state = optimize_contrast(ctx, profile)
@@ -61,7 +64,8 @@ def test_optimize_budget_respected(synthetic_protein_df, sample_to_condition):
         sample_to_condition=sample_to_condition,
         contrast=("A", "B"),
         ground_truth=None,
-        peptide_counts=None, config=config,
+        peptide_counts=None,
+        config=config,
     )
     with patch("mokume.agentic.runner.run_experiment", return_value=_mock_de_result()):
         state = optimize_contrast(ctx, profile)

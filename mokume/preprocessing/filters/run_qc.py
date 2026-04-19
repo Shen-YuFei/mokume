@@ -70,9 +70,7 @@ class RunIntensityFilter(BaseFilter):
             run_col = RUN
 
         if col not in df.columns or run_col not in df.columns:
-            logger.warning(
-                "%s: Required columns not found, skipping filter", self.name
-            )
+            logger.warning("%s: Required columns not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
         # Calculate total intensity per run
@@ -146,14 +144,14 @@ class MinFeaturesFilter(BaseFilter):
             run_col = RUN
 
         if run_col not in df.columns:
-            logger.warning(
-                "%s: Run column not found, skipping filter", self.name
-            )
+            logger.warning("%s: Run column not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
         # Count features per run
         feature_counts = df.groupby(run_col).size()
-        passing_runs_features = feature_counts[feature_counts >= self.min_features].index
+        passing_runs_features = feature_counts[
+            feature_counts >= self.min_features
+        ].index
 
         # Count proteins per run if column exists
         if self.protein_column in df.columns and self.min_proteins > 0:
@@ -235,9 +233,7 @@ class MissingRateFilter(BaseFilter):
             run_col = SAMPLE_ID
 
         if col not in df.columns or run_col not in df.columns:
-            logger.warning(
-                "%s: Required columns not found, skipping filter", self.name
-            )
+            logger.warning("%s: Required columns not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
         # Calculate missing rate per run
@@ -320,9 +316,7 @@ class SampleCorrelationFilter(BaseFilter):
             or sample_col not in df.columns
             or self.protein_column not in df.columns
         ):
-            logger.warning(
-                "%s: Required columns not found, skipping filter", self.name
-            )
+            logger.warning("%s: Required columns not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
         # Pivot to wide format for correlation calculation

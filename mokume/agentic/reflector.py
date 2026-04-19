@@ -41,14 +41,16 @@ def _parse_reflection_json(raw: str) -> ReflectionResult:
     data = json.loads(text[start:end])
     next_configs = []
     for item in data.get("next_configs", []):
-        next_configs.append(CandidateConfig(
-            name=item.get("name", "refined"),
-            de_method=item.get("de_method", "deqms"),
-            fdr_method=item.get("fdr_method", "bh"),
-            imputation=item.get("imputation", "none"),
-            log2fc_threshold=float(item.get("log2fc_threshold", 0.5)),
-            reasoning=item.get("reasoning", ""),
-        ))
+        next_configs.append(
+            CandidateConfig(
+                name=item.get("name", "refined"),
+                de_method=item.get("de_method", "deqms"),
+                fdr_method=item.get("fdr_method", "bh"),
+                imputation=item.get("imputation", "none"),
+                log2fc_threshold=float(item.get("log2fc_threshold", 0.5)),
+                reasoning=item.get("reasoning", ""),
+            )
+        )
 
     return ReflectionResult(
         converged=data.get("convergence", False),

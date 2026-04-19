@@ -124,7 +124,9 @@ def plot_tsne(
         Output file path for the saved plot.
     """
     fig, ax = plt.subplots(1, 1, figsize=(20, 10))
-    sns.scatterplot(x=x_col, y=y_col, hue=hue_col, data=df, ax=ax, markers=["o", "+", "x"])
+    sns.scatterplot(
+        x=x_col, y=y_col, hue=hue_col, data=df, ax=ax, markers=["o", "+", "x"]
+    )
     ax.set_xlabel(x_col)
     ax.set_ylabel(y_col)
     ax.set_title(f"{x_col} vs {y_col} with {hue_col} information")

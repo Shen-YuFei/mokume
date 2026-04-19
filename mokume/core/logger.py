@@ -154,7 +154,9 @@ def log_execution_time(
             except Exception as e:
                 end_time = datetime.now()
                 execution_time = end_time - start_time
-                logger.exception(f"Error in {func.__name__} after {execution_time}: {str(e)}")
+                logger.exception(
+                    f"Error in {func.__name__} after {execution_time}: {str(e)}"
+                )
                 raise
 
         return wrapper

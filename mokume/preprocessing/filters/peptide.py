@@ -64,9 +64,7 @@ class PeptideLengthFilter(BaseFilter):
             col = PEPTIDE_SEQUENCE
 
         if col not in df.columns:
-            logger.warning(
-                "%s: Sequence column not found, skipping filter", self.name
-            )
+            logger.warning("%s: Sequence column not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
         # Calculate sequence length (removing modifications if present)
@@ -264,9 +262,7 @@ class MissedCleavageFilter(BaseFilter):
             col = PEPTIDE_CANONICAL
 
         if col not in df.columns:
-            logger.warning(
-                "%s: Sequence column not found, skipping filter", self.name
-            )
+            logger.warning("%s: Sequence column not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
         def count_missed_cleavages(seq):
@@ -409,9 +405,7 @@ class SequencePatternFilter(BaseFilter):
             col = PEPTIDE_CANONICAL
 
         if col not in df.columns:
-            logger.warning(
-                "%s: Sequence column not found, skipping filter", self.name
-            )
+            logger.warning("%s: Sequence column not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
         # Combine compiled patterns into single regex for vectorized matching
@@ -419,7 +413,9 @@ class SequencePatternFilter(BaseFilter):
             return df, self._create_result(input_count, input_count)
 
         combined_pattern = "|".join(p.pattern for p in self._compiled_patterns)
-        mask = ~df[col].fillna("").astype(str).str.contains(combined_pattern, regex=True)
+        mask = ~df[col].fillna("").astype(str).str.contains(
+            combined_pattern, regex=True
+        )
         filtered_df = df[mask].copy()
 
         output_count = len(filtered_df)

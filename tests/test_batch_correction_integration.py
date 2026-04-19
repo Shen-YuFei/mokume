@@ -49,9 +49,7 @@ class TestBatchDetection:
         samples = ["S1", "S2", "S3", "S4", "S5"]
         batch_values = ["A", "A", "B", "B", "C"]
         batches = detect_batches(
-            samples,
-            method="column",
-            batch_column_values=batch_values
+            samples, method="column", batch_column_values=batch_values
         )
 
         assert len(batches) == 5

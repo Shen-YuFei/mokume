@@ -90,6 +90,7 @@ def plot_volcano(
 
     # Legend
     from matplotlib.patches import Patch
+
     n_up = (df["significance"] == "UP").sum()
     n_down = (df["significance"] == "DOWN").sum()
     n_ns = (df["significance"] == "Unchanged").sum()
@@ -198,10 +199,12 @@ def plot_heatmap(
     if intensity_z.shape[0] < 2 or intensity_z.shape[1] < 2:
         fig, ax = plt.subplots(figsize=figsize)
         ax.text(
-            0.5, 0.5,
+            0.5,
+            0.5,
             f"Not enough data for heatmap clustering\n"
             f"({intensity_z.shape[0]} proteins × {intensity_z.shape[1]} samples after filtering)",
-            ha="center", va="center",
+            ha="center",
+            va="center",
         )
         ax.set_title(title)
         if output_file:

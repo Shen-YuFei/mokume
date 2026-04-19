@@ -45,7 +45,9 @@ class WriteCSVTask(Thread):
     _queue: Queue
     _wrote_header: bool
 
-    def __init__(self, path: str, daemon: bool = True, write_options: dict = None, **kwargs):
+    def __init__(
+        self, path: str, daemon: bool = True, write_options: dict = None, **kwargs
+    ):
         """
         Initialize a WriteCSVTask instance.
 
@@ -114,7 +116,9 @@ class WriteCSVTask(Thread):
             self._wrote_header = True
 
             elapsed = time.time() - start_time
-            logger.debug("Wrote %d rows to CSV file %s in %.2f seconds", rows, self.path, elapsed)
+            logger.debug(
+                "Wrote %d rows to CSV file %s in %.2f seconds", rows, self.path, elapsed
+            )
         except Exception as e:
             logger.error("Error writing to CSV file %s: %s", self.path, str(e))
             raise
@@ -233,7 +237,10 @@ class WriteParquetTask(Thread):
 
             elapsed = time.time() - start_time
             logger.debug(
-                "Wrote %d rows to Parquet file %s in %.2f seconds", rows, self.path, elapsed
+                "Wrote %d rows to Parquet file %s in %.2f seconds",
+                rows,
+                self.path,
+                elapsed,
             )
         except Exception as e:
             logger.error("Error writing to Parquet file %s: %s", self.path, str(e))

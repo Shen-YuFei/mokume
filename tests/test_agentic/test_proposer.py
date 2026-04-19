@@ -25,13 +25,13 @@ def test_propose_configs_llm_fallback(synthetic_protein_df, sample_to_condition)
 
 def test_parse_configs_from_json():
     """Parse well-formed LLM JSON response."""
-    raw = '''Here are my suggestions:
+    raw = """Here are my suggestions:
     [
         {"name": "cfg1", "de_method": "deqms", "fdr_method": "ihw",
          "imputation": "none", "log2fc_threshold": 0.5,
          "reasoning": "test", "expected_outcome": "good"}
     ]
-    '''
+    """
     configs = _parse_configs_from_json(raw)
     assert len(configs) == 1
     assert configs[0].de_method == "deqms"

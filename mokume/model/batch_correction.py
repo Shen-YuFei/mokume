@@ -63,7 +63,9 @@ class BatchDetectionMethod(Enum):
             if member.value == name_lower:
                 return member
         valid = [m.value for m in cls]
-        raise ValueError(f"Unknown batch detection method: {name}. Valid options: {valid}")
+        raise ValueError(
+            f"Unknown batch detection method: {name}. Valid options: {valid}"
+        )
 
 
 @dataclass
@@ -121,7 +123,10 @@ class BatchCorrectionConfig:
         if isinstance(self.batch_method, str):
             self.batch_method = BatchDetectionMethod.from_str(self.batch_method)
 
-        if self.batch_method == BatchDetectionMethod.EXPLICIT_COLUMN and not self.batch_column:
+        if (
+            self.batch_method == BatchDetectionMethod.EXPLICIT_COLUMN
+            and not self.batch_column
+        ):
             raise ValueError(
                 "batch_column must be specified when batch_method is EXPLICIT_COLUMN"
             )

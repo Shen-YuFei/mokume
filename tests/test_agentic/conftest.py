@@ -33,8 +33,12 @@ def synthetic_protein_df():
 def sample_to_condition():
     """Map samples to 2 conditions."""
     return {
-        "S1": "A", "S2": "A", "S3": "A",
-        "S4": "B", "S5": "B", "S6": "B",
+        "S1": "A",
+        "S2": "A",
+        "S3": "A",
+        "S4": "B",
+        "S5": "B",
+        "S6": "B",
     }
 
 

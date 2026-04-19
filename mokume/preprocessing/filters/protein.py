@@ -147,9 +147,7 @@ class MinPeptideFilter(BaseFilter):
         else:
             # Fall back to counting rows per protein
             protein_counts = df[self.protein_column].value_counts()
-            passing_proteins = protein_counts[
-                protein_counts >= self.min_peptides
-            ].index
+            passing_proteins = protein_counts[protein_counts >= self.min_peptides].index
 
             filtered_df = df[df[self.protein_column].isin(passing_proteins)].copy()
 
@@ -348,9 +346,9 @@ class RazorPeptideFilter(BaseFilter):
             return df, self._create_result(input_count, input_count)
 
         # Identify razor peptides (peptides mapping to multiple proteins)
-        peptide_protein_counts = (
-            df.groupby(self.peptide_column)[self.protein_column].nunique()
-        )
+        peptide_protein_counts = df.groupby(self.peptide_column)[
+            self.protein_column
+        ].nunique()
         razor_peptides = peptide_protein_counts[peptide_protein_counts > 1].index
 
         if self.handling == RazorPeptideHandling.REMOVE:
@@ -360,9 +358,9 @@ class RazorPeptideFilter(BaseFilter):
         elif self.handling == RazorPeptideHandling.ASSIGN_TO_TOP:
             # Keep only assignment to protein with most peptides
             # First, count unique peptides per protein
-            protein_peptide_counts = (
-                df.groupby(self.protein_column)[self.peptide_column].nunique()
-            )
+            protein_peptide_counts = df.groupby(self.protein_column)[
+                self.peptide_column
+            ].nunique()
 
             # For each razor peptide, keep only the one assigned to top protein
             def assign_to_top(group):
@@ -393,5 +391,8 @@ class RazorPeptideFilter(BaseFilter):
         return filtered_df, self._create_result(
             input_count,
             output_count,
-            {"handling": self.handling.name, "razor_peptides_found": len(razor_peptides)},
+            {
+                "handling": self.handling.name,
+                "razor_peptides_found": len(razor_peptides),
+            },
         )

@@ -26,7 +26,6 @@ References:
     unlimited numbers of proteomes. Mol Cell Proteomics. 2023.
 """
 
-
 import importlib
 import warnings
 from typing import Optional
@@ -98,7 +97,7 @@ def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
         return np.full(n_samples, np.nan)
 
     # Log-transform for ratio calculations
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         log_matrix = np.log2(peptide_matrix)
 
     # Step 1: Align peptide traces
@@ -195,11 +194,13 @@ def _process_protein(
             sample_data = protein_data[protein_data[sample_column] == sample]
             if len(sample_data) > 0:
                 intensity = sample_data[intensity_column].median()
-                results.append({
-                    'protein': protein,
-                    'sample': sample,
-                    'intensity': intensity,
-                })
+                results.append(
+                    {
+                        "protein": protein,
+                        "sample": sample,
+                        "intensity": intensity,
+                    }
+                )
         return results
 
     # Create peptide x sample matrix via pivot_table (vectorized, sums duplicates)
@@ -219,11 +220,13 @@ def _process_protein(
     # Store results
     for i, sample in enumerate(samples):
         if not np.isnan(intensities[i]) and intensities[i] > 0:
-            results.append({
-                'protein': protein,
-                'sample': sample,
-                'intensity': intensities[i],
-            })
+            results.append(
+                {
+                    "protein": protein,
+                    "sample": sample,
+                    "intensity": intensities[i],
+                }
+            )
 
     return results
 
@@ -382,7 +385,9 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         samples = peptide_df[sample_column].unique()
         proteins = peptide_df[protein_column].unique()
 
-        logger.info(f"Processing {len(proteins)} proteins across {len(samples)} samples")
+        logger.info(
+            f"Processing {len(proteins)} proteins across {len(samples)} samples"
+        )
         logger.info(f"Threads: {self.threads}")
 
         # Group data by protein for efficient access
@@ -411,11 +416,13 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         result_df = pd.DataFrame(results)
 
         if len(result_df) > 0:
-            result_df = result_df.rename(columns={
-                'protein': protein_column,
-                'sample': sample_column,
-                'intensity': 'Intensity',
-            })
+            result_df = result_df.rename(
+                columns={
+                    "protein": protein_column,
+                    "sample": sample_column,
+                    "intensity": "Intensity",
+                }
+            )
 
         return result_df
 
@@ -515,13 +522,19 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         # Use a separator unlikely to appear in sample/run names
         sep = "|||"
         peptide_df = peptide_df.copy()
-        peptide_df['_sample_run'] = peptide_df[sample_column].astype(str) + sep + peptide_df[run_column].astype(str)
+        peptide_df["_sample_run"] = (
+            peptide_df[sample_column].astype(str)
+            + sep
+            + peptide_df[run_column].astype(str)
+        )
 
         # Get unique sample-run combinations
-        sample_runs = peptide_df['_sample_run'].unique()
+        sample_runs = peptide_df["_sample_run"].unique()
         proteins = peptide_df[protein_column].unique()
 
-        logger.info(f"Processing {len(proteins)} proteins across {len(sample_runs)} sample-run combinations")
+        logger.info(
+            f"Processing {len(proteins)} proteins across {len(sample_runs)} sample-run combinations"
+        )
         logger.info(f"Threads: {self.threads}")
 
         # Group data by protein for efficient access
@@ -534,7 +547,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
                 group,
                 peptide_column,
                 intensity_column,
-                '_sample_run',  # Use combined column for grouping
+                "_sample_run",  # Use combined column for grouping
                 sample_runs,
                 self.min_peptides,
             )
@@ -552,13 +565,15 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         if len(result_df) > 0:
             # Split sample_run back into sample and run using the same separator
             # Use regex=False to treat separator as literal string
-            result_df[[sample_column, run_column]] = result_df['sample'].str.split(
+            result_df[[sample_column, run_column]] = result_df["sample"].str.split(
                 sep, n=1, expand=True, regex=False
             )
-            result_df = result_df.drop(columns=['sample'])
-            result_df = result_df.rename(columns={
-                'protein': protein_column,
-                'intensity': 'Intensity',
-            })
+            result_df = result_df.drop(columns=["sample"])
+            result_df = result_df.rename(
+                columns={
+                    "protein": protein_column,
+                    "intensity": "Intensity",
+                }
+            )
 
         return result_df

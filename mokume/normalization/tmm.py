@@ -126,7 +126,9 @@ class TMMNormalizer:
 
         # Select sample with UQ closest to mean UQ
         ref_sample = (uq_series - mean_uq).abs().idxmin()
-        logger.debug(f"Selected reference sample: {ref_sample} (UQ={upper_quartiles[ref_sample]:.2f})")
+        logger.debug(
+            f"Selected reference sample: {ref_sample} (UQ={upper_quartiles[ref_sample]:.2f})"
+        )
         return ref_sample
 
     def _compute_tmm_factor(
@@ -166,10 +168,14 @@ class TMMNormalizer:
         n_ref = lib_sizes[ref]
 
         # Only use proteins with non-zero values in both samples
-        valid = (y_sample > 0) & (y_ref > 0) & np.isfinite(y_sample) & np.isfinite(y_ref)
+        valid = (
+            (y_sample > 0) & (y_ref > 0) & np.isfinite(y_sample) & np.isfinite(y_ref)
+        )
 
         if valid.sum() < 10:
-            logger.warning(f"Sample {sample}: Only {valid.sum()} valid proteins for TMM. Returning factor=1.")
+            logger.warning(
+                f"Sample {sample}: Only {valid.sum()} valid proteins for TMM. Returning factor=1."
+            )
             return 1.0
 
         y_s = y_sample[valid]
@@ -213,11 +219,15 @@ class TMMNormalizer:
         keep = keep_m & keep_a
 
         if keep.sum() < 5:
-            logger.warning(f"Sample {sample}: Only {keep.sum()} proteins after trimming. Using less stringent trim.")
+            logger.warning(
+                f"Sample {sample}: Only {keep.sum()} proteins after trimming. Using less stringent trim."
+            )
             keep = keep_m  # Fall back to just M-trimming
 
         if keep.sum() < 5:
-            logger.warning(f"Sample {sample}: Still too few proteins. Returning factor=1.")
+            logger.warning(
+                f"Sample {sample}: Still too few proteins. Returning factor=1."
+            )
             return 1.0
 
         # Compute weighted mean of M-values for kept proteins
@@ -230,7 +240,7 @@ class TMMNormalizer:
             tmm_factor = np.mean(M_keep)
 
         # Convert from log2 to factor
-        factor = 2 ** tmm_factor
+        factor = 2**tmm_factor
 
         return factor
 
@@ -256,7 +266,7 @@ class TMMNormalizer:
 
         # Handle log-transformed input
         if self.log_transform:
-            X_raw = 2 ** X  # Convert back to raw for TMM computation
+            X_raw = 2**X  # Convert back to raw for TMM computation
         else:
             X_raw = X
 
@@ -266,7 +276,9 @@ class TMMNormalizer:
         # Select reference sample
         if self.ref_sample is not None:
             if self.ref_sample not in X_raw.columns:
-                raise ValueError(f"Reference sample '{self.ref_sample}' not found in data")
+                raise ValueError(
+                    f"Reference sample '{self.ref_sample}' not found in data"
+                )
             self.ref_sample_ = self.ref_sample
         else:
             self.ref_sample_ = self._select_reference_sample(X_raw)
@@ -286,7 +298,9 @@ class TMMNormalizer:
         self.geometric_mean_ = np.exp(log_factors.mean())
         self.norm_factors_ = factors_series / self.geometric_mean_
 
-        logger.info(f"TMM normalization fitted: {len(X_raw.columns)} samples, ref={self.ref_sample_}")
+        logger.info(
+            f"TMM normalization fitted: {len(X_raw.columns)} samples, ref={self.ref_sample_}"
+        )
         logger.debug(f"Normalization factors: {self.norm_factors_.to_dict()}")
 
         return self
@@ -322,7 +336,9 @@ class TMMNormalizer:
             if sample in self.norm_factors_.index:
                 result[sample] = X[sample] / self.norm_factors_[sample]
             else:
-                logger.warning(f"Sample {sample} not in fitted factors, leaving unchanged")
+                logger.warning(
+                    f"Sample {sample} not in fitted factors, leaving unchanged"
+                )
 
         return result
 

@@ -17,16 +17,15 @@ import warnings
 from typing import List, Optional, Dict, Union
 
 import pandas as pd
+from sklearn.cluster._hdbscan import hdbscan
+from sklearn.decomposition import PCA
+
+from mokume.model.batch_correction import BatchDetectionMethod
+from mokume.plotting import is_plotting_available
 
 warnings.filterwarnings(
     "ignore", category=PendingDeprecationWarning, module="numpy.matrixlib.defmatrix"
 )
-
-from sklearn.cluster._hdbscan import hdbscan
-from sklearn.decomposition import PCA
-
-from mokume.plotting import is_plotting_available
-from mokume.model.batch_correction import BatchDetectionMethod
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -129,6 +128,7 @@ def detect_batches(
         #   PXD001-S1  → PXD001  (hyphen-separated)
         #   p1_1       → p1      (quantms TMT plex prefix: letters + digits before _digit)
         import re
+
         prefixes = []
         for s in sample_ids:
             if "-" in s:
@@ -306,7 +306,9 @@ def extract_covariates_from_sdrf(
         encoded, _ = pd.factorize(pd.array(values))
         covar_data.append(encoded.tolist())
         valid_columns.append(col)
-        logger.info(f"Extracted covariate '{col}' with {len(unique_values)} unique values")
+        logger.info(
+            f"Extracted covariate '{col}' with {len(unique_values)} unique values"
+        )
 
     if not covar_data:
         return None
@@ -317,7 +319,9 @@ def extract_covariates_from_sdrf(
     n_covariates = len(covar_data)
     result = [[covar_data[j][i] for j in range(n_covariates)] for i in range(n_samples)]
 
-    logger.info(f"Extracted {n_covariates} covariates for {n_samples} samples: {valid_columns}")
+    logger.info(
+        f"Extracted {n_covariates} covariates for {n_samples} samples: {valid_columns}"
+    )
     return result
 
 
