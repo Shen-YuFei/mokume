@@ -60,6 +60,8 @@ directlfq = ["directlfq", "pyyaml"]
 batch-correction = ["combat"]
 inmoose = ["combat"]  # Deprecated alias, use batch-correction instead
 tissuemap = ["scanpy", "combat", "umap-learn", "matplotlib", "seaborn"]
+agentic = ["pyyaml", "langchain-openai"]
+agentic-core = ["pyyaml"]
 all = ["directlfq", "pyyaml", "combat", "matplotlib", "seaborn", "plotly", "scanpy", "umap-learn"]
 
 [tool.poetry.dependencies.matplotlib]

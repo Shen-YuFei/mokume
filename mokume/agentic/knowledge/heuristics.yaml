@@ -1,0 +1,39 @@
+data_type_priors:
+  LFQ:
+    recommended_de: ["deqms", "proda"]
+    recommended_fdr: ["ihw", "bh"]
+    recommended_imputation: ["none", "minprob"]
+    notes: "DEqMS best when peptide counts available"
+
+  TMT:
+    recommended_de: ["limrots", "deqms"]
+    recommended_fdr: ["bh"]
+    recommended_imputation: ["none"]
+    notes: "TMT has lower missingness, imputation rarely needed"
+
+  DIA:
+    recommended_de: ["proda", "deqms"]
+    recommended_fdr: ["ihw"]
+    recommended_imputation: ["none", "knn"]
+    notes: "DIA missing is MAR not MNAR, avoid MinProb"
+
+condition_rules:
+  - if: "missing_rate < 0.15"
+    then: "prefer imputation=none"
+    confidence: "high"
+    evidence: "PXD001819 benchmark: none > minprob > mindet"
+
+  - if: "has_peptide_counts and n_proteins > 200"
+    then: "prefer de=deqms"
+    confidence: "high"
+    evidence: "DEqMS AUC=0.996 vs limrots AUC=0.994 on UPS1"
+
+  - if: "n_per_group < 3"
+    then: "prefer de=limrots"
+    confidence: "medium"
+    evidence: "Bootstrap handles small samples better than EB shrinkage"
+
+  - if: "n_proteins > 500"
+    then: "prefer fdr=ihw"
+    confidence: "high"
+    evidence: "IHW +8 rejections over BH on PXD001819"

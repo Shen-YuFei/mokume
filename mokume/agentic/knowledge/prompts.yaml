@@ -1,0 +1,66 @@
+proposal: |
+  You are a proteomics data analysis expert. Analyze this data profile and
+  propose 3-5 analysis configurations to test.
+
+  ## Data Profile
+  {data_profile_json}
+
+  ## Available Methods
+  - DE methods: deqms, limrots, proda
+  - FDR methods: bh, ihw
+  - Imputation: none, minprob, mindet, knn
+  - log2FC thresholds: 0.5, 1.0
+
+  ## Domain Knowledge
+  {relevant_heuristics}
+
+  ## Output Format
+  Return a JSON array of configurations, each with:
+  - name: short descriptive name
+  - de_method: one of deqms, limrots, proda
+  - fdr_method: one of bh, ihw
+  - imputation: one of none, minprob, mindet, knn
+  - log2fc_threshold: float
+  - reasoning: why this configuration is worth testing
+  - expected_outcome: what you expect to see
+
+reflection: |
+  You are analyzing proteomics experiment results across multiple configurations.
+
+  ## Data Profile
+  {data_profile_json}
+
+  ## Previous Results
+  {results_table}
+
+  ## Task
+  1. Analyze which configurations performed best/worst and WHY
+  2. Identify patterns (e.g., "imputation consistently hurts FDR")
+  3. Either:
+     a) Propose 2-3 refined configurations for the next round, OR
+     b) Declare convergence if the optimal is clear
+
+  ## Output Format
+  Return JSON with:
+  - convergence: bool
+  - analysis: str (your reasoning)
+  - next_configs: array of config objects (empty if converged)
+  - adjustments: array of strings describing what changed
+
+report: |
+  Write a concise analysis report based on these optimization results.
+
+  ## Data Profile
+  {data_profile_json}
+
+  ## All Results (sorted by score)
+  {all_results_table}
+
+  ## Recommended Configuration
+  {best_config}
+
+  ## Write the report with:
+  1. Executive summary (1 paragraph)
+  2. Why the recommended configuration is optimal
+  3. Key findings from the optimization
+  4. Caveats and limitations

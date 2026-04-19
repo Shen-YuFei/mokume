@@ -14,6 +14,7 @@ from mokume.commands.peptides2protein import peptides2protein
 from mokume.commands.visualize import tsne_visualization
 from mokume.commands.batch_correct import correct_batches
 from mokume.commands.tissuemap import tissuemap_cmd
+from mokume.commands.agentic import agentic_cmd
 
 import mokume
 
@@ -75,6 +76,7 @@ cli.add_command(peptides2protein)
 cli.add_command(tsne_visualization)
 cli.add_command(correct_batches)
 cli.add_command(tissuemap_cmd)
+cli.add_command(agentic_cmd)
 
 
 def main():
