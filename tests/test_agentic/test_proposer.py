@@ -2,7 +2,13 @@
 
 from mokume.agentic.config import AgenticConfig
 from mokume.agentic.profiler import profile_data
-from mokume.agentic.proposer import propose_configs, _items_to_configs
+from mokume.agentic.proposer import (
+    _dedup_configs,
+    _format_seen_block,
+    _items_to_configs,
+    propose_configs,
+)
+from mokume.agentic.state import CandidateConfig
 
 
 def test_propose_configs_no_llm(synthetic_protein_df, sample_to_condition):
@@ -101,3 +107,54 @@ def test_items_to_configs_new_imputation_methods():
     ]
     configs = _items_to_configs(items)
     assert [c.imputation for c in configs] == ["qrilc", "mle", "mice", "nbavg", "gms"]
+
+
+def test_candidate_signature_stable_and_distinct():
+    """signature() must be stable and discriminate config differences."""
+    a = CandidateConfig(name="a", de_method="limma", normalization="median")
+    a_renamed = CandidateConfig(name="A2", de_method="limma", normalization="median")
+    b = CandidateConfig(name="b", de_method="limma", normalization="none")
+    assert a.signature() == a_renamed.signature()  # name is not part of sig
+    assert a.signature() != b.signature()
+
+
+def test_dedup_configs_drops_seen():
+    """_dedup_configs removes configs whose signature is already known."""
+    c1 = CandidateConfig(name="c1", de_method="limma")
+    c2 = CandidateConfig(name="c2", de_method="rots")
+    deduped = _dedup_configs([c1, c2], {c1.signature()})
+    assert [c.name for c in deduped] == ["c2"]
+
+
+def test_dedup_configs_passthrough_when_seen_empty():
+    """Empty seen set must not filter anything."""
+    c1 = CandidateConfig(name="c1", de_method="limma")
+    assert _dedup_configs([c1], set()) == [c1]
+    assert _dedup_configs([c1], None) == [c1]
+
+
+def test_format_seen_block_first_round():
+    """No seen signatures yet -> friendly placeholder."""
+    assert "first round" in _format_seen_block(None)
+    assert "first round" in _format_seen_block(set())
+
+
+def test_format_seen_block_sorted():
+    """Seen signatures are listed deterministically."""
+    sigs = {"limma|bh|none|none|fc0.5|none|k2", "rots|bh|none|none|fc0.5|none|k2"}
+    out = _format_seen_block(sigs)
+    assert "limma" in out and "rots" in out
+    # Sorted output: lima... before rots... (alphabetical)
+    assert out.index("limma") < out.index("rots")
+
+
+def test_propose_configs_no_llm_dedup(synthetic_protein_df, sample_to_condition):
+    """Rule-based fallback also honours the seen-signatures filter."""
+    profile = profile_data(synthetic_protein_df, sample_to_condition)
+    config = AgenticConfig(use_llm=False)
+    first = propose_configs(profile, config)
+    assert first, "first round should produce candidates"
+    seen = {c.signature() for c in first}
+    second = propose_configs(profile, config, seen=seen)
+    # Either zero (full duplicates) or all-new signatures
+    assert all(c.signature() not in seen for c in second)
