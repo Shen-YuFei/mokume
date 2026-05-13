@@ -40,6 +40,24 @@ from mokume.normalization.loess import (
     LOESSNormalizer,
     loess_normalize,
 )
+from mokume.normalization.protein import (
+    median_center,
+    quantile_normalize,
+)
+from mokume.normalization.rlr import (
+    RlrNormalizer,
+    rlr_normalize,
+)
+from mokume.normalization.distribution import (
+    MeanCenterNormalizer,
+    MedianCenterNormalizer,
+    QuantileNormalizer,
+)
+from mokume.normalization.mbqn import (
+    MBQNNormalizer,
+    mbqn_normalize,
+)
+from mokume.normalization.vsn import vsn_normalize
 
 __all__ = [
     # Feature normalization
@@ -69,4 +87,18 @@ __all__ = [
     # LOESS normalization
     "LOESSNormalizer",
     "loess_normalize",
+    # Distribution-alignment normalization (quantile / median center / mean center)
+    "quantile_normalize",
+    "median_center",
+    "QuantileNormalizer",
+    "MedianCenterNormalizer",
+    "MeanCenterNormalizer",
+    # RLR normalization (NormalyzerDE)
+    "RlrNormalizer",
+    "rlr_normalize",
+    # MBQN normalization
+    "MBQNNormalizer",
+    "mbqn_normalize",
+    # VSN normalization (pure Python reimplementation)
+    "vsn_normalize",
 ]

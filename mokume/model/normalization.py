@@ -279,6 +279,10 @@ class PeptideNormalizationMethod(Enum):
     ConditionMedian = auto()
     Hierarchical = auto()  # DirectLFQ-style, native mokume implementation
     TMM = auto()  # Trimmed Mean of M-values (Robinson & Oshlack, 2010)
+    Quantile = auto()  # Quantile normalization
+    MedianCenter = auto()  # Sample-level median centering
+    MeanCenter = auto()  # Sample-level mean centering
+    Rlr = auto()  # Robust Linear Regression (NormalyzerDE)
 
     @classmethod
     def from_str(cls, name: str) -> "PeptideNormalizationMethod":
@@ -357,6 +361,10 @@ class PeptideNormalizationMethod(Enum):
         return self in (
             PeptideNormalizationMethod.Hierarchical,
             PeptideNormalizationMethod.TMM,
+            PeptideNormalizationMethod.Quantile,
+            PeptideNormalizationMethod.MedianCenter,
+            PeptideNormalizationMethod.MeanCenter,
+            PeptideNormalizationMethod.Rlr,
         )
 
     def __call__(self, dataset_df: pd.DataFrame, sample: str, med_map: dict):
@@ -396,6 +404,30 @@ def hierarchical_normalization(dataset_df, sample, med_map):
 @PeptideNormalizationMethod.TMM.register_replicate_fn
 def tmm_normalization(dataset_df, sample, med_map):
     """Placeholder: TMM normalization is applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.Quantile.register_replicate_fn
+def quantile_normalization(dataset_df, sample, med_map):
+    """Placeholder: quantile normalization is applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.MedianCenter.register_replicate_fn
+def median_center_normalization(dataset_df, sample, med_map):
+    """Placeholder: sample-level median centering applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.MeanCenter.register_replicate_fn
+def mean_center_normalization(dataset_df, sample, med_map):
+    """Placeholder: sample-level mean centering applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.Rlr.register_replicate_fn
+def rlr_normalization(dataset_df, sample, med_map):
+    """Placeholder: RLR normalization is applied at dataset level."""
     return dataset_df
 
 

@@ -12,6 +12,8 @@ mokume supports multiple protein quantification methods, each suited to differen
 | **DirectLFQ** | Intensity traces with hierarchical alignment | No | `DirectLFQQuantification` | Yes** |
 | **Sum** | Sum of all peptide intensities | No | `AllPeptidesQuantification` | No |
 | **Ratio** | Log2 sample/reference per plex (PS protocol) | No | `RatioQuantification` | No |
+| **TMT Abundance** | Median of log2 peptide intensities (`abd`) | No | `TMTAbundanceQuantification` | No |
+| **TMT Reporter Intensity** | Sum of raw reporter intensities (`intensity`) | No | `TMTReporterIntensityQuantification` | No |
 | **Median** | Median of peptide intensities | No | Built-in | No |
 
 \* MaxLFQ automatically uses DirectLFQ when installed for best accuracy, falling back to built-in implementation otherwise.
@@ -142,6 +144,44 @@ mokume features2proteins \
 
 !!! info
     Ratio quantification handles cross-plex normalization inherently via per-plex reference division. The `--irs` flag is ignored for ratio mode.
+
+## TMT Abundance
+
+The `abd` method computes protein abundance as the **median of log2-transformed peptide intensities** per (protein, sample). Non-positive intensities are treated as missing.
+
+```python
+from mokume.quantification import TMTAbundanceQuantification
+
+abd = TMTAbundanceQuantification()
+result = abd.quantify(peptides, intensity_column="NormIntensity")
+```
+
+Or via the factory:
+
+```python
+from mokume.quantification import get_quantification_method
+
+abd = get_quantification_method("abd")  # also "abundance"
+```
+
+## TMT Reporter Intensity
+
+The `intensity` method computes protein abundance as the **sum of raw reporter intensities** per (protein, sample) in linear space — no log transform, no aggregation choice.
+
+```python
+from mokume.quantification import TMTReporterIntensityQuantification
+
+reporter = TMTReporterIntensityQuantification()
+result = reporter.quantify(peptides, intensity_column="NormIntensity")
+```
+
+Or via the factory:
+
+```python
+from mokume.quantification import get_quantification_method
+
+reporter = get_quantification_method("intensity")  # also "reporter"
+```
 
 ## Standard Output Format
 

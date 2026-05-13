@@ -318,6 +318,27 @@ def detect_plexes_from_sdrf(sdrf_path: str) -> dict[str, str]:
     return sample_to_plex
 
 
+def _shorten_factor_label(raw_label: str) -> str:
+    """Shorten verbose SDRF ontology-annotated factor value labels.
+
+    Handles formats like
+    ``CT=mixture;QY=12500 amol;CN=UPS1;CV=Standards Research Group``
+    and returns the most informative short token (e.g. ``12500 amol``).
+    Plain-text labels are returned unchanged.
+    """
+    if ";" not in raw_label or "=" not in raw_label:
+        return raw_label
+    parts: dict[str, str] = {}
+    for token in raw_label.split(";"):
+        if "=" in token:
+            k, v = token.split("=", 1)
+            parts[k.strip()] = v.strip()
+    for key in ("QY", "CN", "NT"):
+        if key in parts:
+            return parts[key]
+    return next(iter(parts.values()), raw_label)
+
+
 def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
     """
     Detect sample-to-condition mapping from SDRF factor value columns.
@@ -349,13 +370,15 @@ def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
     factor_col = factor_cols[0]
     sample_to_condition = {}
     for _, row in sdrf.drop_duplicates(subset=["source name"]).iterrows():
-        sample_to_condition[row["source name"]] = str(row[factor_col])
+        sample_to_condition[row["source name"]] = _shorten_factor_label(
+            str(row[factor_col])
+        )
 
     # Also map run file names to conditions for run-level protein matrices
     data_file_col = "comment[data file]"
     if data_file_col in sdrf.columns:
         for _, row in sdrf.iterrows():
-            condition = str(row[factor_col])
+            condition = _shorten_factor_label(str(row[factor_col]))
             raw_name = str(row[data_file_col])
             stem = re.sub(r"\.(raw|mzML|d)$", "", raw_name, flags=re.IGNORECASE)
             for variant in (raw_name, stem, raw_name.upper(), stem.upper()):

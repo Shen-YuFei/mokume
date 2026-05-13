@@ -80,6 +80,99 @@ def impute_mindet(
     return result
 
 
+def _knn_impute(data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """KNN imputation wrapper for the dispatcher."""
+    imputer = KNNImputer(
+        n_neighbors=kwargs.get("n_neighbors", 5),
+        weights=kwargs.get("weights", "uniform"),
+    )
+    result = pd.DataFrame(
+        imputer.fit_transform(data),
+        index=data.index,
+        columns=data.columns,
+    )
+    n_imputed = data.isna().sum().sum()
+    logger.info("KNN imputation: %d values imputed", n_imputed)
+    return result
+
+
+def _dispatch_seqknn(data, **kwargs):
+    from mokume.imputation.seqknn import impute_seqknn
+
+    return impute_seqknn(data, **kwargs)
+
+
+def _dispatch_missforest(data, **kwargs):
+    from mokume.imputation.missforest import impute_missforest
+
+    return impute_missforest(data, **kwargs)
+
+
+def _dispatch_impseq(data, **kwargs):
+    from mokume.imputation.impseq import impute_impseq
+
+    return impute_impseq(data, **kwargs)
+
+
+def _dispatch_impseqrob(data, **kwargs):
+    from mokume.imputation.impseqrob import impute_impseqrob
+
+    return impute_impseqrob(data, **kwargs)
+
+
+def _dispatch_bpca(data, **kwargs):
+    from mokume.imputation.bpca import impute_bpca
+
+    return impute_bpca(data, **kwargs)
+
+
+def _dispatch_qrilc(data, **kwargs):
+    from mokume.imputation.qrilc import impute_qrilc
+
+    return impute_qrilc(data, **kwargs)
+
+
+def _dispatch_mice(data, **kwargs):
+    from mokume.imputation.mice import impute_mice
+
+    return impute_mice(data, **kwargs)
+
+
+def _dispatch_nbavg(data, **kwargs):
+    from mokume.imputation.nbavg import impute_nbavg
+
+    return impute_nbavg(data, **kwargs)
+
+
+def _dispatch_gms(data, **kwargs):
+    from mokume.imputation.gms import impute_gms
+
+    return impute_gms(data, **kwargs)
+
+
+def _dispatch_mle(data, **kwargs):
+    from mokume.imputation.mle import impute_mle
+
+    return impute_mle(data, **kwargs)
+
+
+_DISPATCH = {
+    "minprob": impute_minprob,
+    "mindet": impute_mindet,
+    "knn": _knn_impute,
+    "seqknn": _dispatch_seqknn,
+    "missforest": _dispatch_missforest,
+    "impseq": _dispatch_impseq,
+    "impseqrob": _dispatch_impseqrob,
+    "bpca": _dispatch_bpca,
+    "qrilc": _dispatch_qrilc,
+    "mice": _dispatch_mice,
+    "nbavg": _dispatch_nbavg,
+    "gms": _dispatch_gms,
+    "mle": _dispatch_mle,
+}
+
+
 def impute_censored(
     data: pd.DataFrame,
     method: str = "minprob",
@@ -90,24 +183,8 @@ def impute_censored(
     if method == "none":
         logger.info("No imputation applied (method='none')")
         return data.copy()
-    if method == "minprob":
-        return impute_minprob(data, **kwargs)
-    if method == "mindet":
-        return impute_mindet(data, **kwargs)
-    if method == "knn":
-        imputer = KNNImputer(
-            n_neighbors=kwargs.get("n_neighbors", 5),
-            weights=kwargs.get("weights", "uniform"),
-        )
-        result = pd.DataFrame(
-            imputer.fit_transform(data),
-            index=data.index,
-            columns=data.columns,
-        )
-        n_imputed = data.isna().sum().sum()
-        logger.info("KNN imputation: %d values imputed", n_imputed)
-        return result
-    raise ValueError(
-        f"Unknown imputation method '{method}'. "
-        f"Choose from: 'minprob', 'mindet', 'knn', 'none'"
-    )
+    handler = _DISPATCH.get(method)
+    if handler is None:
+        valid = ", ".join(sorted([*_DISPATCH, "none"]))
+        raise ValueError(f"Unknown imputation method '{method}'. Choose from: {valid}")
+    return handler(data, **kwargs)

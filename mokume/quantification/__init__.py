@@ -20,6 +20,10 @@ from mokume.quantification.top3 import Top3Quantification
 from mokume.quantification.topn import TopNQuantification
 from mokume.quantification.maxlfq import MaxLFQQuantification
 from mokume.quantification.all_peptides import AllPeptidesQuantification
+from mokume.quantification.ratio import RatioQuantification
+from mokume.quantification.tmt_abundance import TMTAbundanceQuantification
+from mokume.quantification.tmt_reporter import TMTReporterIntensityQuantification
+from mokume.quantification.spectral_count import SpectralCountQuantification
 
 # Lazy import for optional DirectLFQ
 from mokume.quantification.directlfq import is_directlfq_available
@@ -38,11 +42,16 @@ __all__ = [
     "TopNQuantification",
     "MaxLFQQuantification",
     "AllPeptidesQuantification",
+    "RatioQuantification",
+    "TMTAbundanceQuantification",
+    "TMTReporterIntensityQuantification",
+    "SpectralCountQuantification",
     # DirectLFQ (optional)
     "DirectLFQQuantification",
     "is_directlfq_available",
     # Factory function
     "get_quantification_method",
+    "list_quantification_methods",
 ]
 
 
@@ -64,7 +73,8 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     method : str
         Name of the quantification method. One of:
         'topN' (where N is any number, e.g., 'top3', 'top5', 'top10'),
-        'maxlfq', 'directlfq', 'all', 'sum'.
+        'maxlfq', 'directlfq', 'all', 'sum',
+        'abd' / 'abundance', 'intensity' / 'reporter', 'ratio'.
     **kwargs
         Additional arguments passed to the quantification method constructor.
 
@@ -79,6 +89,14 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
             - min_nonan: int (default 1)
             - num_cores: int (default None)
             - deactivate_normalization: bool (default False)
+
+        For 'ratio' (TMT ratio quantification):
+            - reference_samples: list[str] (required)
+            - sample_to_plex: dict[str, str] (required)
+            - fraction_merge_method: str (default 'mean')
+
+        For 'abd' / 'abundance' and 'intensity' / 'reporter':
+            No additional arguments.
 
     Returns
     -------
@@ -136,8 +154,35 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     elif method_lower in ("all", "sum", "allpeptides"):
         return AllPeptidesQuantification()
 
+    elif method_lower in ("abd", "abundance", "tmtabundance"):
+        return TMTAbundanceQuantification()
+
+    elif method_lower in ("intensity", "reporter", "tmtreporterintensity"):
+        return TMTReporterIntensityQuantification()
+
+    elif method_lower in ("spectralcount", "spectral_count", "count"):
+        return SpectralCountQuantification()
+
+    elif method_lower == "ratio":
+        try:
+            reference_samples = kwargs["reference_samples"]
+            sample_to_plex = kwargs["sample_to_plex"]
+        except KeyError as exc:
+            raise ValueError(
+                "RatioQuantification requires 'reference_samples' and "
+                "'sample_to_plex' kwargs."
+            ) from exc
+        return RatioQuantification(
+            reference_samples=reference_samples,
+            sample_to_plex=sample_to_plex,
+            fraction_merge_method=kwargs.get("fraction_merge_method", "mean"),
+        )
+
     else:
-        available = "topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum"
+        available = (
+            "topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum, "
+            "abd/abundance, intensity/reporter, ratio"
+        )
         raise ValueError(
             f"Unknown quantification method: {method}. Available methods: {available}"
         )
@@ -166,4 +211,8 @@ def list_quantification_methods() -> dict:
         "maxlfq": True,
         "directlfq": is_directlfq_available(),
         "sum": True,
+        "abd": True,
+        "intensity": True,
+        "ratio": True,
+        "spectral_count": True,
     }

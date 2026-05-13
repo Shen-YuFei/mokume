@@ -34,6 +34,8 @@ def impute_missing_values(
         - "median": Impute using the median of each column.
         - "most_frequent": Impute using the most frequent value of each column.
         - "constant": Impute using a specific value provided via `fill_value`.
+        - "seqknn": Sequential KNN (Kim et al. 2004) - iterative neighbour fill.
+        - "missforest": Random Forest iterative imputation (Stekhoven & Buehlmann 2011).
     n_neighbors : int, optional
         The number of neighboring samples to use for KNN imputation. Default is 5.
     weights : str, optional
@@ -53,25 +55,45 @@ def impute_missing_values(
     if data is None:
         return None
 
-    if method not in {"knn", "mean", "median", "constant", "most_frequent"}:
+    if method not in {
+        "knn",
+        "mean",
+        "median",
+        "constant",
+        "most_frequent",
+        "seqknn",
+        "missforest",
+    }:
         raise ValueError(
-            "Invalid method. Choose from 'knn', 'mean', 'median', 'most_frequent', or 'constant'."
+            "Invalid method. Choose from 'knn', 'mean', 'median', 'most_frequent', "
+            "'constant', 'seqknn', or 'missforest'."
         )
 
-    if method == "knn":
-        imputer = KNNImputer(
-            n_neighbors=n_neighbors,
-            weights=weights,
-            metric=metric,
-            keep_empty_features=keep_empty_features,
-        )
+    if method == "seqknn":
+        from mokume.imputation.seqknn import impute_seqknn
+
+        def impute(df: pd.DataFrame) -> pd.DataFrame:
+            return impute_seqknn(df, k=n_neighbors)
+    elif method == "missforest":
+        from mokume.imputation.missforest import impute_missforest
+
+        def impute(df: pd.DataFrame) -> pd.DataFrame:
+            return impute_missforest(df)
     else:
-        strategy = method
-        imputer = SimpleImputer(strategy=strategy, fill_value=fill_value)
+        if method == "knn":
+            imputer = KNNImputer(
+                n_neighbors=n_neighbors,
+                weights=weights,
+                metric=metric,
+                keep_empty_features=keep_empty_features,
+            )
+        else:
+            strategy = method
+            imputer = SimpleImputer(strategy=strategy, fill_value=fill_value)
 
-    def impute(df: pd.DataFrame) -> pd.DataFrame:
-        imputed_data = imputer.fit_transform(df)
-        return pd.DataFrame(imputed_data, columns=df.columns, index=df.index)
+        def impute(df: pd.DataFrame) -> pd.DataFrame:
+            imputed_data = imputer.fit_transform(df)
+            return pd.DataFrame(imputed_data, columns=df.columns, index=df.index)
 
     if isinstance(data, pd.DataFrame):
         return impute(data)

@@ -29,6 +29,15 @@ class QuantificationMethod(Enum):
     MAXLFQ : auto
         MaxLFQ algorithm for label-free quantification.
         Uses delayed normalization and maximal peptide ratio extraction.
+    TMT_ABUNDANCE : auto
+        TMT abundance method (``abd``).
+        Median of log2-transformed peptide intensities per protein.
+    TMT_REPORTER_INTENSITY : auto
+        TMT reporter intensity method (``intensity``).
+        Sum of raw reporter intensities per protein (linear space).
+    RATIO : auto
+        TMT ratio quantification (Proteome Sciences protocol).
+        log2(sample / reference) per PSM, median-aggregated to protein.
     """
 
     IBAQ = auto()
@@ -36,6 +45,9 @@ class QuantificationMethod(Enum):
     TOPN = auto()
     ALL_PEPTIDES = auto()
     MAXLFQ = auto()
+    TMT_ABUNDANCE = auto()
+    TMT_REPORTER_INTENSITY = auto()
+    RATIO = auto()
 
     @classmethod
     def from_str(cls, name: str) -> "QuantificationMethod":
@@ -79,5 +91,14 @@ class QuantificationMethod(Enum):
             QuantificationMethod.TOPN: "Average of top N most intense peptides",
             QuantificationMethod.ALL_PEPTIDES: "Sum of all peptide intensities",
             QuantificationMethod.MAXLFQ: "MaxLFQ label-free quantification",
+            QuantificationMethod.TMT_ABUNDANCE: (
+                "TMT abundance: median of log2 peptide intensities"
+            ),
+            QuantificationMethod.TMT_REPORTER_INTENSITY: (
+                "TMT reporter intensity: sum of raw reporter intensities"
+            ),
+            QuantificationMethod.RATIO: (
+                "TMT ratio: log2(sample/reference) per PSM, median-aggregated"
+            ),
         }
         return descriptions.get(self, "Unknown method")
