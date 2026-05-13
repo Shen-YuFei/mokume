@@ -56,6 +56,46 @@ def _apply_condition_rules(space: dict, profile: DataProfile) -> dict:
     return space
 
 
+def _build_ensemble_configs(
+    heuristics: dict,
+    space: dict,
+    profile: DataProfile,
+) -> list[CandidateConfig]:
+    """Materialise ensemble strategies from heuristics as CandidateConfigs."""
+    strategies = heuristics.get("ensemble_strategies", {}) or {}
+    if not strategies:
+        return []
+
+    baseline_fdr = space["fdr_methods"][0]
+    baseline_norm = space["normalizations"][0]
+    baseline_imp = space["imputations"][0]
+
+    configs: list[CandidateConfig] = []
+    for strat_name, strat in strategies.items():
+        methods = strat.get("methods") or []
+        min_k = int(strat.get("min_k", 2))
+        if not methods:
+            continue
+        ensemble_str = ",".join(methods)
+        configs.append(
+            CandidateConfig(
+                name=f"ensemble_{strat_name}_{baseline_fdr}_{baseline_norm}",
+                de_method="ensemble",
+                fdr_method=baseline_fdr,
+                normalization=baseline_norm,
+                imputation=baseline_imp,
+                log2fc_threshold=0.5,
+                ensemble=ensemble_str,
+                ensemble_k=min_k,
+                reasoning=(
+                    f"Rule-based ensemble ({strat_name}): "
+                    f"top-{min_k} consensus across {ensemble_str}"
+                ),
+            )
+        )
+    return configs
+
+
 def rule_propose(
     profile: DataProfile,
     max_configs: int = 18,
@@ -76,9 +116,11 @@ def rule_propose(
         )
     )
 
-    # Trim to budget
-    if len(combos) > max_configs:
-        combos = combos[:max_configs]
+    # Reserve room for ensemble candidates so they are never dropped on trim
+    ensemble_configs = _build_ensemble_configs(heuristics, space, profile)
+    budget_for_singles = max(1, max_configs - len(ensemble_configs))
+    if len(combos) > budget_for_singles:
+        combos = combos[:budget_for_singles]
 
     configs = []
     for de, fdr, norm, imp, thr in combos:
@@ -95,6 +137,7 @@ def rule_propose(
             )
         )
 
+    configs.extend(ensemble_configs)
     logger.info("Rule engine generated %d candidate configs", len(configs))
     return configs
 

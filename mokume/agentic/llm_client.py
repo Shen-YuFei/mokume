@@ -27,8 +27,18 @@ _CONFIG_ITEM_SCHEMA: dict[str, Any] = {
         "name": {"type": "string", "description": "Short descriptive name"},
         "de_method": {
             "type": "string",
-            "enum": ["limma", "rots", "deqms", "proda", "msstats"],
-            "description": "Differential expression method",
+            "enum": [
+                "limma",
+                "rots",
+                "deqms",
+                "proda",
+                "msstats",
+                "ensemble",
+            ],
+            "description": (
+                "Differential expression method. Use 'ensemble' to combine "
+                "multiple methods via top-k consensus (set ensemble + ensemble_k)."
+            ),
         },
         "fdr_method": {
             "type": "string",
@@ -58,8 +68,41 @@ _CONFIG_ITEM_SCHEMA: dict[str, Any] = {
                 "knn",
                 "missforest",
                 "seqknn",
+                "qrilc",
+                "mle",
+                "mice",
+                "nbavg",
+                "gms",
+                "bpca",
+                "impseq",
+                "impseqrob",
             ],
-            "description": "Missing value imputation method",
+            "description": (
+                "Missing value imputation method. "
+                "bpca/impseq/impseqrob require an R runtime via rpy2."
+            ),
+        },
+        "ensemble": {
+            "type": "string",
+            "enum": [
+                "none",
+                "limma,deqms,proda",
+                "limma,rots,deqms",
+                "limma,rots,deqms,proda",
+            ],
+            "description": (
+                "Ensemble DE methods (comma-separated) for top-k consensus. "
+                "Use 'none' unless de_method == 'ensemble'."
+            ),
+        },
+        "ensemble_k": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": (
+                "Minimum number of ensemble methods that must agree "
+                "(top-k consensus). Only consumed when ensemble != 'none'."
+            ),
         },
         "log2fc_threshold": {
             "type": "number",
@@ -82,6 +125,8 @@ _CONFIG_ITEM_SCHEMA: dict[str, Any] = {
         "fdr_method",
         "normalization",
         "imputation",
+        "ensemble",
+        "ensemble_k",
         "log2fc_threshold",
         "reasoning",
         "expected_outcome",

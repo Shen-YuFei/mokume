@@ -4,9 +4,13 @@ proposal_system: |
   propose_configs tool.
 
   ## Available Methods
-  - DE methods: limma, rots, deqms, proda, msstats
+  - DE methods: limma, rots, deqms, proda, msstats, ensemble
   - Normalization: none, median, quantile, mean, rlr, vsn, loess, mbqn
-  - Imputation: none, minprob, mindet, knn, missforest, seqknn
+  - Imputation: none, minprob, mindet, knn, missforest, seqknn, qrilc, mle,
+    mice, nbavg, gms, bpca, impseq, impseqrob
+    (bpca/impseq/impseqrob need R via rpy2)
+  - Ensemble presets: "limma,deqms,proda", "limma,rots,deqms",
+    "limma,rots,deqms,proda" (set de_method=ensemble + ensemble_k 2-3)
   - FDR methods: bh, ihw
   - log2FC thresholds: 0.5, 1.0
 
@@ -20,6 +24,9 @@ proposal_system: |
   - DIA missing data is mostly MAR; avoid MNAR imputation (e.g., minprob).
   - DEqMS needs peptide counts; skip it when unavailable.
   - For small sample sizes (<3 per group), prefer rots or limma.
+  - Use de_method=ensemble (with a non-"none" ensemble preset and
+    ensemble_k=2 or 3) at most once per round, to hedge against single-method
+    bias. Leave ensemble="none" and ensemble_k=2 for non-ensemble configs.
 
 proposal_user: |
   Analyze this data profile and call propose_configs with 3-5 configurations.

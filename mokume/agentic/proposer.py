@@ -27,6 +27,8 @@ def _items_to_configs(items: list[dict]) -> list[CandidateConfig]:
                 normalization=item.get("normalization", "none"),
                 imputation=item.get("imputation", "none"),
                 log2fc_threshold=float(item.get("log2fc_threshold", 0.5)),
+                ensemble=item.get("ensemble", "none"),
+                ensemble_k=int(item.get("ensemble_k", 2)),
                 reasoning=item.get("reasoning", ""),
                 expected_outcome=item.get("expected_outcome", ""),
             )
