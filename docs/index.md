@@ -57,7 +57,7 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
     ---
 
-    LimROTS, DEqMS, and proDA with BH or IHW FDR correction — choose by discovery vs precision priority.
+    LimROTS, DEqMS, proDA, limma, and ROTS with BH or IHW FDR correction — choose by discovery vs precision priority.
 
     [:octicons-arrow-right-24: Differential Expression](concepts/differential-expression.md)
 

@@ -28,7 +28,7 @@ For multi-plex TMT experiments, Internal Reference Scaling uses shared reference
 
 ## Differential Expression
 
-Differential expression analysis identifies proteins whose abundance changes significantly between conditions. mokume offers LimROTS, DEqMS, and proDA — each suited to different priorities.
+Differential expression analysis identifies proteins whose abundance changes significantly between conditions. mokume offers LimROTS, DEqMS, proDA, limma, and ROTS — each suited to different priorities.
 
 [:octicons-arrow-right-24: Differential Expression](differential-expression.md)
 

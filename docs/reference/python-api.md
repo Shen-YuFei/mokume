@@ -157,6 +157,9 @@ proteins = features_to_proteins(
 
 ## Differential Expression
 
+Supported methods: `limrots`, `deqms`, `proda`, `limma`, `rots`.
+All methods are pure-Python reimplementations — no R or rpy2 required.
+
 ```python
 from mokume.analysis import DifferentialExpression
 
@@ -191,6 +194,12 @@ results = deqms.run_comparisons(
     sample_to_condition,
     [("NASH", "HL"), ("NASH", "Control")],
 )
+```
+
+```python
+# limma — stable empirical Bayes baseline
+de = DifferentialExpression(method="limma", fdr_method="bh")
+result = de.run(protein_df, sample_to_condition, ("NASH", "HL"))
 ```
 
 ---

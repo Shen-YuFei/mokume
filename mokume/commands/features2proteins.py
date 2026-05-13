@@ -44,9 +44,22 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--quant-method",
     "quant_method",
-    help="Quantification method: directlfq, ibaq, maxlfq, topn, sum, median, ratio",
+    help=(
+        "Quantification method: directlfq, ibaq, maxlfq, topn, sum, "
+        "median, ratio, abd (TMT abundance), intensity (TMT reporter)"
+    ),
     type=click.Choice(
-        ["directlfq", "ibaq", "maxlfq", "topn", "sum", "median", "ratio"],
+        [
+            "directlfq",
+            "ibaq",
+            "maxlfq",
+            "topn",
+            "sum",
+            "median",
+            "ratio",
+            "abd",
+            "intensity",
+        ],
         case_sensitive=False,
     ),
     default="maxlfq",
@@ -295,7 +308,9 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     "--de-method",
     "de_method",
     help="DE statistical method",
-    type=click.Choice(["auto", "limrots", "deqms", "proda"], case_sensitive=False),
+    type=click.Choice(
+        ["auto", "limrots", "limma", "deqms", "proda", "rots"], case_sensitive=False
+    ),
     default="auto",
     show_default=True,
 )

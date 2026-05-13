@@ -90,7 +90,7 @@ mokume features2proteins [OPTIONS]
 | `--de` | off | Enable differential expression analysis |
 | `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
 | `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
-| `--de-method` | `auto` | Method: auto, limrots, deqms, or proda |
+| `--de-method` | `auto` | Method: auto, limrots, deqms, proda, limma, or rots |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
 | `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
@@ -98,7 +98,7 @@ mokume features2proteins [OPTIONS]
 
 Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrasts-file`. Both can be combined.
 
-`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods.
+`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods are pure-Python reimplementations — no R or rpy2 required.
 
 ### Plots & Reports
 

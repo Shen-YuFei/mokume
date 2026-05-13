@@ -54,6 +54,8 @@ The `features2proteins` command is the recommended way to go from raw feature da
 | Sum | `--quant-method sum` | No | Sum of all peptides |
 | Median | `--quant-method median` | No | Median peptide intensity |
 | Ratio | `--quant-method ratio` | No | Log2 sample/reference (TMT) |
+| TMT Abundance | `--quant-method abd` | No | Median of log2 peptide intensities (TMT) |
+| TMT Reporter Intensity | `--quant-method intensity` | No | Sum of raw reporter intensities (TMT) |
 
 In practice:
 
@@ -237,7 +239,7 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 | `--de` | off | Enable differential expression |
 | `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
 | `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
-| `--de-method` | `auto` | Method: auto, limrots, deqms, or proda |
+| `--de-method` | `auto` | Method: auto, limrots, deqms, proda, limma, or rots |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
 | `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
@@ -252,9 +254,9 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 
 !!! tip
     `--de-method auto` chooses `deqms` for `directlfq`
-    quantification and `limrots` for all others. Use `proda`
-    explicitly when dropout-aware modeling is more appropriate
-    for your matrix. See [Differential Expression
+    quantification and `limrots` for all others. All methods
+    are pure-Python reimplementations — no R or rpy2 required.
+    See [Differential Expression
     concepts](../concepts/differential-expression.md) for a
     detailed comparison of methods.
 

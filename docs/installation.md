@@ -82,3 +82,4 @@ pip install .
 
 - Python >= 3.9
 - Core dependencies: numpy, pandas, scipy, scikit-learn, pyopenms, pyarrow, duckdb, click, anndata
+- DE methods (limma, DEqMS, proDA, LimROTS, ROTS), imputation (BPCA, impSeq, impSeqRob), and VSN normalization are **pure-Python** — no R or rpy2 required

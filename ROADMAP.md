@@ -145,9 +145,9 @@ From SCP benchmarks:
 
 ### Normalization
 
-- [ ] VSN (Variance Stabilizing Normalization)
-- [ ] Quantile normalization
-- [ ] LOESS normalization for intensity-dependent bias
+- [x] VSN (Variance Stabilizing Normalization) — pure-Python reimplementation
+- [x] Quantile normalization — `QuantileNormalizer`, `quantile_normalize`
+- [x] LOESS normalization for intensity-dependent bias — `LOESSNormalizer`, `loess_normalize`
 
 ### Quantification
 
@@ -156,6 +156,6 @@ From SCP benchmarks:
 
 ### Integration
 
-- [ ] Export to AnnData format for scanpy/single-cell ecosystem
-- [ ] Integration with downstream statistical tools (limma, DEqMS)
+- [x] Export to AnnData format for scanpy/single-cell ecosystem — `mokume.io.parquet.create_anndata`
+- [x] Native pure-Python DE methods (limma, DEqMS, proDA, LimROTS, ROTS, MSstats)
 - [ ] Nextflow/Snakemake workflow templates

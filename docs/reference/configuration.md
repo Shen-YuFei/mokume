@@ -99,7 +99,7 @@ from mokume.pipeline.config import (
 |-------|------|---------|-------------|
 | `enabled` | `bool` | `False` | Enable DE analysis |
 | `contrasts` | `list \| None` | `None` | Contrasts (e.g., ["A-B"]) |
-| `method` | `str` | `"auto"` | Method: auto, limrots, deqms, or proda |
+| `method` | `str` | `"auto"` | Method: auto, limrots, deqms, proda, limma, or rots |
 | `log2fc_threshold` | `float` | `0.5` | Min absolute log2 fold change |
 | `fdr_threshold` | `float` | `0.05` | Max FDR |
 | `fdr_method` | `str` | `"bh"` | FDR correction: bh or ihw |

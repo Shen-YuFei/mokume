@@ -86,6 +86,12 @@ def main():
     Main function to run the CLI.
     """
     try:
+        from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
+
+        load_dotenv()
+    except ImportError:
+        pass
+    try:
         cli()
     except SystemExit as e:
         if e.code != 0:

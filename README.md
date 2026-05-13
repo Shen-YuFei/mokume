@@ -31,6 +31,9 @@ pip install mokume[plotting]
 # TissueMap pipeline (tissue specificity analysis)
 pip install mokume[tissuemap]
 
+# AI-assisted agentic optimization (DeepSeek / OpenAI-compatible)
+pip install mokume[agentic]
+
 # All optional dependencies
 pip install mokume[all]
 ```
@@ -123,10 +126,18 @@ mokume/
 │   ├── parquet.py           # Parquet/TSV reading, AnnData creation
 │   └── fasta.py             # FASTA file handling
 │
+├── agentic/                 # AI-assisted DE optimization
+│   ├── config.py            # AgenticConfig (provider, model, API key)
+│   ├── llm_client.py        # OpenAI-compatible LLM client
+│   ├── proposer.py          # LLM + rule-based config proposal
+│   ├── optimizer.py         # Multi-round optimization loop
+│   └── profiler.py          # Data profiling for LLM context
+│
 ├── commands/                # CLI commands
 │   ├── features2peptides.py # Feature to peptide conversion
 │   ├── peptides2protein.py  # Protein quantification
 │   ├── batch_correct.py     # Batch correction
+│   ├── agentic.py           # Agentic optimization CLI
 │   ├── tissuemap.py         # TissueMap pipeline CLI
 │   └── visualize.py         # t-SNE visualization
 │
@@ -182,7 +193,7 @@ Use `force_builtin=True` to always use the built-in implementation, or check `ma
 
 ## Differential Expression Analysis
 
-mokume provides modern empirical Bayes and bootstrap-based statistical methods for identifying differentially expressed proteins with high sensitivity while controlling false positives.
+mokume provides modern empirical Bayes and bootstrap-based statistical methods for identifying differentially expressed proteins with high sensitivity while controlling false positives. All methods are **pure-Python** reimplementations — no R or rpy2 required.
 
 ### DE Methods
 
@@ -1078,6 +1089,69 @@ pipeline.run()
 | **tissue-enriched** | At least one TS ≥ 2.5 |
 | **house-keeping** | All tissues, all \|TS\| < 2.0 |
 | **other** | Everything else |
+
+## Agentic Optimization
+
+AI-assisted differential expression parameter optimization using LLMs (DeepSeek, or any OpenAI-compatible provider).
+
+### Setup
+
+```bash
+pip install mokume[agentic]
+```
+
+### API Key Configuration
+
+The API key can be provided in three ways (in priority order):
+
+1. **Auto-saved `.env`** — pass `--llm-api-key` once, it is automatically saved to `.env` for future runs
+2. **Environment variable** — `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`
+3. **CLI flag** — `--llm-api-key sk-xxx`
+
+### Usage
+
+```bash
+# Default provider (DeepSeek)
+mokume agentic optimize \
+  --protein-matrix proteins.tsv \
+  --sdrf sdrf.tsv \
+  --contrasts "treated vs control" \
+  --llm-api-key sk-xxx
+
+# Custom OpenAI-compatible provider
+mokume agentic optimize \
+  --protein-matrix proteins.tsv \
+  --sdrf sdrf.tsv \
+  --contrasts "treated vs control" \
+  --llm-provider custom \
+  --llm-base-url https://api.openai.com/v1 \
+  --llm-model gpt-4o \
+  --llm-api-key sk-xxx
+
+# Rule-based only (no LLM)
+mokume agentic optimize \
+  --protein-matrix proteins.tsv \
+  --sdrf sdrf.tsv \
+  --contrasts "treated vs control" \
+  --no-llm
+```
+
+### Python API
+
+```python
+from mokume.agentic.config import AgenticConfig
+
+# DeepSeek (default)
+config = AgenticConfig(llm_api_key="sk-xxx")
+
+# Custom provider
+config = AgenticConfig(
+    llm_provider="custom",
+    llm_base_url="https://api.openai.com/v1",
+    llm_model="gpt-4o",
+    llm_api_key="sk-xxx",
+)
+```
 
 ## Citation
 
