@@ -14,7 +14,7 @@ from mokume.agentic.profiler import DataProfile, profile_data
 from mokume.agentic.proposer import propose_configs
 from mokume.agentic.reflector import reflect
 from mokume.agentic.reporter import save_outputs
-from mokume.agentic.runner import run_experiment
+from mokume.agentic.runner import PreprocessCache, run_experiment
 from mokume.agentic.state import (
     AgenticState,
     AuditEntry,
@@ -37,6 +37,7 @@ class RoundContext:
     ground_truth: set | None
     peptide_counts: pd.Series | None
     config: AgenticConfig
+    cache: PreprocessCache | None = None
 
 
 def _trim_to_budget(
@@ -94,6 +95,7 @@ def _run_round(
                 ctx.sample_to_condition,
                 ctx.contrast,
                 ctx.peptide_counts,
+                cache=ctx.cache,
             )
             result = evaluate(
                 cfg,
@@ -134,13 +136,15 @@ def _get_candidates(
     state: AgenticState,
     profile: DataProfile,
     config: AgenticConfig,
+    seen: set[str],
 ) -> list[CandidateConfig] | None:
     """Get candidates for this round, or None to stop."""
     if round_num == 1:
-        return propose_configs(profile, config)
+        return propose_configs(profile, config, seen=seen)
     ref = state.rounds[-1].reflection
     if ref and ref.next_configs:
-        return ref.next_configs
+        # Drop reflector candidates already in seen set
+        return [c for c in ref.next_configs if c.signature() not in seen]
     return None
 
 
@@ -159,10 +163,13 @@ def optimize_contrast(
 ) -> AgenticState:
     """Run the full optimization loop for a single contrast."""
     state = AgenticState()
+    seen_signatures: set[str] = set()
     logger.info("Optimizing contrast: %s vs %s", ctx.contrast[0], ctx.contrast[1])
 
     for round_num in range(1, ctx.config.max_rounds + 1):
-        candidates = _get_candidates(round_num, state, profile, ctx.config)
+        candidates = _get_candidates(
+            round_num, state, profile, ctx.config, seen_signatures
+        )
         if candidates is None:
             break
         candidates = _trim_to_budget(
@@ -171,6 +178,7 @@ def optimize_contrast(
             ctx.config.max_experiments,
         )
         if not candidates:
+            logger.info("Round %d: no new candidates after dedup, stopping", round_num)
             break
 
         state.audit_trail.append(
@@ -184,6 +192,7 @@ def optimize_contrast(
         rnd = _run_round(round_num, candidates, ctx)
         state.rounds.append(rnd)
         state.total_experiments += len(candidates)
+        seen_signatures.update(c.signature() for c in candidates)
         _update_best(state, rnd)
 
         ref_result = reflect(profile, state.rounds, ctx.config)
@@ -220,9 +229,19 @@ def optimize(
             ground_truth=ground_truth,
             peptide_counts=peptide_counts,
             config=config,
+            cache=PreprocessCache(),
         )
         key = f"{contrast[0]}_vs_{contrast[1]}"
         state = optimize_contrast(ctx, profile)
+        if ctx.cache is not None:
+            stats = ctx.cache.stats()
+            logger.info(
+                "Preprocess cache for %s: %d hits, %d misses, %d unique combos",
+                key,
+                stats["hits"],
+                stats["misses"],
+                stats["unique_combos"],
+            )
         save_outputs(profile, state, config)
         all_states[key] = state
 

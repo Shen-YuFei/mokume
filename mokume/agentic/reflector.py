@@ -20,18 +20,85 @@ from mokume.core.logger import get_logger
 logger = get_logger("mokume.agentic.reflector")
 
 
+def _collect_all_results(rounds: list[RoundResult]) -> list[tuple[int, object]]:
+    """Flatten (round_num, result) pairs across every round."""
+    return [(rnd.round_num, res) for rnd in rounds for res in rnd.results]
+
+
 def _format_results_table(rounds: list[RoundResult]) -> str:
-    """Format all results as a text table for LLM."""
-    lines = ["Round | Config | Score | TP | FP | AUC | #UP | #DOWN"]
-    lines.append("-" * 60)
-    for rnd in rounds:
-        for res in rnd.results:
-            lines.append(
-                f"{rnd.round_num} | {res.config_name} | "
-                f"{res.score:.3f} | {res.tp} | {res.fp} | "
-                f"{res.auc} | {res.n_de_up} | {res.n_de_down}"
+    """Format results for the LLM, sorted by score with Top-3 marked.
+
+    Sections produced:
+      1. Top-3 configurations globally (★ marker)
+      2. Failed configurations (score == -1) — useful for the LLM to avoid
+      3. Per-round best (trajectory) — convergence signal
+      4. Full leaderboard
+    """
+    flat = _collect_all_results(rounds)
+    if not flat:
+        return "No experiment results yet."
+
+    successful = sorted(
+        (p for p in flat if p[1].score > -1.0),
+        key=lambda p: p[1].score,
+        reverse=True,
+    )
+    failed = [p for p in flat if p[1].score <= -1.0]
+
+    parts: list[str] = []
+
+    if successful:
+        parts.append("Top-3 globally (★ = current best):")
+        top3 = successful[:3]
+        best_score = top3[0][1].score
+        for rank, (rnum, res) in enumerate(top3, start=1):
+            marker = "★" if rank == 1 else " "
+            delta = res.score - best_score
+            parts.append(
+                f"  {marker} #{rank} R{rnum} {res.config_name} "
+                f"score={res.score:.3f} (Δ={delta:+.3f}) "
+                f"TP={res.tp} FP={res.fp} AUC={res.auc} "
+                f"UP={res.n_de_up} DOWN={res.n_de_down}"
             )
-    return "\n".join(lines)
+        parts.append("")
+
+    if failed:
+        parts.append(f"Failed configurations ({len(failed)}, avoid in next round):")
+        for rnum, res in failed[:5]:
+            parts.append(f"  ✗ R{rnum} {res.config_name}")
+        if len(failed) > 5:
+            parts.append(f"  ... and {len(failed) - 5} more")
+        parts.append("")
+
+    parts.append("Per-round best (convergence trajectory):")
+    for rnd in rounds:
+        if rnd.results and rnd.results[0].score > -1.0:
+            top = rnd.results[0]
+            parts.append(f"  R{rnd.round_num}: {top.config_name} score={top.score:.3f}")
+        else:
+            parts.append(f"  R{rnd.round_num}: (all failed)")
+    parts.append("")
+
+    if successful:
+        score_gap = successful[0][1].score - successful[-1][1].score
+        parts.append(
+            f"Score range across successful runs: "
+            f"{successful[-1][1].score:.3f} – {successful[0][1].score:.3f} "
+            f"(gap={score_gap:.3f})"
+        )
+        parts.append("")
+
+    parts.append("Full leaderboard (score desc):")
+    parts.append("Rank | Round | Config | Score | TP | FP | AUC | #UP | #DOWN")
+    parts.append("-" * 70)
+    for rank, (rnum, res) in enumerate(successful, start=1):
+        parts.append(
+            f"{rank:>4} | R{rnum} | {res.config_name} | "
+            f"{res.score:.3f} | {res.tp} | {res.fp} | "
+            f"{res.auc} | {res.n_de_up} | {res.n_de_down}"
+        )
+
+    return "\n".join(parts)
 
 
 def _parse_reflection_data(data: dict) -> ReflectionResult:

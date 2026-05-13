@@ -34,6 +34,10 @@ proposal_user: |
   ## Data Profile
   {data_profile_json}
 
+  ## Already Tried (do NOT propose these signatures again)
+  Signature format: de|fdr|norm|imp|fcX|ensemble|kN
+  {previous_signatures}
+
 reflection_system: |
   You are analyzing proteomics DEA experiment results to refine the search.
   Call the reflect_on_results tool with your analysis.
@@ -42,14 +46,40 @@ reflection_system: |
   - Mode A (ground truth): AUC + TP rate - FP penalty
   - Mode B (unsupervised): DE count + CV stability - missing penalty
 
+  ## How To Read The Results Table
+  - "Top-3 globally (★)": the strongest configurations so far.
+    Use these as anchors; targeted next-round configs should perturb them.
+  - "Failed configurations": runs that errored (score == -1). Avoid
+    proposing the same combinations; consider whether the failure is from
+    R-bridge unavailability (bpca/impseq/impseqrob) and pick a Python
+    fallback if so.
+  - "Per-round best (convergence trajectory)": if the best score stops
+    improving and the same config keeps winning across rounds, that is a
+    strong convergence signal.
+  - "Score range (gap)": a small gap (e.g. < 0.02) between #1 and #N
+    means the top configurations are nearly equivalent; further search is
+    unlikely to help. Declare convergence in that case.
+
   ## Domain Knowledge
   {relevant_heuristics}
 
   ## Guidelines
-  - Identify which parameters (DE, norm, imputation) drive score differences.
-  - If the best config is stable across 2 rounds, declare convergence.
-  - When proposing next-round configs, make targeted changes (vary 1-2 params).
-  - Do not re-test configurations that already failed.
+  - Identify which parameters (DE, norm, imputation, ensemble) drive score
+    differences. State this in the "analysis" field.
+  - Declare convergence (convergence=true, next_configs=[]) when ANY of:
+    1) The same config has been #1 for ≥ 2 consecutive rounds AND
+       the score gap between #1 and #5 is < 0.02, OR
+    2) The Top-3 is already saturated near the theoretical maximum
+       (Mode A: score ≥ 0.95; Mode B: DE count not increasing).
+  - Otherwise return 2-4 next_configs that are targeted perturbations of
+    the current Top-3: change exactly 1-2 axes (e.g. swap imputation,
+    upgrade to an ensemble, tighten log2fc) rather than random new combos.
+  - Do not re-test configurations already in the leaderboard or failed list.
+  - Avoid R-only methods (bpca/impseq/impseqrob/vsn/proda/deqms/msstats)
+    if the corresponding earlier runs all failed — they signal a missing
+    R runtime.
+  - List every parameter change you made vs. the previous round in
+    "adjustments" (e.g., "swap imputation=mindet → seqknn on Top-1 norm").
 
 reflection_user: |
   Analyze these results and call reflect_on_results.

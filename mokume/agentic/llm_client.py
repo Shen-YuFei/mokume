@@ -224,7 +224,10 @@ def create_client(config: AgenticConfig):
 
 def _build_common_kwargs(config: AgenticConfig) -> dict[str, Any]:
     """Build kwargs shared across all chat completion calls."""
-    kwargs: dict[str, Any] = {"model": config.llm_model, "max_tokens": 8192}
+    kwargs: dict[str, Any] = {
+        "model": config.llm_model,
+        "max_tokens": config.llm_max_tokens,
+    }
     if config.llm_thinking and config.llm_provider == "deepseek":
         kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
         kwargs["reasoning_effort"] = config.llm_reasoning_effort

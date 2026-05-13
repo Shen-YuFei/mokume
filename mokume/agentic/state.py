@@ -34,6 +34,20 @@ class CandidateConfig:
             "expected_outcome": self.expected_outcome,
         }
 
+    def signature(self) -> str:
+        """Return a stable identifier for dedup (excludes free-text fields)."""
+        return "|".join(
+            [
+                self.de_method,
+                self.fdr_method,
+                self.normalization,
+                self.imputation,
+                f"fc{self.log2fc_threshold:g}",
+                self.ensemble,
+                f"k{self.ensemble_k}",
+            ]
+        )
+
 
 @dataclass
 class EvaluationResult:

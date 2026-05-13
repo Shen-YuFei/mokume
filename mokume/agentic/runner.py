@@ -12,6 +12,48 @@ from mokume.imputation.censored import impute_censored
 logger = get_logger("mokume.agentic.runner")
 
 
+class PreprocessCache:
+    """Memoize (normalization, imputation) pairs within an optimization run.
+
+    Many candidate configurations share the same (norm, imp) prefix and only
+    differ in the DE method / thresholds. Caching the imputed matrix avoids
+    re-running expensive normalization (VSN / LOESS / MBQN) and imputation
+    (KNN / BPCA / impSeq) work on every config.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, str], pd.DataFrame] = {}
+        self.hits = 0
+        self.misses = 0
+
+    def get_or_compute(
+        self,
+        norm_method: str,
+        imp_method: str,
+        protein_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Return imputed matrix for (norm, imp), computing on miss."""
+        key = (norm_method, imp_method)
+        cached = self._store.get(key)
+        if cached is not None:
+            self.hits += 1
+            logger.debug("PreprocessCache hit for (%s, %s)", norm_method, imp_method)
+            return cached.copy()
+        self.misses += 1
+        normed = _apply_normalization(protein_df, norm_method)
+        imputed = _apply_imputation(normed, imp_method)
+        self._store[key] = imputed
+        return imputed.copy()
+
+    def stats(self) -> dict:
+        """Return cache hit / miss counters for telemetry."""
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "unique_combos": len(self._store),
+        }
+
+
 def _apply_normalization(
     protein_df: pd.DataFrame,
     method: str,
@@ -89,15 +131,23 @@ def run_experiment(
     sample_to_condition: dict[str, str],
     contrast: tuple[str, str],
     peptide_counts: pd.Series | None = None,
+    cache: PreprocessCache | None = None,
 ) -> pd.DataFrame:
-    """Run a single DE experiment with the given configuration."""
+    """Run a single DE experiment with the given configuration.
+
+    If ``cache`` is provided, (normalization, imputation) is memoized across
+    configurations so the same prefix only runs once per round.
+    """
     logger.info("Running experiment: %s", config.name)
 
-    # 1. Apply normalization
-    normed_df = _apply_normalization(protein_df, config.normalization)
-
-    # 2. Apply imputation
-    imputed_df = _apply_imputation(normed_df, config.imputation)
+    # 1+2. Normalization + imputation (cached when possible)
+    if cache is not None:
+        imputed_df = cache.get_or_compute(
+            config.normalization, config.imputation, protein_df
+        )
+    else:
+        normed_df = _apply_normalization(protein_df, config.normalization)
+        imputed_df = _apply_imputation(normed_df, config.imputation)
 
     # 3. Run DE (single method or ensemble)
     if config.ensemble and config.ensemble != "none":

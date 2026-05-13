@@ -49,9 +49,34 @@ def _build_heuristic_text(profile: DataProfile) -> str:
     )
 
 
+def _dedup_configs(
+    configs: list[CandidateConfig],
+    seen: set[str] | None,
+) -> list[CandidateConfig]:
+    """Drop configs whose signature is already seen, preserving order."""
+    if not seen:
+        return configs
+    deduped: list[CandidateConfig] = []
+    for cfg in configs:
+        sig = cfg.signature()
+        if sig in seen:
+            logger.debug("Skipping duplicate config %s (%s)", cfg.name, sig)
+            continue
+        deduped.append(cfg)
+    return deduped
+
+
+def _format_seen_block(seen: set[str] | None) -> str:
+    """Format previously-tried signatures for the LLM prompt."""
+    if not seen:
+        return "(none — this is the first round)"
+    return "\n".join(f"- {sig}" for sig in sorted(seen))
+
+
 def llm_propose(
     profile: DataProfile,
     config: AgenticConfig,
+    seen: set[str] | None = None,
 ) -> list[CandidateConfig]:
     """Propose configs using LLM with tool calls."""
     prompts = load_prompts()
@@ -62,6 +87,7 @@ def llm_propose(
     )
     user_msg = prompts["proposal_user"].format(
         data_profile_json=json.dumps(profile.to_dict(), indent=2),
+        previous_signatures=_format_seen_block(seen),
     )
 
     result = call_with_tools(system_msg, user_msg, [PROPOSAL_TOOL], config)
@@ -74,15 +100,24 @@ def llm_propose(
 def propose_configs(
     profile: DataProfile,
     config: AgenticConfig,
+    seen: set[str] | None = None,
 ) -> list[CandidateConfig]:
-    """Propose configurations (LLM with rule-based fallback)."""
+    """Propose configurations (LLM with rule-based fallback).
+
+    ``seen`` is a set of CandidateConfig.signature() strings already tried;
+    matching candidates are filtered out and (when LLM is on) also surfaced
+    in the prompt so the model proactively avoids them.
+    """
     if config.use_llm:
         try:
-            configs = llm_propose(profile, config)
-            logger.info("LLM proposed %d configs", len(configs))
-            return configs
+            configs = llm_propose(profile, config, seen=seen)
+            configs = _dedup_configs(configs, seen)
+            logger.info("LLM proposed %d configs (after dedup)", len(configs))
+            if configs:
+                return configs
+            logger.warning("LLM returned only duplicates, falling back to rules")
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLM unavailable (%s), using rule-based", exc)
 
     configs = rule_propose(profile)
-    return configs
+    return _dedup_configs(configs, seen)

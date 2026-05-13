@@ -48,8 +48,12 @@ class AgenticConfig:
     llm_api_key: Optional[str] = None
     llm_model: Optional[str] = None  # auto-set from provider if None
     llm_temperature: float = 0.1  # ignored when thinking mode is enabled
-    llm_thinking: bool = False  # deepseek thinking mode
+    llm_thinking: bool = True  # deepseek thinking mode (V4 Pro)
     llm_reasoning_effort: str = "high"  # "high" or "max" (deepseek only)
+    # Default to DeepSeek V4 Pro's documented 384K output cap so thinking
+    # mode reasoning_content + tool-call arguments never hit a length cut.
+    # Override on the AgenticConfig if your custom provider has a lower cap.
+    llm_max_tokens: int = 384000
 
     def __post_init__(self) -> None:
         """Apply provider presets for base_url and model if not explicitly set."""

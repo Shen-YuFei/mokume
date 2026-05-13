@@ -124,6 +124,21 @@ def agentic_cmd():
     "--llm-model", default=None, help="LLM model name (auto-set from provider)."
 )
 @click.option(
+    "--llm-thinking/--no-llm-thinking",
+    "llm_thinking",
+    default=True,
+    show_default=True,
+    help="Enable DeepSeek V4 Pro deep-thinking mode for proposer / reflector.",
+)
+@click.option(
+    "--reasoning-effort",
+    "llm_reasoning_effort",
+    default="high",
+    type=click.Choice(["high", "max"], case_sensitive=False),
+    show_default=True,
+    help="Reasoning depth when --llm-thinking is enabled (DeepSeek only).",
+)
+@click.option(
     "--no-llm",
     is_flag=True,
     default=False,
@@ -154,6 +169,8 @@ def optimize_cmd(**kwargs):
         llm_base_url=kwargs["llm_base_url"],
         llm_api_key=kwargs["llm_api_key"],
         llm_model=kwargs["llm_model"],
+        llm_thinking=kwargs["llm_thinking"],
+        llm_reasoning_effort=kwargs["llm_reasoning_effort"].lower(),
         contrasts=parsed,
         output_dir=kwargs["output_dir"],
     )
