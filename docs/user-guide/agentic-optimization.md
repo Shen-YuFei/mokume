@@ -115,10 +115,10 @@ tool schema (`mokume/agentic/llm_client.py`).
 
 Notes:
 
-- `bpca`, `impseq`, `impseqrob` and `vsn`/`proda`/`deqms`/`msstats` are
-  R-bridged. They require `rpy2` and the corresponding Bioconductor
-  packages. The runner will surface an error and the evaluator will
-  score the config 0, so they are effectively skipped on hosts without R.
+- All DE, normalization, and imputation methods (including `bpca`,
+  `impseq`, `impseqrob`, `vsn`, `proda`, `deqms`, `msstats`) are
+  **pure-Python reimplementations**. No `rpy2`, R runtime, or
+  Bioconductor packages are required.
 - Imputation always runs in **log2 space**, and the runner restores the
   original scale afterwards. See
   [concepts/imputation.md](../concepts/imputation.md).

@@ -8,7 +8,6 @@ proposal_system: |
   - Normalization: none, median, quantile, mean, rlr, vsn, loess, mbqn
   - Imputation: none, minprob, mindet, knn, missforest, seqknn, qrilc, mle,
     mice, nbavg, gms, bpca, impseq, impseqrob
-    (bpca/impseq/impseqrob need R via rpy2)
   - Ensemble presets: "limma,deqms,proda", "limma,rots,deqms",
     "limma,rots,deqms,proda" (set de_method=ensemble + ensemble_k 2-3)
   - FDR methods: bh, ihw
@@ -49,10 +48,8 @@ reflection_system: |
   ## How To Read The Results Table
   - "Top-3 globally (★)": the strongest configurations so far.
     Use these as anchors; targeted next-round configs should perturb them.
-  - "Failed configurations": runs that errored (score == -1). Avoid
-    proposing the same combinations; consider whether the failure is from
-    R-bridge unavailability (bpca/impseq/impseqrob) and pick a Python
-    fallback if so.
+  - Failed configurations: runs that errored (score == -1). Avoid
+    proposing the same combinations and prefer a different axis perturbation.
   - "Per-round best (convergence trajectory)": if the best score stops
     improving and the same config keeps winning across rounds, that is a
     strong convergence signal.
@@ -75,9 +72,6 @@ reflection_system: |
     the current Top-3: change exactly 1-2 axes (e.g. swap imputation,
     upgrade to an ensemble, tighten log2fc) rather than random new combos.
   - Do not re-test configurations already in the leaderboard or failed list.
-  - Avoid R-only methods (bpca/impseq/impseqrob/vsn/proda/deqms/msstats)
-    if the corresponding earlier runs all failed — they signal a missing
-    R runtime.
   - List every parameter change you made vs. the previous round in
     "adjustments" (e.g., "swap imputation=mindet → seqknn on Top-1 norm").
 

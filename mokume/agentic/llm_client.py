@@ -77,10 +77,7 @@ _CONFIG_ITEM_SCHEMA: dict[str, Any] = {
                 "impseq",
                 "impseqrob",
             ],
-            "description": (
-                "Missing value imputation method. "
-                "bpca/impseq/impseqrob require an R runtime via rpy2."
-            ),
+            "description": "Missing value imputation method.",
         },
         "ensemble": {
             "type": "string",
