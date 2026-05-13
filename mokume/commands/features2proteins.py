@@ -46,7 +46,8 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     "quant_method",
     help=(
         "Quantification method: directlfq, ibaq, maxlfq, topn, sum, "
-        "median, ratio, abd (TMT abundance), intensity (TMT reporter)"
+        "median, ratio, abd (TMT abundance), intensity (TMT reporter), "
+        "spectral_count (PSM-based count)"
     ),
     type=click.Choice(
         [
@@ -59,6 +60,7 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
             "ratio",
             "abd",
             "intensity",
+            "spectral_count",
         ],
         case_sensitive=False,
     ),
@@ -283,6 +285,72 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     default="mean",
     show_default=True,
 )
+# Imputation options
+@click.option(
+    "--impute",
+    "impute",
+    help="Enable missing-value imputation on the protein matrix",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--impute-method",
+    "impute_method",
+    help="Imputation method (operates in log2 space)",
+    type=click.Choice(
+        [
+            "none",
+            "knn",
+            "minprob",
+            "mindet",
+            "qrilc",
+            "missforest",
+            "seqknn",
+            "mle",
+            "mice",
+            "nbavg",
+            "gms",
+            "bpca",
+            "impseq",
+            "impseqrob",
+        ],
+        case_sensitive=False,
+    ),
+    default="none",
+    show_default=True,
+)
+@click.option(
+    "--impute-quantile",
+    "impute_quantile",
+    help="Quantile for MinProb/MinDet/QRILC low-tail draw",
+    type=float,
+    default=0.01,
+    show_default=True,
+)
+@click.option(
+    "--impute-shift",
+    "impute_shift",
+    help="MinProb shift in standard deviations",
+    type=float,
+    default=1.6,
+    show_default=True,
+)
+@click.option(
+    "--impute-scale",
+    "impute_scale",
+    help="MinProb scale factor for the imputation distribution sigma",
+    type=float,
+    default=0.3,
+    show_default=True,
+)
+@click.option(
+    "--impute-n-neighbors",
+    "impute_n_neighbors",
+    help="Number of neighbours for KNN/SeqKNN/NBavg imputation",
+    type=int,
+    default=5,
+    show_default=True,
+)
 # Differential expression options
 @click.option(
     "--de",
@@ -307,11 +375,35 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--de-method",
     "de_method",
-    help="DE statistical method",
+    help="DE statistical method (use 'ensemble' for top-k consensus across methods)",
     type=click.Choice(
-        ["auto", "limrots", "limma", "deqms", "proda", "rots"], case_sensitive=False
+        [
+            "auto",
+            "limrots",
+            "limma",
+            "deqms",
+            "proda",
+            "rots",
+            "msstats",
+            "ensemble",
+        ],
+        case_sensitive=False,
     ),
     default="auto",
+    show_default=True,
+)
+@click.option(
+    "--de-ensemble-methods",
+    "de_ensemble_methods",
+    help="Comma-separated DE methods used by --de-method=ensemble (default: limrots,deqms,proda)",
+    default=None,
+)
+@click.option(
+    "--de-ensemble-min-k",
+    "de_ensemble_min_k",
+    help="Minimum number of ensemble members that must agree on direction",
+    type=int,
+    default=2,
     show_default=True,
 )
 @click.option(
@@ -435,11 +527,20 @@ def features2proteins(
     coverage_threshold: float,
     # Ratio
     ratio_fraction_merge: str,
+    # Imputation
+    impute: bool,
+    impute_method: str,
+    impute_quantile: float,
+    impute_shift: float,
+    impute_scale: float,
+    impute_n_neighbors: int,
     # DE
     differential_expression: bool,
     de_contrasts: str,
     de_contrasts_file: str,
     de_method: str,
+    de_ensemble_methods: str,
+    de_ensemble_min_k: int,
     de_log2fc_threshold: float,
     de_fdr_threshold: float,
     de_fdr_method: str,
@@ -608,6 +709,11 @@ def features2proteins(
     parsed_highlight_genes = (
         [s.strip() for s in highlight_genes.split(",")] if highlight_genes else None
     )
+    parsed_de_ensemble_methods = (
+        [s.strip() for s in de_ensemble_methods.split(",")]
+        if de_ensemble_methods
+        else None
+    )
 
     # Run the pipeline
     run_pipeline(
@@ -651,10 +757,19 @@ def features2proteins(
         de_fdr_threshold=de_fdr_threshold,
         de_fdr_method=de_fdr_method,
         de_output=de_output,
+        de_ensemble_methods=parsed_de_ensemble_methods,
+        de_ensemble_min_k=de_ensemble_min_k,
         # Coverage filter
         coverage_threshold=coverage_threshold,
         # Ratio
         ratio_fraction_merge=ratio_fraction_merge,
+        # Imputation
+        impute=impute,
+        impute_method=impute_method,
+        impute_quantile=impute_quantile,
+        impute_shift=impute_shift,
+        impute_scale=impute_scale,
+        impute_n_neighbors=impute_n_neighbors,
         # Plots
         plot_output_dir=plot_output_dir,
         plot_volcano=plot_volcano,
