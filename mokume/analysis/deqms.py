@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from scipy.special import digamma, polygamma
 from scipy.stats import t as t_dist
-from skmisc.loess import loess as sk_loess
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from mokume.analysis._helpers import (
     bh_adjust,
@@ -80,19 +80,25 @@ def _spectra_count_ebayes(
         return fit.t_stat[:, 0], fit.p_value[:, 0], fit.s2_post, fit.df_prior
 
     try:
-        lo = sk_loess(x_valid, log_var[valid], span=0.75, degree=2)
-        lo.fit()
+        fitted = lowess(
+            log_var[valid],
+            x_valid,
+            frac=0.75,
+            return_sorted=False,
+        )
     except Exception:
         logger.warning("LOESS failed, falling back to standard eBayes")
         return fit.t_stat[:, 0], fit.p_value[:, 0], fit.s2_post, fit.df_prior
 
     y_pred = np.full(n_genes, np.nan)
-    y_pred[valid] = lo.outputs.fitted_values
+    y_pred[valid] = fitted
 
     non_valid = ~valid & np.isfinite(x)
     if non_valid.any():
-        pred = lo.predict(x[non_valid])
-        y_pred[non_valid] = pred.values
+        # statsmodels.lowess does not predict at new points, so linearly
+        # interpolate the fitted curve at the unseen x values.
+        order = np.argsort(x_valid)
+        y_pred[non_valid] = np.interp(x[non_valid], x_valid[order], fitted[order])
 
     eg = log_var - digamma(df_valid / 2) + np.log(df_valid / 2)
     egpred = y_pred - digamma(df_valid / 2) + np.log(df_valid / 2)
