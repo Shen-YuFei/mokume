@@ -119,6 +119,7 @@ nav:
       - "peptides2protein: Protein Quantification": user-guide/peptides2protein.md
       - "correct-batches: Batch Correction": user-guide/batch-correct.md
       - "tissuemap: Tissue Proteome Atlas": user-guide/tissuemap.md
+      - "agentic optimize: LLM-Assisted Workflow Search": user-guide/agentic-optimization.md
       - Visualization & Reports: user-guide/visualization.md
   - Reference:
       - reference/index.md

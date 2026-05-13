@@ -1109,6 +1109,15 @@ pipeline.run()
 
 AI-assisted differential expression parameter optimization using LLMs (DeepSeek, or any OpenAI-compatible provider).
 
+The agent now proposes configurations across the full method catalogue:
+
+- **DE methods**: `limma`, `rots`, `deqms`, `proda`, `msstats`, and **`ensemble`** (top-k consensus combining multiple methods)
+- **Normalization**: `none`, `median`, `quantile`, `mean`, `rlr`, `vsn`, `loess`, `mbqn`
+- **Imputation** (13 methods): `minprob`, `mindet`, `knn`, `missforest`, `seqknn`, `qrilc`, `mle`, `mice`, `nbavg`, `gms`, `bpca`, `impseq`, `impseqrob`
+- **Ensemble presets**: `limma,deqms,proda` (2/3 consensus), `limma,rots,deqms,proda` (3/4 consensus), configurable via `ensemble_strategies` in `heuristics.yaml`
+
+See the [agentic optimization user guide](docs/user-guide/agentic-optimization.md) for the full workflow, scoring modes, and ensemble configuration.
+
 ### Setup
 
 ```bash

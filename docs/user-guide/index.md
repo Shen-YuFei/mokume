@@ -24,6 +24,10 @@ Standalone batch correction for already-quantified protein data. Combines multip
 
 Builds a per-dataset tissue proteome atlas from QPX outputs, including AdaTiSS tissue-specificity scoring, AnnData exports, and atlas-style plots.
 
+### [agentic optimize: LLM-Assisted Workflow Search](agentic-optimization.md)
+
+Searches normalization × imputation × DE × ensemble configurations with an LLM-driven (or rule-based) loop, scoring each against ground truth or unsupervised QC metrics until convergence.
+
 ### [Visualization & Reports](visualization.md)
 
 PCA, t-SNE, volcano plots, heatmaps, and interactive HTML QC reports.
