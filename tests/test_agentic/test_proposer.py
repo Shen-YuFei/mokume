@@ -41,3 +41,63 @@ def test_items_to_configs():
     assert len(configs) == 1
     assert configs[0].de_method == "deqms"
     assert configs[0].normalization == "median"
+
+
+def test_items_to_configs_ensemble_passthrough():
+    """Ensemble + ensemble_k fields are forwarded into CandidateConfig."""
+    items = [
+        {
+            "name": "ens",
+            "de_method": "ensemble",
+            "fdr_method": "bh",
+            "normalization": "rlr",
+            "imputation": "seqknn",
+            "ensemble": "limma,deqms,proda",
+            "ensemble_k": 3,
+            "log2fc_threshold": 1.0,
+            "reasoning": "consensus",
+            "expected_outcome": "robust",
+        }
+    ]
+    configs = _items_to_configs(items)
+    assert configs[0].de_method == "ensemble"
+    assert configs[0].ensemble == "limma,deqms,proda"
+    assert configs[0].ensemble_k == 3
+
+
+def test_items_to_configs_ensemble_defaults():
+    """Missing ensemble fields default to 'none' / 2 (backward compat)."""
+    items = [
+        {
+            "name": "no_ens",
+            "de_method": "limma",
+            "fdr_method": "bh",
+            "normalization": "none",
+            "imputation": "none",
+            "log2fc_threshold": 0.5,
+            "reasoning": "baseline",
+            "expected_outcome": "stable",
+        }
+    ]
+    configs = _items_to_configs(items)
+    assert configs[0].ensemble == "none"
+    assert configs[0].ensemble_k == 2
+
+
+def test_items_to_configs_new_imputation_methods():
+    """New imputation enum values round-trip through the proposer."""
+    items = [
+        {
+            "name": f"cfg_{m}",
+            "de_method": "limma",
+            "fdr_method": "bh",
+            "normalization": "none",
+            "imputation": m,
+            "log2fc_threshold": 0.5,
+            "reasoning": "test",
+            "expected_outcome": "ok",
+        }
+        for m in ("qrilc", "mle", "mice", "nbavg", "gms")
+    ]
+    configs = _items_to_configs(items)
+    assert [c.imputation for c in configs] == ["qrilc", "mle", "mice", "nbavg", "gms"]
