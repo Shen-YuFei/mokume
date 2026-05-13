@@ -6,8 +6,8 @@ from pathlib import Path
 import yaml
 
 from mokume.agentic.config import AgenticConfig
+from mokume.agentic.llm_client import LLMUnavailableError, call_text
 from mokume.agentic.profiler import DataProfile
-from mokume.agentic.proposer import LLMUnavailableError, _get_llm
 from mokume.agentic.rules import load_prompts
 from mokume.agentic.state import AgenticState, EvaluationResult
 from mokume.core.logger import get_logger
@@ -93,19 +93,16 @@ def _llm_report(
     config: AgenticConfig,
 ) -> str:
     """Generate report using LLM."""
-    llm = _get_llm(config)
     prompts = load_prompts()
     best = results[0] if results else None
 
-    prompt = prompts["report"].format(
+    system_msg = prompts["report_system"]
+    user_msg = prompts["report_user"].format(
         data_profile_json=json.dumps(profile.to_dict(), indent=2),
         all_results_table=_results_to_tsv(results),
         best_config=json.dumps(best.config if best else {}, indent=2),
-        n_rounds=len(state.rounds),
-        total_experiments=state.total_experiments,
     )
-    response = llm.invoke(prompt)
-    return response.content if hasattr(response, "content") else str(response)
+    return call_text(system_msg, user_msg, config)
 
 
 def save_outputs(

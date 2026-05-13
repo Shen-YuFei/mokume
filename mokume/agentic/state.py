@@ -11,8 +11,11 @@ class CandidateConfig:
     name: str
     de_method: str = "deqms"
     fdr_method: str = "bh"
+    normalization: str = "none"
     imputation: str = "none"
     log2fc_threshold: float = 0.5
+    ensemble: str = "none"  # "none" or comma-separated methods
+    ensemble_k: int = 2  # min agreement for top-k consensus
     reasoning: str = ""
     expected_outcome: str = ""
 
@@ -22,8 +25,11 @@ class CandidateConfig:
             "name": self.name,
             "de_method": self.de_method,
             "fdr_method": self.fdr_method,
+            "normalization": self.normalization,
             "imputation": self.imputation,
             "log2fc_threshold": self.log2fc_threshold,
+            "ensemble": self.ensemble,
+            "ensemble_k": self.ensemble_k,
             "reasoning": self.reasoning,
             "expected_outcome": self.expected_outcome,
         }

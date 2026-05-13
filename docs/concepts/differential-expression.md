@@ -1,14 +1,16 @@
 # Differential Expression
 
-Differential expression (DE) analysis identifies proteins whose abundance changes significantly between experimental conditions. mokume provides three statistical methods, each with distinct strengths.
+Differential expression (DE) analysis identifies proteins whose abundance changes significantly between experimental conditions. mokume provides five pure-Python statistical methods, each with distinct strengths.
 
 ## Overview
 
-| Method | Model | Key Feature | Needs Peptide Counts | Optional Dep |
-|--------|-------|-------------|:--------------------:|:------------:|
-| **LimROTS** | Reproducibility-optimized t-statistic | Bootstrap-tuned smoothing | No | No |
-| **DEqMS** | Empirical Bayes with peptide-count weighting | Variance stabilization by spectrum count | Yes | No |
-| **proDA** | Probabilistic dropout model | Dropout-aware likelihood | No | No |
+| Method | Model | Key Feature | Needs Peptide Counts |
+|--------|-------|-------------|:--------------------:|
+| **LimROTS** | Reproducibility-optimized t-statistic | Bootstrap-tuned smoothing | No |
+| **DEqMS** | Empirical Bayes with peptide-count weighting | Variance stabilization by spectrum count | Yes |
+| **proDA** | Probabilistic dropout model | Dropout-aware likelihood | No |
+| **limma** | Moderated t-test (empirical Bayes) | Stable baseline, small-sample friendly | No |
+| **ROTS** | Reproducibility-optimized statistic | Data-adaptive test statistic | No |
 
 ## Choosing a Method
 
@@ -24,6 +26,9 @@ graph TD
 
 !!! tip "`--de-method auto`"
     When set to `auto` (the default), mokume selects **DEqMS** for DirectLFQ quantification and **LimROTS** for all other methods. You can always override this with `--de-method`.
+
+!!! note "No R required"
+    All DE methods are pure-Python reimplementations. No R, rpy2, or Bioconductor packages are needed.
 
 ## LimROTS
 
@@ -120,6 +125,57 @@ de = DifferentialExpression(
 
 !!! note "When to use proDA"
     proDA is most valuable when your protein matrix has **>30% missing values** and you suspect missingness is abundance-dependent (MNAR). On clean matrices with few missing values, LimROTS or DEqMS will typically outperform.
+
+## limma
+
+**limma** (Ritchie et al., 2015) fits linear models to log-expression data and uses empirical Bayes moderation of standard errors. It is the most widely used method in genomics and a stable baseline for proteomics.
+
+**Strengths:**
+
+- Extremely well-validated across thousands of studies
+- Robust with small sample sizes (n ≥ 2 per group)
+- Fast and computationally lightweight
+
+**Weaknesses:**
+
+- Does not account for peptide-count information
+- May be less powerful than DEqMS when peptide counts are available
+
+```python
+from mokume.analysis import DifferentialExpression
+
+de = DifferentialExpression(
+    method="limma",
+    fdr_method="bh",
+    fdr_threshold=0.05,
+    log2fc_threshold=0.5,
+)
+```
+
+## ROTS
+
+**ROTS** (Suomi et al., 2017) optimizes a test statistic for maximal reproducibility across bootstrap resamples. Unlike LimROTS (which also incorporates limma empirical Bayes), ROTS uses only the bootstrap-optimized statistic without shrinkage priors.
+
+**Strengths:**
+
+- Data-adaptive: optimizes its own test statistic shape
+- Good performance across diverse data types
+
+**Weaknesses:**
+
+- Computationally expensive (bootstrap iterations)
+- May be redundant with LimROTS in most scenarios
+
+```python
+from mokume.analysis import DifferentialExpression
+
+de = DifferentialExpression(
+    method="rots",
+    fdr_method="bh",
+    fdr_threshold=0.05,
+    log2fc_threshold=0.5,
+)
+```
 
 ## FDR Correction
 

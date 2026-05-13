@@ -26,8 +26,9 @@ def _get_data_type_priors(heuristics: dict, data_type: str) -> dict:
     priors = heuristics.get("data_type_priors", {})
     dt = priors.get(data_type, priors.get("LFQ", {}))
     return {
-        "de_methods": list(dt.get("recommended_de", ["deqms", "limrots", "proda"])),
+        "de_methods": list(dt.get("recommended_de", ["deqms", "limma", "proda"])),
         "fdr_methods": list(dt.get("recommended_fdr", ["bh", "ihw"])),
+        "normalizations": list(dt.get("recommended_normalization", ["none"]))[:2],
         "imputations": list(dt.get("recommended_imputation", ["none"])),
     }
 
@@ -35,8 +36,8 @@ def _get_data_type_priors(heuristics: dict, data_type: str) -> dict:
 def _refine_de_methods(de: list[str], profile: DataProfile) -> list[str]:
     """Add DE methods based on data characteristics."""
     min_grp = min(profile.samples_per_condition.values(), default=3)
-    if min_grp < 3 and "limrots" not in de:
-        de.append("limrots")
+    if min_grp < 3 and "rots" not in de:
+        de.append("rots")
     if profile.has_peptide_counts and "deqms" not in de:
         de.insert(0, "deqms")
     return de
@@ -50,6 +51,8 @@ def _apply_condition_rules(space: dict, profile: DataProfile) -> dict:
     if profile.missing_rate < 0.15:
         others = [m for m in space["imputations"] if m != "none"]
         space["imputations"] = ["none"] + others
+    if "none" not in space["normalizations"]:
+        space["normalizations"].insert(0, "none")
     return space
 
 
@@ -67,6 +70,7 @@ def rule_propose(
         product(
             space["de_methods"],
             space["fdr_methods"],
+            space["normalizations"],
             space["imputations"],
             thresholds,
         )
@@ -77,13 +81,14 @@ def rule_propose(
         combos = combos[:max_configs]
 
     configs = []
-    for de, fdr, imp, thr in combos:
-        name = f"{de}_{fdr}_{imp}_fc{thr}"
+    for de, fdr, norm, imp, thr in combos:
+        name = f"{de}_{fdr}_{norm}_{imp}_fc{thr}"
         configs.append(
             CandidateConfig(
                 name=name,
                 de_method=de,
                 fdr_method=fdr,
+                normalization=norm,
                 imputation=imp,
                 log2fc_threshold=thr,
                 reasoning=f"Rule-based: {profile.data_type} prior",

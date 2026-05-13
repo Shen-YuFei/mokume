@@ -3,6 +3,10 @@
 import json
 
 from mokume.agentic.config import AgenticConfig
+from mokume.agentic.llm_client import (
+    PROPOSAL_TOOL,
+    call_with_tools,
+)
 from mokume.agentic.profiler import DataProfile
 from mokume.agentic.rules import load_prompts, rule_propose, _load_heuristics
 from mokume.agentic.state import CandidateConfig
@@ -11,41 +15,8 @@ from mokume.core.logger import get_logger
 logger = get_logger("mokume.agentic.proposer")
 
 
-class LLMUnavailableError(Exception):
-    """Raised when LLM provider is not available."""
-
-
-def _get_llm(config: AgenticConfig):
-    """Get a ChatOpenAI instance (works with any OpenAI-compatible API)."""
-    try:
-        from langchain_openai import ChatOpenAI  # pylint: disable=import-outside-toplevel
-    except ImportError as exc:
-        raise LLMUnavailableError(
-            "LLM requires langchain-openai: pip install langchain-openai"
-        ) from exc
-
-    kwargs = {
-        "model": config.llm_model,
-        "temperature": config.llm_temperature,
-        "max_tokens": 4096,
-    }
-    if config.llm_base_url:
-        kwargs["base_url"] = config.llm_base_url
-    if config.llm_api_key:
-        kwargs["api_key"] = config.llm_api_key
-    return ChatOpenAI(**kwargs)
-
-
-def _parse_configs_from_json(raw: str) -> list[CandidateConfig]:
-    """Parse LLM JSON response into CandidateConfig list."""
-    # Extract JSON array from response
-    text = raw.strip()
-    start = text.find("[")
-    end = text.rfind("]") + 1
-    if start < 0 or end <= start:
-        raise ValueError("No JSON array found in LLM response")
-
-    items = json.loads(text[start:end])
+def _items_to_configs(items: list[dict]) -> list[CandidateConfig]:
+    """Convert parsed JSON items to CandidateConfig list."""
     configs = []
     for item in items:
         configs.append(
@@ -53,6 +24,7 @@ def _parse_configs_from_json(raw: str) -> list[CandidateConfig]:
                 name=item.get("name", "llm_config"),
                 de_method=item.get("de_method", "deqms"),
                 fdr_method=item.get("fdr_method", "bh"),
+                normalization=item.get("normalization", "none"),
                 imputation=item.get("imputation", "none"),
                 log2fc_threshold=float(item.get("log2fc_threshold", 0.5)),
                 reasoning=item.get("reasoning", ""),
@@ -62,23 +34,16 @@ def _parse_configs_from_json(raw: str) -> list[CandidateConfig]:
     return configs
 
 
-def _build_proposal_prompt(profile: DataProfile) -> str:
-    """Build the proposal prompt from template + data."""
-    prompts = load_prompts()
+def _build_heuristic_text(profile: DataProfile) -> str:
+    """Format heuristics for the data type as text for the LLM."""
     heuristics = _load_heuristics()
-
-    # Format heuristics for the data type
     dt = profile.data_type
     priors = heuristics.get("data_type_priors", {}).get(dt, {})
+    setting_specific = heuristics.get("setting_specific", {})
     rules = heuristics.get("condition_rules", [])
-    heuristic_text = json.dumps(
-        {"priors": priors, "rules": rules},
+    return json.dumps(
+        {"priors": priors, "setting_specific": setting_specific, "rules": rules},
         indent=2,
-    )
-
-    return prompts["proposal"].format(
-        data_profile_json=json.dumps(profile.to_dict(), indent=2),
-        relevant_heuristics=heuristic_text,
     )
 
 
@@ -86,12 +51,22 @@ def llm_propose(
     profile: DataProfile,
     config: AgenticConfig,
 ) -> list[CandidateConfig]:
-    """Propose configs using LLM."""
-    llm = _get_llm(config)
-    prompt = _build_proposal_prompt(profile)
-    response = llm.invoke(prompt)
-    text = response.content if hasattr(response, "content") else str(response)
-    return _parse_configs_from_json(text)
+    """Propose configs using LLM with tool calls."""
+    prompts = load_prompts()
+    heuristic_text = _build_heuristic_text(profile)
+
+    system_msg = prompts["proposal_system"].format(
+        relevant_heuristics=heuristic_text,
+    )
+    user_msg = prompts["proposal_user"].format(
+        data_profile_json=json.dumps(profile.to_dict(), indent=2),
+    )
+
+    result = call_with_tools(system_msg, user_msg, [PROPOSAL_TOOL], config)
+    items = result.get("configs", [])
+    if not items:
+        raise ValueError("LLM returned no configs")
+    return _items_to_configs(items)
 
 
 def propose_configs(
@@ -104,7 +79,7 @@ def propose_configs(
             configs = llm_propose(profile, config)
             logger.info("LLM proposed %d configs", len(configs))
             return configs
-        except (LLMUnavailableError, ValueError, ConnectionError) as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("LLM unavailable (%s), using rule-based", exc)
 
     configs = rule_propose(profile)

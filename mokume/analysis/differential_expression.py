@@ -10,8 +10,11 @@ import pandas as pd
 from statsmodels.stats.multitest import multipletests
 
 from mokume.analysis.deqms import run_deqms
+from mokume.analysis.limma import run_limma
 from mokume.analysis.limrots import run_limrots
 from mokume.analysis.proda import run_proda
+from mokume.analysis.rots import run_rots
+from mokume.analysis.msstats import run_msstats
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.analysis.de")
@@ -23,14 +26,14 @@ _DE_OPTION_DEFAULTS = {
     "skip_log2": False,
     "fdr_method": "bh",
     "n_boot": 100,
-    "n_threads": None,
+    "seed": 42,
 }
 
 
 class DifferentialExpression:
     """Differential expression analysis for protein intensity data."""
 
-    SUPPORTED_METHODS = ("limrots", "deqms", "proda")
+    SUPPORTED_METHODS = ("limrots", "deqms", "proda", "limma", "rots", "msstats")
 
     def __init__(
         self,
@@ -57,7 +60,7 @@ class DifferentialExpression:
         self.skip_log2 = config["skip_log2"]
         self.fdr_method = config["fdr_method"].lower()
         self.n_boot = config["n_boot"]
-        self.n_threads = config["n_threads"]
+        self.seed = config["seed"]
         self.peptide_counts = peptide_counts
 
     def run(
@@ -79,6 +82,9 @@ class DifferentialExpression:
             "limrots": self._run_limrots,
             "deqms": self._run_deqms,
             "proda": self._run_proda,
+            "limma": self._run_limma,
+            "rots": self._run_rots,
+            "msstats": self._run_msstats,
         }
         runner = dispatch[self.method]
         return runner(log2_matrix, (samples_a, samples_b), contrast)
@@ -123,7 +129,7 @@ class DifferentialExpression:
             sample_groups[1],
             contrast,
             n_boot=self.n_boot,
-            n_threads=self.n_threads,
+            seed=self.seed,
         )
         if result.empty:
             return result
@@ -156,6 +162,57 @@ class DifferentialExpression:
         """Run proDA via :func:`mokume.analysis.proda.run_proda`."""
         cond_a, cond_b = contrast
         result = run_proda(
+            log2_matrix, sample_groups[0], sample_groups[1], cond_a, cond_b
+        )
+        if result.empty:
+            return result
+        return self._finalize_results(result)
+
+    def _run_limma(
+        self,
+        log2_matrix: pd.DataFrame,
+        sample_groups: tuple[list[str], list[str]],
+        contrast: tuple[str, str],
+    ) -> pd.DataFrame:
+        """Run limma via :func:`mokume.analysis.limma.run_limma`."""
+        cond_a, cond_b = contrast
+        result = run_limma(
+            log2_matrix, sample_groups[0], sample_groups[1], cond_a, cond_b
+        )
+        if result.empty:
+            return result
+        return self._finalize_results(result)
+
+    def _run_rots(
+        self,
+        log2_matrix: pd.DataFrame,
+        sample_groups: tuple[list[str], list[str]],
+        contrast: tuple[str, str],
+    ) -> pd.DataFrame:
+        """Run ROTS via :func:`mokume.analysis.rots.run_rots`."""
+        cond_a, cond_b = contrast
+        result = run_rots(
+            log2_matrix,
+            sample_groups[0],
+            sample_groups[1],
+            cond_a,
+            cond_b,
+            n_boot=self.n_boot,
+            seed=self.seed,
+        )
+        if result.empty:
+            return result
+        return self._finalize_results(result)
+
+    def _run_msstats(
+        self,
+        log2_matrix: pd.DataFrame,
+        sample_groups: tuple[list[str], list[str]],
+        contrast: tuple[str, str],
+    ) -> pd.DataFrame:
+        """Run MSstats via :func:`mokume.analysis.msstats.run_msstats`."""
+        cond_a, cond_b = contrast
+        result = run_msstats(
             log2_matrix, sample_groups[0], sample_groups[1], cond_a, cond_b
         )
         if result.empty:

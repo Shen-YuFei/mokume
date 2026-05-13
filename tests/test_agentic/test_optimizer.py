@@ -40,7 +40,9 @@ def test_optimize_contrast_no_llm(synthetic_protein_df, sample_to_condition):
         peptide_counts=None,
         config=config,
     )
-    with patch("mokume.agentic.runner.run_experiment", return_value=_mock_de_result()):
+    with patch(
+        "mokume.agentic.optimizer.run_experiment", return_value=_mock_de_result()
+    ):
         state = optimize_contrast(ctx, profile)
 
     assert state.total_experiments > 0
@@ -67,7 +69,9 @@ def test_optimize_budget_respected(synthetic_protein_df, sample_to_condition):
         peptide_counts=None,
         config=config,
     )
-    with patch("mokume.agentic.runner.run_experiment", return_value=_mock_de_result()):
+    with patch(
+        "mokume.agentic.optimizer.run_experiment", return_value=_mock_de_result()
+    ):
         state = optimize_contrast(ctx, profile)
 
     assert state.total_experiments <= 3

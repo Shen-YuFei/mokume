@@ -3,11 +3,15 @@
 import json
 
 from mokume.agentic.config import AgenticConfig
+from mokume.agentic.llm_client import (
+    REFLECTION_TOOL,
+    LLMUnavailableError,
+    call_with_tools,
+)
 from mokume.agentic.profiler import DataProfile
-from mokume.agentic.proposer import LLMUnavailableError, _get_llm
+from mokume.agentic.proposer import _build_heuristic_text, _items_to_configs
 from mokume.agentic.rules import load_prompts
 from mokume.agentic.state import (
-    CandidateConfig,
     ReflectionResult,
     RoundResult,
 )
@@ -30,28 +34,9 @@ def _format_results_table(rounds: list[RoundResult]) -> str:
     return "\n".join(lines)
 
 
-def _parse_reflection_json(raw: str) -> ReflectionResult:
-    """Parse LLM reflection response."""
-    text = raw.strip()
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start < 0 or end <= start:
-        return ReflectionResult(converged=True, analysis=text)
-
-    data = json.loads(text[start:end])
-    next_configs = []
-    for item in data.get("next_configs", []):
-        next_configs.append(
-            CandidateConfig(
-                name=item.get("name", "refined"),
-                de_method=item.get("de_method", "deqms"),
-                fdr_method=item.get("fdr_method", "bh"),
-                imputation=item.get("imputation", "none"),
-                log2fc_threshold=float(item.get("log2fc_threshold", 0.5)),
-                reasoning=item.get("reasoning", ""),
-            )
-        )
-
+def _parse_reflection_data(data: dict) -> ReflectionResult:
+    """Convert parsed tool-call dict to ReflectionResult."""
+    next_configs = _items_to_configs(data.get("next_configs", []))
     return ReflectionResult(
         converged=data.get("convergence", False),
         next_configs=next_configs,
@@ -91,15 +76,24 @@ def reflect(
     """Analyze results and propose next actions."""
     if config.use_llm:
         try:
-            llm = _get_llm(config)
             prompts = load_prompts()
-            prompt = prompts["reflection"].format(
+            heuristic_text = _build_heuristic_text(profile)
+
+            system_msg = prompts["reflection_system"].format(
+                relevant_heuristics=heuristic_text,
+            )
+            user_msg = prompts["reflection_user"].format(
                 data_profile_json=json.dumps(profile.to_dict(), indent=2),
                 results_table=_format_results_table(rounds),
             )
-            response = llm.invoke(prompt)
-            text = response.content if hasattr(response, "content") else str(response)
-            result = _parse_reflection_json(text)
+
+            data = call_with_tools(
+                system_msg,
+                user_msg,
+                [REFLECTION_TOOL],
+                config,
+            )
+            result = _parse_reflection_data(data)
             logger.info("LLM reflection: converged=%s", result.converged)
             return result
         except (LLMUnavailableError, ValueError, ConnectionError) as exc:

@@ -1,7 +1,12 @@
 """Configuration dataclasses for the agentic analysis module."""
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
+
+# Provider presets: (base_url, default_model)
+_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
+    "deepseek": ("https://api.deepseek.com", "deepseek-v4-pro"),
+}
 
 
 @dataclass
@@ -38,10 +43,27 @@ class AgenticConfig:
 
     # LLM settings (OpenAI-compatible API)
     use_llm: bool = True
-    llm_base_url: Optional[str] = None
+    llm_provider: Literal["deepseek", "custom"] = "deepseek"
+    llm_base_url: Optional[str] = None  # auto-set from provider if None
     llm_api_key: Optional[str] = None
-    llm_model: str = "deepseek-chat"
-    llm_temperature: float = 0.1
+    llm_model: Optional[str] = None  # auto-set from provider if None
+    llm_temperature: float = 0.1  # ignored when thinking mode is enabled
+    llm_thinking: bool = False  # deepseek thinking mode
+    llm_reasoning_effort: str = "high"  # "high" or "max" (deepseek only)
+
+    def __post_init__(self) -> None:
+        """Apply provider presets for base_url and model if not explicitly set."""
+        preset = _PROVIDER_PRESETS.get(self.llm_provider)
+        if preset:
+            if self.llm_base_url is None:
+                self.llm_base_url = preset[0]
+            if self.llm_model is None:
+                self.llm_model = preset[1]
+        else:
+            if self.llm_base_url is None:
+                raise ValueError("llm_base_url is required for custom provider")
+            if self.llm_model is None:
+                raise ValueError("llm_model is required for custom provider")
 
     # Evaluation
     weights: ScoreWeights = field(default_factory=ScoreWeights)

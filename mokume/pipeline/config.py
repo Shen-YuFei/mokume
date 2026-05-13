@@ -29,7 +29,20 @@ class FilterConfig:
 
 @dataclass
 class NormalizationConfig:
-    """Normalization method parameters."""
+    """Normalization method parameters.
+
+    Attributes
+    ----------
+    run_method : str
+        Run/technical replicate normalization method.
+    sample_method : str
+        Sample-to-sample normalization method. Supported values:
+        ``none``, ``globalmedian``, ``conditionmedian``, ``hierarchical``,
+        ``tmm``, ``quantile``, ``mediancenter``, ``meancenter``,
+        ``rlr`` (NormalyzerDE Robust Linear Regression).
+    proteins_file : str, optional
+        File path containing protein IDs to subset normalization to.
+    """
 
     run_method: str = "median"
     sample_method: str = "globalMedian"

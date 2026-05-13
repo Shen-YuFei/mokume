@@ -148,6 +148,16 @@ class LoadingStage:
             )
         elif sample_norm_method == PeptideNormalizationMethod.TMM:
             combined_df = NormalizationStage(self.config).apply_tmm(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.Quantile:
+            combined_df = NormalizationStage(self.config).apply_quantile(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.MedianCenter:
+            combined_df = NormalizationStage(self.config).apply_median_center(
+                combined_df
+            )
+        elif sample_norm_method == PeptideNormalizationMethod.MeanCenter:
+            combined_df = NormalizationStage(self.config).apply_mean_center(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.Rlr:
+            combined_df = NormalizationStage(self.config).apply_rlr(combined_df)
 
         return combined_df
 
@@ -355,6 +365,73 @@ class NormalizationStage:
 
         return normalized_long
 
+    def _apply_dataset_normalizer(
+        self,
+        df: pd.DataFrame,
+        normalizer,
+        log_space: bool,
+        name: str,
+    ) -> pd.DataFrame:
+        """Pivot peptide-level long DataFrame to wide, fit_transform, melt back."""
+        logger.info("Applying %s sample normalization...", name)
+        wide = df.pivot_table(
+            index=[PROTEIN_NAME, PEPTIDE_CANONICAL],
+            columns=SAMPLE_ID,
+            values=NORM_INTENSITY,
+            aggfunc="sum",
+        )
+        if log_space:
+            wide = np.log2(wide.replace(0, np.nan))
+        normalized_wide = normalizer.fit_transform(wide)
+        if log_space:
+            normalized_wide = 2**normalized_wide
+        normalized_long = (
+            normalized_wide.reset_index()
+            .melt(
+                id_vars=[PROTEIN_NAME, PEPTIDE_CANONICAL],
+                var_name=SAMPLE_ID,
+                value_name=NORM_INTENSITY,
+            )
+            .dropna(subset=[NORM_INTENSITY])
+        )
+        logger.info("%s normalization complete: %d rows", name, len(normalized_long))
+        return normalized_long
+
+    def apply_quantile(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply quantile sample normalization."""
+        from mokume.normalization.distribution import QuantileNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, QuantileNormalizer(), log_space=False, name="Quantile"
+        )
+
+    def apply_median_center(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply sample-level median centering in log2 space."""
+        from mokume.normalization.distribution import MedianCenterNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, MedianCenterNormalizer(), log_space=True, name="MedianCenter"
+        )
+
+    def apply_mean_center(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply sample-level mean centering in log2 space."""
+        from mokume.normalization.distribution import MeanCenterNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, MeanCenterNormalizer(), log_space=True, name="MeanCenter"
+        )
+
+    def apply_rlr(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply Robust Linear Regression normalization (NormalyzerDE)."""
+        from mokume.normalization.rlr import RlrNormalizer
+
+        return self._apply_dataset_normalizer(
+            df,
+            RlrNormalizer(log_transform=False),
+            log_space=False,
+            name="RLR",
+        )
+
     def apply_irs(self, protein_df: pd.DataFrame) -> pd.DataFrame:
         """Apply Internal Reference Scaling normalization for multi-plex TMT data.
 
@@ -483,7 +560,15 @@ class QuantificationStage:
 
         if quant_method == "ibaq":
             return self._quantify_ibaq(peptide_df)
-        elif quant_method in ("maxlfq", "sum", "all"):
+        elif quant_method in (
+            "maxlfq",
+            "sum",
+            "all",
+            "abd",
+            "abundance",
+            "intensity",
+            "reporter",
+        ):
             method = get_quantification_method(quant_method)
             result = method.quantify(
                 peptide_df,

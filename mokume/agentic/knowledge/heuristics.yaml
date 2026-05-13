@@ -1,39 +1,97 @@
 data_type_priors:
   LFQ:
-    recommended_de: ["deqms", "proda"]
+    recommended_de: ["deqms", "limma", "rots", "proda"]
     recommended_fdr: ["ihw", "bh"]
-    recommended_imputation: ["none", "minprob"]
-    notes: "DEqMS best when peptide counts available"
+    recommended_imputation: ["none", "mindet", "seqknn", "missforest"]
+    recommended_normalization: ["none", "rlr", "median"]
+    notes: "DEqMS best when peptide counts available; limma stable baseline"
 
   TMT:
-    recommended_de: ["limrots", "deqms"]
+    recommended_de: ["limma", "proda", "deqms"]
     recommended_fdr: ["bh"]
-    recommended_imputation: ["none"]
-    notes: "TMT has lower missingness, imputation rarely needed"
+    recommended_imputation: ["none", "seqknn"]
+    recommended_normalization: ["median", "none"]
+    notes: "TMT has lower missingness; limma is a strong baseline for TMT"
 
   DIA:
-    recommended_de: ["proda", "deqms"]
+    recommended_de: ["limma", "rots", "proda", "deqms"]
     recommended_fdr: ["ihw"]
-    recommended_imputation: ["none", "knn"]
+    recommended_imputation: ["none", "mindet", "knn"]
+    recommended_normalization: ["none", "quantile", "rlr"]
     notes: "DIA missing is MAR not MNAR, avoid MinProb"
+
+# Setting-specific top methods
+setting_specific:
+  FG_DDA:
+    best_de: ["deqms", "rots", "limma"]
+    best_normalization: ["none", "median"]
+    best_imputation: ["mindet", "seqknn"]
+    avoid_de: ["msstats"]
+    notes: "DEqMS dominates DDA when peptide counts available"
+  MQ_DDA:
+    best_de: ["deqms", "limma"]
+    best_normalization: ["none", "median"]
+    best_imputation: ["mindet", "seqknn"]
+    avoid_de: ["msstats"]
+  DIANN_DIA:
+    best_de: ["limma", "rots"]
+    best_normalization: ["none"]
+    best_imputation: ["mindet"]
+    avoid_de: ["msstats"]
+    notes: "DIA-NN directLFQ + no norm + MinDet + limma is top workflow"
+  spt_DIA:
+    best_de: ["rots", "limma"]
+    best_normalization: ["none"]
+    best_imputation: ["mindet", "knn"]
+    notes: "ROTS dominant on Spectronaut DIA (203/315 top5 workflows)"
+  FG_TMT:
+    best_de: ["limma", "proda"]
+    best_normalization: ["median", "none"]
+    best_imputation: ["none", "seqknn"]
+    notes: "limma is top DEA for FragPipe TMT"
+  MQ_TMT:
+    best_de: ["proda", "limma"]
+    best_normalization: ["median", "none"]
+    best_imputation: ["none", "seqknn"]
+    notes: "proDA dominant on MaxQuant TMT (best_rank 28.8)"
+
+ensemble_strategies:
+  top_k_2of3:
+    methods: ["limma", "deqms", "proda"]
+    min_k: 2
+    notes: "Conservative: protein must be DE in ≥2/3 methods"
+  top_k_3of4:
+    methods: ["limma", "rots", "deqms", "proda"]
+    min_k: 3
+    notes: "Strict: protein must be DE in ≥3/4 methods"
 
 condition_rules:
   - if: "missing_rate < 0.15"
     then: "prefer imputation=none"
     confidence: "high"
-    evidence: "PXD001819 benchmark: none > minprob > mindet"
+    evidence: "Benchmark: no high-performance workflow uses imputation when missing < 15%"
 
   - if: "has_peptide_counts and n_proteins > 200"
     then: "prefer de=deqms"
     confidence: "high"
-    evidence: "DEqMS AUC=0.996 vs limrots AUC=0.994 on UPS1"
+    evidence: "Benchmark: DEqMS top1 for FG_DDA (92 top5) and MQ_DDA (81 top5)"
 
   - if: "n_per_group < 3"
-    then: "prefer de=limrots"
+    then: "prefer de=rots or de=limma"
     confidence: "medium"
-    evidence: "Bootstrap handles small samples better than EB shrinkage"
+    evidence: "ROTS bootstrap handles small samples; limma EB shrinkage is robust"
 
   - if: "n_proteins > 500"
     then: "prefer fdr=ihw"
     confidence: "high"
-    evidence: "IHW +8 rejections over BH on PXD001819"
+    evidence: "IHW gains power over BH when many hypotheses available"
+
+  - if: "data_type == DIA"
+    then: "avoid imputation=minprob"
+    confidence: "high"
+    evidence: "Benchmark: DIA missing is MAR, MNAR imputation (MinProb) hurts performance"
+
+  - if: "data_type == TMT and missing_rate < 0.05"
+    then: "prefer imputation=none and normalization=median"
+    confidence: "high"
+    evidence: "Benchmark: TMT has low missingness, median norm + no imputation is top"

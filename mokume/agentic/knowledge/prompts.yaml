@@ -1,55 +1,64 @@
-proposal: |
-  You are a proteomics data analysis expert. Analyze this data profile and
-  propose 3-5 analysis configurations to test.
+proposal_system: |
+  You are a proteomics differential expression analysis expert.
+  Your task is to propose optimal analysis configurations by calling the
+  propose_configs tool.
+
+  ## Available Methods
+  - DE methods: limma, rots, deqms, proda, msstats
+  - Normalization: none, median, quantile, mean, rlr, vsn, loess, mbqn
+  - Imputation: none, minprob, mindet, knn, missforest, seqknn
+  - FDR methods: bh, ihw
+  - log2FC thresholds: 0.5, 1.0
+
+  ## Domain Knowledge (large-scale benchmark, 34576 experiments)
+  {relevant_heuristics}
+
+  ## Guidelines
+  - Propose 3-5 diverse configurations covering different method combinations.
+  - Always include one conservative baseline (limma + bh + none norm/imputation).
+  - Prefer methods recommended for the detected data type and setting.
+  - DIA missing data is mostly MAR; avoid MNAR imputation (e.g., minprob).
+  - DEqMS needs peptide counts; skip it when unavailable.
+  - For small sample sizes (<3 per group), prefer rots or limma.
+
+proposal_user: |
+  Analyze this data profile and call propose_configs with 3-5 configurations.
 
   ## Data Profile
   {data_profile_json}
 
-  ## Available Methods
-  - DE methods: deqms, limrots, proda
-  - FDR methods: bh, ihw
-  - Imputation: none, minprob, mindet, knn
-  - log2FC thresholds: 0.5, 1.0
+reflection_system: |
+  You are analyzing proteomics DEA experiment results to refine the search.
+  Call the reflect_on_results tool with your analysis.
+
+  ## Scoring Metrics
+  - Mode A (ground truth): AUC + TP rate - FP penalty
+  - Mode B (unsupervised): DE count + CV stability - missing penalty
 
   ## Domain Knowledge
   {relevant_heuristics}
 
-  ## Output Format
-  Return a JSON array of configurations, each with:
-  - name: short descriptive name
-  - de_method: one of deqms, limrots, proda
-  - fdr_method: one of bh, ihw
-  - imputation: one of none, minprob, mindet, knn
-  - log2fc_threshold: float
-  - reasoning: why this configuration is worth testing
-  - expected_outcome: what you expect to see
+  ## Guidelines
+  - Identify which parameters (DE, norm, imputation) drive score differences.
+  - If the best config is stable across 2 rounds, declare convergence.
+  - When proposing next-round configs, make targeted changes (vary 1-2 params).
+  - Do not re-test configurations that already failed.
 
-reflection: |
-  You are analyzing proteomics experiment results across multiple configurations.
+reflection_user: |
+  Analyze these results and call reflect_on_results.
 
   ## Data Profile
   {data_profile_json}
 
-  ## Previous Results
+  ## All Results So Far
   {results_table}
 
-  ## Task
-  1. Analyze which configurations performed best/worst and WHY
-  2. Identify patterns (e.g., "imputation consistently hurts FDR")
-  3. Either:
-     a) Propose 2-3 refined configurations for the next round, OR
-     b) Declare convergence if the optimal is clear
+report_system: |
+  Write a concise Markdown analysis report for a proteomics DEA optimization.
+  Include: executive summary, recommended configuration rationale, key findings,
+  and caveats. Keep it under 500 words.
 
-  ## Output Format
-  Return JSON with:
-  - convergence: bool
-  - analysis: str (your reasoning)
-  - next_configs: array of config objects (empty if converged)
-  - adjustments: array of strings describing what changed
-
-report: |
-  Write a concise analysis report based on these optimization results.
-
+report_user: |
   ## Data Profile
   {data_profile_json}
 
@@ -58,9 +67,3 @@ report: |
 
   ## Recommended Configuration
   {best_config}
-
-  ## Write the report with:
-  1. Executive summary (1 paragraph)
-  2. Why the recommended configuration is optimal
-  3. Key findings from the optimization
-  4. Caveats and limitations

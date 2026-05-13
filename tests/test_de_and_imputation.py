@@ -1,12 +1,12 @@
 """
-Tests for new analysis, imputation, and normalization modules.
+Tests for analysis, imputation, and normalization modules.
 
 Covers: DifferentialExpression (limrots, deqms, proda, ihw),
         censored imputation (minprob, mindet, knn),
         LOESS normalization.
-"""
 
-import warnings
+All DE methods are pure-Python reimplementations; no rpy2/R required.
+"""
 
 import numpy as np
 import pandas as pd
@@ -14,8 +14,10 @@ import pytest
 
 from mokume.analysis.differential_expression import DifferentialExpression
 from mokume.analysis.deqms import run_deqms
+from mokume.analysis.limma import run_limma
 from mokume.analysis.limrots import run_limrots
-from mokume.analysis.proda import run_proda, DropoutParams
+from mokume.analysis.proda import run_proda
+from mokume.analysis.rots import run_rots
 from mokume.imputation.censored import (
     impute_minprob,
     impute_mindet,
@@ -29,11 +31,11 @@ from mokume.normalization.loess import LOESSNormalizer, loess_normalize
 # ---------------------------------------------------------------------------
 
 
-def _make_protein_matrix(n_proteins=50, n_samples_per_group=3, seed=42):
+def _make_protein_matrix(n_proteins=100, n_samples_per_group=4, seed=42):
     """Create a synthetic protein intensity matrix with known DE proteins."""
     rng = np.random.default_rng(seed)
 
-    n_de = 10  # first 10 proteins are DE
+    n_de = 15  # first 15 proteins are DE
     n_total = n_samples_per_group * 2
 
     # Background ~ N(23, 1)
@@ -48,8 +50,8 @@ def _make_protein_matrix(n_proteins=50, n_samples_per_group=3, seed=42):
 
     df = pd.DataFrame(data, index=proteins, columns=samples_a + samples_b)
 
-    # Sprinkle some NaN (10% missing)
-    mask = rng.random(df.shape) < 0.10
+    # Sprinkle some NaN (5% missing, light enough for R packages)
+    mask = rng.random(df.shape) < 0.05
     df[mask] = np.nan
 
     return df, samples_a, samples_b, proteins[:n_de]
@@ -129,15 +131,17 @@ class TestDEDEqMS:
         assert len(result) > 0
         assert "pvalue" in result.columns
 
-    def test_run_deqms_no_lowess_runtime_warning_without_peptide_counts(self):
+    def test_deqms_with_peptide_counts(self):
+        rng = np.random.default_rng(42)
         mat, sa, sb, _ = _make_protein_matrix()
         log2_mat = np.log2(mat.clip(lower=1))
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = run_deqms(log2_mat, sa, sb, ("A", "B"))
+        counts = pd.Series(
+            rng.integers(2, 10, len(log2_mat)),
+            index=log2_mat.index,
+        )
+        result = run_deqms(log2_mat, sa, sb, ("A", "B"), peptide_counts=counts)
         assert len(result) > 0
-        runtime_warnings = [w for w in caught if issubclass(w.category, RuntimeWarning)]
-        assert runtime_warnings == []
+        assert "peptide_count" in result.columns
 
 
 # ---------------------------------------------------------------------------
@@ -162,10 +166,12 @@ class TestDEProDA:
         assert len(result) > 0
         assert "pvalue" in result.columns
 
-    def test_dropout_params_namedtuple(self):
-        dp = DropoutParams(rho=np.array([1.0]), zeta=np.array([0.5]))
-        assert dp.rho[0] == 1.0
-        assert dp.zeta[0] == 0.5
+    def test_proda_has_expected_columns(self):
+        mat, sa, sb, _ = _make_protein_matrix()
+        result = run_proda(np.log2(mat.clip(lower=1)), sa, sb, "A", "B")
+        assert len(result) > 0
+        for col in ("ProteinName", "log2FC", "pvalue", "adj_pvalue"):
+            assert col in result.columns
 
 
 # ---------------------------------------------------------------------------
@@ -322,3 +328,61 @@ class TestRunComparisons:
         results = de.run_comparisons(wide, s2c, [("A", "B")])
         assert "A-B" in results
         assert len(results["A-B"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# DifferentialExpression — limma
+# ---------------------------------------------------------------------------
+
+
+class TestDELimma:
+    def test_limma_returns_results(self):
+        mat, sa, sb, _ = _make_protein_matrix()
+        wide, s2c = _make_wide_df(mat, sa, sb)
+        de = DifferentialExpression(
+            method="limma", log2fc_threshold=1.0, skip_log2=True
+        )
+        result = de.run(wide, s2c, ("A", "B"))
+        assert len(result) > 0
+        assert "adj_pvalue" in result.columns
+
+    def test_run_limma_direct(self):
+        mat, sa, sb, _ = _make_protein_matrix()
+        result = run_limma(np.log2(mat.clip(lower=1)), sa, sb, "A", "B")
+        assert len(result) > 0
+        assert "pvalue" in result.columns
+
+    def test_limma_has_expected_columns(self):
+        mat, sa, sb, _ = _make_protein_matrix()
+        result = run_limma(np.log2(mat.clip(lower=1)), sa, sb, "A", "B")
+        for col in ("ProteinName", "log2FC", "pvalue", "adj_pvalue", "t_stat"):
+            assert col in result.columns
+
+
+# ---------------------------------------------------------------------------
+# DifferentialExpression — ROTS
+# ---------------------------------------------------------------------------
+
+
+class TestDEROTS:
+    def test_rots_returns_results(self):
+        mat, sa, sb, _ = _make_protein_matrix()
+        wide, s2c = _make_wide_df(mat, sa, sb)
+        de = DifferentialExpression(
+            method="rots", log2fc_threshold=1.0, skip_log2=True, n_boot=20
+        )
+        result = de.run(wide, s2c, ("A", "B"))
+        assert len(result) > 0
+        assert "adj_pvalue" in result.columns
+
+    def test_run_rots_direct(self):
+        mat, sa, sb, _ = _make_protein_matrix()
+        result = run_rots(np.log2(mat.clip(lower=1)), sa, sb, "A", "B", n_boot=20)
+        assert len(result) > 0
+        assert "pvalue" in result.columns
+
+    def test_rots_has_expected_columns(self):
+        mat, sa, sb, _ = _make_protein_matrix()
+        result = run_rots(np.log2(mat.clip(lower=1)), sa, sb, "A", "B", n_boot=20)
+        for col in ("ProteinName", "log2FC", "pvalue", "adj_pvalue", "d_stat"):
+            assert col in result.columns

@@ -2,7 +2,7 @@
 
 from mokume.agentic.config import AgenticConfig
 from mokume.agentic.profiler import profile_data
-from mokume.agentic.proposer import propose_configs, _parse_configs_from_json
+from mokume.agentic.proposer import propose_configs, _items_to_configs
 
 
 def test_propose_configs_no_llm(synthetic_protein_df, sample_to_condition):
@@ -23,15 +23,21 @@ def test_propose_configs_llm_fallback(synthetic_protein_df, sample_to_condition)
     assert len(configs) > 0
 
 
-def test_parse_configs_from_json():
-    """Parse well-formed LLM JSON response."""
-    raw = """Here are my suggestions:
-    [
-        {"name": "cfg1", "de_method": "deqms", "fdr_method": "ihw",
-         "imputation": "none", "log2fc_threshold": 0.5,
-         "reasoning": "test", "expected_outcome": "good"}
+def test_items_to_configs():
+    """Convert parsed JSON items to CandidateConfig list."""
+    items = [
+        {
+            "name": "cfg1",
+            "de_method": "deqms",
+            "fdr_method": "ihw",
+            "normalization": "median",
+            "imputation": "none",
+            "log2fc_threshold": 0.5,
+            "reasoning": "test",
+            "expected_outcome": "good",
+        }
     ]
-    """
-    configs = _parse_configs_from_json(raw)
+    configs = _items_to_configs(items)
     assert len(configs) == 1
     assert configs[0].de_method == "deqms"
+    assert configs[0].normalization == "median"

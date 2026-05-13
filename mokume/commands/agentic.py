@@ -1,11 +1,45 @@
 """CLI commands for agentic analysis."""
 
+from pathlib import Path
+
 import click
 import pandas as pd
 
 from mokume.agentic.config import AgenticConfig
 from mokume.agentic.optimizer import optimize
 from mokume.normalization.irs import detect_condition_from_sdrf
+
+_ENV_KEY_MAP = {
+    "llm_api_key": "DEEPSEEK_API_KEY",
+    "llm_base_url": "OPENAI_BASE_URL",
+}
+
+
+def _persist_to_dotenv(kwargs: dict) -> None:
+    """Save LLM settings to .env if provided via CLI and not already stored."""
+    dotenv_path = Path.cwd() / ".env"
+    existing = {}
+    if dotenv_path.exists():
+        for line in dotenv_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                existing[k.strip()] = v.strip()
+
+    updates = {}
+    for kwarg_key, env_key in _ENV_KEY_MAP.items():
+        val = kwargs.get(kwarg_key)
+        if val and existing.get(env_key) != val:
+            updates[env_key] = val
+
+    if not updates:
+        return
+
+    existing.update(updates)
+    lines = [f"{k}={v}" for k, v in existing.items()]
+    dotenv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    saved = ", ".join(updates.keys())
+    click.echo(f"Saved to .env: {saved}")
 
 
 def _parse_contrasts(raw: str) -> list[tuple[str, str]]:
@@ -69,18 +103,26 @@ def agentic_cmd():
 @click.option("--max-rounds", default=5, type=int, help="Max optimization rounds.")
 @click.option("--max-experiments", default=30, type=int, help="Max total experiments.")
 @click.option(
+    "--llm-provider",
+    default="deepseek",
+    type=click.Choice(["deepseek", "custom"]),
+    help="LLM provider preset (default: deepseek).",
+)
+@click.option(
     "--llm-base-url",
     default=None,
     envvar="OPENAI_BASE_URL",
-    help="OpenAI-compatible API base URL (e.g. https://api.deepseek.com).",
+    help="OpenAI-compatible API base URL. Required for custom provider.",
 )
 @click.option(
     "--llm-api-key",
     default=None,
-    envvar="OPENAI_API_KEY",
-    help="API key for the LLM service. Also reads OPENAI_API_KEY env var.",
+    envvar=["DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
+    help="API key for the LLM service. Reads DEEPSEEK_API_KEY or OPENAI_API_KEY.",
 )
-@click.option("--llm-model", default="deepseek-chat", help="LLM model name.")
+@click.option(
+    "--llm-model", default=None, help="LLM model name (auto-set from provider)."
+)
 @click.option(
     "--no-llm",
     is_flag=True,
@@ -92,6 +134,7 @@ def agentic_cmd():
 )
 def optimize_cmd(**kwargs):
     """Run agentic optimization for differential expression analysis."""
+    _persist_to_dotenv(kwargs)
     pm = kwargs["protein_matrix"]
     sep = "\t" if pm.endswith(".tsv") else ","
     protein_df = pd.read_csv(pm, sep=sep)
@@ -107,6 +150,7 @@ def optimize_cmd(**kwargs):
         max_rounds=kwargs["max_rounds"],
         max_experiments=kwargs["max_experiments"],
         use_llm=not kwargs["no_llm"],
+        llm_provider=kwargs["llm_provider"],
         llm_base_url=kwargs["llm_base_url"],
         llm_api_key=kwargs["llm_api_key"],
         llm_model=kwargs["llm_model"],
