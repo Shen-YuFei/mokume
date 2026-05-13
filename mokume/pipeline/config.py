@@ -114,6 +114,9 @@ class DEConfig:
     fdr_threshold: float = 0.05
     fdr_method: str = "bh"
     output: Optional[str] = None
+    # Ensemble-specific (used when method == "ensemble")
+    ensemble_methods: Optional[list] = None
+    ensemble_min_k: int = 2
 
 
 @dataclass

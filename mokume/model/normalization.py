@@ -283,6 +283,8 @@ class PeptideNormalizationMethod(Enum):
     MedianCenter = auto()  # Sample-level median centering
     MeanCenter = auto()  # Sample-level mean centering
     Rlr = auto()  # Robust Linear Regression (NormalyzerDE)
+    Mbqn = auto()  # Mean-Balanced Quantile Normalization (Brombacher 2020)
+    Loess = auto()  # LOESS regression on MA plot (Yang 2002)
 
     @classmethod
     def from_str(cls, name: str) -> "PeptideNormalizationMethod":
@@ -365,6 +367,8 @@ class PeptideNormalizationMethod(Enum):
             PeptideNormalizationMethod.MedianCenter,
             PeptideNormalizationMethod.MeanCenter,
             PeptideNormalizationMethod.Rlr,
+            PeptideNormalizationMethod.Mbqn,
+            PeptideNormalizationMethod.Loess,
         )
 
     def __call__(self, dataset_df: pd.DataFrame, sample: str, med_map: dict):
@@ -428,6 +432,18 @@ def mean_center_normalization(dataset_df, sample, med_map):
 @PeptideNormalizationMethod.Rlr.register_replicate_fn
 def rlr_normalization(dataset_df, sample, med_map):
     """Placeholder: RLR normalization is applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.Mbqn.register_replicate_fn
+def mbqn_normalization(dataset_df, sample, med_map):
+    """Placeholder: MBQN normalization is applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.Loess.register_replicate_fn
+def loess_normalization(dataset_df, sample, med_map):
+    """Placeholder: LOESS normalization is applied at dataset level."""
     return dataset_df
 
 

@@ -158,6 +158,10 @@ class LoadingStage:
             combined_df = NormalizationStage(self.config).apply_mean_center(combined_df)
         elif sample_norm_method == PeptideNormalizationMethod.Rlr:
             combined_df = NormalizationStage(self.config).apply_rlr(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.Mbqn:
+            combined_df = NormalizationStage(self.config).apply_mbqn(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.Loess:
+            combined_df = NormalizationStage(self.config).apply_loess(combined_df)
 
         return combined_df
 
@@ -432,6 +436,22 @@ class NormalizationStage:
             name="RLR",
         )
 
+    def apply_mbqn(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply Mean-Balanced Quantile Normalization (in log2 space)."""
+        from mokume.normalization.mbqn import MBQNNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, MBQNNormalizer(), log_space=True, name="MBQN"
+        )
+
+    def apply_loess(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply LOESS regression-based normalization (in log2 space)."""
+        from mokume.normalization.loess import LOESSNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, LOESSNormalizer(), log_space=True, name="LOESS"
+        )
+
     def apply_irs(self, protein_df: pd.DataFrame) -> pd.DataFrame:
         """Apply Internal Reference Scaling normalization for multi-plex TMT data.
 
@@ -568,6 +588,9 @@ class QuantificationStage:
             "abundance",
             "intensity",
             "reporter",
+            "spectral_count",
+            "spectralcount",
+            "count",
         ):
             method = get_quantification_method(quant_method)
             result = method.quantify(
@@ -687,6 +710,150 @@ class QuantificationStage:
         )
 
         return result_wide.reset_index()
+
+
+class ImputationStage:
+    """Impute missing values on the wide protein-level matrix.
+
+    The matrix is transformed to log2 space before imputation and back to
+    linear space afterwards because most imputation methods assume
+    log-normal intensities (notably MinProb/MinDet/QRILC).
+    """
+
+    _SUPPORTED_METHODS = (
+        "none",
+        "knn",
+        "minprob",
+        "mindet",
+        "qrilc",
+        "missforest",
+        "seqknn",
+        "mle",
+        "mice",
+        "nbavg",
+        "gms",
+        "bpca",
+        "impseq",
+        "impseqrob",
+    )
+
+    def __init__(self, config: PipelineConfig):
+        self.config = config
+
+    def impute(self, protein_df: pd.DataFrame) -> pd.DataFrame:
+        """Apply imputation to the wide protein matrix."""
+        if not self.config.imputation.enabled:
+            return protein_df
+
+        method = self.config.imputation.method.lower()
+        if method == "none":
+            return protein_df
+
+        if method not in self._SUPPORTED_METHODS:
+            raise ValueError(
+                f"Unknown imputation method: {method}. "
+                f"Supported: {', '.join(self._SUPPORTED_METHODS)}"
+            )
+
+        if PROTEIN_NAME in protein_df.columns:
+            protein_col = PROTEIN_NAME
+        elif "protein" in protein_df.columns:
+            protein_col = "protein"
+        else:
+            protein_col = protein_df.columns[0]
+
+        sample_cols = [c for c in protein_df.columns if c != protein_col]
+        wide = protein_df.set_index(protein_col)[sample_cols]
+
+        wide_log2 = np.log2(wide.replace(0, np.nan))
+        n_before = int(wide_log2.isna().sum().sum())
+        if n_before == 0:
+            logger.info("Imputation (%s): no missing values, skipping", method)
+            return protein_df
+
+        imputed_log2 = self._dispatch(method, wide_log2)
+        n_after = int(imputed_log2.isna().sum().sum())
+        logger.info(
+            "Imputation (%s): %d -> %d missing values", method, n_before, n_after
+        )
+
+        imputed_linear = 2**imputed_log2
+        return imputed_linear.reset_index()
+
+    def _dispatch(self, method: str, wide: pd.DataFrame) -> pd.DataFrame:
+        """Dispatch to the matching imputation backend."""
+        cfg = self.config.imputation
+
+        if method == "knn":
+            from sklearn.impute import KNNImputer
+
+            imputer = KNNImputer(n_neighbors=cfg.n_neighbors, keep_empty_features=True)
+            arr = imputer.fit_transform(wide)
+            return pd.DataFrame(arr, index=wide.index, columns=wide.columns)
+
+        if method == "minprob":
+            from mokume.imputation.censored import impute_minprob
+
+            return impute_minprob(
+                wide, quantile=cfg.quantile, shift=cfg.shift, scale=cfg.scale
+            )
+
+        if method == "mindet":
+            from mokume.imputation.censored import impute_mindet
+
+            return impute_mindet(wide, quantile=cfg.quantile)
+
+        if method == "qrilc":
+            from mokume.imputation.qrilc import impute_qrilc
+
+            return impute_qrilc(wide)
+
+        if method == "missforest":
+            from mokume.imputation.missforest import impute_missforest
+
+            return impute_missforest(wide)
+
+        if method == "seqknn":
+            from mokume.imputation.seqknn import impute_seqknn
+
+            return impute_seqknn(wide, k=cfg.n_neighbors)
+
+        if method == "mle":
+            from mokume.imputation.mle import impute_mle
+
+            return impute_mle(wide)
+
+        if method == "mice":
+            from mokume.imputation.mice import impute_mice
+
+            return impute_mice(wide)
+
+        if method == "nbavg":
+            from mokume.imputation.nbavg import impute_nbavg
+
+            return impute_nbavg(wide, k=cfg.n_neighbors)
+
+        if method == "gms":
+            from mokume.imputation.gms import impute_gms
+
+            return impute_gms(wide)
+
+        if method == "bpca":
+            from mokume.imputation.bpca import impute_bpca
+
+            return impute_bpca(wide)
+
+        if method == "impseq":
+            from mokume.imputation.impseq import impute_impseq
+
+            return impute_impseq(wide)
+
+        if method == "impseqrob":
+            from mokume.imputation.impseqrob import impute_impseqrob
+
+            return impute_impseqrob(wide)
+
+        raise ValueError(f"Unknown imputation method: {method}")
 
 
 class PostprocessingStage:
@@ -870,9 +1037,14 @@ class PostprocessingStage:
             de_method = "deqms" if quant == "directlfq" else "limrots"
             logger.info(f"Auto-selected DE method: {de_method} (quant={quant})")
 
-        # Load peptide counts for DEqMS
+        # Load peptide counts (used by deqms members and ensemble that includes deqms)
         peptide_counts = None
-        if de_method == "deqms" and self.config.input.parquet:
+        needs_peptide_counts = de_method == "deqms" or (
+            de_method == "ensemble"
+            and self.config.de.ensemble_methods
+            and "deqms" in self.config.de.ensemble_methods
+        )
+        if needs_peptide_counts and self.config.input.parquet:
             try:
                 pep_df = pd.read_parquet(
                     self.config.input.parquet,
@@ -881,6 +1053,51 @@ class PostprocessingStage:
                 peptide_counts = pep_df.groupby("anchor_protein")["sequence"].nunique()
             except (FileNotFoundError, KeyError, ValueError) as exc:
                 logger.warning("Could not load peptide counts for DEqMS: %s", exc)
+
+        if de_method == "ensemble":
+            from mokume.analysis.ensemble import run_ensemble
+
+            ensemble_methods = self.config.de.ensemble_methods or [
+                "limrots",
+                "deqms",
+                "proda",
+            ]
+            min_k = self.config.de.ensemble_min_k
+            all_results = {}
+            for contrast in contrasts:
+                key = f"{contrast[0]}-{contrast[1]}"
+                logger.info(
+                    "Running ensemble DE: %s (methods=%s, min_k=%d)",
+                    key,
+                    ensemble_methods,
+                    min_k,
+                )
+                result = run_ensemble(
+                    protein_df,
+                    sample_to_condition,
+                    contrast,
+                    methods=ensemble_methods,
+                    min_k=min_k,
+                    fdr_method=self.config.de.fdr_method,
+                    fdr_threshold=self.config.de.fdr_threshold,
+                    log2fc_threshold=self.config.de.log2fc_threshold,
+                    peptide_counts=peptide_counts,
+                )
+                all_results[key] = {"df": result, "conditions": contrast}
+
+                if self.config.de.output:
+                    if len(contrasts) == 1:
+                        output_path = self.config.de.output
+                    else:
+                        base, ext = os.path.splitext(self.config.de.output)
+                        output_path = (
+                            f"{base}_{key}{ext}" if ext else f"{base}_{key}.csv"
+                        )
+                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                    result.to_csv(output_path, index=False)
+                    logger.info(f"DE results saved to {output_path}")
+
+            return all_results
 
         de = DifferentialExpression(
             method=de_method,

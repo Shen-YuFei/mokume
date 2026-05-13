@@ -13,6 +13,7 @@ from mokume.pipeline.config import (
     QuantificationConfig,
     IRSConfig,
     BatchCorrectionConfig,
+    ImputationConfig,
     DEConfig,
     OutputConfig,
 )
@@ -24,6 +25,7 @@ from mokume.pipeline.stages import (
     LoadingStage,
     NormalizationStage,
     QuantificationStage,
+    ImputationStage,
     PostprocessingStage,
 )
 
@@ -35,6 +37,7 @@ __all__ = [
     "QuantificationConfig",
     "IRSConfig",
     "BatchCorrectionConfig",
+    "ImputationConfig",
     "DEConfig",
     "OutputConfig",
     "QuantificationPipeline",
@@ -42,5 +45,6 @@ __all__ = [
     "LoadingStage",
     "NormalizationStage",
     "QuantificationStage",
+    "ImputationStage",
     "PostprocessingStage",
 ]

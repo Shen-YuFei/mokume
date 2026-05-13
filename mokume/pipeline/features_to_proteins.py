@@ -30,6 +30,7 @@ from mokume.pipeline.config import (
     QuantificationConfig,
     IRSConfig,
     BatchCorrectionConfig,
+    ImputationConfig,
     DEConfig,
     OutputConfig,
 )
@@ -37,6 +38,7 @@ from mokume.pipeline.stages import (
     LoadingStage,
     NormalizationStage,
     QuantificationStage,
+    ImputationStage,
     PostprocessingStage,
 )
 
@@ -77,6 +79,7 @@ class QuantificationPipeline:
         self.loading = LoadingStage(config)
         self.normalization = NormalizationStage(config)
         self.quantification = QuantificationStage(config)
+        self.imputation = ImputationStage(config)
         self.postprocessing = PostprocessingStage(config)
 
     def _validate_config(self):
@@ -133,6 +136,10 @@ class QuantificationPipeline:
         # Apply coverage filter if configured (generic, works with any method)
         if self.config.quantification.coverage_threshold is not None:
             protein_df = self.normalization.apply_coverage_filter(protein_df)
+
+        # Apply imputation if configured (after coverage filter, before batch correction)
+        if self.config.imputation.enabled:
+            protein_df = self.imputation.impute(protein_df)
 
         # Apply batch correction if configured
         if self.config.batch.enabled:
@@ -305,6 +312,8 @@ def features_to_proteins(
     de_fdr_threshold: float = 0.05,
     de_fdr_method: str = "bh",
     de_output: Optional[str] = None,
+    de_ensemble_methods: Optional[list] = None,
+    de_ensemble_min_k: int = 2,
     # Plotting parameters
     plot_output_dir: Optional[str] = None,
     plot_volcano: bool = False,
@@ -315,6 +324,13 @@ def features_to_proteins(
     coverage_threshold: Optional[float] = None,
     # Ratio quantification
     ratio_fraction_merge: str = "mean",
+    # Imputation parameters
+    impute: bool = False,
+    impute_method: str = "none",
+    impute_quantile: float = 0.01,
+    impute_shift: float = 1.6,
+    impute_scale: float = 0.3,
+    impute_n_neighbors: int = 5,
     # Interactive report parameters
     interactive_report: bool = False,
     report_output: Optional[str] = None,
@@ -435,6 +451,14 @@ def features_to_proteins(
             mean_only=batch_mean_only,
             ref_batch=batch_ref,
         ),
+        imputation=ImputationConfig(
+            enabled=impute,
+            method=impute_method,
+            quantile=impute_quantile,
+            shift=impute_shift,
+            scale=impute_scale,
+            n_neighbors=impute_n_neighbors,
+        ),
         de=DEConfig(
             enabled=differential_expression,
             contrasts=de_contrasts,
@@ -443,6 +467,8 @@ def features_to_proteins(
             fdr_threshold=de_fdr_threshold,
             fdr_method=de_fdr_method,
             output=de_output,
+            ensemble_methods=de_ensemble_methods,
+            ensemble_min_k=de_ensemble_min_k,
         ),
         output=OutputConfig(
             export_peptides=export_peptides,
