@@ -28,9 +28,15 @@ For multi-plex TMT experiments, Internal Reference Scaling uses shared reference
 
 ## Differential Expression
 
-Differential expression analysis identifies proteins whose abundance changes significantly between conditions. mokume offers LimROTS, DEqMS, proDA, limma, and ROTS — each suited to different priorities.
+Differential expression analysis identifies proteins whose abundance changes significantly between conditions. mokume offers LimROTS, DEqMS, proDA, limma, ROTS, MSstats, and a top-k consensus ensemble — each suited to different priorities.
 
 [:octicons-arrow-right-24: Differential Expression](differential-expression.md)
+
+## Missing Value Imputation
+
+Mass-spectrometry-based proteomics produces sparse intensity matrices. mokume's `ImputationStage` integrates 13 censored-aware, MAR, and matrix-completion methods into the pipeline (after coverage filtering, before batch correction).
+
+[:octicons-arrow-right-24: Imputation](imputation.md)
 
 ## Preprocessing Filters
 

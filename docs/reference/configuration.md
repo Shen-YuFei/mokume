@@ -84,14 +84,13 @@ from mokume.pipeline.config import (
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | `bool` | `False` | Enable missing value imputation |
-| `method` | `str` | `"none"` | Method: none, minprob, mindet, knn |
-| `quantile` | `float` | `0.01` | Quantile used by MinProb / MinDet |
-| `shift` | `float` | `1.6` | Mean shift for MinProb |
-| `scale` | `float` | `0.3` | Standard deviation scaling for MinProb |
-| `n_neighbors` | `int` | `5` | Number of neighbors for KNN imputation |
+| `method` | `str` | `"none"` | Method: none, knn, minprob, mindet, qrilc, missforest, seqknn, mle, mice, nbavg, gms, bpca, impseq, impseqrob |
+| `quantile` | `float` | `0.01` | Quantile for MinProb / MinDet / QRILC low-tail draw |
+| `shift` | `float` | `1.6` | MinProb shift in standard deviations |
+| `scale` | `float` | `0.3` | MinProb scale factor for sigma |
+| `n_neighbors` | `int` | `5` | Number of neighbours for KNN / SeqKNN / NBavg |
 
-!!! note
-    `ImputationConfig` is part of the configuration schema, but the current high-level `features2proteins` CLI and functional pipeline entry point do not yet expose imputation parameters directly. For now, use the standalone utilities in `mokume.imputation` when you need MinProb, MinDet, or KNN imputation.
+The `ImputationStage` runs in log2 space (the protein matrix is transformed before imputation and back to linear afterwards) so that censored-aware methods like MinProb / MinDet / QRILC behave correctly. The CLI exposes this through `--impute`, `--impute-method`, and the per-method `--impute-*` parameters.
 
 ### DEConfig
 
@@ -99,11 +98,15 @@ from mokume.pipeline.config import (
 |-------|------|---------|-------------|
 | `enabled` | `bool` | `False` | Enable DE analysis |
 | `contrasts` | `list \| None` | `None` | Contrasts (e.g., ["A-B"]) |
-| `method` | `str` | `"auto"` | Method: auto, limrots, deqms, proda, limma, or rots |
+| `method` | `str` | `"auto"` | Method: auto, limrots, limma, deqms, proda, rots, msstats, ensemble |
+| `ensemble_methods` | `list \| None` | `None` | Member methods used when `method="ensemble"` (default `["limrots", "deqms", "proda"]`) |
+| `ensemble_min_k` | `int` | `2` | Minimum ensemble members that must agree on direction |
 | `log2fc_threshold` | `float` | `0.5` | Min absolute log2 fold change |
 | `fdr_threshold` | `float` | `0.05` | Max FDR |
 | `fdr_method` | `str` | `"bh"` | FDR correction: bh or ihw |
 | `output` | `str \| None` | `None` | Output file for DE results |
+
+When `method="ensemble"`, each member method runs on the same contrast and the per-protein verdicts are combined via top-k consensus with Fisher-combined p-values.
 
 ### OutputConfig
 

@@ -108,6 +108,7 @@ nav:
       - Quantification Methods: concepts/quantification.md
       - Normalization: concepts/normalization.md
       - Differential Expression: concepts/differential-expression.md
+      - Imputation: concepts/imputation.md
       - Batch Correction: concepts/batch-correction.md
       - IRS Normalization: concepts/irs.md
       - Preprocessing Filters: concepts/preprocessing.md

@@ -157,7 +157,8 @@ proteins = features_to_proteins(
 
 ## Differential Expression
 
-Supported methods: `limrots`, `deqms`, `proda`, `limma`, `rots`.
+Supported methods: `limrots`, `deqms`, `proda`, `limma`, `rots`, `msstats`,
+and `ensemble` (top-k consensus across multiple methods).
 All methods are pure-Python reimplementations — no R or rpy2 required.
 
 ```python
@@ -200,6 +201,22 @@ results = deqms.run_comparisons(
 # limma — stable empirical Bayes baseline
 de = DifferentialExpression(method="limma", fdr_method="bh")
 result = de.run(protein_df, sample_to_condition, ("NASH", "HL"))
+```
+
+```python
+# Top-k consensus ensemble across multiple methods
+from mokume.analysis.ensemble import run_ensemble
+
+ensemble_df = run_ensemble(
+    protein_df,
+    sample_to_condition,
+    contrast=("NASH", "HL"),
+    methods=("limrots", "deqms", "proda"),
+    min_k=2,
+    fdr_method="bh",
+    fdr_threshold=0.05,
+    log2fc_threshold=0.5,
+)
 ```
 
 ---
@@ -258,23 +275,64 @@ normalizer = LOESSNormalizer(frac=0.75, reference="median")
 loess_df = normalizer.fit_transform(log2_df)
 ```
 
-### Imputation Utilities
+### MBQN Normalization
 
 ```python
-from mokume.imputation import classify_missing, impute_censored
+from mokume.normalization import MBQNNormalizer, mbqn_normalize
 
-missing_type = classify_missing(data, quantile_threshold=0.01)
+mbqn_df = mbqn_normalize(log2_df)
+mbqn_df = MBQNNormalizer().fit_transform(log2_df)
+```
 
-minprob_df = impute_censored(
-    data,
-    method="minprob",
-    quantile=0.01,
-    shift=1.6,
-    scale=0.3,
+### VSN Normalization
+
+```python
+from mokume.normalization import vsn_normalize
+
+# Input is linear-scale; output is glog2 (variance-stabilised)
+stabilised_df = vsn_normalize(linear_df)
+```
+
+!!! note
+    VSN is intentionally not exposed via `--sample-normalization` because
+    its glog2 output is incompatible with the pipeline's downstream
+    linear-scale assumptions. Use the standalone API only.
+
+### Imputation Utilities
+
+Low-level imputers (operate on a wide log2 matrix):
+
+```python
+from mokume.imputation import (
+    impute_minprob,
+    impute_mindet,
+    impute_qrilc,
+    impute_seqknn,
+    impute_missforest,
+    impute_mice,
+    impute_mle,
+    impute_bpca,
+    impute_gms,
+    impute_nbavg,
+    impute_impseq,
+    impute_impseqrob,
 )
 
-mindet_df = impute_censored(data, method="mindet", quantile=0.01)
-knn_df = impute_censored(data, method="knn", n_neighbors=5)
+minprob_df = impute_minprob(log2_df, quantile=0.01, shift=1.6, scale=0.3)
+mindet_df = impute_mindet(log2_df, quantile=0.01)
+bpca_df = impute_bpca(log2_df, n_pcs=2)
+```
+
+High-level pipeline stage:
+
+```python
+from mokume.pipeline import ImputationConfig, ImputationStage, PipelineConfig
+
+config = PipelineConfig(
+    imputation=ImputationConfig(enabled=True, method="minprob"),
+    # other stage configs ...
+)
+imputed_df = ImputationStage(config).impute(protein_df)
 ```
 
 ---

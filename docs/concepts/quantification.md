@@ -15,6 +15,7 @@ mokume supports multiple protein quantification methods, each suited to differen
 | **TMT Abundance** | Median of log2 peptide intensities (`abd`) | No | `TMTAbundanceQuantification` | No |
 | **TMT Reporter Intensity** | Sum of raw reporter intensities (`intensity`) | No | `TMTReporterIntensityQuantification` | No |
 | **Median** | Median of peptide intensities | No | Built-in | No |
+| **Spectral Count** | Count of peptidoforms per (protein, sample) (`spectral_count`) | No | `SpectralCountQuantification` | No |
 
 \* MaxLFQ automatically uses DirectLFQ when installed for best accuracy, falling back to built-in implementation otherwise.
 
@@ -182,6 +183,40 @@ from mokume.quantification import get_quantification_method
 
 reporter = get_quantification_method("intensity")  # also "reporter"
 ```
+
+## Spectral Count
+
+The simplest count-based quantification: protein abundance is the number of
+peptidoform rows per (protein, sample). Useful as a baseline for label-free
+workflows and for sanity-checking peptide identification depth across
+samples.
+
+```python
+from mokume.quantification import SpectralCountQuantification
+
+sc = SpectralCountQuantification()
+result = sc.quantify(peptides)
+```
+
+Or via the factory / CLI:
+
+```python
+from mokume.quantification import get_quantification_method
+
+sc = get_quantification_method("spectral_count")  # aliases: "spectralcount", "count"
+```
+
+```bash
+mokume features2proteins -p features.parquet -o proteins.csv \
+    --quant-method spectral_count
+```
+
+!!! note
+    Because the `features2proteins` pipeline already aggregates by
+    peptidoform (`sum_peptidoform_intensities`) before quantification,
+    the count returned here is **distinct peptidoforms per sample**, not
+    raw PSM count. Use it as an identification-depth indicator rather
+    than as a strict spectral-count quantification.
 
 ## Standard Output Format
 

@@ -88,7 +88,15 @@ mokume features2proteins -p data.parquet -o out.csv \
 
 ### LOESS Normalization
 
-LOESS normalization is available as a standalone Python API utility for log2-scale matrices when you want to correct intensity-dependent bias using MA-style local regression.
+LOESS normalization corrects intensity-dependent bias between samples by
+fitting local regression on MA-plot residuals (M = log2 sample / reference,
+A = log2 mean). Exposed via the pipeline as `--sample-normalization loess`
+or as a standalone utility on a log2-scale wide matrix.
+
+```bash
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization loess
+```
 
 ```python
 from mokume.normalization import loess_normalize
@@ -96,8 +104,39 @@ from mokume.normalization import loess_normalize
 normalized = loess_normalize(log2_df, frac=0.75, reference="median")
 ```
 
-!!! note
-    LOESS is not currently exposed as a top-level `features2proteins` CLI normalization mode. It is most useful as a programmatic utility when you already have a matrix and want to test intensity-dependent bias correction explicitly.
+### MBQN Normalization
+
+Mean-Balanced Quantile Normalization (Brombacher et al., 2020) performs
+standard quantile normalization and then rebalances each protein so its
+across-sample mean matches its pre-normalization mean. This preserves
+the rank-invariant property of quantile normalization while reducing
+feature-level bias on heavily skewed distributions.
+
+```bash
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization mbqn
+```
+
+```python
+from mokume.normalization import mbqn_normalize
+
+normalized = mbqn_normalize(log2_df)
+```
+
+### VSN Normalization
+
+Variance Stabilizing Normalization (Huber et al., 2002) fits a per-sample
+affine + arsinh transformation to stabilise variance across the intensity
+range. The pure-Python implementation is available as a standalone utility
+only — it is intentionally **not** exposed via `--sample-normalization`
+because VSN's glog2 output is incompatible with the pipeline's downstream
+linear-scale assumptions (sum / median aggregation, IRS, coverage filter).
+
+```python
+from mokume.normalization import vsn_normalize
+
+stabilised = vsn_normalize(linear_df)  # input is linear-scale
+```
 
 ### TMM Normalization
 

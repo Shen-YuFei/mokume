@@ -32,7 +32,7 @@ mokume features2proteins [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, ibaq, topn, sum, median, ratio |
+| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, ibaq, topn, sum, median, ratio, abd (TMT abundance), intensity (TMT reporter), spectral_count |
 | `--fasta` | none | FASTA file (required for iBAQ) |
 | `--topn` | 3 | N for TopN quantification |
 | `--ion-alignment` | none | Ion alignment: none or hierarchical |
@@ -44,8 +44,10 @@ mokume features2proteins [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--run-normalization` | `median` | Run-level: median, mean, max, global, max_min, iqr, none |
-| `--sample-normalization` | `globalMedian` | Sample-level: globalMedian, conditionMedian, hierarchical, tmm, none |
+| `--sample-normalization` | `globalMedian` | Sample-level: globalMedian, conditionMedian, hierarchical, tmm, quantile, mediancenter, meancenter, rlr, mbqn, loess, none |
 | `--normalization-proteins` | none | File with protein IDs for normalization |
+
+VSN is available as a standalone Python API utility (`mokume.normalization.vsn_normalize`) but not exposed via `--sample-normalization` because its glog2 output is incompatible with the pipeline's downstream linear-scale assumptions.
 
 ### IRS (Multi-Plex TMT)
 
@@ -83,6 +85,19 @@ mokume features2proteins [OPTIONS]
 | `--batch-mean-only` | off | Only adjust batch means |
 | `--batch-ref` | none | Reference batch ID |
 
+### Imputation
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--impute` | off | Enable missing-value imputation on the protein matrix |
+| `--impute-method` | `none` | Method: none, knn, minprob, mindet, qrilc, missforest, seqknn, mle, mice, nbavg, gms, bpca, impseq, impseqrob |
+| `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet/QRILC low-tail draw |
+| `--impute-shift` | 1.6 | MinProb shift in standard deviations |
+| `--impute-scale` | 0.3 | MinProb scale factor for the imputation distribution sigma |
+| `--impute-n-neighbors` | 5 | Number of neighbours for KNN/SeqKNN/NBavg |
+
+Imputation runs in log2 space (the matrix is transformed before imputation and back to linear afterwards) so that censored-aware methods like MinProb/MinDet/QRILC behave correctly. The imputation step is applied after coverage filtering and before batch correction in the pipeline.
+
 ### Differential Expression
 
 | Option | Default | Description |
@@ -90,7 +105,9 @@ mokume features2proteins [OPTIONS]
 | `--de` | off | Enable differential expression analysis |
 | `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
 | `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
-| `--de-method` | `auto` | Method: auto, limrots, deqms, proda, limma, or rots |
+| `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, msstats, ensemble |
+| `--de-ensemble-methods` | `limrots,deqms,proda` | Comma-separated DE methods used when `--de-method=ensemble` |
+| `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
 | `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
@@ -99,6 +116,8 @@ mokume features2proteins [OPTIONS]
 Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrasts-file`. Both can be combined.
 
 `--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods are pure-Python reimplementations — no R or rpy2 required.
+
+`--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold.
 
 ### Plots & Reports
 

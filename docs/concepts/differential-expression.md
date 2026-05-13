@@ -177,6 +177,77 @@ de = DifferentialExpression(
 )
 ```
 
+## MSstats
+
+**MSstats** (Choi et al., 2014) summarises peptide-level intensities to
+protein-level abundances via Tukey median polish and then fits a per-protein
+linear model with empirical Bayes-style moderation. mokume's `msstats`
+backend is a pure-Python reimplementation of the core single-comparison
+workflow (no mixed-effects modelling).
+
+**Strengths:**
+
+- Median-polish summarisation is robust to outlier peptides
+- Familiar interface for users coming from R/MSstats
+
+**Weaknesses:**
+
+- The pure-Python port covers the core linear model only, not the full
+  mixed-effects machinery of the R package
+- Generally more conservative than DEqMS / LimROTS for small samples
+
+```python
+from mokume.analysis import DifferentialExpression
+
+de = DifferentialExpression(
+    method="msstats",
+    fdr_method="bh",
+    fdr_threshold=0.05,
+    log2fc_threshold=0.5,
+)
+```
+
+## Ensemble (top-k consensus)
+
+The `ensemble` method runs several individual DE methods on the same
+contrast and combines their per-protein verdicts using a top-k consensus
+rule: a protein is called significant only when at least `min_k` member
+methods agree on direction (UP or DOWN) and the Fisher-combined p-value
+passes the FDR threshold.
+
+**Output columns** include the median log2FC across members, the
+Fisher-combined p-value (BH-adjusted), `n_methods_up`, `n_methods_down`,
+and `methods_significant` (comma-separated list of members that called
+the protein).
+
+**Strengths:**
+
+- Higher precision than any single method by requiring agreement
+- Naturally robust to method-specific failure modes
+- Output exposes per-protein method agreement for downstream inspection
+
+**Weaknesses:**
+
+- Cost scales with the number of member methods
+- May lose sensitivity for proteins that only one method can detect
+
+```python
+from mokume.analysis.ensemble import run_ensemble
+
+ensemble_df = run_ensemble(
+    protein_df,
+    sample_to_condition,
+    contrast=("A", "B"),
+    methods=("limrots", "deqms", "proda"),
+    min_k=2,
+    fdr_method="bh",
+    fdr_threshold=0.05,
+    log2fc_threshold=0.5,
+)
+```
+
+CLI equivalent: `--de-method ensemble --de-ensemble-methods limrots,deqms,proda --de-ensemble-min-k 2`.
+
 ## FDR Correction
 
 All methods produce raw p-values that are corrected for multiple testing. mokume supports two correction methods:

@@ -170,6 +170,11 @@ mokume/
 | **MaxLFQ** | Delayed normalization with parallelization | No | `MaxLFQQuantification` | No* |
 | **DirectLFQ** | Intensity traces with hierarchical alignment | No | `DirectLFQQuantification` | Yes** |
 | **Sum** | Sum of all peptide intensities | No | `AllPeptidesQuantification` | No |
+| **Median** | Median of peptide intensities | No | Built-in | No |
+| **Ratio** | Log2 sample/reference per plex (PS protocol, TMT) | No | `RatioQuantification` | No |
+| **TMT Abundance** (`abd`) | Median of log2 peptide intensities | No | `TMTAbundanceQuantification` | No |
+| **TMT Reporter** (`intensity`) | Sum of raw reporter intensities | No | `TMTReporterIntensityQuantification` | No |
+| **Spectral Count** | Count of peptidoforms per (protein, sample) | No | `SpectralCountQuantification` | No |
 
 *MaxLFQ automatically uses DirectLFQ when installed for best accuracy, falling back to built-in implementation otherwise.
 
@@ -200,6 +205,10 @@ mokume provides modern empirical Bayes and bootstrap-based statistical methods f
 - **LimROTS** — Combines limma empirical Bayes variance stabilization with ROTS bootstrap-optimized test statistic and permutation-based FDR. Best overall sensitivity; recommended for MaxLFQ data.
 - **DEqMS** — Extends limma with peptide-count weighting via spectra count eBayes. Better false-positive control on noisy data; recommended for DirectLFQ data.
 - **proDA** — Probabilistic dropout-aware analysis that models missing values as informative dropout events rather than discarding them.
+- **limma** — Stable empirical Bayes baseline (`lmFit → contrasts.fit → eBayes → topTable`).
+- **ROTS** — Bootstrap-optimised reproducibility-oriented test statistic without empirical Bayes shrinkage.
+- **MSstats** — Tukey median polish summarisation followed by per-protein linear modelling.
+- **Ensemble** — Top-k consensus across multiple DE methods with Fisher-combined p-values.
 
 FDR correction: **BH** (Benjamini-Hochberg, default) or **IHW** (Independent Hypothesis Weighting).
 
@@ -232,6 +241,12 @@ results = de.run_comparisons(protein_df, sample_to_condition, contrasts)
 Output columns: `ProteinName`, `log2FC`, `pvalue`, `adj_pvalue`, `significance` (`UP` / `DOWN` / `Unchanged`).
 
 ### Missing Value Imputation
+
+The `features2proteins` pipeline integrates 13 imputation methods via
+`--impute --impute-method <name>` (operates on the protein matrix in
+log2 space, after coverage filtering and before batch correction).
+
+Standalone API examples:
 
 ```python
 from mokume.imputation.censored import impute_censored

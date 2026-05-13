@@ -56,6 +56,7 @@ The `features2proteins` command is the recommended way to go from raw feature da
 | Ratio | `--quant-method ratio` | No | Log2 sample/reference (TMT) |
 | TMT Abundance | `--quant-method abd` | No | Median of log2 peptide intensities (TMT) |
 | TMT Reporter Intensity | `--quant-method intensity` | No | Sum of raw reporter intensities (TMT) |
+| Spectral Count | `--quant-method spectral_count` | No | Count of peptidoforms per (protein, sample) |
 
 In practice:
 
@@ -114,7 +115,21 @@ mokume features2proteins -p data.parquet -o out.csv \
 mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical \
     --normalization-proteins housekeeping.txt
+
+# Quantile / MedianCenter / MeanCenter / RLR / MBQN / LOESS (dataset-level)
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization mbqn
+
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization loess
 ```
+
+!!! note
+    `quantile`, `mediancenter`, `meancenter`, `rlr`, `mbqn`, and `loess` are
+    dataset-level normalizers applied after peptide aggregation. VSN is
+    intentionally not exposed here — use `from mokume.normalization import
+    vsn_normalize` directly when you need it, because VSN's glog2 output
+    is incompatible with the pipeline's downstream linear-scale assumptions.
 
 - `globalMedian` is the default and a good general-purpose starting point.
 - `hierarchical` is useful when you want DirectLFQ-style normalization with a non-DirectLFQ quantification method.
@@ -239,7 +254,9 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 | `--de` | off | Enable differential expression |
 | `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
 | `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
-| `--de-method` | `auto` | Method: auto, limrots, deqms, proda, limma, or rots |
+| `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, msstats, ensemble |
+| `--de-ensemble-methods` | `limrots,deqms,proda` | Comma-separated DE methods used when `--de-method=ensemble` |
+| `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
 | `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
@@ -259,6 +276,49 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
     See [Differential Expression
     concepts](../concepts/differential-expression.md) for a
     detailed comparison of methods.
+
+```bash
+# Top-k consensus across multiple methods
+mokume features2proteins \
+    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --de --de-contrasts "NASH vs HL" \
+    --de-method ensemble \
+    --de-ensemble-methods "limrots,deqms,proda" \
+    --de-ensemble-min-k 2 \
+    --de-output ensemble_de.csv
+```
+
+## Imputation
+
+Proteomics data is sparse. The pipeline can fill missing values on the
+protein matrix after coverage filtering and before batch correction.
+Imputation runs in log2 space so that censored-aware methods (MinProb,
+MinDet, QRILC) behave correctly.
+
+```bash
+# MinProb low-tail draw (Perseus style)
+mokume features2proteins \
+    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --impute --impute-method minprob \
+    --impute-quantile 0.01 --impute-shift 1.6 --impute-scale 0.3
+
+# KNN imputation
+mokume features2proteins \
+    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --impute --impute-method knn --impute-n-neighbors 5
+```
+
+| Imputation Option | Default | Description |
+|-------------------|---------|-------------|
+| `--impute` | off | Enable imputation on the protein matrix |
+| `--impute-method` | `none` | none, knn, minprob, mindet, qrilc, missforest, seqknn, mle, mice, nbavg, gms, bpca, impseq, impseqrob |
+| `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet/QRILC low-tail draw |
+| `--impute-shift` | 1.6 | MinProb shift in standard deviations |
+| `--impute-scale` | 0.3 | MinProb scale factor for sigma |
+| `--impute-n-neighbors` | 5 | Neighbours for KNN/SeqKNN/NBavg |
 
 ## Plots and Reports
 
