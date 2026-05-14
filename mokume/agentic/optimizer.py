@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from joblib import Parallel, delayed
+
 from mokume.agentic.config import AgenticConfig
 from mokume.agentic.evaluator import (
     compute_score_ground_truth,
@@ -13,7 +15,12 @@ from mokume.agentic.evaluator import (
 from mokume.agentic.profiler import DataProfile, profile_data
 from mokume.agentic.proposer import propose_configs
 from mokume.agentic.reflector import reflect
-from mokume.agentic.reporter import save_outputs
+from mokume.agentic.reporter import (
+    contrast_slug,
+    load_state_snapshot,
+    save_outputs,
+    save_state_snapshot,
+)
 from mokume.agentic.runner import PreprocessCache, run_experiment
 from mokume.agentic.state import (
     AgenticState,
@@ -80,40 +87,50 @@ def _score_results(
     return results
 
 
+def _evaluate_one(cfg: CandidateConfig, ctx: RoundContext) -> EvaluationResult:
+    """Run + evaluate a single config, returning a sentinel result on failure."""
+    try:
+        de_df = run_experiment(
+            cfg,
+            ctx.protein_df,
+            ctx.sample_to_condition,
+            ctx.contrast,
+            ctx.peptide_counts,
+            cache=ctx.cache,
+        )
+        return evaluate(
+            cfg,
+            de_df,
+            ctx.protein_df,
+            ctx.sample_to_condition,
+            ctx.ground_truth,
+        )
+    except (ValueError, KeyError, RuntimeError, ArithmeticError) as exc:
+        logger.error("Experiment %s failed: %s", cfg.name, exc)
+        return EvaluationResult(
+            config_name=cfg.name,
+            config=cfg.to_dict(),
+            score=-1.0,
+        )
+
+
 def _run_round(
     round_num: int,
     configs: list[CandidateConfig],
     ctx: RoundContext,
 ) -> RoundResult:
-    """Execute one round of experiments."""
-    results = []
-    for cfg in configs:
-        try:
-            de_df = run_experiment(
-                cfg,
-                ctx.protein_df,
-                ctx.sample_to_condition,
-                ctx.contrast,
-                ctx.peptide_counts,
-                cache=ctx.cache,
+    """Execute one round of experiments (parallel when ctx.config.n_jobs != 1)."""
+    n_jobs = ctx.config.n_jobs
+    if n_jobs == 1 or len(configs) <= 1:
+        results = [_evaluate_one(cfg, ctx) for cfg in configs]
+    else:
+        # Threading backend keeps the shared PreprocessCache useful and
+        # avoids pickling the (potentially large) protein matrix per worker.
+        results = list(
+            Parallel(n_jobs=n_jobs, backend="threading")(
+                delayed(_evaluate_one)(cfg, ctx) for cfg in configs
             )
-            result = evaluate(
-                cfg,
-                de_df,
-                ctx.protein_df,
-                ctx.sample_to_condition,
-                ctx.ground_truth,
-            )
-            results.append(result)
-        except (ValueError, KeyError, RuntimeError, ArithmeticError) as exc:
-            logger.error("Experiment %s failed: %s", cfg.name, exc)
-            results.append(
-                EvaluationResult(
-                    config_name=cfg.name,
-                    config=cfg.to_dict(),
-                    score=-1.0,
-                )
-            )
+        )
 
     results = _score_results(
         results,
@@ -157,16 +174,39 @@ def _update_best(state: AgenticState, rnd: RoundResult) -> None:
     state.best_config = rnd.configs[idx]
 
 
+def _load_resume_state(ctx: RoundContext) -> tuple[AgenticState, set[str], int]:
+    """Return (state, seen_signatures, start_round) honouring ctx.config.resume."""
+    if not ctx.config.resume:
+        return AgenticState(), set(), 1
+    loaded = load_state_snapshot(ctx.config.output_dir, ctx.contrast)
+    if loaded is None:
+        return AgenticState(), set(), 1
+    if loaded.converged:
+        logger.info(
+            "Resumed state for %s is already converged; skipping contrast",
+            ctx.contrast,
+        )
+    seen = {cfg.signature() for rnd in loaded.rounds for cfg in rnd.configs}
+    start_round = len(loaded.rounds) + 1
+    return loaded, seen, start_round
+
+
 def optimize_contrast(
     ctx: RoundContext,
     profile: DataProfile,
 ) -> AgenticState:
     """Run the full optimization loop for a single contrast."""
-    state = AgenticState()
-    seen_signatures: set[str] = set()
-    logger.info("Optimizing contrast: %s vs %s", ctx.contrast[0], ctx.contrast[1])
+    state, seen_signatures, start_round = _load_resume_state(ctx)
+    logger.info(
+        "Optimizing contrast: %s vs %s (starting at round %d)",
+        ctx.contrast[0],
+        ctx.contrast[1],
+        start_round,
+    )
+    if state.converged:
+        return state
 
-    for round_num in range(1, ctx.config.max_rounds + 1):
+    for round_num in range(start_round, ctx.config.max_rounds + 1):
         candidates = _get_candidates(
             round_num, state, profile, ctx.config, seen_signatures
         )
@@ -199,9 +239,46 @@ def optimize_contrast(
         rnd.reflection = ref_result
         if ref_result.converged:
             state.converged = True
+
+        # Checkpoint after each completed round so --resume can pick up here
+        save_state_snapshot(ctx.config.output_dir, ctx.contrast, state)
+
+        if state.converged:
             break
 
     return state
+
+
+@dataclass
+class ContrastJob:
+    """Inputs needed to optimize one contrast (shared across serial / parallel)."""
+
+    protein_df: pd.DataFrame
+    sample_to_condition: dict[str, str]
+    config: AgenticConfig
+    ground_truth: set[str] | None
+    peptide_counts: pd.Series | None
+    profile: DataProfile
+    cache: PreprocessCache
+
+
+def _run_one_contrast(
+    contrast: tuple[str, str],
+    job: ContrastJob,
+) -> tuple[str, AgenticState]:
+    """Run optimization for a single contrast against the shared cache."""
+    ctx = RoundContext(
+        protein_df=job.protein_df,
+        sample_to_condition=job.sample_to_condition,
+        contrast=contrast,
+        ground_truth=job.ground_truth,
+        peptide_counts=job.peptide_counts,
+        config=job.config,
+        cache=job.cache,
+    )
+    state = optimize_contrast(ctx, job.profile)
+    save_outputs(job.profile, state, job.config)
+    return contrast_slug(contrast), state
 
 
 def optimize(
@@ -220,29 +297,37 @@ def optimize(
         profile.missing_rate * 100,
     )
 
-    all_states = {}
-    for contrast in config.contrasts or []:
-        ctx = RoundContext(
-            protein_df=protein_df,
-            sample_to_condition=sample_to_condition,
-            contrast=contrast,
-            ground_truth=ground_truth,
-            peptide_counts=peptide_counts,
-            config=config,
-            cache=PreprocessCache(),
-        )
-        key = f"{contrast[0]}_vs_{contrast[1]}"
-        state = optimize_contrast(ctx, profile)
-        if ctx.cache is not None:
-            stats = ctx.cache.stats()
-            logger.info(
-                "Preprocess cache for %s: %d hits, %d misses, %d unique combos",
-                key,
-                stats["hits"],
-                stats["misses"],
-                stats["unique_combos"],
+    contrasts = list(config.contrasts or [])
+    # (norm, imp) is contrast-independent, so we share one cache instance
+    # across every contrast in this run.
+    job = ContrastJob(
+        protein_df=protein_df,
+        sample_to_condition=sample_to_condition,
+        config=config,
+        ground_truth=ground_truth,
+        peptide_counts=peptide_counts,
+        profile=profile,
+        cache=PreprocessCache(),
+    )
+    max_concurrent = config.max_concurrent_contrasts
+
+    if max_concurrent == 1 or len(contrasts) <= 1:
+        pairs = [_run_one_contrast(contrast, job) for contrast in contrasts]
+    else:
+        pairs = list(
+            Parallel(n_jobs=max_concurrent, backend="threading")(
+                delayed(_run_one_contrast)(contrast, job) for contrast in contrasts
             )
-        save_outputs(profile, state, config)
-        all_states[key] = state
+        )
+
+    all_states = dict(pairs)
+
+    stats = job.cache.stats()
+    logger.info(
+        "Shared preprocess cache: %d hits, %d misses, %d unique combos",
+        stats["hits"],
+        stats["misses"],
+        stats["unique_combos"],
+    )
 
     return all_states

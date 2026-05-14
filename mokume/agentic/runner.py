@@ -1,5 +1,7 @@
 """Experiment executor for agentic analysis."""
 
+import threading
+
 import numpy as np
 import pandas as pd
 
@@ -18,11 +20,13 @@ class PreprocessCache:
     Many candidate configurations share the same (norm, imp) prefix and only
     differ in the DE method / thresholds. Caching the imputed matrix avoids
     re-running expensive normalization (VSN / LOESS / MBQN) and imputation
-    (KNN / BPCA / impSeq) work on every config.
+    (KNN / BPCA / impSeq) work on every config. Thread-safe so it can back
+    a joblib.Parallel(backend='threading') sweep without double-compute.
     """
 
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], pd.DataFrame] = {}
+        self._lock = threading.Lock()
         self.hits = 0
         self.misses = 0
 
@@ -34,24 +38,33 @@ class PreprocessCache:
     ) -> pd.DataFrame:
         """Return imputed matrix for (norm, imp), computing on miss."""
         key = (norm_method, imp_method)
-        cached = self._store.get(key)
-        if cached is not None:
-            self.hits += 1
-            logger.debug("PreprocessCache hit for (%s, %s)", norm_method, imp_method)
-            return cached.copy()
-        self.misses += 1
+        with self._lock:
+            cached = self._store.get(key)
+            if cached is not None:
+                self.hits += 1
+                logger.debug(
+                    "PreprocessCache hit for (%s, %s)", norm_method, imp_method
+                )
+                return cached.copy()
+            self.misses += 1
+        # Compute outside the lock so concurrent misses on distinct keys
+        # can run in parallel; only the dict insert below is serialised.
         normed = _apply_normalization(protein_df, norm_method)
         imputed = _apply_imputation(normed, imp_method)
-        self._store[key] = imputed
-        return imputed.copy()
+        with self._lock:
+            # Another thread may have raced and populated the same key;
+            # keep the first winner to keep results reproducible.
+            self._store.setdefault(key, imputed)
+            return self._store[key].copy()
 
     def stats(self) -> dict:
         """Return cache hit / miss counters for telemetry."""
-        return {
-            "hits": self.hits,
-            "misses": self.misses,
-            "unique_combos": len(self._store),
-        }
+        with self._lock:
+            return {
+                "hits": self.hits,
+                "misses": self.misses,
+                "unique_combos": len(self._store),
+            }
 
 
 def _apply_normalization(

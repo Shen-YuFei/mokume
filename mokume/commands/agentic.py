@@ -103,6 +103,33 @@ def agentic_cmd():
 @click.option("--max-rounds", default=5, type=int, help="Max optimization rounds.")
 @click.option("--max-experiments", default=30, type=int, help="Max total experiments.")
 @click.option(
+    "--n-jobs",
+    "n_jobs",
+    default=1,
+    type=int,
+    show_default=True,
+    help="Parallel candidates per round (1=serial, -1=all cores, threading backend).",
+)
+@click.option(
+    "--max-concurrent-contrasts",
+    "max_concurrent_contrasts",
+    default=1,
+    type=int,
+    show_default=True,
+    help="How many contrasts to optimize in parallel (LLM-rate-limit friendly default).",
+)
+@click.option(
+    "--resume",
+    "resume",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help=(
+        "Resume from state.json checkpoints in --output-dir when present; "
+        "otherwise start a fresh run."
+    ),
+)
+@click.option(
     "--llm-provider",
     default="deepseek",
     type=click.Choice(["deepseek", "custom"]),
@@ -164,6 +191,9 @@ def optimize_cmd(**kwargs):
         expected_fc=kwargs["expected_fc"],
         max_rounds=kwargs["max_rounds"],
         max_experiments=kwargs["max_experiments"],
+        n_jobs=kwargs["n_jobs"],
+        max_concurrent_contrasts=kwargs["max_concurrent_contrasts"],
+        resume=kwargs["resume"],
         use_llm=not kwargs["no_llm"],
         llm_provider=kwargs["llm_provider"],
         llm_base_url=kwargs["llm_base_url"],

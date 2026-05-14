@@ -15,6 +15,55 @@ from mokume.core.logger import get_logger
 logger = get_logger("mokume.agentic.reporter")
 
 
+def contrast_slug(contrast: tuple[str, str]) -> str:
+    """Filesystem-safe slug for a contrast pair (e.g. 'A_vs_B')."""
+    return f"{contrast[0]}_vs_{contrast[1]}"
+
+
+def checkpoint_path(output_dir: str | Path, contrast: tuple[str, str]) -> Path:
+    """Return the state snapshot path for a contrast."""
+    return Path(output_dir) / contrast_slug(contrast) / "state.json"
+
+
+def save_state_snapshot(
+    output_dir: str | Path,
+    contrast: tuple[str, str],
+    state: AgenticState,
+) -> Path:
+    """Persist the per-contrast state for --resume."""
+    path = checkpoint_path(output_dir, contrast)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(state.to_dict(), indent=2, default=str),
+        encoding="utf-8",
+    )
+    logger.debug("Saved state snapshot to %s", path)
+    return path
+
+
+def load_state_snapshot(
+    output_dir: str | Path,
+    contrast: tuple[str, str],
+) -> AgenticState | None:
+    """Load a per-contrast state snapshot if one exists."""
+    path = checkpoint_path(output_dir, contrast)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to read checkpoint %s (%s); starting fresh", path, exc)
+        return None
+    state = AgenticState.from_dict(data)
+    logger.info(
+        "Resumed state from %s: %d rounds, %d experiments",
+        path,
+        len(state.rounds),
+        state.total_experiments,
+    )
+    return state
+
+
 def _all_results(state: AgenticState) -> list[EvaluationResult]:
     """Flatten all results across rounds."""
     results = []

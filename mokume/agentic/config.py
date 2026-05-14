@@ -40,6 +40,22 @@ class AgenticConfig:
     # Optimization budget
     max_rounds: int = 5
     max_experiments: int = 30
+    # Parallel execution: number of candidates to run concurrently within a
+    # single round. 1 keeps the historical sequential behaviour; -1 uses all
+    # cores. Joblib uses a threading backend so the PreprocessCache stays
+    # shared across workers.
+    n_jobs: int = 1
+    # Number of contrasts to optimize concurrently. Default 1 keeps the
+    # original behaviour and is also LLM-rate-limit friendly; increase to
+    # parallelize multi-contrast runs (PreprocessCache is shared across
+    # contrasts since (norm, imp) is contrast-independent).
+    max_concurrent_contrasts: int = 1
+    # Rule-based convergence: declare converged when the best score has not
+    # improved by more than this delta for 2 consecutive rounds.
+    convergence_score_gap: float = 0.02
+    # If True, optimize() will try to load a previous state.json per contrast
+    # from output_dir and resume after the last completed round.
+    resume: bool = False
 
     # LLM settings (OpenAI-compatible API)
     use_llm: bool = True

@@ -131,6 +131,20 @@ exclude_dirs = ["tests"]
 [tool.bandit.assert_used]
 skips = ["*/test_*.py", "*/tests/*"]
 
+[tool.pylint.design]
+# Scientific code: dataclasses aggregate many fields, helper
+# functions take many tabular inputs, and analysis pipelines
+# accumulate intermediates. Defaults (5 / 7 / 15) are too tight.
+max-args = 6
+max-attributes = 25
+max-locals = 18
+max-positional-arguments = 6
+
+[tool.pylint."MESSAGES CONTROL"]
+# C0114/0115/0116: missing module/class/function docstrings; already covered
+# by the project documentation policy and ruff/pydocstyle in pre-commit.
+disable = ["C0114", "C0115", "C0116"]
+
 [tool.isort]
 profile = "black"
 
