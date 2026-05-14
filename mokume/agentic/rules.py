@@ -1,24 +1,22 @@
 """Rule-based configuration generation (fallback when LLM unavailable)."""
 
 from itertools import product
-from pathlib import Path
-
-import yaml
 
 from mokume.agentic.profiler import DataProfile
+from mokume.agentic.skill_loader import (
+    extract_prompts,
+    load_skill,
+    load_skill_data,
+)
 from mokume.agentic.state import CandidateConfig
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.agentic.rules")
 
-_KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
-
 
 def _load_heuristics() -> dict:
-    """Load heuristics from YAML knowledge base."""
-    path = _KNOWLEDGE_DIR / "heuristics.yaml"
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """Load heuristics from the proteomics-heuristics skill data."""
+    return load_skill_data("proteomics-heuristics")
 
 
 def _get_data_type_priors(heuristics: dict, data_type: str) -> dict:
@@ -143,14 +141,24 @@ def rule_propose(
 
 
 def load_prompts() -> dict[str, str]:
-    """Load LLM prompt templates from YAML."""
-    path = _KNOWLEDGE_DIR / "prompts.yaml"
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """Load LLM prompt templates from skill markdown files.
+
+    Returns a dict with keys: proposal_system, proposal_user,
+    reflection_system, reflection_user, report_system, report_user.
+    """
+    result: dict[str, str] = {}
+    for skill_name, prefix in [
+        ("proteomics-proposal", "proposal"),
+        ("proteomics-reflection", "reflection"),
+        ("proteomics-reporting", "report"),
+    ]:
+        skill = load_skill(skill_name)
+        prompts = extract_prompts(skill)
+        result[f"{prefix}_system"] = prompts.get("system", "")
+        result[f"{prefix}_user"] = prompts.get("user", "")
+    return result
 
 
 def load_benchmarks() -> dict:
-    """Load benchmark reference data from YAML."""
-    path = _KNOWLEDGE_DIR / "benchmarks.yaml"
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """Load benchmark reference data from the proteomics-benchmarks skill."""
+    return load_skill_data("proteomics-benchmarks")

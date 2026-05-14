@@ -32,7 +32,7 @@ If you just want one fixed pipeline, prefer
          ▼
 ┌────────────────────┐
 │  Proposer          │  ← LLM (tool-call, strict mode) OR
-│  - LLM             │    rule-based fallback (heuristics.yaml +
+│  - LLM             │    rule-based fallback (skills/ +
 │  - Rule-based      │    ensemble_strategies)
 └────────┬───────────┘
          │  3–18 CandidateConfigs
@@ -133,7 +133,7 @@ When the proposer picks `de_method=ensemble`, the runner calls
 forwarded to the evaluator like any other DE result.
 
 Two default ensemble presets ship in
-`mokume/agentic/knowledge/heuristics.yaml`:
+`mokume/agentic/skills/proteomics-heuristics/data.yaml`:
 
 ```yaml
 ensemble_strategies:
@@ -178,7 +178,7 @@ mokume agentic optimize \
 ### Rule-based only (no LLM)
 
 Useful for reproducible CI runs or when an API key is unavailable. The
-rule engine reads `heuristics.yaml` and emits a diverse set of
+rule engine reads the proteomics-heuristics skill and emits a diverse set of
 candidates, **including ensemble strategies**:
 
 ```bash
