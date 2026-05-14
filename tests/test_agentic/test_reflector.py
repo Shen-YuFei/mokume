@@ -48,7 +48,7 @@ def test_format_results_table_sorts_and_marks_top3():
     ]
     out = _format_results_table(rounds)
     assert "Top-3 globally" in out
-    assert "★" in out  # best marker
+    assert "*" in out  # best marker
     lo = out.index("low")
     hi = out.index("high")
     assert hi < lo  # 'high' appears before 'low' in leaderboard
@@ -85,28 +85,58 @@ def test_collect_all_results_flattens():
     assert flat[2][0] == 2 and flat[2][1].config_name == "c"
 
 
-def test_rule_reflect_converges_when_best_stable():
-    """Same best name across 2 rounds -> converged."""
+def test_rule_reflect_converges_when_best_stable_and_flat():
+    """Same best name and delta-score <= threshold -> converged."""
     rounds = [
-        _mk_round(1, _mk_result("winner", 0.8, 4)),
-        _mk_round(2, _mk_result("winner", 0.85, 4)),
+        _mk_round(1, _mk_result("winner", 0.80, 4)),
+        _mk_round(2, _mk_result("winner", 0.81, 4)),
     ]
-    out = _rule_reflect(rounds)
+    out = _rule_reflect(rounds, score_gap=0.02)
     assert out.converged is True
 
 
-def test_rule_reflect_keeps_searching_when_best_changes():
-    """Best name changing -> not converged."""
+def test_rule_reflect_keeps_searching_when_still_improving():
+    """Same best name but delta-score > threshold -> keep searching."""
     rounds = [
-        _mk_round(1, _mk_result("first", 0.6, 3)),
-        _mk_round(2, _mk_result("second", 0.7, 4)),
+        _mk_round(1, _mk_result("winner", 0.80, 4)),
+        _mk_round(2, _mk_result("winner", 0.90, 4)),
     ]
-    out = _rule_reflect(rounds)
+    out = _rule_reflect(rounds, score_gap=0.02)
+    assert out.converged is False
+
+
+def test_rule_reflect_converges_when_best_changes_but_score_flat():
+    """Best name changed but delta-score ~= 0 -> saturation, converge."""
+    rounds = [
+        _mk_round(1, _mk_result("a", 0.70, 3)),
+        _mk_round(2, _mk_result("b", 0.71, 3)),
+    ]
+    out = _rule_reflect(rounds, score_gap=0.02)
+    assert out.converged is True
+
+
+def test_rule_reflect_keeps_searching_when_best_changes_and_improves():
+    """Best changed and delta-score material -> keep searching."""
+    rounds = [
+        _mk_round(1, _mk_result("first", 0.60, 3)),
+        _mk_round(2, _mk_result("second", 0.70, 4)),
+    ]
+    out = _rule_reflect(rounds, score_gap=0.02)
     assert out.converged is False
 
 
 def test_rule_reflect_waits_after_single_round():
     """Single round means we cannot judge stability yet."""
     rounds = [_mk_round(1, _mk_result("only", 0.5, 2))]
+    out = _rule_reflect(rounds)
+    assert out.converged is False
+
+
+def test_rule_reflect_keeps_searching_when_all_failed():
+    """Latest round with no successful results -> keep searching."""
+    rounds = [
+        _mk_round(1, _mk_result("good", 0.6, 2)),
+        _mk_round(2, _mk_result("bad", -1.0)),
+    ]
     out = _rule_reflect(rounds)
     assert out.converged is False
