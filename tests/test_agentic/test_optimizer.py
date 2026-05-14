@@ -22,14 +22,14 @@ def _mock_de_result(n=30):
     )
 
 
-def test_optimize_contrast_no_llm(synthetic_protein_df, sample_to_condition):
+def test_optimize_contrast_no_llm(synthetic_protein_df, sample_to_condition, tmp_path):
     """Full optimization loop with mocked runner, no LLM."""
     profile = profile_data(synthetic_protein_df, sample_to_condition)
     config = AgenticConfig(
         use_llm=False,
         max_rounds=2,
         max_experiments=4,
-        output_dir="./test_optimization_output",
+        output_dir=str(tmp_path / "output"),
     )
 
     ctx = RoundContext(
@@ -51,14 +51,14 @@ def test_optimize_contrast_no_llm(synthetic_protein_df, sample_to_condition):
     assert len(state.audit_trail) > 0
 
 
-def test_optimize_budget_respected(synthetic_protein_df, sample_to_condition):
+def test_optimize_budget_respected(synthetic_protein_df, sample_to_condition, tmp_path):
     """Optimizer stops when budget is exhausted."""
     profile = profile_data(synthetic_protein_df, sample_to_condition)
     config = AgenticConfig(
         use_llm=False,
         max_rounds=10,
         max_experiments=3,
-        output_dir="./test_optimization_budget",
+        output_dir=str(tmp_path / "budget"),
     )
 
     ctx = RoundContext(
