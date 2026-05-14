@@ -1,7 +1,7 @@
 """Unified LLM client for agentic analysis via OpenAI-compatible API.
 
 Supports DeepSeek V4 Pro thinking mode, Tool Calls (strict), and
-automatic fallback (strict → JSON mode → raw text parsing).
+automatic fallback (strict -> JSON mode -> raw text parsing).
 """
 
 import json
@@ -241,7 +241,7 @@ def call_with_tools(
 ) -> dict[str, Any]:
     """Call LLM with tool definitions and return parsed tool-call arguments.
 
-    Falls back: strict tool call → JSON mode → raw text extraction.
+    Falls back: strict tool call -> JSON mode -> raw text extraction.
     """
     client = create_client(config)
 
@@ -258,7 +258,7 @@ def call_with_tools(
         if msg.tool_calls:
             raw = msg.tool_calls[0].function.arguments
             return json.loads(raw)
-        # Model replied with text instead of tool call – fall through
+        # Model replied with text instead of tool call - fall through
         logger.warning("Tool call returned text, falling back")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Tool call failed (%s), falling back", exc)

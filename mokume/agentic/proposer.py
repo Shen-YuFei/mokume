@@ -69,7 +69,7 @@ def _dedup_configs(
 def _format_seen_block(seen: set[str] | None) -> str:
     """Format previously-tried signatures for the LLM prompt."""
     if not seen:
-        return "(none — this is the first round)"
+        return "(none -- this is the first round)"
     return "\n".join(f"- {sig}" for sig in sorted(seen))
 
 

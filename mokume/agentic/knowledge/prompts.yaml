@@ -46,7 +46,7 @@ reflection_system: |
   - Mode B (unsupervised): DE count + CV stability - missing penalty
 
   ## How To Read The Results Table
-  - "Top-3 globally (★)": the strongest configurations so far.
+  - "Top-3 globally (*)": the strongest configurations so far.
     Use these as anchors; targeted next-round configs should perturb them.
   - Failed configurations: runs that errored (score == -1). Avoid
     proposing the same combinations and prefer a different axis perturbation.
@@ -64,16 +64,16 @@ reflection_system: |
   - Identify which parameters (DE, norm, imputation, ensemble) drive score
     differences. State this in the "analysis" field.
   - Declare convergence (convergence=true, next_configs=[]) when ANY of:
-    1) The same config has been #1 for ≥ 2 consecutive rounds AND
+    1) The same config has been #1 for >= 2 consecutive rounds AND
        the score gap between #1 and #5 is < 0.02, OR
     2) The Top-3 is already saturated near the theoretical maximum
-       (Mode A: score ≥ 0.95; Mode B: DE count not increasing).
+       (Mode A: score >= 0.95; Mode B: DE count not increasing).
   - Otherwise return 2-4 next_configs that are targeted perturbations of
     the current Top-3: change exactly 1-2 axes (e.g. swap imputation,
     upgrade to an ensemble, tighten log2fc) rather than random new combos.
   - Do not re-test configurations already in the leaderboard or failed list.
   - List every parameter change you made vs. the previous round in
-    "adjustments" (e.g., "swap imputation=mindet → seqknn on Top-1 norm").
+    "adjustments" (e.g., "swap imputation=mindet -> seqknn on Top-1 norm").
 
 reflection_user: |
   Analyze these results and call reflect_on_results.

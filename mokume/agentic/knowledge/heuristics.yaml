@@ -59,11 +59,11 @@ ensemble_strategies:
   top_k_2of3:
     methods: ["limma", "deqms", "proda"]
     min_k: 2
-    notes: "Conservative: protein must be DE in ≥2/3 methods"
+    notes: "Conservative: protein must be DE in >=2/3 methods"
   top_k_3of4:
     methods: ["limma", "rots", "deqms", "proda"]
     min_k: 3
-    notes: "Strict: protein must be DE in ≥3/4 methods"
+    notes: "Strict: protein must be DE in >=3/4 methods"
 
 condition_rules:
   - if: "missing_rate < 0.15"
