@@ -51,12 +51,32 @@ class TissueSpecificityConfig:
 
 @dataclass
 class EmbeddingConfig:
-    """Dimensionality reduction configuration."""
+    """Dimensionality reduction configuration.
+
+    The PCA input is built by selecting low-NaN proteins and then imputing the
+    remaining missing values via :func:`mokume.imputation.impute_missing_values`.
+    Defaults to MNAR-aware ``mindet`` because proteomics missingness is mostly
+    not-at-random (low-abundance proteins drop below LOD) — left-censored
+    methods preserve the tissue-specific low-abundance signal that MAR
+    imputers (median, mean, knn) tend to wash out.
+    """
 
     max_nan_frac_for_pca: Optional[float] = None
     pca_components: int = 50
     tsne_perplexity: float = 15.0
     random_state: int = 42
+
+    # Imputation: any method exposed by mokume.imputation
+    # Examples: "mindet", "minprob", "qrilc", "median", "mean", "knn",
+    # "seqknn", "missforest", "bpca", "impseq", "impseqrob", "mle",
+    # "nbavg", "gms", "mice".
+    imputation_method: str = "mindet"
+    imputation_n_neighbors: int = 5
+
+    # Dimensionality reduction: "tsne" (default) or "umap"
+    embedding_method: str = "tsne"
+    umap_n_neighbors: int = 15
+    umap_min_dist: float = 0.1
 
 
 @dataclass
@@ -230,6 +250,15 @@ _YAML_TEMPLATE = """\
 #   pca_components: 50
 #   tsne_perplexity: 15.0
 #   random_state: 42                   # Seed for reproducibility
+#   # Imputation for the PCA input (MNAR-aware default for proteomics):
+#   #   mindet | minprob | qrilc | knn | seqknn | missforest |
+#   #   bpca | gms | mle | mice | nbavg | impseq | impseqrob | median
+#   imputation_method: mindet
+#   imputation_n_neighbors: 5          # Used by knn / seqknn
+#   # Backend after PCA: tsne (default) or umap (requires umap-learn)
+#   embedding_method: tsne
+#   umap_n_neighbors: 15
+#   umap_min_dist: 0.1
 
 # ── Plotting ─────────────────────────────────────────────────────────
 # plotting:

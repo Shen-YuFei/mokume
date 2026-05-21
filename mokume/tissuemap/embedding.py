@@ -1,5 +1,6 @@
 """
-Dimensionality reduction: PCA + t-SNE.
+Dimensionality reduction: protein selection → MNAR-aware imputation → PCA →
+t-SNE / UMAP.
 """
 
 from __future__ import annotations
@@ -8,14 +9,50 @@ import logging
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
+try:
+    import umap as _umap_module  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - optional dependency
+    _umap_module = None
+
+from mokume.imputation import (
+    impute_bpca,
+    impute_gms,
+    impute_impseq,
+    impute_impseqrob,
+    impute_mice,
+    impute_mindet,
+    impute_minprob,
+    impute_missing_values,
+    impute_mle,
+    impute_nbavg,
+    impute_qrilc,
+)
 from mokume.tissuemap.config import EmbeddingConfig
 
 logger = logging.getLogger(__name__)
 
 _MIN_PROTEINS_FOR_PCA = 500
+
+# Imputation methods that operate directly on a DataFrame and return one back.
+# ``impute_missing_values`` already wraps "knn", "mean", "median", "constant",
+# "most_frequent", "seqknn" and "missforest", so we only need to dispatch
+# explicitly for the more specialised left-censored / iterative methods.
+_DIRECT_IMPUTERS = {
+    "mindet": impute_mindet,
+    "minprob": impute_minprob,
+    "qrilc": impute_qrilc,
+    "bpca": impute_bpca,
+    "gms": impute_gms,
+    "mle": impute_mle,
+    "mice": impute_mice,
+    "nbavg": impute_nbavg,
+    "impseq": impute_impseq,
+    "impseqrob": impute_impseqrob,
+}
 
 
 def _resolve_nan_threshold(
@@ -83,6 +120,56 @@ def _run_pca(
     return pca_emb, var_explained
 
 
+def _impute_for_pca(
+    x_sub: np.ndarray,
+    method: str,
+    n_neighbors: int,
+) -> np.ndarray:
+    """Impute remaining NaN values in the protein-by-sample sub-matrix.
+
+    The matrix is samples × proteins. We delegate to ``mokume.imputation`` so
+    every CLI / config that already supports those methods stays consistent
+    with the tissuemap embedding step.
+    """
+    if not np.isnan(x_sub).any():
+        return x_sub.astype(np.float32)
+
+    method = method.lower()
+    df = pd.DataFrame(x_sub)
+
+    try:
+        if method in _DIRECT_IMPUTERS:
+            imputed = _DIRECT_IMPUTERS[method](df)
+        else:
+            imputed = impute_missing_values(df, method=method, n_neighbors=n_neighbors)
+    except (
+        ValueError,
+        RuntimeError,
+        ArithmeticError,
+        ImportError,
+        KeyError,
+        np.linalg.LinAlgError,
+    ) as exc:
+        # Imputers can fail on degenerate matrices (LinAlg), bad params (Value/
+        # KeyError), missing optional deps (Import), or numerical edge cases
+        # (Arithmetic/Runtime). AttributeError / TypeError are programmer bugs
+        # and must NOT be swallowed here.
+        logger.warning(
+            "Imputation '%s' failed (%s); falling back to column median",
+            method,
+            exc,
+        )
+        col_medians = np.nanmedian(x_sub, axis=0, keepdims=True)
+        col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
+        return np.where(np.isnan(x_sub), col_medians, x_sub).astype(np.float32)
+
+    out = np.asarray(imputed, dtype=np.float32)
+    if np.isnan(out).any():
+        # Some methods leave residual NaNs (e.g. all-NaN columns); patch with 0.
+        out = np.where(np.isnan(out), 0.0, out)
+    return out
+
+
 def _run_tsne(
     adata: ad.AnnData,
     pca_emb: np.ndarray,
@@ -104,15 +191,58 @@ def _run_tsne(
     logger.info("t-SNE done")
 
 
+def _run_umap(
+    adata: ad.AnnData,
+    pca_emb: np.ndarray,
+    config: EmbeddingConfig,
+    n_jobs: int,
+) -> None:
+    """Fit UMAP on PCA embedding and store in adata.
+
+    Writes the result to both ``X_umap`` (the canonical key) and ``X_tsne``
+    (so downstream plotters that key off ``X_tsne`` keep working without
+    changes). UMAP 1.0+ honours ``n_jobs`` only when ``random_state`` is
+    ``None``; otherwise it must stay single-threaded for reproducibility.
+    """
+    if _umap_module is None:
+        raise ImportError(
+            "UMAP requested but 'umap-learn' is not installed. "
+            "Install it with `pip install umap-learn`."
+        )
+
+    n_neighbors = min(config.umap_n_neighbors, max(2, adata.n_obs - 1))
+    umap_jobs = 1 if config.random_state is not None else n_jobs
+    reducer = _umap_module.UMAP(
+        n_components=2,
+        n_neighbors=n_neighbors,
+        min_dist=config.umap_min_dist,
+        random_state=config.random_state,
+        n_jobs=umap_jobs,
+    )
+    embedding = reducer.fit_transform(pca_emb)
+    adata.obsm["X_umap"] = embedding
+    # Reuse the existing plot key so downstream code does not need changes.
+    adata.obsm["X_tsne"] = embedding
+    logger.info("UMAP done (n_neighbors=%d)", n_neighbors)
+
+
+_EMBEDDERS = {
+    "tsne": _run_tsne,
+    "umap": _run_umap,
+}
+
+
 def embed(
     adata: ad.AnnData,
     config: EmbeddingConfig,
     n_jobs: int = 8,
 ) -> ad.AnnData:
-    """Run PCA + t-SNE on the corrected layer.
+    """Run protein selection → imputation → PCA → t-SNE / UMAP.
 
-    Uses a low-NaN protein subset for PCA to avoid zero-fill artifacts.
-    Remaining NaN in the subset are filled with 0 for PCA input only.
+    Uses a low-NaN protein subset for PCA, then fills the remaining missing
+    values with the configured imputation method (delegated to
+    :mod:`mokume.imputation`). Defaults to ``mindet`` because proteomics
+    missingness is mostly MNAR.
 
     Parameters
     ----------
@@ -124,8 +254,10 @@ def embed(
     Returns
     -------
     ad.AnnData
-        Updated with ``obsm["X_pca"]``, ``obsm["X_tsne"]``,
-        and ``uns["embedding_metrics"]``.
+        Updated with ``obsm["X_pca"]``, ``obsm["X_tsne"]`` (always — UMAP
+        results are also mirrored here), and ``uns["embedding_metrics"]``.
+        When ``embedding_method == "umap"`` the result is also stored at
+        ``obsm["X_umap"]``.
     """
     x_data = adata.layers["log2_corrected"].copy()
     nan_threshold = _resolve_nan_threshold(x_data, config.max_nan_frac_for_pca)
@@ -143,15 +275,28 @@ def embed(
         return adata
 
     x_sub = x_data[:, keep_mask]
-    col_medians = np.nanmedian(x_sub, axis=0, keepdims=True)
-    col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
-    x_sub = np.where(np.isnan(x_sub), col_medians, x_sub).astype(np.float32)
+    logger.info("Imputation: %s", config.imputation_method)
+    x_sub = _impute_for_pca(
+        x_sub, config.imputation_method, config.imputation_n_neighbors
+    )
 
     pca_emb, var_explained = _run_pca(adata, x_sub, config)
-    _run_tsne(adata, pca_emb, config, n_jobs)
+
+    method = (config.embedding_method or "tsne").lower()
+    embedder = _EMBEDDERS.get(method)
+    if embedder is None:
+        logger.warning(
+            "Unknown embedding_method '%s'; falling back to t-SNE",
+            config.embedding_method,
+        )
+        method = "tsne"
+        embedder = _EMBEDDERS["tsne"]
+    embedder(adata, pca_emb, config, n_jobs)
 
     adata.uns["embedding_metrics"] = {
         "pca_var_explained": round(var_explained, 4),
         "n_proteins_used": int(n_kept),
+        "imputation_method": config.imputation_method,
+        "embedding_method": method,
     }
     return adata

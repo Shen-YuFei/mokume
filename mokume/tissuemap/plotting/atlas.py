@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import NamedTuple
 
 import anndata as ad
 import matplotlib
@@ -22,6 +23,14 @@ from scipy.spatial.distance import pdist
 logger = logging.getLogger(__name__)
 
 _SMALL_THRESHOLD = 8
+
+
+class _SaveOpts(NamedTuple):
+    """Bundle the figure-output options shared by every atlas saver."""
+
+    dpi: int
+    save_pdf: bool
+
 
 _GROUP_PALETTE = {
     "Muscle/Cardiac": {"base": "#D32F2F", "cmap": matplotlib.colormaps["Reds"]},
@@ -209,18 +218,25 @@ def _compute_tissue_groups(
 def _build_tissue_colors(
     proteomic_groups: dict[str, list[str]],
 ) -> dict[str, tuple]:
-    """Assign per-tissue colors from group colormaps."""
-    tissue_colors: dict[str, tuple] = {}
-    for group_name, members in proteomic_groups.items():
-        palette = _GROUP_PALETTE.get(
-            group_name, {"base": "#999", "cmap": matplotlib.colormaps["Greys"]}
-        )
-        cmap = palette["cmap"]
-        n = len(members)
-        for i, t in enumerate(members):
-            frac = 0.35 + 0.55 * (i / max(n - 1, 1))
-            tissue_colors[t] = cmap(frac)
-    return tissue_colors
+    """Assign one distinct categorical colour per tissue.
+
+    Tissues keep the proteomic-group context via the hull / dendrogram /
+    legend grouping, so the colour itself only needs to identify the tissue.
+    Using categorical palettes (``tab20`` then ``Set3`` / ``tab20b`` /
+    ``tab20c`` as fallback) keeps every tissue visually distinct, even when
+    several tissues share the same proteomic group or fall outside any
+    recognised group (which previously rendered them in indistinguishable
+    grayscale shades).
+    """
+    palette_sources = ("tab20", "Set3", "tab20b", "tab20c")
+    colours: list[tuple] = []
+    for name in palette_sources:
+        cmap = matplotlib.colormaps[name]
+        n = cmap.N if hasattr(cmap, "N") else 20
+        colours.extend(cmap(i) for i in range(n))
+
+    ordered_tissues = [t for members in proteomic_groups.values() for t in members]
+    return {t: colours[i % len(colours)] for i, t in enumerate(ordered_tissues)}
 
 
 def _draw_tsne_panel(
@@ -335,43 +351,107 @@ def _draw_dendrogram_panel(
 
 def _save_atlas_figures(
     fig,
-    ax_tsne,
-    ax_dend,
     out_dir: Path,
-    dpi: int,
-    save_pdf: bool,
+    opts: _SaveOpts,
 ) -> None:
-    """Save combined figure and individual sub-plots."""
+    """Save the combined slide figure (t-SNE + dendrogram)."""
     fig.savefig(
         out_dir / "slide_atlas_dendrogram.png",
-        dpi=dpi,
+        dpi=opts.dpi,
         bbox_inches="tight",
         facecolor="white",
     )
-    if save_pdf:
+    if opts.save_pdf:
         fig.savefig(
             out_dir / "slide_atlas_dendrogram.pdf",
             bbox_inches="tight",
             facecolor="white",
         )
-    for ax, name in [(ax_tsne, "tissue_atlas"), (ax_dend, "tissue_dendrogram")]:
-        extent = ax.get_tightbbox(fig.canvas.get_renderer()).transformed(
-            fig.dpi_scale_trans.inverted(),
-        )
+    plt.close(fig)
+    logger.info("Saved slide_atlas_dendrogram.png")
+
+
+def _save_individual_atlas(
+    out_dir: Path,
+    adata: ad.AnnData,
+    tissue_order: list[str],
+    tissue_colors: dict,
+    proteomic_groups: dict,
+    opts: _SaveOpts,
+) -> None:
+    """Render and save ``tissue_atlas.png`` as a standalone figure.
+
+    Avoids the unreliable ``bbox_inches=ax.get_tightbbox()`` crop, which used
+    to leak into the neighboring dendrogram axes when the legend extended
+    beyond the t-SNE axes.
+    """
+    fig, ax = plt.subplots(figsize=(11, 9))
+    tissues = adata.obs["tissue"].values
+    _draw_tsne_panel(
+        ax,
+        adata.obsm["X_tsne"],
+        tissues,
+        tissue_order,
+        tissue_colors,
+        proteomic_groups,
+    )
+    legend_elements = _build_legend_elements(tissues, proteomic_groups, tissue_colors)
+    leg = ax.legend(
+        handles=legend_elements,
+        loc="center left",
+        bbox_to_anchor=(1.01, 0.5),
+        fontsize=7,
+        frameon=True,
+        framealpha=0.95,
+        edgecolor="#ddd",
+        handletextpad=0.5,
+        labelspacing=0.2,
+        borderpad=0.6,
+        title="Proteomic group",
+        title_fontsize=8,
+    )
+    leg.set_alignment("left")
+    _configure_tsne_axes(ax, adata)
+    fig.savefig(
+        out_dir / "tissue_atlas.png",
+        dpi=opts.dpi,
+        bbox_inches="tight",
+        facecolor="white",
+    )
+    if opts.save_pdf:
         fig.savefig(
-            out_dir / f"{name}.png",
-            dpi=dpi,
-            bbox_inches=extent,
+            out_dir / "tissue_atlas.pdf",
+            bbox_inches="tight",
             facecolor="white",
         )
-        if save_pdf:
-            fig.savefig(
-                out_dir / f"{name}.pdf",
-                bbox_inches=extent,
-                facecolor="white",
-            )
-    plt.close()
-    logger.info("Saved slide_atlas_dendrogram.png")
+    plt.close(fig)
+    logger.info("Saved tissue_atlas.png")
+
+
+def _save_individual_dendrogram(
+    out_dir: Path,
+    z_linkage,
+    unique_tissues: list[str],
+    tissue_to_group: dict,
+    opts: _SaveOpts,
+) -> None:
+    """Render and save ``tissue_dendrogram.png`` as a standalone figure."""
+    fig, ax = plt.subplots(figsize=(7, 9))
+    _draw_dendrogram_panel(ax, z_linkage, unique_tissues, tissue_to_group)
+    fig.savefig(
+        out_dir / "tissue_dendrogram.png",
+        dpi=opts.dpi,
+        bbox_inches="tight",
+        facecolor="white",
+    )
+    if opts.save_pdf:
+        fig.savefig(
+            out_dir / "tissue_dendrogram.pdf",
+            bbox_inches="tight",
+            facecolor="white",
+        )
+    plt.close(fig)
+    logger.info("Saved tissue_dendrogram.png")
 
 
 def _store_group_metadata(
@@ -506,4 +586,20 @@ def plot_slide_atlas_dendrogram(
     ax_dend = fig.add_subplot(gs[1])
     _draw_dendrogram_panel(ax_dend, z_linkage, unique_tissues, tissue_to_group)
 
-    _save_atlas_figures(fig, ax_tsne, ax_dend, out_dir, dpi, save_pdf)
+    save_opts = _SaveOpts(dpi=dpi, save_pdf=save_pdf)
+    _save_atlas_figures(fig, out_dir, save_opts)
+    _save_individual_atlas(
+        out_dir,
+        adata,
+        tissue_order,
+        tissue_colors,
+        proteomic_groups,
+        save_opts,
+    )
+    _save_individual_dendrogram(
+        out_dir,
+        z_linkage,
+        unique_tissues,
+        tissue_to_group,
+        save_opts,
+    )

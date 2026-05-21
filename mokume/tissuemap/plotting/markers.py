@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 _HEATMAP_CMAP = LinearSegmentedColormap.from_list(
     "custom_heatmap", ["#2166AC", "#F7F7F7", "#B2182B"]
 )
-_EXPR_CMAP = LinearSegmentedColormap.from_list(
-    "expr", ["#EEEEEE", "#FDD835", "#F4511E", "#B71C1C"]
-)
+# Marker expression cmap: ``plasma`` (dark purple → magenta → orange → bright
+# yellow). High contrast on a white background, colour-blind safe, and never
+# starts near-white so even low-expression points remain visible.
+_EXPR_CMAP = matplotlib.colormaps["plasma"]
+_EXPR_NA_COLOR = "#BDBDBD"  # mid-grey for samples where the protein is NaN
 
 
 def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
@@ -296,29 +298,74 @@ def _select_showcase_markers(
     return showcase
 
 
-def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
-    """Render a single marker expression subplot."""
-    prot_idx = var_index_map[prot]
-    expr = np.nan_to_num(adata.X[:, prot_idx].copy(), nan=0.0)
-    order = np.argsort(expr)
-    vmin = float(np.percentile(expr, 5))
-    vmax = float(np.percentile(expr, 95))
+def _draw_nan_points(ax, tsne: np.ndarray, nan_mask: np.ndarray) -> None:
+    """Draw NaN samples as solid mid-grey discs under the detected layer."""
+    if not nan_mask.any():
+        return
+    ax.scatter(
+        tsne[nan_mask, 0],
+        tsne[nan_mask, 1],
+        c=_EXPR_NA_COLOR,
+        s=40,
+        alpha=0.55,
+        edgecolors="white",
+        linewidths=0.5,
+        zorder=1,
+    )
+
+
+def _draw_detected_points(
+    ax,
+    tsne: np.ndarray,
+    expr_all: np.ndarray,
+    nan_mask: np.ndarray,
+) -> None:
+    """Draw the detected samples sorted by expression with a colorbar."""
+    valid_idx = np.where(~nan_mask)[0]
+    if valid_idx.size == 0:
+        return
+    expr_valid = expr_all[valid_idx]
+    order = np.argsort(expr_valid)
+    sorted_idx = valid_idx[order]
     scat = ax.scatter(
-        tsne[order, 0],
-        tsne[order, 1],
-        c=expr[order],
+        tsne[sorted_idx, 0],
+        tsne[sorted_idx, 1],
+        c=expr_valid[order],
         cmap=_EXPR_CMAP,
-        s=18,
-        alpha=0.85,
-        edgecolors="none",
-        vmin=vmin,
-        vmax=vmax,
+        s=55,
+        alpha=0.95,
+        edgecolors="white",
+        linewidths=0.6,
+        vmin=float(np.percentile(expr_valid, 5)),
+        vmax=float(np.percentile(expr_valid, 95)),
+        zorder=2,
     )
     plt.colorbar(scat, ax=ax, shrink=0.6, aspect=15, pad=0.02)
+
+
+def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
+    """Render a single marker expression subplot.
+
+    Samples where the protein is NaN are drawn as solid mid-grey discs first,
+    so they stay visible on the white background and clearly distinguish
+    "not detected" from "low expression". Detected samples are then drawn on
+    top using a high-contrast cmap, with high-expression points last.
+    """
+    expr_all = np.asarray(adata.X[:, var_index_map[prot]]).ravel()
+    nan_mask = np.isnan(expr_all)
+
+    _draw_nan_points(ax, tsne, nan_mask)
+    _draw_detected_points(ax, tsne, expr_all, nan_mask)
+
     ts_val = ""
     if "max_ts" in adata.var.columns:
         ts_val = f" (TS={adata.var.loc[prot, 'max_ts']:.2f})"
-    ax.set_title(f"{prot}\n{tissue} marker{ts_val}", fontsize=9, fontweight="bold")
+    ax.set_title(
+        f"{prot}\n{tissue} marker{ts_val} "
+        f"| {int((~nan_mask).sum())}/{len(expr_all)} detected",
+        fontsize=9,
+        fontweight="bold",
+    )
     ax.set_xticks([])
     ax.set_yticks([])
     for sp in ax.spines.values():
