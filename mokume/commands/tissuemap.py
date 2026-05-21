@@ -59,6 +59,40 @@ import click
     default=None,
     help="Plot resolution (DPI).  [default: 250]",
 )
+@click.option(
+    "--imputation-method",
+    "imputation_method",
+    type=click.Choice(
+        [
+            "mindet",
+            "minprob",
+            "qrilc",
+            "knn",
+            "seqknn",
+            "missforest",
+            "bpca",
+            "gms",
+            "mle",
+            "mice",
+            "nbavg",
+            "impseq",
+            "impseqrob",
+            "median",
+        ],
+        case_sensitive=False,
+    ),
+    default=None,
+    help="Imputation for the PCA input. Defaults to 'mindet' (MNAR-aware, "
+    "recommended for proteomics). Overrides any value in --config.",
+)
+@click.option(
+    "--embedding-method",
+    "embedding_method",
+    type=click.Choice(["tsne", "umap"], case_sensitive=False),
+    default=None,
+    help="Dimensionality reduction backend after PCA. Defaults to 'tsne'. "
+    "'umap' requires the optional 'umap-learn' package.",
+)
 def tissuemap_cmd(
     scan_dir: Optional[Path],
     output_dir: Path,
@@ -67,6 +101,8 @@ def tissuemap_cmd(
     tmt_datasets: tuple[str, ...],
     n_jobs: int,
     dpi: Optional[int],
+    imputation_method: Optional[str],
+    embedding_method: Optional[str],
 ) -> None:
     """Per-dataset tissue proteome analysis.
 
@@ -92,7 +128,16 @@ def tissuemap_cmd(
             "--scan-dir is required when not using --generate-config."
         )
 
-    config = _build_config(scan_dir, output_dir, config_path, tmt_datasets, n_jobs, dpi)
+    config = _build_config(
+        scan_dir,
+        output_dir,
+        config_path,
+        tmt_datasets,
+        n_jobs,
+        dpi,
+        imputation_method,
+        embedding_method,
+    )
     TissueMapPipeline(config).run()
 
 
@@ -103,9 +148,12 @@ def _build_config(
     tmt_datasets: tuple[str, ...],
     n_jobs: int,
     dpi: Optional[int],
+    imputation_method: Optional[str],
+    embedding_method: Optional[str],
 ):
     """Build TissueMapConfig from CLI arguments."""
     from mokume.tissuemap.config import (
+        EmbeddingConfig,
         InputConfig,
         OutputConfig,
         PlottingConfig,
@@ -123,11 +171,22 @@ def _build_config(
             overrides["input.tmt_datasets"] = list(tmt_datasets)
         if dpi is not None:
             overrides["plotting.dpi"] = dpi
+        if imputation_method is not None:
+            overrides["embedding.imputation_method"] = imputation_method.lower()
+        if embedding_method is not None:
+            overrides["embedding.embedding_method"] = embedding_method.lower()
         return load_config(config_path, overrides=overrides)
+
+    embedding_kwargs: dict[str, str] = {}
+    if imputation_method is not None:
+        embedding_kwargs["imputation_method"] = imputation_method.lower()
+    if embedding_method is not None:
+        embedding_kwargs["embedding_method"] = embedding_method.lower()
 
     return TissueMapConfig(
         n_jobs=n_jobs,
         input=InputConfig(scan_dir=scan_dir, tmt_datasets=list(tmt_datasets)),
         plotting=PlottingConfig(dpi=dpi if dpi is not None else 250),
         output=OutputConfig(output_dir=output_dir),
+        embedding=EmbeddingConfig(**embedding_kwargs),
     )
