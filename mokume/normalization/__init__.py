@@ -57,7 +57,7 @@ from mokume.normalization.mbqn import (
     MBQNNormalizer,
     mbqn_normalize,
 )
-from mokume.normalization.vsn import vsn_normalize
+from mokume.normalization.vsn import VSNNormalizer, vsn_normalize
 
 __all__ = [
     # Feature normalization
@@ -100,5 +100,6 @@ __all__ = [
     "MBQNNormalizer",
     "mbqn_normalize",
     # VSN normalization (pure Python reimplementation)
+    "VSNNormalizer",
     "vsn_normalize",
 ]

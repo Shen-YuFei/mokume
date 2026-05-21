@@ -285,6 +285,7 @@ class PeptideNormalizationMethod(Enum):
     Rlr = auto()  # Robust Linear Regression (NormalyzerDE)
     Mbqn = auto()  # Mean-Balanced Quantile Normalization (Brombacher 2020)
     Loess = auto()  # LOESS regression on MA plot (Yang 2002)
+    Vsn = auto()  # Variance Stabilizing Normalization (Huber 2002)
 
     @classmethod
     def from_str(cls, name: str) -> "PeptideNormalizationMethod":
@@ -369,6 +370,7 @@ class PeptideNormalizationMethod(Enum):
             PeptideNormalizationMethod.Rlr,
             PeptideNormalizationMethod.Mbqn,
             PeptideNormalizationMethod.Loess,
+            PeptideNormalizationMethod.Vsn,
         )
 
     def __call__(self, dataset_df: pd.DataFrame, sample: str, med_map: dict):
@@ -444,6 +446,12 @@ def mbqn_normalization(dataset_df, sample, med_map):
 @PeptideNormalizationMethod.Loess.register_replicate_fn
 def loess_normalization(dataset_df, sample, med_map):
     """Placeholder: LOESS normalization is applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.Vsn.register_replicate_fn
+def vsn_normalization(dataset_df, sample, med_map):
+    """Placeholder: VSN normalization is applied at dataset level."""
     return dataset_df
 
 

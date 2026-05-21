@@ -114,3 +114,52 @@ def vsn_normalize(data: pd.DataFrame) -> pd.DataFrame:
     result_df = pd.DataFrame(transformed, index=data.index, columns=data.columns)
     logger.info("VSN normalization complete: %d proteins", len(result_df))
     return result_df
+
+
+class VSNNormalizer:
+    """Scikit-learn-style wrapper around :func:`vsn_normalize`.
+
+    Accepts a **log2-space** wide matrix to stay consistent with the rest of
+    the dataset-level normalizers (MBQN, LOESS, MedianCenter, Rlr) so the
+    pipeline's ``_apply_dataset_normalizer`` can drive them all uniformly with
+    ``log_space=True``. Internally the matrix is reverted to linear intensity
+    (which is VSN's native domain) before fitting; the resulting glog2-scale
+    output is returned as-is so the outer ``2**`` reverse step still produces
+    a valid stabilized linear matrix.
+    """
+
+    def __init__(self) -> None:
+        self._fitted = False
+
+    def fit(self, data: pd.DataFrame, y=None):  # noqa: ARG002
+        """Fit (no-op for stateless normalizer)."""
+        self._fitted = True
+        return self
+
+    def transform(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Apply VSN normalization.
+
+        ``data`` must be a wide matrix in log2 space. Non-finite cells
+        (``NaN``, ``-inf``, ``+inf``) are propagated as ``NaN`` into the
+        linear-space input — :func:`vsn_normalize` is NaN-aware (it relies on
+        ``np.nansum`` / ``np.isfinite`` masks), so missing values are kept as
+        missing rather than coerced to ``0.0`` or ``inf**0=NaN`` numerical
+        noise. A warning is emitted whenever non-finite cells are dropped so
+        callers can audit how much signal entered VSN.
+        """
+        log2_arr = data.to_numpy(dtype=float, copy=True)
+        finite_mask = np.isfinite(log2_arr)
+        if not finite_mask.all():
+            logger.warning(
+                "VSNNormalizer.transform: %d/%d non-finite cells in log2 input "
+                "treated as missing",
+                int((~finite_mask).sum()),
+                log2_arr.size,
+            )
+        linear = np.where(finite_mask, 2.0**log2_arr, np.nan)
+        linear_df = pd.DataFrame(linear, index=data.index, columns=data.columns)
+        return vsn_normalize(linear_df)
+
+    def fit_transform(self, data: pd.DataFrame, y=None) -> pd.DataFrame:
+        """Fit and transform in one step."""
+        return self.fit(data, y).transform(data)

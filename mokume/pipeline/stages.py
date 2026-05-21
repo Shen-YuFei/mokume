@@ -162,6 +162,8 @@ class LoadingStage:
             combined_df = NormalizationStage(self.config).apply_mbqn(combined_df)
         elif sample_norm_method == PeptideNormalizationMethod.Loess:
             combined_df = NormalizationStage(self.config).apply_loess(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.Vsn:
+            combined_df = NormalizationStage(self.config).apply_vsn(combined_df)
 
         return combined_df
 
@@ -450,6 +452,20 @@ class NormalizationStage:
 
         return self._apply_dataset_normalizer(
             df, LOESSNormalizer(), log_space=True, name="LOESS"
+        )
+
+    def apply_vsn(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply Variance Stabilizing Normalization (in log2 space).
+
+        VSNNormalizer reverts log2 to linear internally to fit Huber's
+        affine + arsinh model in its native domain, then returns the
+        glog2-stabilized matrix; the outer ``2**`` reverse step in
+        :meth:`_apply_dataset_normalizer` produces a stabilized linear matrix.
+        """
+        from mokume.normalization.vsn import VSNNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, VSNNormalizer(), log_space=True, name="VSN"
         )
 
     def apply_irs(self, protein_df: pd.DataFrame) -> pd.DataFrame:
