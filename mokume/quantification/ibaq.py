@@ -252,6 +252,36 @@ class PeptideProteinMapper:
         return sum(mw_list)
 
 
+def _keep_only_proteotypic_rows(data: pd.DataFrame) -> pd.DataFrame:
+    """Drop shared-peptide rows so that both the iBAQ and TPA numerators
+    aggregate only proteotypic intensity.
+
+    The mokume pipeline (``features2proteins``) already strips ``unique != 1``
+    rows upstream and drops the ``unique`` column, so this filter is a no-op
+    on that path. When callers feed a raw QPX feature parquet directly
+    (e.g. via the ``peptides2protein`` CLI), this prevents shared-homologue
+    signal from inflating the numerator of large homologous families
+    (myosin, tubulin, histone, ...) — the same signal that would otherwise
+    double-count once it appears under every protein the peptide maps to.
+    Together with the cross-protein unique denominator in
+    :func:`extract_fasta` this keeps the iBAQ and TPA ratios symmetric.
+    """
+    if "unique" not in data.columns:
+        return data
+    n_before = len(data)
+    data = data[data["unique"].isin([1, "1", True])]
+    n_dropped = n_before - len(data)
+    if n_dropped:
+        logger.info(
+            "Dropped %d/%d shared-peptide rows (unique != 1) before "
+            "iBAQ/TPA aggregation; numerators will sum proteotypic "
+            "intensity only.",
+            n_dropped,
+            n_before,
+        )
+    return data
+
+
 @log_execution_time(logger)
 def peptides_to_protein(
     fasta: str,
@@ -324,6 +354,8 @@ def peptides_to_protein(
     data[NORM_INTENSITY] = data[NORM_INTENSITY].astype(float)
     data = data.dropna(subset=[NORM_INTENSITY])
     data = data[data[NORM_INTENSITY] > 0]
+
+    data = _keep_only_proteotypic_rows(data)
 
     # get fasta info
     proteins = data[PROTEIN_NAME].unique().tolist()
