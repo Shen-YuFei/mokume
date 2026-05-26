@@ -252,9 +252,7 @@ loess_df = normalizer.fit_transform(log2_df)
 ### Imputation Utilities
 
 ```python
-from mokume.imputation import classify_missing, impute_censored
-
-missing_type = classify_missing(data, quantile_threshold=0.01)
+from mokume.imputation import impute_censored
 
 minprob_df = impute_censored(
     data,

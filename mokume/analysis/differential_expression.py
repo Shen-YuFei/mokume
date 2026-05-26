@@ -28,7 +28,6 @@ _DE_OPTION_DEFAULTS = {
 
 
 class DifferentialExpression:
-
     """Differential expression analysis for protein intensity data."""
 
     SUPPORTED_METHODS = ("limrots", "deqms", "proda")
@@ -43,14 +42,15 @@ class DifferentialExpression:
         unknown = set(options) - set(_DE_OPTION_DEFAULTS)
         if unknown:
             unknown_args = ", ".join(sorted(unknown))
-            raise TypeError(f"Unexpected DifferentialExpression options: {unknown_args}")
+            raise TypeError(
+                f"Unexpected DifferentialExpression options: {unknown_args}"
+            )
 
         config = {**_DE_OPTION_DEFAULTS, **options}
         self.method = method.lower()
         if self.method not in self.SUPPORTED_METHODS:
             raise ValueError(
-                f"Unknown DE method '{method}'. "
-                f"Supported: {self.SUPPORTED_METHODS}"
+                f"Unknown DE method '{method}'. Supported: {self.SUPPORTED_METHODS}"
             )
         self.log2fc_threshold = config["log2fc_threshold"]
         self.fdr_threshold = config["fdr_threshold"]
@@ -69,7 +69,10 @@ class DifferentialExpression:
         """Run differential expression analysis for a single contrast."""
         cond_a, cond_b = contrast
         log2_matrix, samples_a, samples_b = self._prepare_matrix(
-            protein_df, sample_to_condition, cond_a, cond_b,
+            protein_df,
+            sample_to_condition,
+            cond_a,
+            cond_b,
         )
 
         dispatch = {
@@ -91,11 +94,17 @@ class DifferentialExpression:
         protein_col = protein_df.columns[0]
         sample_cols = [c for c in protein_df.columns if c != protein_col]
         samples_a, samples_b = _split_samples(
-            sample_cols, sample_to_condition, cond_a, cond_b,
+            sample_cols,
+            sample_to_condition,
+            cond_a,
+            cond_b,
         )
         logger.info(
             "DE analysis: %s (%d samples) vs %s (%d samples)",
-            cond_a, len(samples_a), cond_b, len(samples_b),
+            cond_a,
+            len(samples_a),
+            cond_b,
+            len(samples_b),
         )
         intensity = protein_df.set_index(protein_col)[sample_cols]
         log2_mat = _log2_transform(intensity, self.skip_log2)
@@ -107,7 +116,12 @@ class DifferentialExpression:
         sample_groups: tuple[list[str], list[str]],
         contrast: tuple[str, str],
     ) -> pd.DataFrame:
-        """Run LimROTS via :func:`mokume.analysis.limrots.run_limrots`."""
+        """Run LimROTS via :func:`mokume.analysis.limrots.run_limrots`.
+
+        LimROTS produces its own permutation-based FDR in ``adj_pvalue``;
+        we keep that estimate and only add significance labels, instead of
+        overwriting it with BH/IHW like other methods.
+        """
         result = run_limrots(
             log2_matrix,
             sample_groups[0],
@@ -118,7 +132,7 @@ class DifferentialExpression:
         )
         if result.empty:
             return result
-        return self._finalize_results(result)
+        return self._classify_and_sort(result)
 
     def _run_deqms(
         self,
@@ -154,7 +168,13 @@ class DifferentialExpression:
         return self._finalize_results(result)
 
     def _finalize_results(self, de_df: pd.DataFrame) -> pd.DataFrame:
-        """Apply FDR correction and classify significance."""
+        """Apply BH/IHW FDR correction over ``pvalue`` and classify significance.
+
+        For methods that already provide their own FDR estimate in
+        ``adj_pvalue`` (e.g. LimROTS permutation FDR), call
+        :meth:`_classify_and_sort` directly instead so the method-specific
+        FDR is preserved.
+        """
         pvalues = de_df["pvalue"].values
         valid = np.isfinite(pvalues)
         adj = np.full(len(pvalues), np.nan)
@@ -166,12 +186,12 @@ class DifferentialExpression:
                     alpha=self.fdr_threshold,
                 )
             else:
-                adj[valid] = multipletests(
-                    pvalues[valid], method="fdr_bh"
-                )[1]
+                adj[valid] = multipletests(pvalues[valid], method="fdr_bh")[1]
         de_df["adj_pvalue"] = adj
+        return self._classify_and_sort(de_df)
 
-        # Classify significance
+    def _classify_and_sort(self, de_df: pd.DataFrame) -> pd.DataFrame:
+        """Label UP/DOWN/Unchanged from existing ``adj_pvalue`` and sort."""
         de_df["significance"] = "Unchanged"
         de_df.loc[
             (de_df["adj_pvalue"] < self.fdr_threshold)
@@ -184,7 +204,6 @@ class DifferentialExpression:
             "significance",
         ] = "DOWN"
 
-        # Sort by adjusted p-value
         de_df = de_df.sort_values("adj_pvalue").reset_index(drop=True)
 
         n_up = (de_df["significance"] == "UP").sum()
@@ -192,8 +211,11 @@ class DifferentialExpression:
         logger.info(
             "DE results: %d proteins tested, %d UP, %d DOWN "
             "(|log2FC| > %.1f, FDR < %.2f)",
-            len(de_df), n_up, n_down,
-            self.log2fc_threshold, self.fdr_threshold,
+            len(de_df),
+            n_up,
+            n_down,
+            self.log2fc_threshold,
+            self.fdr_threshold,
         )
 
         return de_df
@@ -230,7 +252,8 @@ def _split_samples(
 
 
 def _log2_transform(
-    intensity: pd.DataFrame, skip: bool,
+    intensity: pd.DataFrame,
+    skip: bool,
 ) -> pd.DataFrame:
     """Optionally log2-transform an intensity matrix."""
     if skip:
@@ -262,7 +285,9 @@ def _ihw_optimize_weights(
         w_p = pvalues / np.clip(w_exp, 0.01, None)
         rej = np.zeros(n_bins)
         for idx, bval in enumerate(unique_bins):
-            _, adj, _, _ = multipletests(w_p[bins == bval], method="fdr_bh", alpha=alpha)
+            _, adj, _, _ = multipletests(
+                w_p[bins == bval], method="fdr_bh", alpha=alpha
+            )
             rej[idx] = (adj < alpha).sum()
         total = rej.sum()
         if total > 0:
@@ -293,7 +318,9 @@ def _ihw_adjust_valid(
     bins = pd.qcut(covariate[valid], q=n_bins, labels=False, duplicates="drop")
     unique_bins = np.unique(bins)
     weights = _ihw_optimize_weights(pvalues[valid], bins, unique_bins, alpha)
-    weighted_p = np.clip(pvalues[valid] / np.clip(np.array([weights[b] for b in bins]), 0.01, None), 0, 1)
+    weighted_p = np.clip(
+        pvalues[valid] / np.clip(np.array([weights[b] for b in bins]), 0.01, None), 0, 1
+    )
     return valid, unique_bins, _bh_adjust(weighted_p)
 
 
@@ -323,7 +350,9 @@ def _ihw_correction(
     n_ihw = (adj_valid < alpha).sum()
     logger.info(
         "IHW: %d bins, BH=%d, IHW=%d (gain=%+d)",
-        len(unique_bins), multipletests(pvalues[valid], method="fdr_bh")[0].sum(), n_ihw,
+        len(unique_bins),
+        multipletests(pvalues[valid], method="fdr_bh")[0].sum(),
+        n_ihw,
         n_ihw - multipletests(pvalues[valid], method="fdr_bh")[0].sum(),
     )
     return adj
