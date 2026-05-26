@@ -17,6 +17,8 @@ delegates ALL processing (normalization + quantification) to the
 directlfq package for reproducibility.
 """
 
+import gc
+
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -186,6 +188,8 @@ class QuantificationPipeline:
         logger.info("Converting to DirectLFQ format...")
         directlfq_input = self.loading.convert_to_directlfq_format(filtered_df)
         logger.info(f"DirectLFQ input shape: {directlfq_input.shape}")
+        del filtered_df
+        gc.collect()
 
         # Configure DirectLFQ
         lfq_config.set_global_protein_and_ion_id(protein_id="protein", quant_id="ion")
@@ -199,6 +203,8 @@ class QuantificationPipeline:
             directlfq_input,
             num_samples_quadratic=self.config.quantification.directlfq_num_samples_quadratic,
         ).complete_dataframe
+        del directlfq_input
+        gc.collect()
 
         # Run DirectLFQ protein estimation
         logger.info("Running DirectLFQ protein estimation...")
