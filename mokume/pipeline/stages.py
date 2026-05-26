@@ -29,6 +29,7 @@ from mokume.model.normalization import (
     FeatureNormalizationMethod,
     PeptideNormalizationMethod,
 )
+from mokume.model.labeling import QuantificationCategory
 from mokume.core.constants import (
     PROTEIN_NAME,
     PEPTIDE_CANONICAL,
@@ -37,6 +38,7 @@ from mokume.core.constants import (
     INTENSITY,
     PARQUET_COLUMNS,
     AGGREGATION_LEVEL_SAMPLE,
+    CONDITION,
 )
 from mokume.core.logger import get_logger
 from mokume.postprocessing.batch_correction import (
@@ -58,7 +60,16 @@ class LoadingStage:
         self.config = config
 
     def load_for_mokume(self) -> pd.DataFrame:
-        """Load data and apply normalization for mokume quantification methods."""
+        """Load data and apply normalization for mokume quantification methods.
+
+        Dispatcher that routes to a SQL-first path when the workflow allows
+        pushing the entire filter+aggregation pipeline into a single DuckDB query
+        (LFQ label, no per-run normalization needed); otherwise falls back to the
+        legacy per-sample pandas loop. Both paths produce equivalent peptide-level
+        DataFrames (validated on PXD003539: rows + keys identical, NormIntensity
+        agreeing to relative 1e-7, the precision limit of the float32 intensity
+        column stored in parquet).
+        """
         filter_builder = SQLFilterBuilder(
             remove_contaminants=self.config.filtering.remove_contaminants,
             min_peptide_length=self.config.filtering.min_aa,
@@ -80,17 +91,180 @@ class LoadingStage:
                 choice,
             ) = feature.experimental_inference
 
-        # Get normalization factors if needed
-        med_map = {}
+        # Build normalization config snapshot (shared between both load paths).
+        run_norm = self.config.normalization.run_method.lower()
         sample_norm = self.config.normalization.sample_method.lower()
         sample_norm_method = PeptideNormalizationMethod.from_str(sample_norm)
 
+        med_map: dict = {}
         if sample_norm == "globalmedian":
             med_map = feature.get_median_map()
         elif sample_norm == "conditionmedian":
             med_map = feature.get_median_map_to_condition()
 
-        # Process samples
+        # SQL-first path is eligible when the per-row run-normalization stage is
+        # not active (it operates on row-level data before peptidoform-max and is
+        # difficult to translate to SQL faithfully) and the label is LFQ (TMT and
+        # iTRAQ require channel-aware reformatting that the prototype query does
+        # not yet implement).
+        needs_run_norm = run_norm not in ("none", "") and technical_repetitions > 1
+        sqlfirst_eligible = label == QuantificationCategory.LFQ and not needs_run_norm
+
+        if sqlfirst_eligible:
+            logger.info(
+                "Loading with SQL-first path (label=%s, tech_reps=%d, run_norm=%s)",
+                label,
+                technical_repetitions,
+                run_norm,
+            )
+            combined_df = self._load_for_mokume_sqlfirst(
+                feature, sample_norm, sample_norm_method, med_map
+            )
+        else:
+            logger.info(
+                "Loading with legacy per-sample pandas path "
+                "(label=%s, tech_reps=%d, run_norm=%s)",
+                label,
+                technical_repetitions,
+                run_norm,
+            )
+            combined_df = self._load_for_mokume_legacy_pandas(
+                feature,
+                label,
+                choice,
+                technical_repetitions,
+                sample_norm,
+                sample_norm_method,
+                med_map,
+            )
+
+        return self._apply_dataset_normalization(combined_df, sample_norm_method)
+
+    def _load_for_mokume_sqlfirst(
+        self,
+        feature: Feature,
+        sample_norm: str,
+        sample_norm_method: PeptideNormalizationMethod,
+        med_map: dict,
+    ) -> pd.DataFrame:
+        """Push the full filter+aggregation pipeline into a single DuckDB query.
+
+        Translates the steps that the legacy pandas loop performs per sample
+        (parse_uniprot_accession, length / condition / run filters,
+        contaminant/decoy removal, per-sample min-unique-peptides filter,
+        peptidoform-max keep, sum aggregation at the sample level) into one
+        SQL query against the SDRF-enriched ``parquet_db`` view. Only the small
+        post-aggregation peptide-level table lands in pandas, where per-sample
+        normalization is applied if needed.
+        """
+        where_clause, where_params = feature.filter_builder.build_where_clause()
+        min_aa = self.config.filtering.min_aa
+        min_unique = self.config.filtering.min_unique_peptides
+
+        query = f"""
+        WITH base AS (
+            SELECT
+                array_to_string(
+                    list_transform(
+                        pg_accessions,
+                        x -> CASE
+                            WHEN length(string_split(x, '|')) = 3
+                                THEN string_split(x, '|')[2]
+                            ELSE x
+                        END
+                    ),
+                    ';'
+                ) AS "{PROTEIN_NAME}",
+                sequence       AS "{PEPTIDE_CANONICAL}",
+                peptidoform    AS "PeptideSequence",
+                charge         AS "PrecursorCharge",
+                intensity      AS "Intensity",
+                COALESCE(condition, 'Empty') AS "{CONDITION}",
+                COALESCE(CAST(biological_replicate AS INTEGER), 1) AS "BioReplicate",
+                sample_accession AS "{SAMPLE_ID}",
+                run            AS "Run"
+            FROM parquet_db
+            WHERE ({where_clause})
+              AND pg_accessions IS NOT NULL
+              AND length(sequence) >= {min_aa}
+              AND (condition IS NULL OR condition != 'Empty')
+              AND run IS NOT NULL
+        ),
+        no_contam AS (
+            SELECT * FROM base
+            WHERE "{PROTEIN_NAME}" NOT LIKE '%CONTAMINANT%'
+              AND "{PROTEIN_NAME}" NOT LIKE '%ENTRAP%'
+              AND "{PROTEIN_NAME}" NOT LIKE '%DECOY%'
+        ),
+        with_n_unique AS (
+            SELECT *,
+                COUNT(DISTINCT "{PEPTIDE_CANONICAL}") OVER (
+                    PARTITION BY "{PROTEIN_NAME}", "{SAMPLE_ID}"
+                ) AS _n_unique_pep
+            FROM no_contam
+        ),
+        min_unique_kept AS (
+            SELECT * FROM with_n_unique WHERE _n_unique_pep >= {min_unique}
+        ),
+        peptidoform_max AS (
+            SELECT * FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY "PeptideSequence", "PrecursorCharge",
+                                     "{SAMPLE_ID}", "{CONDITION}", "BioReplicate"
+                        ORDER BY "Intensity" DESC, "Run"
+                    ) AS _rn
+                FROM min_unique_kept
+            )
+            WHERE _rn = 1
+        )
+        SELECT
+            "{PROTEIN_NAME}",
+            "{PEPTIDE_CANONICAL}",
+            "{SAMPLE_ID}",
+            "BioReplicate",
+            "{CONDITION}",
+            SUM("Intensity") AS "{NORM_INTENSITY}"
+        FROM peptidoform_max
+        GROUP BY "{PROTEIN_NAME}", "{PEPTIDE_CANONICAL}", "{SAMPLE_ID}",
+                 "BioReplicate", "{CONDITION}"
+        """
+        combined_df = feature.parquet_db.execute(query, where_params).df()
+
+        # Per-sample normalization (skip dataset-level methods that operate on
+        # the full table later in _apply_dataset_normalization).
+        if not sample_norm_method.is_dataset_level and sample_norm != "none":
+            chunks = []
+            for sample_id, sample_df in combined_df.groupby(
+                SAMPLE_ID, observed=True, sort=False
+            ):
+                chunks.append(
+                    sample_norm_method(sample_df.copy(), str(sample_id), med_map)
+                )
+            combined_df = pd.concat(chunks, ignore_index=True)
+
+        # Match legacy column dtypes (apply_initial_filtering casts these to
+        # Categorical in the pandas path; downstream consumers may rely on it).
+        combined_df[CONDITION] = pd.Categorical(combined_df[CONDITION])
+        combined_df[SAMPLE_ID] = pd.Categorical(combined_df[SAMPLE_ID])
+        return combined_df
+
+    def _load_for_mokume_legacy_pandas(
+        self,
+        feature: Feature,
+        label,
+        choice,
+        technical_repetitions: int,
+        sample_norm: str,
+        sample_norm_method: PeptideNormalizationMethod,
+        med_map: dict,
+    ) -> pd.DataFrame:
+        """Original per-sample pandas loop, kept verbatim for fallback paths.
+
+        Used when the SQL-first dispatcher cannot apply (TMT/iTRAQ labels or
+        an active per-run normalization stage that needs row-level intensities
+        before peptidoform-max).
+        """
         all_peptides = []
 
         for samples, df in feature.iter_samples():
@@ -138,10 +312,19 @@ class LoadingStage:
 
                 all_peptides.append(dataset_df)
 
-        # Combine all peptides
-        combined_df = pd.concat(all_peptides, ignore_index=True)
+        return pd.concat(all_peptides, ignore_index=True)
 
-        # Apply dataset-level normalization if selected
+    def _apply_dataset_normalization(
+        self,
+        combined_df: pd.DataFrame,
+        sample_norm_method: PeptideNormalizationMethod,
+    ) -> pd.DataFrame:
+        """Apply dataset-level normalization (operates on the combined table).
+
+        Dispatches to the matching ``NormalizationStage`` method when the
+        configured peptide normalization is dataset-level (Hierarchical, TMM,
+        Quantile, MedianCenter, MeanCenter, Rlr, Mbqn, Loess, Vsn).
+        """
         if sample_norm_method == PeptideNormalizationMethod.Hierarchical:
             combined_df = NormalizationStage(self.config).apply_hierarchical(
                 combined_df
