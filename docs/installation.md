@@ -6,6 +6,9 @@
 pip install mokume
 ```
 
+For standard quantification workflows, the core package is enough.
+Install optional extras only when you need specific functionality.
+
 ### Optional Extras
 
 mokume uses optional dependencies for specialized features:
@@ -32,7 +35,7 @@ mokume uses optional dependencies for specialized features:
     pip install mokume[batch-correction]
     ```
 
-    Enables ComBat batch correction via the inmoose package.
+    Enables ComBat-based batch correction via the `combat` dependency.
 
 === "Interactive Reports"
 
@@ -41,6 +44,15 @@ mokume uses optional dependencies for specialized features:
     ```
 
     Enables interactive HTML reports with plotly.
+
+=== "TissueMap"
+
+    ```bash
+    pip install mokume[tissuemap]
+    ```
+
+    Enables the `mokume tissuemap` workflow for per-dataset tissue atlas analysis,
+    including AdaTiSS tissue-specificity scoring, embeddings, and atlas plots.
 
 === "Everything"
 

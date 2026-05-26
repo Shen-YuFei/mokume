@@ -55,6 +55,13 @@ The `features2proteins` command is the recommended way to go from raw feature da
 | Median | `--quant-method median` | No | Median peptide intensity |
 | Ratio | `--quant-method ratio` | No | Log2 sample/reference (TMT) |
 
+In practice:
+
+- Use `maxlfq` as the default starting point for standard LFQ workflows.
+- Use `directlfq` when you explicitly want the DirectLFQ package to handle normalization and quantification together.
+- Use `ibaq` when you need absolute-style quantification and have a FASTA file.
+- Use `ratio` for TMT PS-style reference-based analysis.
+
 ```bash
 # iBAQ (requires FASTA)
 mokume features2proteins \
@@ -81,7 +88,7 @@ Adjusts for intensity differences between MS runs within each sample.
 ```bash
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
-    --run-normalization median  # median, mean, iqr, max, max_min, none
+    --run-normalization median  # median, mean, max, global, max_min, iqr, none
 ```
 
 ### Sample-Level Normalization
@@ -97,11 +104,19 @@ mokume features2proteins -p data.parquet -o out.csv \
 mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical
 
+# TMM normalization
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization tmm
+
 # With specific normalization proteins
 mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical \
     --normalization-proteins housekeeping.txt
 ```
+
+- `globalMedian` is the default and a good general-purpose starting point.
+- `hierarchical` is useful when you want DirectLFQ-style normalization with a non-DirectLFQ quantification method.
+- `tmm` is available for composition-bias-aware sample normalization.
 
 ## IRS Normalization (Multi-Plex TMT)
 
@@ -180,26 +195,68 @@ mokume features2proteins \
 
 ## Differential Expression
 
-```bash
-mokume features2proteins \
-    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --quant-method maxlfq \
-    --de \
-    --de-contrasts "NASH-HL,NASH-Control" \
-    --de-method ttest \
-    --de-log2fc 0.5 \
-    --de-fdr 0.05 \
-    --de-output de_results.csv
-```
+Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-contrasts-file` (TSV). Both can be combined.
+
+=== "Inline contrasts"
+
+    ```bash
+    mokume features2proteins \
+        -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+        --quant-method maxlfq \
+        --de \
+        --de-contrasts "NASH vs HL,NASH vs Control" \
+        --de-method limrots \
+        --de-fdr-method ihw \
+        --de-output de_results.csv
+    ```
+
+=== "Contrasts file"
+
+    ```bash
+    mokume features2proteins \
+        -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+        --quant-method maxlfq \
+        --de \
+        --de-contrasts-file contrasts.tsv \
+        --de-method deqms \
+        --de-fdr-method ihw \
+        --de-output de_results.csv
+    ```
+
+    Where `contrasts.tsv` is a two-column TSV:
+
+    ```
+    group1    group2
+    NASH      HL
+    NASH      Control
+    HL        Control
+    ```
 
 | DE Option | Default | Description |
 |-----------|---------|-------------|
 | `--de` | off | Enable differential expression |
-| `--de-contrasts` | all pairs | Comma-separated contrasts (e.g., "A-B") |
-| `--de-method` | `ttest` | Method: ttest or limma |
+| `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
+| `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
+| `--de-method` | `auto` | Method: auto, limrots, deqms, or proda |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
+| `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
 | `--de-output` | auto | Output file for DE results |
+
+!!! warning "Contrasts are required"
+    If `--de` is enabled but no contrasts are provided
+    (neither `--de-contrasts` nor `--de-contrasts-file`),
+    the pipeline raises an error listing available conditions.
+    Use `" vs "` as the delimiter to support hyphenated
+    condition names.
+
+!!! tip
+    `--de-method auto` chooses `deqms` for `directlfq`
+    quantification and `limrots` for all others. Use `proda`
+    explicitly when dropout-aware modeling is more appropriate
+    for your matrix. See [Differential Expression
+    concepts](../concepts/differential-expression.md) for a
+    detailed comparison of methods.
 
 ## Plots and Reports
 
@@ -241,7 +298,7 @@ mokume features2proteins \
     --remove-contaminants \
     --irs --irs-remove-reference \
     --batch-correction --batch-method sample_prefix \
-    --de --de-contrasts "NASH-HL" --de-method ttest \
+    --de --de-contrasts "NASH-HL" --de-method limrots --de-fdr-method ihw \
     --plot-dir plots/ --plot-volcano --plot-pca \
     --interactive-report --report-output qc_report.html
 ```

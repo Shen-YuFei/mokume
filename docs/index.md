@@ -53,6 +53,22 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (æœ
 
     [:octicons-arrow-right-24: Preprocessing](concepts/preprocessing.md)
 
+-   :material-chart-scatter-plot-hexbin:{ .lg .middle } **Differential Expression**
+
+    ---
+
+    LimROTS, DEqMS, and proDA with BH or IHW FDR correction â€” choose by discovery vs precision priority.
+
+    [:octicons-arrow-right-24: Differential Expression](concepts/differential-expression.md)
+
+-   :material-map-marker-path:{ .lg .middle } **Tissue Proteome Atlas**
+
+    ---
+
+    Build per-dataset tissue atlases with AdaTiSS tissue-specificity scoring, AnnData outputs, and atlas plots.
+
+    [:octicons-arrow-right-24: TissueMap workflow](user-guide/tissuemap.md)
+
 -   :material-rocket-launch-outline:{ .lg .middle } **One-Step Pipeline**
 
     ---
@@ -64,6 +80,12 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (æœ
 </div>
 
 ---
+
+## Choose Your Workflow
+
+- **Standard LFQ / TMT quantification** â€” start with [`features2proteins`](user-guide/features2proteins.md)
+- **Need more control before protein summarization** â€” use the two-step path via [`features2peptides`](user-guide/features2peptides.md) and [`peptides2protein`](user-guide/peptides2protein.md)
+- **Tissue atlas analysis** â€” use [`tissuemap`](user-guide/tissuemap.md)
 
 ## Quick Example
 
@@ -96,10 +118,10 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (æœ
 
 ## Part of the quantms Ecosystem
 
-mokume is a core component of the [quantms](https://quantms.org) proteomics analysis platform, providing the quantification engine that powers protein-level analysis from mass spectrometry data.
+mokume is a core component of the [quantms](https://quantms.org) proteomics analysis platform, providing the quantification engine that powers protein-level analysis, normalization, and tissue atlas workflows from mass spectrometry data.
 
 | Ecosystem Tool | Purpose |
 |---|---|
 | [quantms](https://quantms.org) | Nextflow pipeline for quantitative proteomics |
 | [qpx](https://qpx.quantms.org) | Data format and conversion tools |
-| **mokume** | Protein quantification and normalization |
+| **mokume** | Protein quantification, normalization, and tissue atlas analysis |

@@ -110,8 +110,10 @@ class LoadingStage:
 
                 # Filter by min unique peptides
                 dataset_df = dataset_df.groupby(PROTEIN_NAME).filter(
-                    lambda x: len(set(x[PEPTIDE_CANONICAL]))
-                    >= self.config.filtering.min_unique_peptides
+                    lambda x: (
+                        len(set(x[PEPTIDE_CANONICAL]))
+                        >= self.config.filtering.min_unique_peptides
+                    )
                 )
 
                 if self.config.filtering.remove_contaminants:
@@ -141,7 +143,9 @@ class LoadingStage:
 
         # Apply dataset-level normalization if selected
         if sample_norm_method == PeptideNormalizationMethod.Hierarchical:
-            combined_df = NormalizationStage(self.config).apply_hierarchical(combined_df)
+            combined_df = NormalizationStage(self.config).apply_hierarchical(
+                combined_df
+            )
         elif sample_norm_method == PeptideNormalizationMethod.TMM:
             combined_df = NormalizationStage(self.config).apply_tmm(combined_df)
 
@@ -162,10 +166,13 @@ class LoadingStage:
 
         # Build query with filters
         where_clause, where_params = filter_builder.build_where_clause()
-        query = "".join([
-            "SELECT pg_accessions, sequence, sample_accession, intensity",
-            " FROM parquet_db WHERE ", where_clause,
-        ])
+        query = "".join(
+            [
+                "SELECT pg_accessions, sequence, sample_accession, intensity",
+                " FROM parquet_db WHERE ",
+                where_clause,
+            ]
+        )
 
         df = feature.parquet_db.execute(query, where_params).df()
 
@@ -287,7 +294,9 @@ class NormalizationStage:
         if self.config.normalization.proteins_file:
             with open(self.config.normalization.proteins_file) as f:
                 selected_proteins = [line.strip() for line in f if line.strip()]
-            logger.info(f"Using {len(selected_proteins)} selected proteins for normalization")
+            logger.info(
+                f"Using {len(selected_proteins)} selected proteins for normalization"
+            )
 
         # Apply hierarchical normalization
         normalizer = HierarchicalSampleNormalizer(
@@ -298,7 +307,7 @@ class NormalizationStage:
         normalized_log2 = normalizer.fit_transform(wide_log2)
 
         # Convert back to linear scale
-        normalized_wide = 2 ** normalized_log2
+        normalized_wide = 2**normalized_log2
 
         # Convert back to long format
         normalized_long = normalized_wide.reset_index().melt(
@@ -378,7 +387,11 @@ class NormalizationStage:
             logger.info(f"Using explicit reference samples: {ref_samples}")
 
         # 3. Explicit column + values
-        if ref_samples is None and self.config.irs.sdrf_column and self.config.irs.sdrf_values:
+        if (
+            ref_samples is None
+            and self.config.irs.sdrf_column
+            and self.config.irs.sdrf_values
+        ):
             ref_samples = detect_reference_by_column(
                 self.config.input.sdrf,
                 self.config.irs.sdrf_column,
@@ -410,7 +423,8 @@ class NormalizationStage:
         if self.config.irs.remove_reference:
             protein_col = protein_df.columns[0]
             cols_to_keep = [protein_col] + [
-                c for c in protein_df.columns
+                c
+                for c in protein_df.columns
                 if c == protein_col or c not in ref_samples
             ]
             # Deduplicate while preserving order
@@ -421,9 +435,7 @@ class NormalizationStage:
                     seen.add(c)
                     unique_cols.append(c)
             protein_df = protein_df[unique_cols]
-            logger.info(
-                f"Removed {len(ref_samples)} reference samples from output"
-            )
+            logger.info(f"Removed {len(ref_samples)} reference samples from output")
 
         return protein_df
 
@@ -442,14 +454,17 @@ class NormalizationStage:
         protein_col = protein_df.columns[0]
         available_samples = [c for c in protein_df.columns if c != protein_col]
         sample_to_condition = {
-            s: c for s, c in sample_to_condition.items()
+            s: c
+            for s, c in sample_to_condition.items()
             if s in available_samples
             and "powder" not in c.lower()
             and "pool" not in c.lower()
         }
 
         return apply_coverage_filter(
-            protein_df, sample_to_condition, self.config.quantification.coverage_threshold
+            protein_df,
+            sample_to_condition,
+            self.config.quantification.coverage_threshold,
         )
 
 
@@ -525,8 +540,7 @@ class QuantificationStage:
 
         if not self.config.input.fasta_file:
             raise ValueError(
-                "iBAQ quantification requires a FASTA file. "
-                "Use --fasta to provide one."
+                "iBAQ quantification requires a FASTA file. Use --fasta to provide one."
             )
 
         proteins = peptide_df[PROTEIN_NAME].unique().tolist()
@@ -547,12 +561,16 @@ class QuantificationStage:
         peptide_df = peptide_df[peptide_df[PROTEIN_NAME].isin(found_proteins)]
 
         protein_intensities = (
-            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID])[NORM_INTENSITY]
+            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID], observed=False)[
+                NORM_INTENSITY
+            ]
             .sum()
             .reset_index()
         )
 
-        num_peptides = protein_intensities[PROTEIN_NAME].map(unique_peptide_counts).fillna(1)
+        num_peptides = (
+            protein_intensities[PROTEIN_NAME].map(unique_peptide_counts).fillna(1)
+        )
         protein_intensities["iBAQ"] = np.where(
             num_peptides > 0,
             protein_intensities[NORM_INTENSITY] / num_peptides,
@@ -572,7 +590,9 @@ class QuantificationStage:
     def _quantify_median(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
         """Quantify using median of peptides."""
         result = (
-            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID])[NORM_INTENSITY]
+            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID], observed=False)[
+                NORM_INTENSITY
+            ]
             .median()
             .reset_index()
         )
@@ -634,7 +654,8 @@ class PostprocessingStage:
             method=batch_method,
             batch_column_values=(
                 self._get_batch_column_values(sample_cols)
-                if self.config.batch.column else None
+                if self.config.batch.column
+                else None
             ),
         )
 
@@ -647,6 +668,7 @@ class PostprocessingStage:
 
         # Check minimum samples per batch
         from collections import Counter
+
         batch_counts = Counter(batch_indices)
         min_samples = min(batch_counts.values())
         if min_samples < 2:
@@ -718,9 +740,7 @@ class PostprocessingStage:
             logger.warning("Returning uncorrected protein intensities")
             return protein_df
 
-    def run_differential_expression(
-        self, protein_df: pd.DataFrame
-    ) -> Optional[dict]:
+    def run_differential_expression(self, protein_df: pd.DataFrame) -> Optional[dict]:
         """Run differential expression analysis."""
         from mokume.analysis.differential_expression import DifferentialExpression
         from mokume.normalization.irs import detect_condition_from_sdrf
@@ -731,43 +751,64 @@ class PostprocessingStage:
         # Get condition mapping from SDRF
         sample_to_condition = detect_condition_from_sdrf(self.config.input.sdrf)
 
-        # Parse contrasts
-        contrasts = []
-        if self.config.de.contrasts:
-            for c in self.config.de.contrasts:
-                # Prefer " vs " delimiter to support hyphenated condition names
-                if " vs " in c:
-                    parts = c.split(" vs ", 1)
-                    contrasts.append((parts[0].strip(), parts[1].strip()))
-                elif "-" in c:
-                    parts = c.split("-", 1)
-                    contrasts.append((parts[0].strip(), parts[1].strip()))
-                else:
-                    logger.warning(f"Invalid contrast format '{c}', expected 'A vs B' or 'A-B'")
-        else:
-            # Auto-detect: compare all conditions pairwise
+        # Parse contrasts (must be explicitly specified via --de-contrasts)
+        if not self.config.de.contrasts:
             conditions = sorted(set(sample_to_condition.values()))
-            exp_conditions = [
-                c for c in conditions
-                if "powder" not in c.lower() and "pool" not in c.lower()
-            ]
-            if len(exp_conditions) == 2:
-                contrasts = [(exp_conditions[0], exp_conditions[1])]
+            raise ValueError(
+                "Differential expression requires explicit contrasts "
+                "via --de-contrasts.\n"
+                f"Available conditions ({len(conditions)}): {conditions}\n"
+                "Format: --de-contrasts 'GroupA vs GroupB,GroupA vs GroupC'"
+            )
+
+        contrasts = []
+        for c in self.config.de.contrasts:
+            # Prefer " vs " delimiter to support hyphenated condition names
+            if " vs " in c:
+                parts = c.split(" vs ", 1)
+                contrasts.append((parts[0].strip(), parts[1].strip()))
+            elif "-" in c:
+                parts = c.split("-", 1)
+                contrasts.append((parts[0].strip(), parts[1].strip()))
             else:
                 logger.warning(
-                    f"Cannot auto-detect contrasts from {exp_conditions}. "
-                    "Use --de-contrasts to specify."
+                    f"Invalid contrast format '{c}', expected 'A vs B' or 'A-B'"
                 )
-                return None
 
         if not contrasts:
-            return None
+            raise ValueError(
+                "All --de-contrasts entries failed to parse; cannot run "
+                "differential expression.\n"
+                f"Received: {list(self.config.de.contrasts)}\n"
+                "Format: 'GroupA vs GroupB,GroupA vs GroupC' or 'GroupA-GroupB,GroupA-GroupC'"
+            )
+
+        # Auto-select DE method based on quantification if "auto"
+        de_method = self.config.de.method
+        if de_method == "auto":
+            quant = self.config.quantification.method.lower()
+            de_method = "deqms" if quant == "directlfq" else "limrots"
+            logger.info(f"Auto-selected DE method: {de_method} (quant={quant})")
+
+        # Load peptide counts for DEqMS
+        peptide_counts = None
+        if de_method == "deqms" and self.config.input.parquet:
+            try:
+                pep_df = pd.read_parquet(
+                    self.config.input.parquet,
+                    columns=["anchor_protein", "sequence"],
+                )
+                peptide_counts = pep_df.groupby("anchor_protein")["sequence"].nunique()
+            except (FileNotFoundError, KeyError, ValueError) as exc:
+                logger.warning("Could not load peptide counts for DEqMS: %s", exc)
 
         de = DifferentialExpression(
-            method=self.config.de.method,
+            method=de_method,
             log2fc_threshold=self.config.de.log2fc_threshold,
             fdr_threshold=self.config.de.fdr_threshold,
+            fdr_method=self.config.de.fdr_method,
             skip_log2=(self.config.quantification.method.lower() == "ratio"),
+            peptide_counts=peptide_counts,
         )
 
         all_results = {}
@@ -775,7 +816,7 @@ class PostprocessingStage:
             key = f"{contrast[0]}-{contrast[1]}"
             logger.info(f"Running DE: {key}")
             result = de.run(protein_df, sample_to_condition, contrast)
-            all_results[key] = result
+            all_results[key] = {"df": result, "conditions": contrast}
 
             # Save DE results
             if self.config.de.output:
@@ -784,6 +825,7 @@ class PostprocessingStage:
                 else:
                     base, ext = os.path.splitext(self.config.de.output)
                     output_path = f"{base}_{key}{ext}" if ext else f"{base}_{key}.csv"
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
                 result.to_csv(output_path, index=False)
                 logger.info(f"DE results saved to {output_path}")
 
@@ -818,17 +860,17 @@ class PostprocessingStage:
             sample_to_condition = detect_condition_from_sdrf(self.config.input.sdrf)
             if self.config.irs.remove_reference:
                 protein_col = protein_df.columns[0]
-                available_samples = [
-                    c for c in protein_df.columns if c != protein_col
-                ]
+                available_samples = [c for c in protein_df.columns if c != protein_col]
                 sample_to_condition = {
-                    s: c for s, c in sample_to_condition.items()
+                    s: c
+                    for s, c in sample_to_condition.items()
                     if s in available_samples
                 }
 
         # Volcano plot
         if self.config.output.plot_volcano and de_results:
-            for contrast_name, de_df in de_results.items():
+            for contrast_name, de_entry in de_results.items():
+                de_df = de_entry["df"]
                 output_file = str(plot_dir / f"volcano_{contrast_name}.png")
                 plot_volcano(
                     de_df,
@@ -840,17 +882,51 @@ class PostprocessingStage:
                 )
                 logger.info(f"Volcano plot saved to {output_file}")
 
-        # Heatmap
-        if self.config.output.plot_heatmap and sample_to_condition:
-            output_file = str(plot_dir / "heatmap.png")
-            plot_heatmap(
-                protein_df,
-                sample_to_condition,
-                proteins=self.config.output.highlight_genes,
-                title="Protein Heatmap",
-                output_file=output_file,
-            )
-            logger.info(f"Heatmap saved to {output_file}")
+        # Heatmap: per-contrast (significant DE proteins + relevant samples)
+        if self.config.output.plot_heatmap and sample_to_condition and de_results:
+            protein_col = protein_df.columns[0]
+            for contrast_name, de_entry in de_results.items():
+                de_df = de_entry["df"]
+                cond_a, cond_b = de_entry["conditions"]
+                sig = de_df[
+                    (de_df["adj_pvalue"] < self.config.de.fdr_threshold)
+                    & (de_df["log2FC"].abs() > self.config.de.log2fc_threshold)
+                ]
+                if sig.empty:
+                    logger.info(
+                        f"Heatmap skipped for {contrast_name}: no significant proteins"
+                    )
+                    continue
+                # Show top 50 by |log2FC| to keep heatmap readable
+                n_total_sig = len(sig)
+                sig_proteins = (
+                    sig.sort_values(
+                        by="log2FC", key=lambda x: x.abs(), ascending=False
+                    )["ProteinName"]
+                    .head(50)
+                    .tolist()
+                )
+                contrast_samples = [
+                    s
+                    for s in protein_df.columns
+                    if s != protein_col
+                    and sample_to_condition.get(s) in (cond_a, cond_b)
+                ]
+                contrast_mapping = {
+                    s: c
+                    for s, c in sample_to_condition.items()
+                    if c in (cond_a, cond_b)
+                }
+                sub_df = protein_df[[protein_col] + contrast_samples]
+                output_file = str(plot_dir / f"heatmap_{contrast_name}.png")
+                plot_heatmap(
+                    sub_df,
+                    contrast_mapping,
+                    proteins=sig_proteins,
+                    title=f"DE Heatmap: {contrast_name} (top {len(sig_proteins)}/{n_total_sig} sig)",
+                    output_file=output_file,
+                )
+                logger.info(f"Heatmap saved to {output_file}")
 
         # PCA by condition
         if self.config.output.plot_pca and sample_to_condition:
@@ -863,9 +939,7 @@ class PostprocessingStage:
             )
             logger.info(f"PCA plot saved to {output_file}")
 
-    def generate_interactive_report(
-        self, protein_df: pd.DataFrame, de_results: dict
-    ):
+    def generate_interactive_report(self, protein_df: pd.DataFrame, de_results: dict):
         """Generate interactive HTML report for DE results."""
         from mokume.reports import is_interactive_available
 
@@ -885,7 +959,8 @@ class PostprocessingStage:
 
         sample_to_condition = detect_condition_from_sdrf(self.config.input.sdrf)
 
-        for contrast_name, de_df in de_results.items():
+        for contrast_name, de_entry in de_results.items():
+            de_df = de_entry["df"] if isinstance(de_entry, dict) else de_entry
             if self.config.output.report_output:
                 if len(de_results) == 1:
                     output_html = self.config.output.report_output

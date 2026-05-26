@@ -262,6 +262,7 @@ def features_to_proteins(
     fasta_file: Optional[str] = None,
     ion_alignment: Optional[str] = None,
     directlfq_num_cores: Optional[int] = None,
+    directlfq_min_nonan: int = 1,
     export_peptides: Optional[str] = None,
     export_ions: Optional[str] = None,
     # Batch correction parameters
@@ -283,9 +284,10 @@ def features_to_proteins(
     # Differential expression parameters
     differential_expression: bool = False,
     de_contrasts: Optional[list] = None,
-    de_method: str = "ttest",
+    de_method: str = "auto",
     de_log2fc_threshold: float = 0.5,
     de_fdr_threshold: float = 0.05,
+    de_fdr_method: str = "bh",
     de_output: Optional[str] = None,
     # Plotting parameters
     plot_output_dir: Optional[str] = None,
@@ -349,6 +351,8 @@ def features_to_proteins(
         Ion alignment method for MaxLFQ: none, hierarchical.
     directlfq_num_cores : int, optional
         Number of cores for DirectLFQ parallel processing.
+    directlfq_min_nonan : int
+        Minimum non-missing values required by DirectLFQ for protein estimation.
     export_peptides : str, optional
         Path to export normalized peptides (for debugging/analysis).
     export_ions : str, optional
@@ -395,6 +399,7 @@ def features_to_proteins(
             coverage_threshold=coverage_threshold,
             ratio_fraction_merge=ratio_fraction_merge,
             directlfq_num_cores=directlfq_num_cores,
+            directlfq_min_nonan=directlfq_min_nonan,
         ),
         irs=IRSConfig(
             enabled=irs,
@@ -420,6 +425,7 @@ def features_to_proteins(
             method=de_method,
             log2fc_threshold=de_log2fc_threshold,
             fdr_threshold=de_fdr_threshold,
+            fdr_method=de_fdr_method,
             output=de_output,
         ),
         output=OutputConfig(

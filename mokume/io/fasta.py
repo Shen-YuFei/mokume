@@ -3,11 +3,12 @@ FASTA file handling utilities.
 """
 
 import logging
+from collections import defaultdict
 from typing import Dict, List, Set, Tuple
 
 from pyopenms import AASequence, FASTAFile, ProteaseDigestion
 
-from mokume.core.constants import get_accession
+from mokume.core.constants import build_accession_map, get_accession
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -65,6 +66,16 @@ def digest_protein(
     return [str(pep.toString()) for pep in digest]
 
 
+_NONSTANDARD_AA = {"X", "B", "Z", "J", "U", "O"}
+
+
+def _strip_nonstandard_aa(sequence: str) -> str:
+    """Remove non-standard amino acids from a protein sequence."""
+    for aa in _NONSTANDARD_AA:
+        sequence = sequence.replace(aa, "")
+    return sequence
+
+
 def extract_fasta(
     fasta: str,
     enzyme: str,
@@ -76,10 +87,18 @@ def extract_fasta(
     """
     Extract protein information from a FASTA file using a specified enzyme for digestion.
 
-    This function processes a FASTA file to extract proteins, performs in-silico digestion
-    using a specified enzyme, calculates unique peptide counts, and optionally computes
-    molecular weights. It handles sequences with nonstandard amino acids by removing them
-    and raises an error if none of the specified proteins are found in the FASTA file.
+    The number of enzyme-specific theoretical peptides reported per protein
+    is the count of peptides that are *unique across the full FASTA database*
+    (proteotypic). Counting all theoretical peptides — including those shared
+    with homologous proteins — would systematically deflate iBAQ for large
+    homologous families (myosin, tubulin, actin, histone, keratin) by 3-20x
+    because the denominator would be inflated by shared peptides while the
+    numerator only contains proteotypic intensity.
+
+    Sequences with nonstandard amino acids (X/B/Z/J/U/O) are stripped before
+    digestion. Callers asking for proteins that are absent from the FASTA are
+    silently omitted from ``uniquepepcounts`` and ``mw_dict``; only when
+    *no* requested protein is found does the function raise ``ValueError``.
 
     Parameters
     ----------
@@ -100,48 +119,40 @@ def extract_fasta(
     -------
     Tuple[Dict[str, int], Dict[str, float], Set[str]]
         A tuple containing:
-        - uniquepepcounts: Dictionary mapping protein accessions to unique peptide counts.
-        - mw_dict: Dictionary mapping protein accessions to molecular weights (empty if tpa=False).
-        - found_proteins: Set of protein accessions that were found in the FASTA file.
+        - uniquepepcounts: Dictionary mapping caller-provided protein names to
+          cross-protein unique theoretical peptide counts.
+        - mw_dict: Dictionary mapping caller-provided protein names to
+          molecular weights (empty if ``tpa=False``).
+        - found_proteins: Set of caller-provided protein names (i.e. the
+          original entries from ``proteins``) that resolved to a FASTA entry.
 
     Raises
     ------
     ValueError
         If none of the specified proteins are found in the FASTA file.
     """
-    fasta_proteins = load_fasta(fasta)
-    found_proteins: Set[str] = set()
-    uniquepepcounts: Dict[str, int] = {}
-    mw_dict: Dict[str, float] = {}
+    acc_to_originals, protein_accessions = build_accession_map(proteins)
 
+    fasta_proteins = load_fasta(fasta)
     digestor = ProteaseDigestion()
     digestor.setEnzyme(enzyme)
 
-    for entry in fasta_proteins:
-        accession = get_accession(entry.identifier)
-        if accession in proteins:
-            found_proteins.add(accession)
-            sequence = entry.sequence
-
-            # Handle non-standard amino acids
-            nonstandard = {"X", "B", "Z", "J", "U", "O"}
-            has_nonstandard = any(aa in sequence for aa in nonstandard)
-            if has_nonstandard:
-                for aa in nonstandard:
-                    sequence = sequence.replace(aa, "")
-
-            aa_sequence = AASequence.fromString(sequence)
-
-            # Perform digestion
-            digest = []
-            digestor.digest(aa_sequence, digest, min_aa, max_aa)
-
-            uniquepepcounts[accession] = len(digest)
-
-            # Calculate molecular weight if needed for TPA
-            if tpa:
-                mw = aa_sequence.getMonoWeight()
-                mw_dict[accession] = mw
+    accession_to_peptides, peptide_to_accessions, accession_to_mw = _digest_full_fasta(
+        fasta_proteins,
+        digestor,
+        min_aa,
+        max_aa,
+        tpa,
+        keep_peptides_for=protein_accessions,
+    )
+    uniquepepcounts, mw_dict, found_proteins = _select_unique_counts_for_callers(
+        protein_accessions,
+        acc_to_originals,
+        accession_to_peptides,
+        peptide_to_accessions,
+        accession_to_mw,
+        tpa,
+    )
 
     if len(found_proteins) == 0:
         raise ValueError(
@@ -149,7 +160,104 @@ def extract_fasta(
             "Please check that the protein accessions match."
         )
 
-    logger.info(f"Found {len(found_proteins)} proteins in FASTA file")
+    logger.info("Found %d proteins in FASTA file", len(found_proteins))
+    return uniquepepcounts, mw_dict, found_proteins
+
+
+def _digest_one(sequence, digestor: ProteaseDigestion, min_aa: int, max_aa: int):
+    """Digest a single sequence and return its peptide set.
+
+    Uses ``pep.toString()`` rather than ``str(pep)`` to keep peptide string
+    keys stable across pyOpenMS versions (``__str__`` has varied; ``toString``
+    is part of the documented API).
+    """
+    digest: List = []
+    digestor.digest(sequence, digest, min_aa, max_aa)
+    return {pep.toString() for pep in digest}
+
+
+def _digest_full_fasta(
+    fasta_proteins,
+    digestor: ProteaseDigestion,
+    min_aa: int,
+    max_aa: int,
+    tpa: bool,
+    keep_peptides_for: Set[str],
+):
+    """Digest every protein in the FASTA once and return the inverted index
+    needed to compute cross-protein peptide uniqueness.
+
+    The inverted index ``peptide_to_accessions`` is populated for every FASTA
+    entry (cross-protein uniqueness requires it). To avoid wasting memory on
+    large proteomes, ``accession_to_peptides`` and ``accession_to_mw`` are
+    only retained for accessions in ``keep_peptides_for``.
+
+    Per-entry parse, digest, and weight failures are logged and skipped so
+    that one bad sequence cannot poison quantification of the rest of the
+    proteome.
+    """
+    accession_to_peptides: Dict[str, Set[str]] = {}
+    peptide_to_accessions: "defaultdict[str, Set[str]]" = defaultdict(set)
+    accession_to_mw: Dict[str, float] = {}
+    for entry in fasta_proteins:
+        accession = get_accession(entry.identifier)
+        try:
+            aa_sequence = AASequence.fromString(_strip_nonstandard_aa(entry.sequence))
+            peps = _digest_one(aa_sequence, digestor, min_aa, max_aa)
+        except (ValueError, RuntimeError) as exc:
+            logger.warning("Skipping %s: %s", accession, exc)
+            continue
+        for pep in peps:
+            peptide_to_accessions[pep].add(accession)
+        if accession in keep_peptides_for:
+            accession_to_peptides[accession] = peps
+            if tpa:
+                try:
+                    accession_to_mw[accession] = aa_sequence.getMonoWeight()
+                except (ValueError, RuntimeError) as exc:
+                    logger.warning("Skipping MW for %s: %s", accession, exc)
+    return accession_to_peptides, peptide_to_accessions, accession_to_mw
+
+
+def _emit_mw_for_caller(
+    originals: List[str],
+    accession: str,
+    accession_to_mw: Dict[str, float],
+    mw_dict: Dict[str, float],
+) -> None:
+    """Copy the molecular weight of ``accession`` to each caller name when known."""
+    if accession not in accession_to_mw:
+        return
+    mw = accession_to_mw[accession]
+    for orig in originals:
+        mw_dict[orig] = mw
+
+
+def _select_unique_counts_for_callers(
+    protein_accessions: Set[str],
+    acc_to_originals: Dict[str, List[str]],
+    accession_to_peptides: Dict[str, Set[str]],
+    peptide_to_accessions: Dict[str, Set[str]],
+    accession_to_mw: Dict[str, float],
+    tpa: bool,
+):
+    """Emit per-caller cross-protein unique peptide counts (and MW)."""
+    found_proteins: Set[str] = set()
+    uniquepepcounts: Dict[str, int] = {}
+    mw_dict: Dict[str, float] = {}
+    for accession in protein_accessions:
+        peps = accession_to_peptides.get(accession)
+        if peps is None:
+            continue
+        originals = acc_to_originals[accession]
+        found_proteins.update(originals)
+        unique_count = sum(
+            1 for pep in peps if peptide_to_accessions[pep] == {accession}
+        )
+        for orig in originals:
+            uniquepepcounts[orig] = unique_count
+        if tpa:
+            _emit_mw_for_caller(originals, accession, accession_to_mw, mw_dict)
     return uniquepepcounts, mw_dict, found_proteins
 
 
@@ -172,19 +280,17 @@ def get_protein_molecular_weights(
     Dict[str, float]
         Dictionary mapping protein accessions to molecular weights.
     """
+    acc_to_originals, protein_accessions = build_accession_map(proteins)
+
     fasta_proteins = load_fasta(fasta)
     mw_dict: Dict[str, float] = {}
 
     for entry in fasta_proteins:
         accession = get_accession(entry.identifier)
-        if accession in proteins:
-            sequence = entry.sequence
-            # Handle non-standard amino acids
-            nonstandard = {"X", "B", "Z", "J", "U", "O"}
-            for aa in nonstandard:
-                sequence = sequence.replace(aa, "")
-
-            aa_sequence = AASequence.fromString(sequence)
-            mw_dict[accession] = aa_sequence.getMonoWeight()
+        if accession in protein_accessions:
+            aa_sequence = AASequence.fromString(_strip_nonstandard_aa(entry.sequence))
+            mw = aa_sequence.getMonoWeight()
+            for orig in acc_to_originals[accession]:
+                mw_dict[orig] = mw
 
     return mw_dict
