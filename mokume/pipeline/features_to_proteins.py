@@ -35,6 +35,7 @@ from mokume.pipeline.config import (
     ImputationConfig,
     DEConfig,
     OutputConfig,
+    RuntimeConfig,
 )
 from mokume.pipeline.stages import (
     LoadingStage,
@@ -182,13 +183,13 @@ class QuantificationPipeline:
             )
 
         logger.info("Loading and filtering data for DirectLFQ...")
-        filtered_df = self.loading.load_for_directlfq()
-        logger.info(f"Filtered data: {len(filtered_df)} features")
+        filtered_table = self.loading.load_for_directlfq()
+        logger.info(f"Filtered data: {filtered_table.num_rows} features")
 
         logger.info("Converting to DirectLFQ format...")
-        directlfq_input = self.loading.convert_to_directlfq_format(filtered_df)
+        directlfq_input = self.loading.convert_to_directlfq_format(filtered_table)
         logger.info(f"DirectLFQ input shape: {directlfq_input.shape}")
-        del filtered_df
+        del filtered_table
         gc.collect()
 
         # Configure DirectLFQ
@@ -206,13 +207,21 @@ class QuantificationPipeline:
         del directlfq_input
         gc.collect()
 
-        # Run DirectLFQ protein estimation
-        logger.info("Running DirectLFQ protein estimation...")
+        # Run DirectLFQ protein estimation. Fall back to a memory-aware
+        # worker budget derived from --duckdb-memory + --duckdb-threads
+        # when --directlfq-cores was not provided, so the global cap bounds
+        # DirectLFQ's fork-pool size (otherwise DirectLFQ defaults to
+        # cpu_count workers and each fork COW-copies the wide pivot table,
+        # which OOM-killed PXD030304 on a 125 GB host).
+        num_cores = (
+            self.config.quantification.directlfq_num_cores
+            or self.config.runtime.effective_workers()
+        )
         protein_df, ion_df = lfq_estimation.estimate_protein_intensities(
             normed_df,
             min_nonan=self.config.quantification.directlfq_min_nonan,
             num_samples_quadratic=10,
-            num_cores=self.config.quantification.directlfq_num_cores,
+            num_cores=num_cores,
         )
 
         # Export ions if requested
@@ -340,6 +349,9 @@ def features_to_proteins(
     # Interactive report parameters
     interactive_report: bool = False,
     report_output: Optional[str] = None,
+    # DuckDB resource limits (cap DuckDB engine only, NOT total process RSS)
+    duckdb_memory: Optional[str] = None,
+    duckdb_threads: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Quantify proteins directly from feature parquet file.
@@ -486,6 +498,10 @@ def features_to_proteins(
             highlight_genes=highlight_genes,
             interactive_report=interactive_report,
             report_output=report_output,
+        ),
+        runtime=RuntimeConfig(
+            duckdb_memory=duckdb_memory,
+            duckdb_threads=duckdb_threads,
         ),
     )
 

@@ -138,6 +138,24 @@ Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrast
 | `--export-peptides` | none | Export normalized peptides to file |
 | `--export-ions` | none | Export normalized ions (DirectLFQ only) |
 
+### DuckDB Resource Limits
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--duckdb-memory` | DuckDB autoconfig (~80% of total RAM) | DuckDB memory limit (e.g. `80GB`, `16384MB`). See note below. |
+| `--duckdb-threads` | all cores | Number of threads DuckDB may use |
+
+!!! warning "`--duckdb-memory` is not a hard process cap"
+    The flag only sizes DuckDB's internal buffer pool. PyArrow, polars, and pandas each
+    have their own independent allocators, so the surrounding Python process can grow to
+    **2-3x** the DuckDB limit on wide pivots (e.g. PXD030304 at 5798 samples peaks
+    ~94 GB of process RSS with `--duckdb-memory 40GB`). For production environments
+    that require a hard ceiling, layer one of these on top of mokume:
+
+    - **systemd / cgroup**: `systemd-run --scope -p MemoryMax=80G -- mokume features2proteins ...`
+    - **SLURM**: `sbatch --mem=80G ...`
+    - **Docker / k8s**: `resources.limits.memory: 80Gi`
+
 ---
 
 ## features2peptides

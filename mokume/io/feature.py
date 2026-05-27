@@ -7,6 +7,7 @@ SQL-level filters for normalization pre-computations.
 """
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
 
@@ -131,13 +132,44 @@ class Feature:
     technical_repetitions: Optional[int]
     filter_builder: Optional[SQLFilterBuilder]
 
+    _MEMORY_LIMIT_RE = re.compile(r"^\s*\d+(?:\.\d+)?\s*[KMGT]?B?\s*$", re.IGNORECASE)
+
     def __init__(
-        self, database_path: str, filter_builder: Optional[SQLFilterBuilder] = None
+        self,
+        database_path: str,
+        filter_builder: Optional[SQLFilterBuilder] = None,
+        duckdb_memory: Optional[str] = None,
+        duckdb_threads: Optional[int] = None,
     ):
+        """Open a DuckDB-backed view over the parquet at ``database_path``.
+
+        ``duckdb_memory`` and ``duckdb_threads`` map directly onto DuckDB's
+        ``SET memory_limit=...`` / ``SET threads=...`` pragmas. They cap **the
+        DuckDB engine only**; the surrounding Python process (PyArrow,
+        polars, pandas) is not limited by these values. Use cgroup
+        ``MemoryMax``, SLURM ``--mem``, or container ``resources.limits`` for
+        a process-level cap in production.
+        """
         if not os.path.exists(database_path):
             raise FileNotFoundError(f"the file {database_path} does not exist.")
 
         self.parquet_db = duckdb.connect()
+
+        # Apply DuckDB resource pragmas before any expensive operation: scanning
+        # large parquets can otherwise allocate up to ~80% of total RAM by
+        # default, which interacts badly with the pandas pipeline downstream.
+        if duckdb_memory is not None:
+            if not self._MEMORY_LIMIT_RE.match(str(duckdb_memory)):
+                raise ValueError(
+                    "duckdb_memory must be a DuckDB memory string like "
+                    f"'80GB' or '16384MB'; got {duckdb_memory!r}"
+                )
+            self.parquet_db.execute(f"SET memory_limit='{duckdb_memory}'")
+        if duckdb_threads is not None:
+            threads = int(duckdb_threads)
+            if threads < 1:
+                raise ValueError(f"duckdb_threads must be >= 1; got {duckdb_threads!r}")
+            self.parquet_db.execute(f"SET threads={threads}")
 
         # Use DuckDB Python API to avoid SQL string interpolation for file paths
         self.parquet_db.read_parquet(database_path).create_view("parquet_db_raw")
@@ -257,8 +289,6 @@ class Feature:
         sdrf_path : str
             Path to the SDRF file containing sample metadata.
         """
-        import re as _re
-
         sdrf_df = load_sdrf(sdrf_path)
 
         # Find the condition column (try factor value first, then characteristics)
@@ -275,7 +305,7 @@ class Feature:
 
         # Strip common raw-file extensions so names match QPX run_file_name
         def _strip_raw_ext(name: str) -> str:
-            return _re.sub(
+            return re.sub(
                 r"\.(raw|mzML|mzml|d|wiff|RAW)$",
                 "",
                 str(name).replace("\\", "/").split("/")[-1],

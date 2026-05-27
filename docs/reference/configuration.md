@@ -16,6 +16,7 @@ from mokume.pipeline.config import (
     ImputationConfig,
     DEConfig,
     OutputConfig,
+    RuntimeConfig,
 )
 ```
 
@@ -121,6 +122,27 @@ When `method="ensemble"`, each member method runs on the same contrast and the p
 | `highlight_genes` | `list \| None` | `None` | Genes to highlight in plots |
 | `interactive_report` | `bool` | `False` | Generate HTML QC report |
 | `report_output` | `str \| None` | `None` | Report output path |
+
+### RuntimeConfig
+
+DuckDB resource limits applied via `SET memory_limit=...` / `SET threads=...`
+pragmas during `Feature` initialisation. Also drives `effective_workers()`, the
+memory-aware worker budget used by DirectLFQ / MaxLFQ fork pools.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `duckdb_memory` | `str \| None` | `None` (DuckDB autoconfig, ~80% of total RAM) | Memory limit string (e.g. `"80GB"`, `"16384MB"`) |
+| `duckdb_threads` | `int \| None` | `None` (all cores) | Thread count for DuckDB (must be >= 1) |
+
+!!! warning "`duckdb_memory` is not a hard process cap"
+    The field only sizes DuckDB's internal buffer pool. PyArrow, polars, and
+    pandas each have their own independent allocators (mimalloc / jemalloc /
+    system malloc), so the surrounding Python process can grow to **2-3x**
+    `duckdb_memory` on wide pivots. For production hard caps, use cgroup
+    `MemoryMax` (systemd), SLURM `--mem`, or container
+    `resources.limits.memory`.
+
+The CLI exposes these as `--duckdb-memory` / `--duckdb-threads`.
 
 ### Full Example
 

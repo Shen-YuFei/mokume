@@ -12,6 +12,7 @@ import os
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 from pathlib import Path
 from typing import Optional
 
@@ -52,6 +53,26 @@ from mokume.pipeline.config import PipelineConfig
 
 logger = get_logger("mokume.pipeline")
 
+# Per-(sample, tech_rep) replicate metric expressions for SQL-first run
+# normalization. Each value must produce a scalar metric per group so that the
+# cross-replicate factor ``intensity * sample_avg / run_metric`` matches the
+# legacy ``normalize_sample`` / ``normalize_replicates`` contract from
+# :mod:`mokume.model.normalization`. ``max_min`` is intentionally absent because
+# its replicate function returns a per-row Series rather than a scalar metric;
+# workflows using it fall back to the legacy pandas loop.
+_SQL_RUN_METRIC_EXPR: dict[str, str] = {
+    "median": 'MEDIAN("Intensity")',
+    "mean": 'AVG("Intensity")',
+    "max": 'MAX("Intensity")',
+    "global": 'SUM("Intensity")',
+    "iqr": (
+        '(QUANTILE_CONT("Intensity", 0.75) + QUANTILE_CONT("Intensity", 0.25)) / 2'
+    ),
+}
+_SQL_RUN_NORM_SUPPORTED: frozenset[str] = frozenset({"none", ""}) | frozenset(
+    _SQL_RUN_METRIC_EXPR
+)
+
 
 class LoadingStage:
     """Loads and filters data from parquet + SDRF."""
@@ -76,7 +97,12 @@ class LoadingStage:
             require_unique=True,
         )
 
-        feature = Feature(self.config.input.parquet, filter_builder=filter_builder)
+        feature = Feature(
+            self.config.input.parquet,
+            filter_builder=filter_builder,
+            duckdb_memory=self.config.runtime.duckdb_memory,
+            duckdb_threads=self.config.runtime.duckdb_threads,
+        )
 
         if self.config.input.sdrf:
             feature.enrich_with_sdrf(self.config.input.sdrf)
@@ -102,13 +128,15 @@ class LoadingStage:
         elif sample_norm == "conditionmedian":
             med_map = feature.get_median_map_to_condition()
 
-        # SQL-first path is eligible when the per-row run-normalization stage is
-        # not active (it operates on row-level data before peptidoform-max and is
-        # difficult to translate to SQL faithfully) and the label is LFQ (TMT and
-        # iTRAQ require channel-aware reformatting that the prototype query does
-        # not yet implement).
-        needs_run_norm = run_norm not in ("none", "") and technical_repetitions > 1
-        sqlfirst_eligible = label == QuantificationCategory.LFQ and not needs_run_norm
+        # SQL-first path is eligible when (a) the label is LFQ (TMT/iTRAQ need
+        # channel-aware reformatting that the SQL prototype does not implement),
+        # and (b) the requested run normalization method has a SQL translation
+        # registered in :data:`_SQL_RUN_METRIC_EXPR`. Workflows using ``max_min``
+        # (whose replicate function returns a per-row Series) fall back to the
+        # legacy pandas loop.
+        sqlfirst_eligible = (
+            label == QuantificationCategory.LFQ and run_norm in _SQL_RUN_NORM_SUPPORTED
+        )
 
         if sqlfirst_eligible:
             logger.info(
@@ -118,7 +146,12 @@ class LoadingStage:
                 run_norm,
             )
             combined_df = self._load_for_mokume_sqlfirst(
-                feature, sample_norm, sample_norm_method, med_map
+                feature,
+                sample_norm,
+                sample_norm_method,
+                med_map,
+                run_norm=run_norm,
+                technical_repetitions=technical_repetitions,
             )
         else:
             logger.info(
@@ -146,21 +179,55 @@ class LoadingStage:
         sample_norm: str,
         sample_norm_method: PeptideNormalizationMethod,
         med_map: dict,
+        run_norm: str = "none",
+        technical_repetitions: int = 1,
     ) -> pd.DataFrame:
         """Push the full filter+aggregation pipeline into a single DuckDB query.
 
         Translates the steps that the legacy pandas loop performs per sample
         (parse_uniprot_accession, length / condition / run filters,
         contaminant/decoy removal, per-sample min-unique-peptides filter,
-        peptidoform-max keep, sum aggregation at the sample level) into one
-        SQL query against the SDRF-enriched ``parquet_db`` view. Only the small
-        post-aggregation peptide-level table lands in pandas, where per-sample
-        normalization is applied if needed.
+        optional per-(sample, tech_rep) run normalization, peptidoform-max
+        keep, sum aggregation at the sample level) into one SQL query against
+        the SDRF-enriched ``parquet_db`` view. Only the small post-aggregation
+        peptide-level table lands in pandas, where per-sample normalization is
+        applied if needed.
+
+        Run normalization is enabled when both ``run_norm`` resolves to a
+        registered SQL metric and ``technical_repetitions > 1`` (matching the
+        global guard in :meth:`FeatureNormalizationMethod.normalize_runs`).
         """
         where_clause, where_params = feature.filter_builder.build_where_clause()
         min_aa = self.config.filtering.min_aa
         min_unique = self.config.filtering.min_unique_peptides
 
+        run_norm_active = run_norm in _SQL_RUN_METRIC_EXPR and technical_repetitions > 1
+
+        # Run normalization is applied via a small per-(SampleID, Run)
+        # scale-factor lookup table registered with DuckDB and joined into the
+        # main query, rather than materialising a full-sized scaled intensity
+        # CTE (which on PXD030304-scale inputs forced ~95 GB of disk spill).
+        scale_df = None
+        scale_join_clause = ""
+        scale_select = "mu.*"
+        scale_orderby = 'mu."Intensity"'
+        if run_norm_active:
+            scale_df = self._compute_run_scale_map(feature, run_norm)
+            feature.parquet_db.register("run_scale_map", scale_df)
+            scale_join_clause = (
+                "LEFT JOIN run_scale_map rsm "
+                f'ON rsm."{SAMPLE_ID}" = mu."{SAMPLE_ID}" '
+                'AND rsm."Run" = mu."Run"'
+            )
+            scale_expr = '(mu."Intensity" * COALESCE(rsm.scale_factor, 1.0))'
+            scale_select = f'mu.* REPLACE ({scale_expr} AS "Intensity")'
+            scale_orderby = scale_expr
+
+        # NOTE: this UniProt mid-section extraction (`sp|UNIPROT|name` -> `UNIPROT`)
+        # is duplicated in two more places. Keep all three in sync when the
+        # protein-accession parsing rules change:
+        #   - _compute_run_scale_map (SQL, this file)
+        #   - convert_to_directlfq_format (polars, this file)
         query = f"""
         WITH base AS (
             SELECT
@@ -208,13 +275,14 @@ class LoadingStage:
         ),
         peptidoform_max AS (
             SELECT * FROM (
-                SELECT *,
+                SELECT {scale_select},
                     ROW_NUMBER() OVER (
-                        PARTITION BY "PeptideSequence", "PrecursorCharge",
-                                     "{SAMPLE_ID}", "{CONDITION}", "BioReplicate"
-                        ORDER BY "Intensity" DESC, "Run"
+                        PARTITION BY mu."PeptideSequence", mu."PrecursorCharge",
+                                     mu."{SAMPLE_ID}", mu."{CONDITION}", mu."BioReplicate"
+                        ORDER BY {scale_orderby} DESC, mu."Run"
                     ) AS _rn
-                FROM min_unique_kept
+                FROM min_unique_kept mu
+                {scale_join_clause}
             )
             WHERE _rn = 1
         )
@@ -229,7 +297,11 @@ class LoadingStage:
         GROUP BY "{PROTEIN_NAME}", "{PEPTIDE_CANONICAL}", "{SAMPLE_ID}",
                  "BioReplicate", "{CONDITION}"
         """
-        combined_df = feature.parquet_db.execute(query, where_params).df()
+        try:
+            combined_df = feature.parquet_db.execute(query, where_params).df()
+        finally:
+            if scale_df is not None:
+                feature.parquet_db.unregister("run_scale_map")
 
         # Per-sample normalization (skip dataset-level methods that operate on
         # the full table later in _apply_dataset_normalization).
@@ -248,6 +320,136 @@ class LoadingStage:
         combined_df[CONDITION] = pd.Categorical(combined_df[CONDITION])
         combined_df[SAMPLE_ID] = pd.Categorical(combined_df[SAMPLE_ID])
         return combined_df
+
+    def _compute_run_scale_map(self, feature: Feature, run_norm: str) -> pd.DataFrame:
+        """Compute the per-``(SampleID, Run)`` multiplicative scale factor
+        applied by :meth:`FeatureNormalizationMethod.normalize_runs`.
+
+        Returns a small DataFrame (at most ``n_runs`` rows) with columns
+        ``SampleID``, ``Run`` and ``scale_factor``. The TechReplicate ladder
+        mirrors :func:`apply_initial_filtering` precisely: per sample, prefer
+        the integer trailing run-name segment after ``_``; fall back to casting
+        the full run name; fall back further to a per-sample DENSE_RANK over
+        unique run names. ``scale_factor`` is ``sample_avg_metric / run_metric``
+        for samples with more than one TechReplicate, and ``1.0`` otherwise
+        (single-tech-rep samples pass through unchanged), so the caller can
+        unconditionally multiply Intensity by ``COALESCE(scale_factor, 1.0)``.
+
+        Compared to the previous in-query CTE chain this aggregates straight
+        from the filtered base to a small ``(SampleID, tech_rep) -> metric``
+        table and never materialises a full-sized scaled-intensity CTE, which
+        is what drove the >95 GB peak resident set on PXD030304.
+        """
+        where_clause, where_params = feature.filter_builder.build_where_clause()
+        min_aa = self.config.filtering.min_aa
+        min_unique = self.config.filtering.min_unique_peptides
+        metric_expr = _SQL_RUN_METRIC_EXPR[run_norm]
+
+        # NOTE: we project only the columns needed for the run-norm aggregate
+        # (SampleID, Run, sequence-for-min-unique gating, Intensity) so DuckDB
+        # never has to carry the peptidoform/charge/condition columns through
+        # the window-function pipeline used to enforce min_unique_peptides.
+        #
+        # The UniProt mid-section extraction below mirrors _load_for_mokume_sqlfirst
+        # and convert_to_directlfq_format (polars). Keep all three in sync.
+        sql = f"""
+        WITH base AS (
+            SELECT
+                array_to_string(
+                    list_transform(
+                        pg_accessions,
+                        x -> CASE
+                            WHEN length(string_split(x, '|')) = 3
+                                THEN string_split(x, '|')[2]
+                            ELSE x
+                        END
+                    ),
+                    ';'
+                ) AS "{PROTEIN_NAME}",
+                sequence         AS "{PEPTIDE_CANONICAL}",
+                intensity        AS "Intensity",
+                sample_accession AS "{SAMPLE_ID}",
+                run              AS "Run"
+            FROM parquet_db
+            WHERE ({where_clause})
+              AND pg_accessions IS NOT NULL
+              AND length(sequence) >= {min_aa}
+              AND (condition IS NULL OR condition != 'Empty')
+              AND run IS NOT NULL
+        ),
+        no_contam AS (
+            SELECT * FROM base
+            WHERE "{PROTEIN_NAME}" NOT LIKE '%CONTAMINANT%'
+              AND "{PROTEIN_NAME}" NOT LIKE '%ENTRAP%'
+              AND "{PROTEIN_NAME}" NOT LIKE '%DECOY%'
+        ),
+        with_n_unique AS (
+            SELECT *,
+                COUNT(DISTINCT "{PEPTIDE_CANONICAL}") OVER (
+                    PARTITION BY "{PROTEIN_NAME}", "{SAMPLE_ID}"
+                ) AS _n_unique_pep
+            FROM no_contam
+        ),
+        kept AS (
+            SELECT "{SAMPLE_ID}", "Run", "Intensity"
+            FROM with_n_unique WHERE _n_unique_pep >= {min_unique}
+        ),
+        sample_run_meta AS (
+            SELECT
+                "{SAMPLE_ID}",
+                BOOL_AND("Run" LIKE '%\\_%' ESCAPE '\\') AS all_have_underscore,
+                BOOL_AND(
+                    TRY_CAST(split_part("Run", '_', -1) AS INTEGER) IS NOT NULL
+                ) AS all_parse_last,
+                BOOL_AND(TRY_CAST("Run" AS INTEGER) IS NOT NULL) AS all_parse_full
+            FROM kept
+            GROUP BY "{SAMPLE_ID}"
+        ),
+        with_tech_rep AS (
+            SELECT
+                m."{SAMPLE_ID}",
+                m."Run",
+                m."Intensity",
+                CASE
+                    WHEN srm.all_have_underscore AND srm.all_parse_last
+                        THEN CAST(split_part(m."Run", '_', -1) AS INTEGER)
+                    WHEN srm.all_parse_full
+                        THEN CAST(m."Run" AS INTEGER)
+                    ELSE
+                        DENSE_RANK() OVER (
+                            PARTITION BY m."{SAMPLE_ID}" ORDER BY m."Run"
+                        )
+                END AS tech_rep
+            FROM kept m
+            JOIN sample_run_meta srm USING ("{SAMPLE_ID}")
+        ),
+        run_metric AS (
+            SELECT "{SAMPLE_ID}", tech_rep, {metric_expr} AS rm
+            FROM with_tech_rep
+            GROUP BY "{SAMPLE_ID}", tech_rep
+        ),
+        sample_avg AS (
+            SELECT "{SAMPLE_ID}", AVG(rm) AS sa, COUNT(*) AS n_tech_reps
+            FROM run_metric
+            GROUP BY "{SAMPLE_ID}"
+        ),
+        run_to_tech_rep AS (
+            SELECT DISTINCT "{SAMPLE_ID}", "Run", tech_rep
+            FROM with_tech_rep
+        )
+        SELECT
+            r."{SAMPLE_ID}" AS "{SAMPLE_ID}",
+            r."Run"         AS "Run",
+            CASE
+                WHEN sa.n_tech_reps > 1
+                    THEN sa.sa / NULLIF(rm.rm, 0)
+                ELSE CAST(1.0 AS DOUBLE)
+            END AS scale_factor
+        FROM run_to_tech_rep r
+        JOIN run_metric rm USING ("{SAMPLE_ID}", tech_rep)
+        JOIN sample_avg  sa USING ("{SAMPLE_ID}")
+        """
+        return feature.parquet_db.execute(sql, where_params).df()
 
     def _load_for_mokume_legacy_pandas(
         self,
@@ -350,66 +552,136 @@ class LoadingStage:
 
         return combined_df
 
-    def load_for_directlfq(self) -> pd.DataFrame:
-        """Load and filter data for DirectLFQ processing."""
+    def load_for_directlfq(self) -> pa.Table:
+        """Load and filter peptide rows for DirectLFQ as a streaming Arrow Table.
+
+        Streams the long-format query result through DuckDB's Arrow reader
+        instead of materialising it as a pandas DataFrame. On large parquets
+        (e.g. PXD030304: 163M peptide rows × 5798 samples) this avoids the
+        ~30+ GB pandas object overhead that previously caused OOM kills, and
+        cuts wall time roughly 30% on medium datasets (validated on
+        PXD017199: 51.5s → 35.4s, 11.8 GB → 7.1 GB peak RSS).
+
+        Protein-accession parsing and the ``min_unique_peptides`` filter are
+        deferred to :meth:`convert_to_directlfq_format`, which performs them
+        in-place on the polars frame (zero-copy from this Arrow Table).
+
+        Returns
+        -------
+        pa.Table
+            Long-format Arrow Table with columns
+            ``[pg_accessions, sequence, sample_accession, intensity]``.
+        """
         filter_builder = SQLFilterBuilder(
             remove_contaminants=self.config.filtering.remove_contaminants,
             min_peptide_length=self.config.filtering.min_aa,
             require_unique=True,
         )
 
-        feature = Feature(self.config.input.parquet, filter_builder=filter_builder)
+        feature = Feature(
+            self.config.input.parquet,
+            filter_builder=filter_builder,
+            duckdb_memory=self.config.runtime.duckdb_memory,
+            duckdb_threads=self.config.runtime.duckdb_threads,
+        )
 
         if self.config.input.sdrf:
             feature.enrich_with_sdrf(self.config.input.sdrf)
 
-        # Build query with filters
         where_clause, where_params = filter_builder.build_where_clause()
-        query = "".join(
+        query = (
+            "SELECT pg_accessions, sequence, sample_accession, intensity "
+            "FROM parquet_db WHERE " + where_clause
+        )
+
+        try:
+            result = feature.parquet_db.execute(query, where_params)
+            reader = result.to_arrow_reader(batch_size=1_000_000)
+            # ``from_batches`` eagerly consumes the reader, materialising every
+            # batch into Arrow buffers that own their memory independently of
+            # the DuckDB connection, so it is safe to close the connection in
+            # the ``finally`` below even though we return the Table.
+            return pa.Table.from_batches(reader)
+        finally:
+            feature.parquet_db.close()
+
+    def convert_to_directlfq_format(self, table: pa.Table) -> pd.DataFrame:
+        """Convert long-format Arrow Table into the DirectLFQ wide log2 frame.
+
+        The pipeline is end-to-end polars (zero-copy from Arrow):
+        protein extraction, ``min_unique_peptides`` filter, sum aggregation,
+        pivot to wide, replace 0 with null, ``log2``. A single
+        :py:meth:`polars.DataFrame.to_pandas` at the end yields the
+        ``MultiIndex(['protein', 'ion'])``-indexed pandas frame DirectLFQ
+        expects.
+
+        Going via polars avoids materialising the long-format pandas
+        DataFrame, which dominated peak RSS on large datasets, and lets the
+        pivot run in parallel (PXD017199 wall: 51.5s → 18.3s, -64%).
+        """
+        try:
+            import polars as pl
+        except ImportError as exc:
+            raise ImportError(
+                "polars is required for the DirectLFQ format conversion. "
+                "Install it with `pip install polars` or "
+                "`pip install mokume[directlfq]`."
+            ) from exc
+
+        pdf = pl.from_arrow(table)
+        if isinstance(pdf, pl.Series):
+            pdf = pdf.to_frame()
+
+        # Protein extraction: take pg_accessions[0]; parse UniProt mid-section
+        # ('sp|UNIPROT|name' -> 'UNIPROT') when pipe-separated, else as-is.
+        # The same rule is implemented in SQL inside _load_for_mokume_sqlfirst
+        # and _compute_run_scale_map (this file). Keep all three in sync; do
+        # NOT extract a shared Python helper, because calling it via polars
+        # ``map_elements`` would force a row-wise Python call and erase the
+        # 64% wall-time win that polars's columnar pivot provides.
+        pdf = pdf.with_columns(
+            pl.col("pg_accessions")
+            .list.get(0, null_on_oob=True)
+            .fill_null("")
+            .alias("_first_acc")
+        )
+        pdf = pdf.with_columns(
+            pl.when(pl.col("_first_acc").str.contains("|", literal=True))
+            .then(pl.col("_first_acc").str.split("|").list.get(1, null_on_oob=True))
+            .otherwise(pl.col("_first_acc"))
+            .alias("protein")
+        ).drop(["_first_acc", "pg_accessions"])
+
+        min_pep = self.config.filtering.min_unique_peptides
+        if min_pep > 0:
+            counts = pdf.group_by("protein").agg(
+                pl.col("sequence").n_unique().alias("_n_pep")
+            )
+            valid = counts.filter(pl.col("_n_pep") >= min_pep).get_column("protein")
+            pdf = pdf.filter(pl.col("protein").is_in(valid.implode()))
+
+        summed = pdf.group_by(["protein", "sequence", "sample_accession"]).agg(
+            pl.col("intensity").cast(pl.Float64).sum()
+        )
+
+        wide_pl = summed.pivot(
+            index=["protein", "sequence"],
+            on="sample_accession",
+            values="intensity",
+            aggregate_function=None,
+        )
+
+        sample_cols = [c for c in wide_pl.columns if c not in ("protein", "sequence")]
+        wide_pl = wide_pl.with_columns(
             [
-                "SELECT pg_accessions, sequence, sample_accession, intensity",
-                " FROM parquet_db WHERE ",
-                where_clause,
+                pl.when(pl.col(c) == 0).then(None).otherwise(pl.col(c).log(2)).alias(c)
+                for c in sample_cols
             ]
         )
 
-        df = feature.parquet_db.execute(query, where_params).df()
-
-        # Parse protein accessions
-        # Extract first element from pg_accessions list, then parse UniProt ID
-        first_acc = df["pg_accessions"].str[0].fillna("")
-        df["protein"] = np.where(
-            first_acc.str.contains("|", regex=False),
-            first_acc.str.split("|").str[1],
-            first_acc,
-        )
-
-        # Filter by min unique peptides
-        peptide_counts = df.groupby("protein")["sequence"].nunique()
-        valid_proteins = peptide_counts[
-            peptide_counts >= self.config.filtering.min_unique_peptides
-        ].index
-        df = df[df["protein"].isin(valid_proteins)]
-
-        return df
-
-    def convert_to_directlfq_format(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Convert to DirectLFQ expected format (wide, log2, MultiIndex)."""
-        # Pivot to wide format
-        wide = df.pivot_table(
-            index=["protein", "sequence"],
-            columns="sample_accession",
-            values="intensity",
-            aggfunc="sum",
-        )
-
-        # Replace 0 with NaN and log2 transform
-        wide = wide.replace(0, np.nan)
-        wide = np.log2(wide)
-
-        # Set index names for DirectLFQ
+        wide = wide_pl.to_pandas()
+        wide = wide.set_index(["protein", "sequence"])
         wide.index.names = ["protein", "ion"]
-
         return wide
 
     def load_for_ratio(self) -> tuple:
@@ -476,12 +748,14 @@ class NormalizationStage:
         """Apply hierarchical sample normalization."""
         logger.info("Applying hierarchical sample normalization...")
 
-        # Convert to wide format for normalization
+        # Convert to wide format for normalization. observed=True avoids the
+        # Cartesian-product blowup when SAMPLE_ID is Categorical.
         wide = df.pivot_table(
             index=[PROTEIN_NAME, PEPTIDE_CANONICAL],
             columns=SAMPLE_ID,
             values=NORM_INTENSITY,
             aggfunc="sum",
+            observed=True,
         )
 
         # Log2 transform for normalization
@@ -528,12 +802,14 @@ class NormalizationStage:
 
         logger.info("Applying TMM sample normalization...")
 
-        # Convert to wide format for normalization
+        # Convert to wide format for normalization. observed=True avoids the
+        # Cartesian-product blowup when SAMPLE_ID is Categorical.
         wide = df.pivot_table(
             index=[PROTEIN_NAME, PEPTIDE_CANONICAL],
             columns=SAMPLE_ID,
             values=NORM_INTENSITY,
             aggfunc="sum",
+            observed=True,
         )
 
         # Apply TMM normalization (works on linear-scale intensities)
@@ -568,6 +844,7 @@ class NormalizationStage:
             columns=SAMPLE_ID,
             values=NORM_INTENSITY,
             aggfunc="sum",
+            observed=True,
         )
         if log_space:
             wide = np.log2(wide.replace(0, np.nan))
@@ -791,7 +1068,20 @@ class QuantificationStage:
             "spectralcount",
             "count",
         ):
-            method = get_quantification_method(quant_method)
+            # Propagate the global parallelism budget so MaxLFQ -> DirectLFQ
+            # does not silently default to cpu_count workers (each forked
+            # worker COW-copies the wide pivot table; on PXD030304-scale
+            # inputs that path was OOM-killing the 125 GB host).
+            # RuntimeConfig.effective_workers() also reasons about
+            # ``duckdb_memory`` so the worker count drops automatically when
+            # the memory budget cannot absorb cpu_count concurrent fork-COW
+            # copies.
+            quant_kwargs = {}
+            effective = self.config.runtime.effective_workers()
+            if effective is not None:
+                quant_kwargs["n_jobs"] = effective
+                quant_kwargs["num_cores"] = effective
+            method = get_quantification_method(quant_method, **quant_kwargs)
             result = method.quantify(
                 peptide_df,
                 protein_column=PROTEIN_NAME,
@@ -807,6 +1097,7 @@ class QuantificationStage:
             else:
                 n = 3
             method = TopNQuantification(n=n)
+            # TopN itself is single-process; nothing extra to thread.
             result = method.quantify(
                 peptide_df,
                 protein_column=PROTEIN_NAME,

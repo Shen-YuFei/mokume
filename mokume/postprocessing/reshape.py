@@ -55,7 +55,10 @@ def remove_missing_values(
     logger.info(f"Initial number of samples: {initial_sample_count}")
 
     pivot_df = ibaq_df.pivot_table(
-        index=PROTEIN_NAME, columns=SAMPLE_ID, values=expression_column
+        index=PROTEIN_NAME,
+        columns=SAMPLE_ID,
+        values=expression_column,
+        observed=True,
     )
     non_missing_samples = pivot_df.columns[pivot_df.notna().any(axis=0)]
     missingness = pivot_df[non_missing_samples].isna().sum() / len(pivot_df) * 100
@@ -108,7 +111,11 @@ def pivot_wider(
         )
 
     matrix = df.pivot_table(
-        index=row_name, columns=col_name, values=values, aggfunc="first"
+        index=row_name,
+        columns=col_name,
+        values=values,
+        aggfunc="first",
+        observed=True,
     )
 
     if fillna is True:

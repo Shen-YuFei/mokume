@@ -167,12 +167,17 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
         str
             Path to the prepared input file.
         """
-        # Pivot to wide format (samples as columns)
+        # Pivot to wide format (samples as columns). observed=True keeps
+        # pandas from materialising the Cartesian product of every Categorical
+        # level (LoadingStage casts SAMPLE_ID/CONDITION to Categorical for
+        # legacy dtype parity; on PXD030304 the unobserved product reached
+        # ~7.3e12 cells, ~13 TiB of int16, before this guard).
         pivot_df = peptide_df.pivot_table(
             index=[protein_column, peptide_column],
             columns=sample_column,
             values=intensity_column,
             aggfunc="sum",  # Sum if multiple measurements per peptide/sample
+            observed=True,
         ).reset_index()
 
         # Rename columns to DirectLFQ expected format

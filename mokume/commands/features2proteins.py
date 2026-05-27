@@ -487,6 +487,27 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     type=click.Path(),
     default=None,
 )
+# DuckDB resource limits (propagated through to mokume.io.feature.Feature)
+@click.option(
+    "--duckdb-memory",
+    "duckdb_memory",
+    help=(
+        "DuckDB memory limit (e.g. '80GB', '16384MB'). Caps DuckDB's "
+        "internal buffer pool only -- the surrounding Python process "
+        "(PyArrow / polars / pandas) is not limited by this value and "
+        "peak RSS can be 2-3x larger on wide pivots. Use cgroup MemoryMax, "
+        "SLURM --mem, or container resources.limits for a hard cap. "
+        "Default: DuckDB autoconfig (~80%% of total RAM)."
+    ),
+    default=None,
+)
+@click.option(
+    "--duckdb-threads",
+    "duckdb_threads",
+    help="Number of threads DuckDB may use. Default: all available cores.",
+    type=int,
+    default=None,
+)
 @click.pass_context
 def features2proteins(
     ctx,
@@ -554,6 +575,9 @@ def features2proteins(
     # Interactive report
     interactive_report: bool,
     report_output: str,
+    # DuckDB resource limits (cap DuckDB engine only, NOT total process RSS)
+    duckdb_memory: str,
+    duckdb_threads: int,
 ) -> None:
     """
     Quantify proteins directly from feature parquet file.
@@ -779,6 +803,9 @@ def features2proteins(
         # Interactive report
         interactive_report=interactive_report,
         report_output=report_output,
+        # DuckDB resource limits (cap DuckDB engine only, NOT total process RSS)
+        duckdb_memory=duckdb_memory,
+        duckdb_threads=duckdb_threads,
     )
 
     click.echo(f"Protein intensities saved to: {output}")

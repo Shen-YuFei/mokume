@@ -102,12 +102,15 @@ class RatioQuantification:
         df = self._aggregate_peptide_to_protein(df)
         logger.info(f"After peptide->protein aggregation: {len(df)} rows")
 
-        # 6. Pivot to wide format
+        # 6. Pivot to wide format. observed=True avoids the pandas Cartesian
+        # product blowup when SAMPLE_ID is Categorical (LoadingStage casts it
+        # for legacy dtype parity).
         wide = df.pivot_table(
             index=PROTEIN_NAME,
             columns=SAMPLE_ID,
             values="log2ratio",
             aggfunc="median",
+            observed=True,
         )
 
         n_proteins = len(wide)

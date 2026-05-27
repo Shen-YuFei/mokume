@@ -56,13 +56,13 @@ flake8 = "^7.0"
 [tool.poetry.extras]
 plotting = ["matplotlib", "seaborn"]
 reports = ["plotly"]
-directlfq = ["directlfq", "pyyaml"]
+directlfq = ["directlfq", "pyyaml", "polars"]
 batch-correction = ["combat"]
 inmoose = ["combat"]  # Deprecated alias, use batch-correction instead
 tissuemap = ["scanpy", "combat", "umap-learn", "matplotlib", "seaborn"]
 agentic = ["pyyaml", "openai", "python-dotenv"]
 agentic-core = ["pyyaml"]
-all = ["directlfq", "pyyaml", "combat", "matplotlib", "seaborn", "plotly", "scanpy", "umap-learn"]
+all = ["directlfq", "pyyaml", "polars", "combat", "matplotlib", "seaborn", "plotly", "scanpy", "umap-learn"]
 
 [tool.poetry.dependencies.matplotlib]
 version = "*"
@@ -74,6 +74,10 @@ optional = true
 
 [tool.poetry.dependencies.directlfq]
 version = ">=0.3.0"
+optional = true
+
+[tool.poetry.dependencies.polars]
+version = ">=1.0"
 optional = true
 
 [tool.poetry.dependencies.pyyaml]

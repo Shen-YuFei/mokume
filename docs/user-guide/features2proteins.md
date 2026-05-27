@@ -82,6 +82,39 @@ mokume features2proteins \
     --quant-method directlfq --directlfq-cores 4
 ```
 
+## Memory & Performance for Large Studies
+
+When the input parquet has thousands of samples (~5000+), the long-form
+features must be pivoted into a wide DirectLFQ matrix. mokume streams the
+DuckDB result set through Arrow into polars and pivots there, which keeps the
+load step's wall time down (cf. PXD030304: ~32 min on 163M long rows pivoted
+into 147,374 × 5,798) and avoids the OOM that pandas pivots used to trigger.
+
+The DuckDB engine itself can be size-capped via `--duckdb-memory` /
+`--duckdb-threads`:
+
+```bash
+mokume features2proteins \
+    -p features.parquet -o proteins.csv \
+    --quant-method directlfq \
+    --duckdb-memory 40GB \
+    --duckdb-threads 16
+```
+
+!!! warning "`--duckdb-memory` is *not* a hard process cap"
+    The flag only sizes DuckDB's internal buffer pool. PyArrow, polars, and
+    pandas allocate independently, so peak Python process RSS can grow to
+    **2-3x** the DuckDB cap on wide pivots. For production environments
+    that need a strict ceiling, layer one of these on top of mokume:
+
+    - **systemd / cgroup**: `systemd-run --scope -p MemoryMax=80G -- mokume features2proteins ...`
+    - **SLURM**: `sbatch --mem=80G ...`
+    - **Docker / k8s**: `resources.limits.memory: 80Gi`
+
+    The `directlfq-cores` worker count is automatically reduced when
+    `--duckdb-memory` is set, so each forked worker has room for its
+    COW-amplified copy of the wide matrix.
+
 ## Normalization Options
 
 ### Run-Level Normalization

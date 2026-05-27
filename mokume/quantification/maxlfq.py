@@ -203,12 +203,16 @@ def _process_protein(
                 )
         return results
 
-    # Create peptide x sample matrix via pivot_table (vectorized, sums duplicates)
+    # Create peptide x sample matrix via pivot_table (vectorized, sums duplicates).
+    # observed=True avoids materialising every Categorical level of sample_column
+    # inside groupby; the reindex below re-introduces the full sample axis with
+    # NaN where absent, so the downstream matrix shape is unchanged.
     pivot = protein_data.pivot_table(
         index=peptide_column,
         columns=sample_column,
         values=intensity_column,
         aggfunc="sum",
+        observed=True,
     )
     # Reindex to ensure consistent ordering
     pivot = pivot.reindex(index=peptides, columns=samples)

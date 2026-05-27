@@ -21,6 +21,13 @@ mokume uses optional dependencies for specialized features:
 
     Enables DirectLFQ quantification and the DirectLFQ backend for MaxLFQ.
 
+    The extra also pulls in `polars`, which mokume uses to stream the
+    long-form parquet into the wide DirectLFQ matrix without materialising
+    an intermediate pandas DataFrame. On large studies (>1000 samples) this
+    cuts the load step's wall time roughly in half and lets datasets that
+    previously OOM-killed pandas pivots (e.g. PXD030304 at 5798 samples)
+    complete on a 125 GB host.
+
 === "Plotting"
 
     ```bash

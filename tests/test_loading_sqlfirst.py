@@ -398,3 +398,178 @@ def test_sqlfirst_equivalent_to_legacy_pandas(lfq_dataset):
     assert (rel.max() <= 1e-5) or (diff.max() <= 1e-3), (
         f"max abs={diff.max():.3g}, max rel={rel.max():.3g}"
     )
+
+
+def _make_lfq_multi_techrep_parquet(path: str) -> List[str]:
+    """Build a tiny LFQ parquet with 2 samples x 3 runs each so the SQL-first
+    run-normalization CTEs (TechReplicate derivation, per-(sample, tech_rep)
+    metric, scale) actually fire. Peptide intensities differ per run by a
+    deterministic multiplier so the per-run median is meaningful and the
+    legacy ``FeatureNormalizationMethod.Median`` factor is non-trivial.
+
+    Returns the ordered list of run_file_name values.
+    """
+    runs = ["run_SA_1", "run_SA_2", "run_SA_3", "run_SB_1", "run_SB_2", "run_SB_3"]
+    # Run multipliers within each sample so that per-(sample, tech_rep) median
+    # is genuinely different and run normalization has a measurable effect.
+    run_mult = {
+        "run_SA_1": 2.0,
+        "run_SA_2": 1.0,
+        "run_SA_3": 4.0,
+        "run_SB_1": 1.5,
+        "run_SB_2": 0.5,
+        "run_SB_3": 3.0,
+    }
+    # Four peptides on the same protein → satisfies min_unique_peptides >= 2.
+    peptides = [
+        ("PEPTIDEAR", 100.0),
+        ("PEPTIDEBR", 200.0),
+        ("PEPTIDECR", 300.0),
+        ("PEPTIDEDR", 400.0),
+    ]
+    p12345 = "sp|P12345|GOOD_HUMAN"
+
+    rows: List[Tuple] = []
+    for run in runs:
+        for pep, base in peptides:
+            rows.append((pep, pep, p12345, 2, run, base * run_mult[run]))
+
+    data = {
+        "sequence": [r[0] for r in rows],
+        "peptidoform": [r[1] for r in rows],
+        "pg_accessions": [_pg(r[2]) for r in rows],
+        "anchor_protein": [r[2] for r in rows],
+        "charge": [r[3] for r in rows],
+        "run_file_name": [r[4] for r in rows],
+        "unique": [True] * len(rows),
+        "is_decoy": [False] * len(rows),
+        "intensities": [_intensities(r[5]) for r in rows],
+    }
+    table = pa.table(data, schema=_LFQ_SCHEMA)
+    pq.write_table(table, path)
+    return runs
+
+
+def _make_lfq_multi_techrep_sdrf(path: str, runs: List[str]) -> None:
+    """Two-sample SDRF where Sample_A owns run_SA_* and Sample_B owns run_SB_*."""
+    header = (
+        "source name\tcomment[data file]\tcomment[label]\t"
+        "characteristics[organism part]\tfactor value[disease]\t"
+        "characteristics[biological replicate]\tcomment[fraction identifier]\t"
+        "comment[technical replicate]\n"
+    )
+    lines = [header]
+    for run in runs:
+        sample = "Sample_A" if "_SA_" in run else "Sample_B"
+        cond = "normal" if sample == "Sample_A" else "disease"
+        tech_rep = run.rsplit("_", 1)[-1]
+        lines.append(
+            f"{sample}\t{run}\tLabel free sample\tbrain\t{cond}\t1\t1\t{tech_rep}\n"
+        )
+    Path(path).write_text("".join(lines), encoding="utf-8")
+
+
+@pytest.fixture
+def lfq_multi_techrep_dataset(tmp_path):
+    parquet = tmp_path / "lfq_multi_techrep.parquet"
+    sdrf = tmp_path / "lfq_multi_techrep.sdrf.tsv"
+    runs = _make_lfq_multi_techrep_parquet(str(parquet))
+    _make_lfq_multi_techrep_sdrf(str(sdrf), runs)
+    return str(parquet), str(sdrf)
+
+
+def test_sqlfirst_run_normalization_matches_legacy(lfq_multi_techrep_dataset):
+    """SQL-first run normalization (median) must match the legacy pandas
+    ``FeatureNormalizationMethod.Median`` row-for-row when each sample has
+    multiple technical replicates.
+
+    Together with the global guard ``technical_repetitions > 1`` this
+    exercises the full ``_build_run_norm_ctes`` SQL block: TechReplicate
+    derivation from the trailing ``_<int>`` segment, per-(sample, tech_rep)
+    median, per-sample mean of those medians, and the per-row
+    ``intensity * sample_avg / run_metric`` scaling.
+    """
+    from mokume.model.normalization import PeptideNormalizationMethod
+
+    parquet, sdrf = lfq_multi_techrep_dataset
+    cfg = PipelineConfig(
+        input=InputConfig(parquet=parquet, sdrf=sdrf),
+        filtering=FilterConfig(
+            remove_contaminants=True, min_aa=7, min_unique_peptides=2
+        ),
+        normalization=NormalizationConfig(run_method="median", sample_method="none"),
+    )
+
+    sample_norm = "none"
+    sample_norm_method = PeptideNormalizationMethod.from_str(sample_norm)
+    filter_builder = SQLFilterBuilder(
+        remove_contaminants=True, min_peptide_length=7, require_unique=True
+    )
+
+    feature_sql = Feature(parquet, filter_builder=filter_builder)
+    feature_sql.enrich_with_sdrf(sdrf)
+    technical_repetitions, label, _samples, choice = analyse_sdrf(sdrf)
+    assert technical_repetitions > 1, (
+        "fixture must produce technical_repetitions > 1 to exercise the "
+        f"run normalization branch (got {technical_repetitions})"
+    )
+
+    feature_legacy = Feature(parquet, filter_builder=filter_builder)
+    feature_legacy.enrich_with_sdrf(sdrf)
+
+    loader = LoadingStage(cfg)
+    sql_df = loader._load_for_mokume_sqlfirst(
+        feature_sql,
+        sample_norm,
+        sample_norm_method,
+        med_map={},
+        run_norm="median",
+        technical_repetitions=technical_repetitions,
+    )
+    legacy_df = loader._load_for_mokume_legacy_pandas(
+        feature_legacy,
+        label,
+        choice,
+        technical_repetitions,
+        sample_norm,
+        sample_norm_method,
+        med_map={},
+    )
+
+    s = _normalize_for_compare(sql_df)
+    lg = _normalize_for_compare(legacy_df)
+    assert len(s) == len(lg), (len(s), len(lg))
+
+    key_cols = [PROTEIN_NAME, PEPTIDE_CANONICAL, SAMPLE_ID, "BioReplicate", "Condition"]
+    for col in key_cols:
+        assert (s[col].values == lg[col].values).all(), col
+
+    diff = (s[NORM_INTENSITY].astype(float) - lg[NORM_INTENSITY].astype(float)).abs()
+    rel = diff / lg[NORM_INTENSITY].astype(float).abs().clip(lower=1e-9)
+    assert (rel.max() <= 1e-5) or (diff.max() <= 1e-3), (
+        f"max abs={diff.max():.3g}, max rel={rel.max():.3g}"
+    )
+
+
+def test_dispatcher_routes_lfq_with_run_norm_to_sqlfirst(
+    lfq_multi_techrep_dataset, caplog
+):
+    """LFQ + run_method in {median, mean, max, global, iqr} should now stay on
+    the SQL-first path — the dispatcher must no longer punt to legacy when
+    technical_repetitions > 1."""
+    import logging
+
+    parquet, sdrf = lfq_multi_techrep_dataset
+    cfg = PipelineConfig(
+        input=InputConfig(parquet=parquet, sdrf=sdrf),
+        filtering=FilterConfig(
+            remove_contaminants=True, min_aa=7, min_unique_peptides=2
+        ),
+        normalization=NormalizationConfig(run_method="median", sample_method="none"),
+    )
+    with caplog.at_level(logging.INFO, logger="mokume.pipeline"):
+        LoadingStage(cfg).load_for_mokume()
+    paths = [r.getMessage() for r in caplog.records if "Loading with" in r.getMessage()]
+    assert any("SQL-first path" in m for m in paths), (
+        f"expected SQL-first dispatch with run_method=median, got log records: {paths}"
+    )
