@@ -13,7 +13,6 @@ from mokume.quantification.ibaq import (
     peptides_to_protein,
     normalize_ibaq,
     extract_fasta,
-    PeptideProteinMapper,
     ConcentrationWeightByProteomicRuler,
 )
 from mokume.quantification.top3 import Top3Quantification
@@ -35,7 +34,6 @@ __all__ = [
     "peptides_to_protein",
     "normalize_ibaq",
     "extract_fasta",
-    "PeptideProteinMapper",
     "ConcentrationWeightByProteomicRuler",
     # Quantification methods
     "Top3Quantification",

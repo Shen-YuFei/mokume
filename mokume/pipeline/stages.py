@@ -1133,56 +1133,58 @@ class QuantificationStage:
         return wide_df.reset_index()
 
     def _quantify_ibaq(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
-        """Quantify using iBAQ method."""
-        from mokume.quantification.ibaq import extract_fasta
+        """Quantify using piBAQ (paralog-aware iBAQ).
+
+        Delegates to :func:`mokume.quantification.ibaq.compute_pibaq`
+        so that the pipeline stage and the standalone ``peptides2protein``
+        CLI produce byte-identical iBAQ values for the same inputs. The
+        long-format result is pivoted to wide-format (rows = protein,
+        columns = sample) to keep the existing pipeline downstream API.
+        """
+        from mokume.io.fasta import digest_fasta_full
+        from mokume.quantification.ibaq import compute_pibaq
+        from mokume.quantification.families import discover_families
 
         if not self.config.input.fasta_file:
             raise ValueError(
                 "iBAQ quantification requires a FASTA file. Use --fasta to provide one."
             )
 
-        proteins = peptide_df[PROTEIN_NAME].unique().tolist()
+        logger.info(
+            "Computing piBAQ for %d proteins using FASTA...",
+            peptide_df[PROTEIN_NAME].nunique(),
+        )
 
-        logger.info(f"Computing iBAQ for {len(proteins)} proteins using FASTA...")
-
-        unique_peptide_counts, mw_dict, found_proteins = extract_fasta(
+        accession_to_peptides, peptide_to_accessions, _ = digest_fasta_full(
             fasta=self.config.input.fasta_file,
             enzyme="Trypsin",
-            proteins=proteins,
             min_aa=self.config.filtering.min_aa,
             max_aa=50,
-            tpa=False,
+            canonicalize_isoforms=True,
+            compute_mw=False,
+        )
+        families = discover_families(
+            accession_to_peptides, peptide_to_accessions, min_shared=2
         )
 
-        logger.info(f"Found {len(found_proteins)} proteins in FASTA")
-
-        peptide_df = peptide_df[peptide_df[PROTEIN_NAME].isin(found_proteins)]
-
-        protein_intensities = (
-            peptide_df.groupby([PROTEIN_NAME, SAMPLE_ID], observed=False)[
-                NORM_INTENSITY
-            ]
-            .sum()
-            .reset_index()
+        long_df = compute_pibaq(
+            peptide_df,
+            accession_to_peptides,
+            peptide_to_accessions,
+            families,
+            mw_map=None,
         )
 
-        num_peptides = (
-            protein_intensities[PROTEIN_NAME].map(unique_peptide_counts).fillna(1)
-        )
-        protein_intensities["iBAQ"] = np.where(
-            num_peptides > 0,
-            protein_intensities[NORM_INTENSITY] / num_peptides,
-            0,
-        )
+        if long_df.empty:
+            logger.info("iBAQ complete: 0 proteins")
+            return pd.DataFrame(columns=[PROTEIN_NAME])
 
-        result_wide = protein_intensities.pivot(
+        result_wide = long_df.pivot(
             index=PROTEIN_NAME,
             columns=SAMPLE_ID,
-            values="iBAQ",
+            values="Ibaq",
         )
-
-        logger.info(f"iBAQ complete: {len(result_wide)} proteins")
-
+        logger.info("iBAQ complete: %d proteins", len(result_wide))
         return result_wide.reset_index()
 
     def _quantify_median(self, peptide_df: pd.DataFrame) -> pd.DataFrame:

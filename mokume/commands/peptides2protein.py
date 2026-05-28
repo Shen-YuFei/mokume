@@ -132,6 +132,27 @@ def get_available_methods():
     default=1,
     type=int,
 )
+@click.option(
+    "--families",
+    "families_yaml",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "Optional YAML file declaring explicit protein family overrides "
+        "for piBAQ (paralog-aware iBAQ; schema: families: [{name, members}])."
+    ),
+)
+@click.option(
+    "--min-shared",
+    "min_shared",
+    type=int,
+    default=2,
+    show_default=True,
+    help=(
+        "Minimum number of distinct peptides two proteins must share to be "
+        "automatically grouped into the same iBAQ family."
+    ),
+)
 @click.pass_context
 def peptides2protein(
     click_context,
@@ -153,6 +174,8 @@ def peptides2protein(
     topn_n: int,
     threads: int,
     min_nonan: int,
+    families_yaml: str,
+    min_shared: int,
 ) -> None:
     """
     Compute protein quantification values from peptide intensity data.
@@ -210,6 +233,8 @@ def peptides2protein(
             output=output,
             verbose=verbose,
             qc_report=qc_report,
+            families_yaml=families_yaml,
+            min_shared=min_shared,
         )
     else:
         # Use the generic quantification methods

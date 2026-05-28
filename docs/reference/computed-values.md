@@ -6,11 +6,14 @@ Reference for all output columns produced by mokume's quantification methods.
 
 | Column | Method | Description |
 |--------|--------|-------------|
-| `Ibaq` | iBAQ | Total intensity / theoretical peptide count |
+| `Ibaq` | iBAQ | Per-protein iBAQ (proportional branch) **or** family-level iBAQ (fallback). Interpretation depends on `EvidenceLevel`. |
 | `IbaqNorm` | iBAQ | `ibaq / sum(ibaq)` per sample |
 | `IbaqLog` | iBAQ | `10 + log10(IbaqNorm)` |
 | `IbaqPpb` | iBAQ | `IbaqNorm * 100,000,000` (parts per billion) |
 | `IbaqBec` | iBAQ + ComBat | Batch effect corrected iBAQ |
+| `FamilyId` | iBAQ | Canonical accession identifying the protein family used by the piBAQ algorithm |
+| `FamilySize` | iBAQ | Number of canonical members in the family (1 = singleton, isolated protein) |
+| `EvidenceLevel` | iBAQ | `high` (≥3 unique anchors), `medium` (1-2 anchors), or `family_only` (zero anchors -> aggregated) |
 | `TopNIntensity` | TopN | Average of top N peptides (e.g., Top3Intensity, Top5Intensity) |
 | `MaxLFQIntensity` | MaxLFQ | MaxLFQ algorithm result |
 | `DirectLFQIntensity` | DirectLFQ | DirectLFQ intensity traces |

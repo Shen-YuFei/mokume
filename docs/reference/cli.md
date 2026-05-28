@@ -241,6 +241,8 @@ mokume peptides2protein [OPTIONS]
 | `--topn_n` | 3 | N for TopN quantification |
 | `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
 | `--min_nonan` | 1 | Min non-NaN for DirectLFQ |
+| `--families` | none | YAML file with explicit family overrides (iBAQ only; see [user guide](../user-guide/peptides2protein.md#family-discovery-tuning)) |
+| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (iBAQ only) |
 | `-o/--output` | none | Output file path |
 | `--verbose` | off | Print distribution info |
 | `--qc_report` | QCprofile.pdf | QC report PDF path |

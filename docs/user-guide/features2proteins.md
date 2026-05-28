@@ -62,7 +62,7 @@ In practice:
 
 - Use `maxlfq` as the default starting point for standard LFQ workflows.
 - Use `directlfq` when you explicitly want the DirectLFQ package to handle normalization and quantification together.
-- Use `ibaq` when you need absolute-style quantification and have a FASTA file.
+- Use `ibaq` when you need absolute-style quantification and have a FASTA file. The pipeline path delegates to the same piBAQ (paralog-aware iBAQ) algorithm as the `peptides2protein` CLI -- see [Quantification Methods → iBAQ](../concepts/quantification.md#ibaq-pibaq-paralog-aware) for the family discovery and fallback semantics; the wide-format pipeline output retains per-protein `Ibaq` values but does not surface the `FamilyId` / `EvidenceLevel` metadata columns.
 - Use `ratio` for TMT PS-style reference-based analysis.
 
 ```bash

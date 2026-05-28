@@ -76,6 +76,96 @@ def _strip_nonstandard_aa(sequence: str) -> str:
     return sequence
 
 
+def canonicalize_isoform(accession: str) -> str:
+    """Strip UniProt isoform suffix to obtain the canonical accession.
+
+    UniProt convention encodes alternative splice isoforms as
+    ``<primary_accession>-<isoform_number>`` (e.g. ``P05067-2``). The
+    canonical entry shares its sequence with ``<primary_accession>-1`` and
+    is also exported simply as ``<primary_accession>``. Non-canonical
+    isoforms often share most of their peptides with the canonical entry,
+    which makes them indistinguishable in shotgun proteomics. Collapsing
+    isoforms to the canonical accession is the conventional UniProt
+    accession behaviour and matches the gpGrouper protein grouping
+    contract (Saltzman et al. 2018 MCP 17:2270).
+
+    Plain accessions without a numeric suffix and accessions whose suffix
+    is not purely numeric (e.g. ``P02768ups``) are returned unchanged.
+
+    Parameters
+    ----------
+    accession : str
+        Protein accession in any UniProt-compatible form.
+
+    Returns
+    -------
+    str
+        Canonical accession (suffix stripped) or ``accession`` if no
+        UniProt-style isoform suffix is present.
+    """
+    if "-" not in accession:
+        return accession
+    base, suffix = accession.rsplit("-", 1)
+    if not base or not suffix.isdigit():
+        return accession
+    return base
+
+
+def canonicalize_isoforms_map(
+    accession_to_peptides: Dict[str, Set[str]],
+) -> Tuple[Dict[str, Set[str]], Dict[str, str]]:
+    """Collapse a per-accession peptide map onto canonical accessions.
+
+    For every accession the peptide set is unioned onto the canonical
+    accession produced by :func:`canonicalize_isoform`. The second return
+    value records the alias mapping so callers can rewrite downstream
+    tables (e.g. peptide-protein rows) without re-running digestion.
+
+    Parameters
+    ----------
+    accession_to_peptides : dict[str, set[str]]
+        Mapping from accession to its digested peptide set.
+
+    Returns
+    -------
+    tuple
+        ``(canonical_to_peptides, original_to_canonical)``.
+    """
+    canonical_to_peptides: Dict[str, Set[str]] = {}
+    original_to_canonical: Dict[str, str] = {}
+    for accession, peps in accession_to_peptides.items():
+        canonical = canonicalize_isoform(accession)
+        original_to_canonical[accession] = canonical
+        if canonical in canonical_to_peptides:
+            canonical_to_peptides[canonical] = canonical_to_peptides[canonical] | peps
+        else:
+            canonical_to_peptides[canonical] = set(peps)
+    return canonical_to_peptides, original_to_canonical
+
+
+def invert_peptide_index(
+    accession_to_peptides: Dict[str, Set[str]],
+) -> Dict[str, Set[str]]:
+    """Build the peptide → accessions inverted index.
+
+    Parameters
+    ----------
+    accession_to_peptides : dict[str, set[str]]
+        Per-accession peptide set, typically from :func:`digest_fasta_full`.
+
+    Returns
+    -------
+    dict[str, set[str]]
+        For every peptide, the set of accessions that contain it after
+        digestion.
+    """
+    peptide_to_accessions: "defaultdict[str, Set[str]]" = defaultdict(set)
+    for accession, peps in accession_to_peptides.items():
+        for pep in peps:
+            peptide_to_accessions[pep].add(accession)
+    return dict(peptide_to_accessions)
+
+
 def extract_fasta(
     fasta: str,
     enzyme: str,
@@ -216,6 +306,100 @@ def _digest_full_fasta(
                     accession_to_mw[accession] = aa_sequence.getMonoWeight()
                 except (ValueError, RuntimeError) as exc:
                     logger.warning("Skipping MW for %s: %s", accession, exc)
+    return accession_to_peptides, peptide_to_accessions, accession_to_mw
+
+
+def digest_fasta_full(
+    fasta: str,
+    enzyme: str,
+    min_aa: int,
+    max_aa: int,
+    *,
+    canonicalize_isoforms: bool = True,
+    compute_mw: bool = False,
+) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]], Dict[str, float]]:
+    """Digest every protein in a FASTA and return the full peptide indices.
+
+    Unlike :func:`extract_fasta` (which only emits per-protein unique-peptide
+    counts), this function exposes the underlying ``accession_to_peptides`` and
+    ``peptide_to_accessions`` maps so that callers can perform downstream
+    analyses such as family discovery (shared-peptide connected components),
+    proportional shared-peptide allocation, or sequence-aware protein
+    inference. It is the entry point for the piBAQ family discovery layer.
+
+    Parameters
+    ----------
+    fasta : str
+        Path to the FASTA file containing protein sequences.
+    enzyme : str
+        Name of the enzyme used for protein digestion (e.g. ``Trypsin``).
+    min_aa : int
+        Minimum number of amino acids for peptides to be retained.
+    max_aa : int
+        Maximum number of amino acids for peptides to be retained.
+    canonicalize_isoforms : bool, optional
+        When ``True`` (default), UniProt isoform suffixes (``-2``, ``-3``,
+        ...) are stripped and peptide sets are unioned onto the canonical
+        accession via :func:`canonicalize_isoforms_map`. Set to ``False``
+        to preserve every original FASTA accession verbatim.
+    compute_mw : bool, optional
+        When ``True``, the third return value is populated with per-accession
+        monoisotopic molecular weights. Defaults to ``False`` to save the
+        digest cost when MW is not needed.
+
+    Returns
+    -------
+    tuple
+        ``(accession_to_peptides, peptide_to_accessions, accession_to_mw)``
+        where every accession is canonical when ``canonicalize_isoforms`` is
+        ``True``. ``accession_to_mw`` is empty when ``compute_mw`` is
+        ``False``.
+    """
+    fasta_proteins = load_fasta(fasta)
+    digestor = ProteaseDigestion()
+    digestor.setEnzyme(enzyme)
+
+    accession_to_peptides: Dict[str, Set[str]] = {}
+    accession_to_mw: Dict[str, float] = {}
+    for entry in fasta_proteins:
+        accession = get_accession(entry.identifier)
+        try:
+            aa_sequence = AASequence.fromString(_strip_nonstandard_aa(entry.sequence))
+            peps = _digest_one(aa_sequence, digestor, min_aa, max_aa)
+        except (ValueError, RuntimeError) as exc:
+            logger.warning("Skipping %s: %s", accession, exc)
+            continue
+        if accession in accession_to_peptides:
+            accession_to_peptides[accession] = accession_to_peptides[accession] | peps
+        else:
+            accession_to_peptides[accession] = peps
+        if compute_mw and accession not in accession_to_mw:
+            try:
+                accession_to_mw[accession] = aa_sequence.getMonoWeight()
+            except (ValueError, RuntimeError) as exc:
+                logger.warning("Skipping MW for %s: %s", accession, exc)
+
+    if canonicalize_isoforms:
+        accession_to_peptides, alias_map = canonicalize_isoforms_map(
+            accession_to_peptides
+        )
+        if compute_mw and accession_to_mw:
+            canonical_mw: Dict[str, float] = {}
+            for original, mw in accession_to_mw.items():
+                canonical = alias_map.get(original, original)
+                # Keep the first MW observed per canonical (canonical entry's
+                # own MW takes priority when present, since iteration order
+                # preserves the FASTA order).
+                canonical_mw.setdefault(canonical, mw)
+            accession_to_mw = canonical_mw
+
+    peptide_to_accessions = invert_peptide_index(accession_to_peptides)
+    logger.info(
+        "Digested %d %saccessions into %d distinct peptides",
+        len(accession_to_peptides),
+        "canonical " if canonicalize_isoforms else "",
+        len(peptide_to_accessions),
+    )
     return accession_to_peptides, peptide_to_accessions, accession_to_mw
 
 

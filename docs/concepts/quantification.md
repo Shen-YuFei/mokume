@@ -37,11 +37,31 @@ graph TD
     I -->|No| K[Median or<br/>Sum + IRS]
 ```
 
-## iBAQ
+## iBAQ (piBAQ: Paralog-Aware)
 
-**Intensity-Based Absolute Quantification** divides summed peptide intensities by the number of theoretically observable peptides, enabling comparison of absolute protein amounts across proteins within a sample.
+**Intensity-Based Absolute Quantification** divides summed peptide intensities by the number of theoretically observable peptides per protein, enabling comparison of absolute protein amounts across proteins within a sample.
 
 $$\text{iBAQ} = \frac{\sum \text{peptide intensities}}{\text{theoretical peptide count}}$$
+
+mokume's default iBAQ implementation is **anchor-gated and family-aware**: peptides are assigned to canonical entries only **unless** an alternative isoform has its own uniquely mappable peptide. The proportional shared-peptide allocation is gpGrouper-style ([Saltzman et al. 2018 *MCP* 17:2270](https://www.mcponline.org/content/17/11/2270)), and the underlying iBAQ definition follows the original [Schwanhäusser et al. 2011 *Nature* 473:337](https://doi.org/10.1038/nature10098) (`sum peptide intensities / theoretical peptide count`). Concretely:
+
+- **Per-protein proportional allocation** (the main path) when every member of a protein family has at least one detected proteotypic peptide. Shared-peptide intensities are split across members weighted by their unique-anchor counts (gpGrouper-style).
+- **Family-level rollup fallback** when one or more members have zero detected proteotypic peptides (e.g. the actin family, where Actc1 / Actb / Actg1 share >99% identity). The whole family receives a single iBAQ from the union of family peptide intensities divided by the family-restricted proteotypic peptide count.
+
+Family discovery proceeds in two layers:
+
+1. **UniProt isoform collapse** — accessions of the form `P05067-2`, `P70255-3` are folded onto their canonical entry (`P05067`, `P70255`). This matches the UniProt convention and absorbs the bulk of "non-canonical isoform with no unique peptide" cases.
+2. **Shared-peptide connected components** — proteins are grouped into a family when they share at least `min_shared` (default 2) digested peptides. Singleton families are equivalent to the per-protein baseline.
+
+Power users can override either layer via `--families families.yaml`:
+
+```yaml
+families:
+  - name: ACT
+    members: [P60709, P63261, P68133]   # canonical accessions
+  - name: HIST_H2A
+    members: [P0C0S5, Q96QV6, P04908]
+```
 
 iBAQ requires a **FASTA file** to compute theoretical peptide counts via in-silico digestion.
 
@@ -57,6 +77,16 @@ peptides_to_protein(
 )
 ```
 
+The piBAQ output adds three metadata columns to the per-protein long-format table so users can audit which path each protein took:
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `FamilyId` | string | Canonical accession of the family representative (largest digested-peptide set) |
+| `FamilySize` | int | Number of canonical members in the family (1 = singleton, isolated protein) |
+| `EvidenceLevel` | enum | `high` (≥3 unique anchors) / `medium` (1-2 anchors) / `family_only` (zero anchors → fallback aggregation triggered) |
+
+When `EvidenceLevel == "family_only"`, every member of the family carries the same iBAQ value — member-level resolution was not identifiable from the data.
+
 Additional iBAQ-derived values:
 
 | Value | Formula | Use Case |
@@ -65,6 +95,8 @@ Additional iBAQ-derived values:
 | IbaqLog | 10 + log10(IbaqNorm) | Visualization |
 | TPA | NormIntensity / MW | Total Protein Approach |
 | CopyNumber | From ProteomicRuler | Absolute copy numbers |
+
+For TPA mode the molecular weight follows the same family-aware rule: per-protein MW for the proportional branch, sum of family MWs for the rollup fallback (so the family-level TPA matches the family-level iBAQ semantics).
 
 ## TopN
 

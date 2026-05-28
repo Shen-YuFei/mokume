@@ -95,43 +95,48 @@ def _run_peptides_to_protein(
     return pd.read_csv(output_path, sep="\t")
 
 
-def test_unique_column_filters_shared_peptides_from_numerator(toy_fasta, tmp_path):
-    """When the peptide table carries `unique`, the iBAQ and TPA numerators
-    must aggregate only proteotypic rows. Shared `GDFEEM...K` (500) must
-    not contribute to either ACTB_TEST or ACTG_TEST."""
+def test_pibaq_path_re_allocates_shared_peptides_via_fasta_mapping(toy_fasta, tmp_path):
+    """piBAQ bypasses the upstream ``unique`` filter and re-allocates
+    shared peptide intensity from the FASTA digest.
+
+    The toy FASTA has ACTB and ACTG sharing exactly one peptide
+    (``GDFEEM...K``) and one unique tail each; at ``min_shared=2`` they
+    fall into separate singleton families. Razor-mirror rows for the
+    shared peptide collapse to a single observation (``max`` dedup) and
+    razor-assign to the family with the highest unique-anchor count;
+    when anchors tie the lex-first family_id wins, so ``P00001`` claims
+    the 500 of shared signal regardless of the upstream razor flag.
+    """
     csv_path = tmp_path / "peptides.csv"
     _build_peptide_table(with_unique_col=True).to_csv(csv_path, index=False)
     res = _run_peptides_to_protein(toy_fasta, csv_path, tmp_path / "out.tsv")
 
     by_protein = res.set_index("ProteinName")["NormIntensity"].to_dict()
-    assert by_protein["sp|P00001|ACTB_TEST"] == pytest.approx(1000.0)
-    assert by_protein["sp|P00002|ACTG_TEST"] == pytest.approx(2000.0)
-    assert by_protein["sp|P00003|INDEP_TEST"] == pytest.approx(900.0)
+    assert by_protein["P00001"] == pytest.approx(1500.0)  # 1000 unique + 500 shared
+    assert by_protein["P00002"] == pytest.approx(2000.0)  # 2000 unique only
+    assert by_protein["P00003"] == pytest.approx(900.0)
 
     # TPA = NormIntensity / MolecularWeight; the per-protein MW is fixed
-    # by the FASTA, so the TPA ratio must inherit the proteotypic-only
-    # numerator. We assert relative ordering rather than absolute values
-    # because the toy MW is deterministic but not worth hard-coding.
+    # by the FASTA, so the TPA ratio inherits the proteotypic numerator.
     tpa_by_protein = res.set_index("ProteinName")["TPA"].to_dict()
-    assert tpa_by_protein["sp|P00002|ACTG_TEST"] > tpa_by_protein["sp|P00001|ACTB_TEST"]
     assert all(v > 0 for v in tpa_by_protein.values())
 
 
-def test_missing_unique_column_is_backward_compatible(toy_fasta, tmp_path):
-    """When the peptide table omits `unique` (the pipeline path: stages.py
-    strips the column after filtering), behaviour is unchanged and every
-    surviving row sums into the numerator. The caller is responsible for
-    filtering upstream."""
+def test_pibaq_path_handles_input_without_unique_column(toy_fasta, tmp_path):
+    """With or without the ``unique`` column the piBAQ path produces the
+    same numerator -- it derives proteotypic / shared status from the
+    FASTA digest, not the upstream razor flag."""
     csv_path = tmp_path / "peptides_no_unique.csv"
     _build_peptide_table(with_unique_col=False).to_csv(csv_path, index=False)
     res = _run_peptides_to_protein(toy_fasta, csv_path, tmp_path / "out.tsv")
 
     by_protein = res.set_index("ProteinName")["NormIntensity"].to_dict()
-    # No filter applied → shared peptide intensity (500) folds into both
-    # ACTB_TEST and ACTG_TEST exactly like the historical behaviour.
-    assert by_protein["sp|P00001|ACTB_TEST"] == pytest.approx(1500.0)
-    assert by_protein["sp|P00002|ACTG_TEST"] == pytest.approx(2500.0)
-    assert by_protein["sp|P00003|INDEP_TEST"] == pytest.approx(900.0)
+    # Identical to the with-unique-col case: ``max`` deduplication of the
+    # razor mirror rows for ``GDFEEM...K`` reduces the shared peptide to a
+    # single 500 observation, razor-assigned to the lex-first family.
+    assert by_protein["P00001"] == pytest.approx(1500.0)
+    assert by_protein["P00002"] == pytest.approx(2000.0)
+    assert by_protein["P00003"] == pytest.approx(900.0)
 
 
 def test_unique_column_accepts_boolean_via_parquet(toy_fasta, tmp_path):
@@ -145,6 +150,8 @@ def test_unique_column_accepts_boolean_via_parquet(toy_fasta, tmp_path):
 
     res = _run_peptides_to_protein(toy_fasta, parquet_path, tmp_path / "out.tsv")
     by_protein = res.set_index("ProteinName")["NormIntensity"].to_dict()
-    assert by_protein["sp|P00001|ACTB_TEST"] == pytest.approx(1000.0)
-    assert by_protein["sp|P00002|ACTG_TEST"] == pytest.approx(2000.0)
-    assert by_protein["sp|P00003|INDEP_TEST"] == pytest.approx(900.0)
+    # Identical to the CSV path: piBAQ re-allocates the shared peptide
+    # from the FASTA digest regardless of how the unique flag was encoded.
+    assert by_protein["P00001"] == pytest.approx(1500.0)
+    assert by_protein["P00002"] == pytest.approx(2000.0)
+    assert by_protein["P00003"] == pytest.approx(900.0)

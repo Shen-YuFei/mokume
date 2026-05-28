@@ -89,7 +89,58 @@ peptides_to_protein(
     max_aa=30,
     verbose=True,
     qc_report="QC.pdf",
+    # piBAQ algorithm tuning (all optional, sensible defaults):
+    families_yaml=None,    # path to YAML with explicit family overrides
+    min_shared=2,          # min shared peptides for auto-family discovery
 )
+```
+
+### compute_pibaq (low-level core API)
+
+For callers that already have a peptide DataFrame and pre-computed FASTA indices, the piBAQ algorithm is exposed as a pure function. This is the entry point used internally by both `peptides_to_protein` and the pipeline stage.
+
+```python
+from mokume.io.fasta import digest_fasta_full
+from mokume.quantification.families import discover_families
+from mokume.quantification.ibaq import compute_pibaq
+
+acc_to_peps, pep_to_accs, mw_map = digest_fasta_full(
+    "proteome.fasta",
+    enzyme="Trypsin",
+    min_aa=7,
+    max_aa=30,
+    canonicalize_isoforms=True,
+    compute_mw=True,
+)
+families = discover_families(acc_to_peps, pep_to_accs, min_shared=2)
+result = compute_pibaq(
+    peptide_df,                # long-format with PROTEIN_NAME, peptide, SAMPLE_ID, NORM_INTENSITY
+    acc_to_peps,
+    pep_to_accs,
+    families,
+    mw_map=mw_map,             # supply for TPA, omit otherwise
+    min_anchors=1,             # gpGrouper-style default
+    high_anchor_threshold=3,   # EvidenceLevel = "high" requires this many
+)
+```
+
+The result has columns `ProteinName`, `SampleID`, `Condition` (when present), `NormIntensity`, `Ibaq`, `FamilyId`, `FamilySize`, `EvidenceLevel`, plus `MolecularWeight` and `TPA` when `mw_map` is supplied.
+
+### Family discovery helpers
+
+```python
+from mokume.quantification.families import (
+    discover_families,
+    load_families_yaml,
+    merge_overrides,
+)
+
+# Auto-discovery via shared-peptide connected components
+auto = discover_families(acc_to_peps, pep_to_accs, min_shared=2)
+
+# Optional YAML override -- pin specific families for audit reproducibility
+overrides = load_families_yaml(Path("families.yaml"))
+families = merge_overrides(auto, overrides)
 ```
 
 ---

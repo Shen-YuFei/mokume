@@ -17,7 +17,7 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
     ---
 
-    iBAQ, TopN, MaxLFQ, DirectLFQ, Sum, Ratio — choose the right method for your experiment.
+    iBAQ (piBAQ: paralog-aware iBAQ with family fallback), TopN, MaxLFQ, DirectLFQ, Sum, Ratio — choose the right method for your experiment.
 
     [:octicons-arrow-right-24: Quantification methods](concepts/quantification.md)
 

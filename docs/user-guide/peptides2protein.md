@@ -53,7 +53,7 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
 
 ### iBAQ
 
-Intensity-Based Absolute Quantification. Divides summed peptide intensities by the number of theoretically observable peptides. **Requires a FASTA file**.
+Intensity-Based Absolute Quantification with the **piBAQ (paralog-aware iBAQ)** algorithm: per-protein proportional allocation when each family member has at least one detected proteotypic peptide, with automatic fallback to family-level rollup when one or more members have zero anchors (e.g. the actin family). See [Quantification Methods](../concepts/quantification.md#ibaq-pibaq-paralog-aware) for the underlying algorithm. **Requires a FASTA file**.
 
 ```bash
 mokume peptides2protein --method ibaq \
@@ -62,6 +62,32 @@ mokume peptides2protein --method ibaq \
     -e Trypsin \
     --normalize \
     --output proteins-ibaq.tsv
+```
+
+The output adds three metadata columns -- `FamilyId`, `FamilySize`, `EvidenceLevel` -- so users can audit which path each protein took. When `EvidenceLevel == "family_only"`, every member of the family carries the same iBAQ value (member-level resolution was not identifiable from the data); when it is `medium` or `high` the iBAQ is per-protein.
+
+#### Family Discovery Tuning
+
+Families are discovered automatically by collapsing UniProt isoform suffixes (`-2`, `-3`, ...) onto the canonical entry and then grouping proteins on the shared-peptide graph. Two CLI flags tune the auto-discovery; both are optional and rarely need adjustment.
+
+```bash
+# Lower the shared-peptide threshold for very tightly homologous families
+mokume peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+    --min-shared 1 -o out.tsv
+
+# Pin specific families with an audit-friendly YAML override
+mokume peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+    --families families.yaml -o out.tsv
+```
+
+The YAML schema is:
+
+```yaml
+families:
+  - name: ACT
+    members: [P60709, P63261, P68133]   # canonical accessions only
+  - name: HIST_H2A
+    members: [P0C0S5, Q96QV6, P04908]
 ```
 
 #### Full iBAQ with TPA and ProteomicRuler
@@ -216,6 +242,8 @@ print(list_quantification_methods())
 | `--topn_n` | 3 | N for TopN quantification |
 | `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
 | `--min_nonan` | 1 | Min non-NaN values (DirectLFQ) |
+| `--families` | none | Optional YAML file with explicit family overrides (iBAQ only) |
+| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (iBAQ only) |
 | `-o/--output` | none | Output file path |
 | `--verbose` | off | Print distribution info |
 | `--qc_report` | QCprofile.pdf | Path for QC report PDF |

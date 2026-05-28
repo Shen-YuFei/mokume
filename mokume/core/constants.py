@@ -34,6 +34,18 @@ IBAQ_BEC = "IbaqBec"
 IBAQ_PPB = "IbaqPpb"
 TPA = "TPA"
 MOLECULARWEIGHT = "MolecularWeight"
+# piBAQ family metadata. FamilyId holds the representative
+# canonical accession (the family member with the most digested
+# peptides); EvidenceLevel takes one of 'high' (>=3 unique anchors),
+# 'medium' (1-2 unique anchors), or
+# 'family_only' (zero anchors -> fallback aggregation triggered);
+# FamilySize is the count of canonical members in the family.
+FAMILY_ID = "FamilyId"
+EVIDENCE_LEVEL = "EvidenceLevel"
+FAMILY_SIZE = "FamilySize"
+EVIDENCE_HIGH = "high"
+EVIDENCE_MEDIUM = "medium"
+EVIDENCE_FAMILY_ONLY = "family_only"
 COPYNUMBER = "CopyNumber"
 CONCENTRATION_NM = "Concentration[nM]"
 WEIGHT_NG = "Weight[ng]"
