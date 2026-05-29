@@ -153,6 +153,29 @@ def get_available_methods():
         "automatically grouped into the same iBAQ family."
     ),
 )
+@click.option(
+    "--min-anchors",
+    "min_anchors",
+    type=int,
+    default=1,
+    show_default=True,
+    help=(
+        "Minimum proteotypic ('anchor') peptides a family member needs for the "
+        "family to stay on the per-protein branch. The family rolls up to a "
+        "single iBAQ only when NO member reaches this threshold (iBAQ only)."
+    ),
+)
+@click.option(
+    "--high-anchor-threshold",
+    "high_anchor_threshold",
+    type=int,
+    default=3,
+    show_default=True,
+    help=(
+        "Minimum anchor count (weakest member) for a family to be labelled "
+        "EvidenceLevel='high' (iBAQ only)."
+    ),
+)
 @click.pass_context
 def peptides2protein(
     click_context,
@@ -176,6 +199,8 @@ def peptides2protein(
     min_nonan: int,
     families_yaml: str,
     min_shared: int,
+    min_anchors: int,
+    high_anchor_threshold: int,
 ) -> None:
     """
     Compute protein quantification values from peptide intensity data.
@@ -235,6 +260,8 @@ def peptides2protein(
             qc_report=qc_report,
             families_yaml=families_yaml,
             min_shared=min_shared,
+            min_anchors=min_anchors,
+            high_anchor_threshold=high_anchor_threshold,
         )
     else:
         # Use the generic quantification methods

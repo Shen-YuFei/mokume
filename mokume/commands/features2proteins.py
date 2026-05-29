@@ -141,6 +141,57 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     type=click.Choice(["none", "hierarchical"], case_sensitive=False),
     default=None,
 )
+# piBAQ-specific options (paralog-aware iBAQ)
+@click.option(
+    "--ibaq-enzyme",
+    "ibaq_enzyme",
+    help="Protease used to digest the FASTA for the piBAQ denominator (iBAQ only)",
+    default="Trypsin",
+    show_default=True,
+)
+@click.option(
+    "--ibaq-max-aa",
+    "ibaq_max_aa",
+    help="Maximum peptide length from the FASTA digest for piBAQ (iBAQ only)",
+    type=int,
+    default=50,
+    show_default=True,
+)
+@click.option(
+    "--ibaq-min-shared",
+    "ibaq_min_shared",
+    help="Minimum distinct peptides two proteins must share to co-cluster "
+    "into one piBAQ family (iBAQ only)",
+    type=int,
+    default=2,
+    show_default=True,
+)
+@click.option(
+    "--ibaq-families",
+    "ibaq_families_yaml",
+    help="YAML file with explicit piBAQ family overrides (iBAQ only)",
+    type=click.Path(exists=True),
+    default=None,
+)
+@click.option(
+    "--ibaq-min-anchors",
+    "ibaq_min_anchors",
+    help="Minimum proteotypic anchors a family member needs to stay on the "
+    "per-protein branch; the family rolls up only when no member reaches it "
+    "(iBAQ only)",
+    type=int,
+    default=1,
+    show_default=True,
+)
+@click.option(
+    "--ibaq-high-anchor-threshold",
+    "ibaq_high_anchor_threshold",
+    help="Minimum anchor count (weakest member) for a family to be labelled "
+    "EvidenceLevel='high' (iBAQ only)",
+    type=int,
+    default=3,
+    show_default=True,
+)
 # DirectLFQ-specific options
 @click.option(
     "--directlfq-cores",
@@ -524,6 +575,12 @@ def features2proteins(
     normalization_proteins: str,
     fasta_file: str,
     ion_alignment: str,
+    ibaq_enzyme: str,
+    ibaq_max_aa: int,
+    ibaq_min_shared: int,
+    ibaq_families_yaml: str,
+    ibaq_min_anchors: int,
+    ibaq_high_anchor_threshold: int,
     directlfq_cores: int,
     directlfq_min_nonan: int,
     export_peptides: str,
@@ -753,6 +810,12 @@ def features2proteins(
         normalization_proteins_file=normalization_proteins,
         fasta_file=fasta_file,
         ion_alignment=ion_alignment,
+        ibaq_enzyme=ibaq_enzyme,
+        ibaq_max_aa=ibaq_max_aa,
+        ibaq_min_shared=ibaq_min_shared,
+        ibaq_families_yaml=ibaq_families_yaml,
+        ibaq_min_anchors=ibaq_min_anchors,
+        ibaq_high_anchor_threshold=ibaq_high_anchor_threshold,
         directlfq_num_cores=directlfq_cores,
         directlfq_min_nonan=directlfq_min_nonan,
         export_peptides=export_peptides,

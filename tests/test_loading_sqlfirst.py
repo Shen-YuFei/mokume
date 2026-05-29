@@ -31,6 +31,7 @@ from mokume.pipeline.config import (
     InputConfig,
     NormalizationConfig,
     PipelineConfig,
+    QuantificationConfig,
 )
 from mokume.pipeline.stages import LoadingStage
 from mokume.io.feature import Feature, SQLFilterBuilder
@@ -297,6 +298,34 @@ def test_sqlfirst_peptidoform_sums_charges_per_sample(lfq_dataset):
     assert np.allclose(p_ar[NORM_INTENSITY].astype(float).values, 403.0, atol=1e-3), (
         p_ar[NORM_INTENSITY].tolist()
     )
+
+
+def test_sqlfirst_ibaq_keeps_shared_rows_and_skips_min_unique(lfq_dataset):
+    parquet, sdrf = lfq_dataset
+    cfg = PipelineConfig(
+        input=InputConfig(parquet=parquet, sdrf=sdrf),
+        filtering=FilterConfig(
+            remove_contaminants=True, min_aa=7, min_unique_peptides=2
+        ),
+        normalization=NormalizationConfig(run_method="none", sample_method="none"),
+        quantification=QuantificationConfig(method="ibaq"),
+    )
+    df = LoadingStage(cfg).load_for_mokume()
+
+    proteins = set(df[PROTEIN_NAME].astype(str))
+    assert "P67890" in proteins
+
+    peptides = set(df[PEPTIDE_CANONICAL].astype(str))
+    assert "ONLYONEPEP" in peptides
+
+    p_ar = df[
+        (df[PROTEIN_NAME].astype(str) == "P12345")
+        & (df[PEPTIDE_CANONICAL].astype(str) == "PEPTIDEAR")
+    ]
+    assert len(p_ar) == 4, p_ar
+    assert np.allclose(
+        p_ar[NORM_INTENSITY].astype(float).values, 12345.0 + 302.0, atol=1e-3
+    ), p_ar[NORM_INTENSITY].tolist()
 
 
 def test_sqlfirst_per_sample_normalization_matches_legacy(lfq_dataset):

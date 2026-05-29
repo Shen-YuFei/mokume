@@ -1,18 +1,10 @@
-"""Tests for the proteotypic-only numerator contract of `peptides_to_protein`.
+"""Tests for the shared-aware piBAQ numerator contract.
 
-The mokume pipeline (``features2proteins``) already strips ``unique != 1``
-rows upstream and drops the ``unique`` column before reaching iBAQ. But the
-``peptides2protein`` CLI accepts arbitrary peptide tables (including raw
-QPX feature parquets), and the previous implementation summed
-``NormIntensity`` over every row reaching it — double-counting shared
-homologue signal in both the iBAQ and TPA numerators (Hemna's concern
-about iBAQpy's TPA path).
-
-These tests pin down a defensive filter inside ``peptides_to_protein``:
-when the input carries a ``unique`` column, only proteotypic rows
-(``unique`` in ``{1, "1", True}``) flow into the per-protein aggregation.
-When the input does not carry the column (the pipeline path), behaviour is
-unchanged.
+``peptides_to_protein`` accepts arbitrary peptide tables, including tables
+that still carry a ``unique`` flag from QPX. piBAQ must not trust that flag as
+an upstream filter: it derives peptide sharing from the FASTA digest, collapses
+razor-mirror shared rows once, and re-allocates shared intensity through the
+same family-aware path used by ``features2proteins --quant-method ibaq``.
 """
 
 from __future__ import annotations
@@ -117,7 +109,7 @@ def test_pibaq_path_re_allocates_shared_peptides_via_fasta_mapping(toy_fasta, tm
     assert by_protein["P00003"] == pytest.approx(900.0)
 
     # TPA = NormIntensity / MolecularWeight; the per-protein MW is fixed
-    # by the FASTA, so the TPA ratio inherits the proteotypic numerator.
+    # by the FASTA, so the TPA ratio inherits the shared-aware numerator.
     tpa_by_protein = res.set_index("ProteinName")["TPA"].to_dict()
     assert all(v > 0 for v in tpa_by_protein.values())
 

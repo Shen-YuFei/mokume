@@ -10,19 +10,32 @@ anchor-gated, family-rollup-fallback algorithm; :func:`compute_pibaq`).
 For each protein family discovered via the FASTA-driven peptide-sharing
 graph, two branches are possible:
 
-- **Per-protein proportional allocation** when every family member has at
-  least one detected proteotypic peptide. Shared-peptide intensities are
-  distributed across members by their unique-anchor counts, then divided
-  by each member's proteotypic peptide count (gpGrouper-style ratio
-  distribution; see Saltzman et al. 2018 *Mol Cell Proteomics*).
-- **Family-level rollup** when one or more members have zero detected
-  proteotypic peptides (e.g. the actin family). The whole family receives
-  a single iBAQ obtained from the union of family peptide intensities
-  divided by the family-restricted proteotypic peptide count. The
-  fallback ensures every detected protein family contributes to the
-  output table even when the data cannot resolve members individually,
-  rather than silently dropping rows as the upstream ibaqpy baseline
-  does.
+- **Per-protein proportional allocation** when *at least one* family
+  member has a detected proteotypic peptide. For each sample/condition
+  group independently, every shared peptide's intensity is distributed
+  across the members it maps to **in proportion to those members'
+  per-group proteotypic (unique-peptide) intensity** -- so a member
+  absent from a given sample receives ~none of that sample's shared
+  signal (gpGrouper-style area-weighted distribution; see Saltzman et
+  al. 2018 *Mol Cell Proteomics*). Each member's (proteotypic +
+  allocated-shared) intensity is then divided by the number of
+  theoretically observable peptides the family owns for that member
+  under the cross-family razor (proteotypic AND shared), keeping iBAQ
+  comparable across proteins and symmetric between numerator and
+  denominator.
+- **Family-level rollup** only when *no* member has a detected
+  proteotypic peptide (e.g. the fully-overlapping actin family). The
+  whole family receives a single iBAQ obtained from the union of family
+  peptide intensities divided by the family's owned theoretical peptide
+  count, replicated across members. The fallback ensures every detected
+  protein family contributes to the output table even when the data
+  cannot resolve members individually, rather than silently dropping
+  rows as the upstream ibaqpy baseline does.
+
+Note that the fallback gate is deliberately permissive: a family where
+some members have unique anchors and others do not stays on the
+proportional branch (the anchorless members fall to ~0 via the per-group
+weighting) rather than collapsing every member onto one shared value.
 
 """
 
@@ -58,12 +71,10 @@ from mokume.core.constants import (
     SAMPLE_ID,
     TPA,
     WEIGHT_NG,
-    get_accession,
     is_parquet,
 )
 from mokume.core.logger import get_logger, log_execution_time, log_function_call
 from mokume.io.fasta import (
-    canonicalize_isoform,
     digest_fasta_full,
 )
 from mokume.io.fasta import extract_fasta as _extract_fasta_io
@@ -85,28 +96,6 @@ AVERAGE_BASE_PAIR_MASS: float = 617.96
 logger = get_logger("mokume.quantification.ibaq")
 
 
-@log_function_call(logger, level=logging.DEBUG)
-def normalize(group):
-    """
-    Normalize the ibaq values using the total ibaq of the sample.
-
-    This method is called rIBAQ, originally published in
-    https://pubs.acs.org/doi/10.1021/pr401017h
-
-    Parameters
-    ----------
-    group : pd.DataFrame
-        Dataframe with all the ibaq values.
-
-    Returns
-    -------
-    pd.DataFrame
-        Dataframe with the normalized ibaq values.
-    """
-    group[IBAQ_NORMALIZED] = group[IBAQ] / group[IBAQ].sum()
-    return group
-
-
 @log_function_call(logger)
 def normalize_ibaq(res: DataFrame) -> DataFrame:
     """
@@ -126,7 +115,14 @@ def normalize_ibaq(res: DataFrame) -> DataFrame:
     pd.DataFrame
         DataFrame with normalized iBAQ values.
     """
-    res = res.groupby([SAMPLE_ID, CONDITION]).apply(normalize)
+    # rIBAQ: divide each protein's iBAQ by its (sample, condition) total.
+    # ``groupby(...).transform`` is the vectorised, future-proof equivalent of
+    # the per-group ``apply(normalize)`` it replaces (no DeprecationWarning,
+    # no implicit grouping-column handling).
+    group_totals = res.groupby([SAMPLE_ID, CONDITION], observed=True)[IBAQ].transform(
+        "sum"
+    )
+    res[IBAQ_NORMALIZED] = res[IBAQ] / group_totals
     # Normalization method used by Proteomics DB 10 + log10(ibaq/sum(ibaq))
     res[IBAQ_LOG] = np.where(
         res[IBAQ_NORMALIZED] > 0, np.log10(res[IBAQ_NORMALIZED]) + 10, 0
@@ -166,9 +162,23 @@ def extract_fasta(
     Kept as a thin wrapper so existing callers can keep importing
     ``extract_fasta`` from :mod:`mokume.quantification.ibaq`. All the
     digestion, uniqueness, and MW logic — including the cross-protein unique
-    peptide counting that this PR introduces — lives in a single
-    implementation in :mod:`mokume.io.fasta` to avoid drift between the two
-    public entry points. See that function's docstring for the full contract.
+    peptide counting — lives in a single implementation in
+    :mod:`mokume.io.fasta` to avoid drift between the two public entry points.
+    See that function's docstring for the full contract.
+
+    .. note::
+        This is the **legacy ibaqpy-style** denominator helper. It returns a
+        *proteotypic-only* (cross-protein unique) theoretical peptide count,
+        which is symmetric with a *proteotypic-only numerator* (shared
+        peptides discarded). It is **not** used by the default piBAQ path
+        (:func:`compute_pibaq` / :func:`peptides_to_protein` /
+        ``features2proteins --quant-method ibaq``), which instead pairs a
+        *shared-aware numerator* (proportional shared-peptide reallocation)
+        with a *total-potential* denominator (proteotypic + shared) via
+        :func:`mokume.io.fasta.digest_fasta_full`. Do not mix the two
+        conventions: the proteotypic-only and total-potential denominators
+        are each only correct alongside their matching numerator. Retained
+        for direct API consumers; prefer ``compute_pibaq`` for new code.
     """
     return _extract_fasta_io(fasta, enzyme, proteins, min_aa, max_aa, tpa)
 
@@ -267,21 +277,6 @@ def _detect_peptide_column(data: pd.DataFrame) -> str:
     )
 
 
-def _canonical_accession(raw: str) -> str:
-    """Map an input protein name (any format) to a canonical UniProt accession.
-
-    Handles ``sp|P12345|NAME``, ``tr|Q67890|NAME``, plain ``P12345-2``, and
-    semicolon-joined razor strings (the first accession wins for the latter,
-    matching DIA-NN's anchor convention; downstream the peptide-to-protein
-    map from the FASTA digest is authoritative).
-    """
-    if not raw:
-        return raw
-    first = raw.split(";", 1)[0]
-    accession = get_accession(first)
-    return canonicalize_isoform(accession)
-
-
 def _count_unique_anchors(
     peptide_df: DataFrame,
     pep_to_accs: Mapping[str, Set[str]],
@@ -303,37 +298,6 @@ def _count_unique_anchors(
     return dict(counts)
 
 
-def _proteotypic_count(
-    member: str,
-    acc_to_peps: Mapping[str, Set[str]],
-    pep_to_accs: Mapping[str, Set[str]],
-) -> int:
-    """Count FASTA-proteotypic peptides of ``member`` (cross the entire FASTA)."""
-    peptides = acc_to_peps.get(member, set())
-    return sum(1 for pep in peptides if pep_to_accs.get(pep, set()) == {member})
-
-
-def _family_proteotypic_count(
-    family: Family,
-    acc_to_peps: Mapping[str, Set[str]],
-    pep_to_accs: Mapping[str, Set[str]],
-) -> int:
-    """Count peptides whose FASTA mapping is contained within the family.
-
-    Family-proteotypic peptides are the natural denominator for the
-    family-rollup fallback iBAQ: they are the peptides whose intensity
-    can be attributed to *some* family member without ambiguity outside
-    the family.
-    """
-    member_set = set(family.members)
-    family_peptides: Set[str] = set()
-    for member in family.members:
-        family_peptides |= acc_to_peps.get(member, set())
-    return sum(
-        1 for pep in family_peptides if pep_to_accs.get(pep, set()).issubset(member_set)
-    )
-
-
 def _classify_evidence(min_anchor: int, min_required: int, high_threshold: int) -> str:
     """Bucket a family's minimum anchor count into a human-readable label."""
     if min_anchor < min_required:
@@ -343,107 +307,140 @@ def _classify_evidence(min_anchor: int, min_required: int, high_threshold: int) 
     return EVIDENCE_MEDIUM
 
 
-def _build_allocation_table(
-    family: Family,
-    peptide_to_accs: Mapping[str, Set[str]],
-    anchor_counts: Mapping[str, int],
-    peptides_in_family: Sequence[str],
-    pep_col: str,
-) -> DataFrame:
-    """For every observed peptide in the family, emit one row per member it
-    maps to, carrying the proportional allocation fraction.
-
-    Allocation weights are anchor counts plus :data:`_WEIGHT_FLOOR` so the
-    formula degenerates to an equal split when all members would otherwise
-    have zero weight.
-    """
-    member_set = set(family.members)
-    weights = {
-        m: max(anchor_counts.get(m, 0), 0) + _WEIGHT_FLOOR for m in family.members
-    }
-    records: List[Dict[str, object]] = []
-    for peptide in peptides_in_family:
-        accs = peptide_to_accs.get(peptide, set()) & member_set
-        if not accs:
-            continue
-        total_weight = sum(weights[a] for a in accs)
-        for acc in accs:
-            records.append(
-                {
-                    pep_col: peptide,
-                    PROTEIN_NAME: acc,
-                    "_alloc_frac": weights[acc] / total_weight,
-                }
-            )
-    return pd.DataFrame.from_records(records)
-
-
 def _proportional_branch(
     family: Family,
     family_df: DataFrame,
     pep_to_accs: Mapping[str, Set[str]],
     acc_to_peps: Mapping[str, Set[str]],
-    anchor_counts: Mapping[str, int],
+    owned_peptides: Set[str],
     pep_col: str,
     group_cols: Sequence[str],
 ) -> DataFrame:
-    """Per-protein iBAQ via proportional shared-peptide allocation.
+    """Per-protein iBAQ via per-sample, unique-intensity-weighted allocation.
 
-    The output is one row per ``(member, *group_cols)`` combination. Members
-    with zero proteotypic peptides in the FASTA receive ``NaN`` iBAQ rather
-    than dividing by zero -- the fallback branch should cover that case but
-    we belt-and-brace here.
+    The output is one row per ``(member, *group_cols)`` combination. Within
+    each group the shared-peptide intensity is split across the members it
+    maps to **in proportion to those members' per-group proteotypic
+    intensity**, so a member that is absent from a given sample receives ~0
+    of that sample's shared signal (only the :data:`_WEIGHT_FLOOR`
+    tie-breaker), instead of a globally fixed ratio leaking phantom signal
+    into samples where the member was never detected.
+
+    Each member's summed (proteotypic + allocated-shared) intensity is then
+    divided by the number of theoretically observable peptides the family
+    *owns* for that member under the cross-family razor (``owned_peptides``
+    intersected with the member's digest). Restricting the denominator to
+    owned peptides keeps it symmetric with the numerator, which only ever
+    sums family-owned peptides, and closes the cross-family seam where a
+    peptide razor-assigned to another family would otherwise inflate this
+    member's denominator without contributing to its numerator.
     """
+    group_keys = list(group_cols)
+    member_set = set(family.members)
+
     # De-duplicate by (peptide, *group_cols) BEFORE allocation: an upstream
     # razor table may list the same shared peptide once per assigned protein
     # (e.g. DIA-NN's razor rows mirroring intensity onto every member of a
-    # group with identical intensity). Without this collapse the same
-    # peptide intensity would enter the allocation N times. We take MAX
-    # rather than SUM because razor mirror rows describe the SAME detected
-    # signal repeated; ``mokume.features2peptides`` already aggregates
-    # across charges/PSMs upstream so the within-(peptide, sample) values
-    # we receive here represent at most one signal per protein.
-    deduped_per_peptide = (
-        family_df.groupby([pep_col, *group_cols], dropna=False)[NORM_INTENSITY]
+    # group with identical intensity). We take MAX rather than SUM because
+    # razor mirror rows describe the SAME detected signal repeated.
+    deduped = (
+        family_df.groupby([pep_col, *group_keys], dropna=False, observed=True)[
+            NORM_INTENSITY
+        ]
         .max()
         .reset_index()
     )
-    peptides_seen = deduped_per_peptide[pep_col].dropna().unique()
-    alloc = _build_allocation_table(
-        family, pep_to_accs, anchor_counts, peptides_seen, pep_col
-    )
-    if alloc.empty:
+    if deduped.empty:
         return pd.DataFrame()
-    # The allocation table's PROTEIN_NAME column carries the per-member
-    # split target; merging on the peptide column lets every dedup'd row
-    # fan out to all its members weighted by ``_alloc_frac``.
-    merged = deduped_per_peptide.merge(alloc, on=pep_col, how="inner")
-    merged["_allocated"] = merged[NORM_INTENSITY] * merged["_alloc_frac"]
+
+    # Within-family accession set per observed peptide: size 1 -> proteotypic
+    # anchor for that member; size >1 -> shared among those members.
+    fam_accs = {
+        pep: (pep_to_accs.get(pep, set()) & member_set)
+        for pep in deduped[pep_col].unique()
+    }
+    deduped = deduped[deduped[pep_col].map(lambda p: len(fam_accs[p]) > 0)]
+    if deduped.empty:
+        return pd.DataFrame()
+
+    n_members = deduped[pep_col].map(lambda p: len(fam_accs[p]))
+    anchor_rows = deduped[n_members == 1].copy()
+    shared_rows = deduped[n_members > 1].copy()
+
+    # Per-(member, group) proteotypic intensity -- the within-family anchor
+    # signal that both drives the shared split and forms the numerator base.
+    if not anchor_rows.empty:
+        anchor_rows[PROTEIN_NAME] = anchor_rows[pep_col].map(
+            lambda p: next(iter(fam_accs[p]))
+        )
+        anchor_int = (
+            anchor_rows.groupby(
+                [PROTEIN_NAME, *group_keys], dropna=False, observed=True
+            )[NORM_INTENSITY]
+            .sum()
+            .reset_index()
+        )
+    else:
+        anchor_int = pd.DataFrame(columns=[PROTEIN_NAME, *group_keys, NORM_INTENSITY])
+
+    # Allocate each shared peptide WITHIN EACH GROUP by the members' per-group
+    # anchor intensity (absent members weigh ~0 via _WEIGHT_FLOOR).
+    if not shared_rows.empty:
+        shared_rows = shared_rows[[pep_col, *group_keys, NORM_INTENSITY]].copy()
+        shared_rows["_members"] = shared_rows[pep_col].map(
+            lambda p: sorted(fam_accs[p])
+        )
+        exploded = shared_rows.explode("_members", ignore_index=True).rename(
+            columns={"_members": PROTEIN_NAME}
+        )
+        exploded = exploded.merge(
+            anchor_int.rename(columns={NORM_INTENSITY: "_anchor_int"}),
+            on=[PROTEIN_NAME, *group_keys],
+            how="left",
+        )
+        exploded["_w"] = exploded["_anchor_int"].fillna(0.0) + _WEIGHT_FLOOR
+        exploded["_wsum"] = exploded.groupby(
+            [pep_col, *group_keys], dropna=False, observed=True
+        )["_w"].transform("sum")
+        exploded["_alloc"] = (
+            exploded[NORM_INTENSITY] * exploded["_w"] / exploded["_wsum"]
+        )
+        shared_contrib = (
+            exploded.groupby([PROTEIN_NAME, *group_keys], dropna=False, observed=True)[
+                "_alloc"
+            ]
+            .sum()
+            .reset_index()
+            .rename(columns={"_alloc": NORM_INTENSITY})
+        )
+    else:
+        shared_contrib = pd.DataFrame(
+            columns=[PROTEIN_NAME, *group_keys, NORM_INTENSITY]
+        )
+
+    combined = pd.concat([anchor_int, shared_contrib], ignore_index=True)
+    if combined.empty:
+        return pd.DataFrame()
     grouped = (
-        merged.groupby([PROTEIN_NAME, *group_cols], dropna=False)["_allocated"]
+        combined.groupby([PROTEIN_NAME, *group_keys], dropna=False, observed=True)[
+            NORM_INTENSITY
+        ]
         .sum()
         .reset_index()
-        .rename(columns={"_allocated": NORM_INTENSITY})
     )
+
     denominators = {
-        m: _proteotypic_count(m, acc_to_peps, pep_to_accs) for m in family.members
+        m: len(acc_to_peps.get(m, set()) & owned_peptides) for m in family.members
     }
-    grouped[IBAQ] = grouped.apply(
-        lambda row: (
-            row[NORM_INTENSITY] / denominators[row[PROTEIN_NAME]]
-            if denominators.get(row[PROTEIN_NAME], 0) > 0
-            else np.nan
-        ),
-        axis=1,
-    )
+    denom = grouped[PROTEIN_NAME].map(denominators).astype(float)
+    grouped[IBAQ] = grouped[NORM_INTENSITY] / denom.where(denom > 0)
     return grouped
 
 
 def _family_rollup_branch(
     family: Family,
     family_df: DataFrame,
-    pep_to_accs: Mapping[str, Set[str]],
-    acc_to_peps: Mapping[str, Set[str]],
+    owned_peptides: Set[str],
     pep_col: str,
     group_cols: Sequence[str],
 ) -> DataFrame:
@@ -452,20 +449,25 @@ def _family_rollup_branch(
     Each peptide-sample observation contributes once (we de-duplicate by
     ``(peptide, *group_cols)`` before summing), preventing the double
     counting that would arise if a shared peptide appeared under several
-    protein rows in the upstream razor table.
+    protein rows in the upstream razor table. The denominator is the number
+    of theoretical peptides the family owns under the cross-family razor
+    (``len(owned_peptides)``), symmetric with the family-summed numerator.
     """
-    family_proteotypic = _family_proteotypic_count(family, acc_to_peps, pep_to_accs)
-    denominator = family_proteotypic if family_proteotypic > 0 else 1
+    denominator = len(owned_peptides) if owned_peptides else 1
     # MAX deduplicates razor mirror rows; see ``_proportional_branch`` for
     # the rationale. After per-peptide collapse we sum across all family
     # peptides to obtain the per-sample family intensity total.
     deduped_per_peptide = (
-        family_df.groupby([pep_col, *group_cols], dropna=False)[NORM_INTENSITY]
+        family_df.groupby([pep_col, *group_cols], dropna=False, observed=True)[
+            NORM_INTENSITY
+        ]
         .max()
         .reset_index()
     )
     family_total = (
-        deduped_per_peptide.groupby(list(group_cols), dropna=False)[NORM_INTENSITY]
+        deduped_per_peptide.groupby(list(group_cols), dropna=False, observed=True)[
+            NORM_INTENSITY
+        ]
         .sum()
         .reset_index()
     )
@@ -662,12 +664,10 @@ def compute_pibaq(
     pep_col = _detect_peptide_column(peptide_df)
     group_cols = _resolve_group_cols(peptide_df, extra_group_cols)
 
-    # Normalise the protein-name column to canonical accessions; without
-    # this the per-row razor strings would prevent us from matching against
-    # the FASTA digest.
-    working = peptide_df.copy()
-    working[PROTEIN_NAME] = working[PROTEIN_NAME].astype(str).map(_canonical_accession)
-    working = working[working[pep_col].isin(peptide_to_accessions)]
+    # Keep only peptides present in the FASTA digest; matching is driven by
+    # the peptide-sequence column against the digest index, not by the
+    # per-row protein-name strings.
+    working = peptide_df[peptide_df[pep_col].isin(peptide_to_accessions)]
     if working.empty:
         include_tpa = mw_map is not None
         return _empty_pibaq_frame(group_cols, include_tpa)
@@ -701,13 +701,18 @@ def compute_pibaq(
             continue
         anchors_in_family = {m: anchor_counts.get(m, 0) for m in family.members}
         min_anchor = min(anchors_in_family.values())
-        is_fallback = min_anchor < min_anchors
+        max_anchor = max(anchors_in_family.values())
+        # Fall back to a single family-level iBAQ only when NO member has a
+        # proteotypic anchor (e.g. the fully-overlapping actin family). When
+        # some members are resolvable, stay on the proportional branch: the
+        # anchorless members fall to ~0 via the per-group intensity weighting
+        # rather than collapsing every member onto one shared value.
+        is_fallback = max_anchor < min_anchors
         if is_fallback:
             block = _family_rollup_branch(
                 family,
                 family_input,
-                peptide_to_accessions,
-                accession_to_peptides,
+                owned,
                 pep_col,
                 group_cols,
             )
@@ -718,7 +723,7 @@ def compute_pibaq(
                 family_input,
                 peptide_to_accessions,
                 accession_to_peptides,
-                anchors_in_family,
+                owned,
                 pep_col,
                 group_cols,
             )
@@ -787,6 +792,8 @@ def _compute_pibaq_table(
     *,
     families_yaml: Optional[Path],
     min_shared: int,
+    min_anchors: int = 1,
+    high_anchor_threshold: int = 3,
 ) -> DataFrame:
     """piBAQ (paralog-aware iBAQ) driver -- the default code path.
 
@@ -828,6 +835,8 @@ def _compute_pibaq_table(
         peptide_to_accessions,
         families,
         mw_map=mw_map,
+        min_anchors=min_anchors,
+        high_anchor_threshold=high_anchor_threshold,
     )
     return res
 
@@ -851,6 +860,8 @@ def peptides_to_protein(
     *,
     families_yaml: Optional[str] = None,
     min_shared: int = 2,
+    min_anchors: int = 1,
+    high_anchor_threshold: int = 3,
 ) -> None:
     """
     Compute iBAQ values for peptides and generate a QC report.
@@ -892,6 +903,14 @@ def peptides_to_protein(
     min_shared : int, optional
         Minimum number of distinct peptides two proteins must share to be
         placed in the same automatically discovered family. Defaults to 2.
+    min_anchors : int, optional
+        Minimum proteotypic ("anchor") peptides a family member needs for
+        the family to stay on the per-protein proportional branch. The
+        family falls back to a single rolled-up iBAQ only when *no* member
+        reaches this threshold. Defaults to 1.
+    high_anchor_threshold : int, optional
+        Minimum anchor count (of the weakest member) for a family to be
+        labelled ``EvidenceLevel == "high"``. Defaults to 3.
     """
     if organism:
         organism_descr = OrganismDescription.get(organism)
@@ -924,6 +943,8 @@ def peptides_to_protein(
         tpa,
         families_yaml=Path(families_yaml) if families_yaml else None,
         min_shared=min_shared,
+        min_anchors=min_anchors,
+        high_anchor_threshold=high_anchor_threshold,
     )
 
     # normalize ibaq

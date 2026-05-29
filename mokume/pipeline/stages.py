@@ -91,10 +91,11 @@ class LoadingStage:
         agreeing to relative 1e-7, the precision limit of the float32 intensity
         column stored in parquet).
         """
+        keep_shared_peptides = self.config.quantification.method.lower() == "ibaq"
         filter_builder = SQLFilterBuilder(
             remove_contaminants=self.config.filtering.remove_contaminants,
             min_peptide_length=self.config.filtering.min_aa,
-            require_unique=True,
+            require_unique=not keep_shared_peptides,
         )
 
         feature = Feature(
@@ -199,7 +200,11 @@ class LoadingStage:
         """
         where_clause, where_params = feature.filter_builder.build_where_clause()
         min_aa = self.config.filtering.min_aa
-        min_unique = self.config.filtering.min_unique_peptides
+        min_unique = (
+            0
+            if self.config.quantification.method.lower() == "ibaq"
+            else self.config.filtering.min_unique_peptides
+        )
 
         run_norm_active = run_norm in _SQL_RUN_METRIC_EXPR and technical_repetitions > 1
 
@@ -342,7 +347,11 @@ class LoadingStage:
         """
         where_clause, where_params = feature.filter_builder.build_where_clause()
         min_aa = self.config.filtering.min_aa
-        min_unique = self.config.filtering.min_unique_peptides
+        min_unique = (
+            0
+            if self.config.quantification.method.lower() == "ibaq"
+            else self.config.filtering.min_unique_peptides
+        )
         metric_expr = _SQL_RUN_METRIC_EXPR[run_norm]
 
         # NOTE: we project only the columns needed for the run-norm aggregate
@@ -474,7 +483,8 @@ class LoadingStage:
 
             for sample in samples:
                 dataset_df = df[df["sample_accession"] == sample].copy()
-                dataset_df = dataset_df[dataset_df["unique"] == 1]
+                if self.config.quantification.method.lower() != "ibaq":
+                    dataset_df = dataset_df[dataset_df["unique"] == 1]
                 dataset_df = dataset_df[PARQUET_COLUMNS]
 
                 dataset_df = reformat_quantms_feature_table_quant_labels(
@@ -485,12 +495,13 @@ class LoadingStage:
                 )
 
                 # Filter by min unique peptides
-                dataset_df = dataset_df.groupby(PROTEIN_NAME).filter(
-                    lambda x: (
-                        len(set(x[PEPTIDE_CANONICAL]))
-                        >= self.config.filtering.min_unique_peptides
+                if self.config.quantification.method.lower() != "ibaq":
+                    dataset_df = dataset_df.groupby(PROTEIN_NAME).filter(
+                        lambda x: (
+                            len(set(x[PEPTIDE_CANONICAL]))
+                            >= self.config.filtering.min_unique_peptides
+                        )
                     )
-                )
 
                 if self.config.filtering.remove_contaminants:
                     dataset_df = remove_contaminants_entrapments_decoys(dataset_df)
@@ -1135,37 +1146,62 @@ class QuantificationStage:
     def _quantify_ibaq(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
         """Quantify using piBAQ (paralog-aware iBAQ).
 
-        Delegates to :func:`mokume.quantification.ibaq.compute_pibaq`
-        so that the pipeline stage and the standalone ``peptides2protein``
-        CLI produce byte-identical iBAQ values for the same inputs. The
-        long-format result is pivoted to wide-format (rows = protein,
-        columns = sample) to keep the existing pipeline downstream API.
+        Delegates to :func:`mokume.quantification.ibaq.compute_pibaq`, the
+        same core used by the standalone ``peptides2protein`` CLI. The two
+        entry points share that core, so they agree on iBAQ values **when
+        configured identically** -- the digestion enzyme, ``min_aa`` /
+        ``max_aa``, family ``min_shared`` and any YAML family overrides must
+        all match. Those knobs are sourced here from
+        :class:`~mokume.pipeline.config.QuantificationConfig`
+        (``ibaq_enzyme`` / ``ibaq_max_aa`` / ``ibaq_min_shared`` /
+        ``ibaq_families_yaml`` / ``ibaq_min_anchors`` /
+        ``ibaq_high_anchor_threshold``) and :attr:`FilterConfig.min_aa`.
+
+        TPA is intentionally **not** emitted on this path: the pipeline
+        contract returns a single wide protein x sample iBAQ matrix, which
+        has no column for a parallel TPA value. Use the ``peptides2protein``
+        CLI with ``--tpa`` when a TPA table is needed. Accordingly
+        ``mw_map`` is left ``None`` here.
         """
         from mokume.io.fasta import digest_fasta_full
         from mokume.quantification.ibaq import compute_pibaq
-        from mokume.quantification.families import discover_families
+        from mokume.quantification.families import (
+            discover_families,
+            load_families_yaml,
+            merge_overrides,
+        )
 
         if not self.config.input.fasta_file:
             raise ValueError(
                 "iBAQ quantification requires a FASTA file. Use --fasta to provide one."
             )
 
+        quant_cfg = self.config.quantification
         logger.info(
-            "Computing piBAQ for %d proteins using FASTA...",
+            "Computing piBAQ for %d proteins using FASTA "
+            "(enzyme=%s, max_aa=%d, min_shared=%d)...",
             peptide_df[PROTEIN_NAME].nunique(),
+            quant_cfg.ibaq_enzyme,
+            quant_cfg.ibaq_max_aa,
+            quant_cfg.ibaq_min_shared,
         )
 
         accession_to_peptides, peptide_to_accessions, _ = digest_fasta_full(
             fasta=self.config.input.fasta_file,
-            enzyme="Trypsin",
+            enzyme=quant_cfg.ibaq_enzyme,
             min_aa=self.config.filtering.min_aa,
-            max_aa=50,
+            max_aa=quant_cfg.ibaq_max_aa,
             canonicalize_isoforms=True,
             compute_mw=False,
         )
         families = discover_families(
-            accession_to_peptides, peptide_to_accessions, min_shared=2
+            accession_to_peptides,
+            peptide_to_accessions,
+            min_shared=quant_cfg.ibaq_min_shared,
         )
+        if quant_cfg.ibaq_families_yaml:
+            overrides = load_families_yaml(Path(quant_cfg.ibaq_families_yaml))
+            families = merge_overrides(families, overrides)
 
         long_df = compute_pibaq(
             peptide_df,
@@ -1173,6 +1209,8 @@ class QuantificationStage:
             peptide_to_accessions,
             families,
             mw_map=None,
+            min_anchors=quant_cfg.ibaq_min_anchors,
+            high_anchor_threshold=quant_cfg.ibaq_high_anchor_threshold,
         )
 
         if long_df.empty:

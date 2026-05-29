@@ -182,8 +182,21 @@ def extract_fasta(
     (proteotypic). Counting all theoretical peptides — including those shared
     with homologous proteins — would systematically deflate iBAQ for large
     homologous families (myosin, tubulin, actin, histone, keratin) by 3-20x
-    because the denominator would be inflated by shared peptides while the
-    numerator only contains proteotypic intensity.
+    *when paired with the legacy proteotypic-only numerator* (shared peptides
+    discarded), because the denominator would then be inflated by shared
+    peptides while the numerator only contains proteotypic intensity.
+
+    .. note::
+        This proteotypic-only count is the **legacy ibaqpy denominator** and
+        is symmetric only with a proteotypic-only numerator. The default
+        mokume iBAQ path is now piBAQ
+        (:func:`mokume.quantification.ibaq.compute_pibaq`), which re-allocates
+        shared-peptide intensity into the numerator and therefore uses a
+        *total-potential* denominator (proteotypic + shared) derived from
+        :func:`digest_fasta_full` instead of this function. The two
+        denominator conventions are mutually exclusive — each is only correct
+        next to its matching numerator. This function is retained for direct
+        API consumers and is not called by the piBAQ pipeline.
 
     Sequences with nonstandard amino acids (X/B/Z/J/U/O) are stripped before
     digestion. Callers asking for proteins that are absent from the FASTA are

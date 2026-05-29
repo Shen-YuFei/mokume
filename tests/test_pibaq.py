@@ -289,12 +289,14 @@ def test_compute_pibaq_proportional_branch_splits_shared_peptide_by_anchor_ratio
 
     result = compute_pibaq(peptide_df, acc_to_peps, pep_to_accs, families)
     by_acc = result.set_index(PROTEIN_NAME)
-    # A gets 3 unique + 3/4 of shared = 300 + 300 = 600; denominator = 3 proteotypic peptides.
+    # A gets 3 unique + 3/4 of shared = 300 + 300 = 600; denominator = 5 total
+    # potential peptides (3 proteotypic ua* + 2 shared sh*).
     assert by_acc.loc["A", NORM_INTENSITY] == pytest.approx(300 + 400 * 0.75)
-    assert by_acc.loc["A", IBAQ] == pytest.approx((300 + 300) / 3)
-    # B gets 1 unique + 1/4 of shared = 100 + 100 = 200; denominator = 1.
+    assert by_acc.loc["A", IBAQ] == pytest.approx((300 + 300) / 5)
+    # B gets 1 unique + 1/4 of shared = 100 + 100 = 200; denominator = 3 total
+    # potential peptides (1 proteotypic ub1 + 2 shared sh*).
     assert by_acc.loc["B", NORM_INTENSITY] == pytest.approx(100 + 400 * 0.25)
-    assert by_acc.loc["B", IBAQ] == pytest.approx((100 + 100) / 1)
+    assert by_acc.loc["B", IBAQ] == pytest.approx((100 + 100) / 3)
     # Both rows share the same family metadata.
     assert set(result[FAMILY_ID]) == {by_acc.loc["A", FAMILY_ID]}
     assert all(result[FAMILY_SIZE] == 2)
@@ -329,6 +331,94 @@ def test_compute_pibaq_fallback_branch_replicates_family_ibaq():
     assert ibaq_values[0] == pytest.approx(200.0)
     assert set(result[EVIDENCE_LEVEL]) == {EVIDENCE_FAMILY_ONLY}
     assert set(result[FAMILY_SIZE]) == {3}
+
+
+def test_compute_pibaq_shared_allocation_is_per_sample_intensity_weighted():
+    """Shared intensity is split *per sample* by each member's unique-peptide
+    intensity in that sample -- not by a single global anchor-count ratio.
+
+    Member ``A`` is observed (with unique peptides) only in ``S1``; in ``S2``
+    only ``B`` is present. The shared peptide ``sh1`` is detected in both
+    samples. A global, count-based split (the previous behaviour) would hand
+    ``A`` 3/4 of ``sh1`` in ``S2`` too -- a phantom intensity for a protein
+    that was never detected there. The per-sample, intensity-weighted split
+    must instead give ``A`` ~0 of ``S2``'s shared signal and route it all to
+    ``B``.
+    """
+    acc_to_peps = {
+        "A": {"sh1", "sh2", "ua1", "ua2", "ua3"},
+        "B": {"sh1", "sh2", "ub1"},
+    }
+    pep_to_accs = invert_peptide_index(acc_to_peps)
+    families = discover_families(acc_to_peps, pep_to_accs)
+    assert families[0].size == 2, "fixture invariant: A and B must co-cluster"
+    peptide_df = _build_peptide_df(
+        [
+            # S1: A fully present (3 unique), B present (1 unique), shared via A.
+            ("A", "ua1", "S1", "C1", 100.0),
+            ("A", "ua2", "S1", "C1", 100.0),
+            ("A", "ua3", "S1", "C1", 100.0),
+            ("B", "ub1", "S1", "C1", 100.0),
+            ("A", "sh1", "S1", "C1", 400.0),
+            # S2: A absent (no unique peptides); only B + the shared peptide.
+            ("B", "ub1", "S2", "C1", 100.0),
+            ("B", "sh1", "S2", "C1", 400.0),
+        ]
+    )
+
+    result = compute_pibaq(peptide_df, acc_to_peps, pep_to_accs, families)
+    by = result.set_index([PROTEIN_NAME, SAMPLE_ID])
+
+    # S1 (both present): A's unique intensity (300) is 3x B's (100), so the
+    # 400 shared splits 300/100 -> A=600, B=200.
+    assert by.loc[("A", "S1"), NORM_INTENSITY] == pytest.approx(600.0)
+    assert by.loc[("B", "S1"), NORM_INTENSITY] == pytest.approx(200.0)
+    assert by.loc[("A", "S1"), IBAQ] == pytest.approx(600.0 / 5)
+
+    # S2 (A absent): A has zero unique signal, so it receives ~0 of the shared
+    # peptide (only the _WEIGHT_FLOOR tie-breaker) and B keeps all of it.
+    assert by.loc[("A", "S2"), NORM_INTENSITY] == pytest.approx(0.0, abs=1e-3)
+    assert by.loc[("A", "S2"), IBAQ] == pytest.approx(0.0, abs=1e-3)
+    assert by.loc[("B", "S2"), NORM_INTENSITY] == pytest.approx(500.0)
+    assert by.loc[("B", "S2"), IBAQ] == pytest.approx(500.0 / 3)
+
+
+def test_compute_pibaq_partial_family_stays_proportional():
+    """A family rolls up to one shared value only when *no* member has a
+    unique anchor. When some members are resolvable, the family stays on the
+    proportional branch and the anchorless member falls to ~0 instead of
+    flattening every member onto a single family-level iBAQ.
+    """
+    acc_to_peps = {
+        "P1": {"u1", "u2", "sh1", "sh2"},  # 2 unique anchors
+        "P2": {"u3", "sh1", "sh2"},  # 1 unique anchor
+        "P3": {"sh1", "sh2"},  # 0 unique anchors
+    }
+    pep_to_accs = invert_peptide_index(acc_to_peps)
+    families = discover_families(acc_to_peps, pep_to_accs)
+    assert families[0].size == 3, "fixture invariant: P1/P2/P3 co-cluster"
+    peptide_df = _build_peptide_df(
+        [
+            ("P1", "u1", "S1", "C1", 100.0),
+            ("P1", "u2", "S1", "C1", 100.0),
+            ("P2", "u3", "S1", "C1", 100.0),
+            ("P1", "sh1", "S1", "C1", 300.0),
+        ]
+    )
+
+    result = compute_pibaq(peptide_df, acc_to_peps, pep_to_accs, families)
+    by = result.set_index(PROTEIN_NAME)
+
+    # Three distinct per-protein iBAQ values -> NOT a single family rollup.
+    assert result[IBAQ].nunique() == 3
+    # P1: (200 unique + 200 shared) / 4 owned peptides = 100.
+    assert by.loc["P1", IBAQ] == pytest.approx(100.0)
+    # P2: (100 unique + 100 shared) / 3 owned peptides = 66.67.
+    assert by.loc["P2", IBAQ] == pytest.approx(200.0 / 3)
+    # P3: no unique signal -> ~0 (only the floor share of the shared peptide).
+    assert by.loc["P3", IBAQ] == pytest.approx(0.0, abs=1e-3)
+    # Evidence still reflects the weakest member (P3 has 0 anchors).
+    assert set(result[EVIDENCE_LEVEL]) == {EVIDENCE_FAMILY_ONLY}
 
 
 def test_compute_pibaq_evidence_high_at_threshold():

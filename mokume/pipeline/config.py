@@ -195,7 +195,34 @@ class NormalizationConfig:
 
 @dataclass
 class QuantificationConfig:
-    """Quantification method parameters."""
+    """Quantification method parameters.
+
+    Attributes
+    ----------
+    ibaq_enzyme : str
+        Protease used to digest the FASTA for the piBAQ theoretical-peptide
+        denominator. Defaults to ``"Trypsin"``.
+    ibaq_max_aa : int
+        Maximum peptide length retained from the FASTA digest for piBAQ.
+        Defaults to ``50`` (the historical pipeline value). The minimum
+        length is taken from :attr:`FilterConfig.min_aa`.
+    ibaq_min_shared : int
+        Minimum number of distinct peptides two proteins must share to be
+        placed in the same automatically discovered piBAQ family. Defaults
+        to ``2`` (matches :func:`mokume.quantification.ibaq.peptides_to_protein`).
+    ibaq_families_yaml : Optional[str]
+        Path to a YAML file declaring explicit piBAQ family overrides
+        (see :func:`mokume.quantification.families.load_families_yaml`).
+        When ``None`` (default) family discovery is purely data-driven.
+    ibaq_min_anchors : int
+        Minimum proteotypic ("anchor") peptides a family member needs for
+        the family to stay on the per-protein proportional branch. The
+        family rolls up to a single iBAQ only when *no* member reaches this
+        threshold. Defaults to ``1``.
+    ibaq_high_anchor_threshold : int
+        Minimum anchor count (of the weakest member) for a family to be
+        labelled ``EvidenceLevel == "high"``. Defaults to ``3``.
+    """
 
     method: str = "maxlfq"
     ion_alignment: Optional[str] = None
@@ -205,6 +232,13 @@ class QuantificationConfig:
     directlfq_num_cores: Optional[int] = None
     directlfq_min_nonan: int = 1
     directlfq_num_samples_quadratic: int = 50
+    # piBAQ-specific (paralog-aware iBAQ family discovery / digestion)
+    ibaq_enzyme: str = "Trypsin"
+    ibaq_max_aa: int = 50
+    ibaq_min_shared: int = 2
+    ibaq_families_yaml: Optional[str] = None
+    ibaq_min_anchors: int = 1
+    ibaq_high_anchor_threshold: int = 3
 
 
 @dataclass

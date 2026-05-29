@@ -299,6 +299,13 @@ def features_to_proteins(
     normalization_proteins_file: Optional[str] = None,
     fasta_file: Optional[str] = None,
     ion_alignment: Optional[str] = None,
+    # piBAQ-specific (paralog-aware iBAQ)
+    ibaq_enzyme: str = "Trypsin",
+    ibaq_max_aa: int = 50,
+    ibaq_min_shared: int = 2,
+    ibaq_families_yaml: Optional[str] = None,
+    ibaq_min_anchors: int = 1,
+    ibaq_high_anchor_threshold: int = 3,
     directlfq_num_cores: Optional[int] = None,
     directlfq_min_nonan: int = 1,
     export_peptides: Optional[str] = None,
@@ -399,6 +406,25 @@ def features_to_proteins(
         FASTA file path. Required for iBAQ quantification.
     ion_alignment : str, optional
         Ion alignment method for MaxLFQ: none, hierarchical.
+    ibaq_enzyme : str
+        Protease used to digest the FASTA for the piBAQ denominator.
+        Default: 'Trypsin'.
+    ibaq_max_aa : int
+        Maximum peptide length retained from the FASTA digest for piBAQ.
+        Default: 50 (min length comes from ``min_aa``).
+    ibaq_min_shared : int
+        Minimum distinct peptides two proteins must share to co-cluster
+        into one piBAQ family. Default: 2.
+    ibaq_families_yaml : str, optional
+        Path to a YAML file with explicit piBAQ family overrides. When
+        ``None`` (default) family discovery is purely data-driven.
+    ibaq_min_anchors : int
+        Minimum proteotypic ("anchor") peptides a family member needs for
+        the family to stay on the per-protein branch; the family rolls up to
+        a single iBAQ only when no member reaches it. Default: 1.
+    ibaq_high_anchor_threshold : int
+        Minimum anchor count (weakest member) for a family to be labelled
+        ``EvidenceLevel == "high"``. Default: 3.
     directlfq_num_cores : int, optional
         Number of cores for DirectLFQ parallel processing.
     directlfq_min_nonan : int
@@ -450,6 +476,12 @@ def features_to_proteins(
             ratio_fraction_merge=ratio_fraction_merge,
             directlfq_num_cores=directlfq_num_cores,
             directlfq_min_nonan=directlfq_min_nonan,
+            ibaq_enzyme=ibaq_enzyme,
+            ibaq_max_aa=ibaq_max_aa,
+            ibaq_min_shared=ibaq_min_shared,
+            ibaq_families_yaml=ibaq_families_yaml,
+            ibaq_min_anchors=ibaq_min_anchors,
+            ibaq_high_anchor_threshold=ibaq_high_anchor_threshold,
         ),
         irs=IRSConfig(
             enabled=irs,
