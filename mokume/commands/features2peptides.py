@@ -43,6 +43,13 @@ from mokume.model.filters import PreprocessingFilterConfig
     type=int,
 )
 @click.option(
+    "--keep-shared-peptides",
+    "keep_shared_peptides",
+    help="Keep shared/non-unique peptide rows and skip the unique-peptide gate",
+    is_flag=True,
+    default=False,
+)
+@click.option(
     "--remove_ids",
     help="Remove specific protein ids from the analysis using a file with one id per line",
     type=click.Path(exists=True),
@@ -194,6 +201,7 @@ def features2parquet(
     sdrf: str,
     min_aa: int,
     min_unique: int,
+    keep_shared_peptides: bool,
     remove_ids: str,
     remove_decoy_contaminants: bool,
     remove_low_frequency_peptides: bool,
@@ -272,6 +280,7 @@ def features2parquet(
         sdrf=sdrf,
         min_aa=min_aa,
         min_unique=min_unique,
+        keep_shared_peptides=keep_shared_peptides,
         remove_ids=remove_ids,
         remove_decoy_contaminants=remove_decoy_contaminants,
         remove_low_frequency_peptides=remove_low_frequency_peptides,

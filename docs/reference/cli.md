@@ -175,6 +175,7 @@ mokume features2peptides [OPTIONS]
 | `-o/--output` | required | Output peptide intensity file |
 | `--min_aa` | 7 | Minimum amino acid length |
 | `--min_unique` | 2 | Minimum unique peptides per protein |
+| `--keep-shared-peptides` | off | Keep shared/non-unique peptides and skip the unique-peptide gate |
 | `--remove_ids` | none | File with protein IDs to exclude |
 | `--remove_decoy_contaminants` | off | Remove decoys and contaminants |
 | `--remove_low_frequency_peptides` | off | Remove peptides in <20% of samples |

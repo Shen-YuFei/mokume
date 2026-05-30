@@ -1,12 +1,14 @@
 import logging
+from pathlib import Path
 
+import pandas as pd
 import pytest
+from mokume.model.labeling import QuantificationCategory
 from mokume.normalization.peptide import (
     peptide_normalization,
     SQLFilterBuilder,
     Feature,
 )
-from pathlib import Path
 
 TESTS_DIR = Path(__file__).parent
 
@@ -256,6 +258,90 @@ class TestFeatureNewQPXFormat:
 
 class TestPeptideNormalizationWideFormat:
     """Tests for peptide_normalization with wide format parquet."""
+
+    def test_keep_shared_peptides_retains_non_unique_rows(self, monkeypatch, tmp_path):
+        feature_rows = pd.DataFrame(
+            [
+                {
+                    "pg_accessions": ["P1"],
+                    "peptidoform": "UNIQUEPEP",
+                    "sequence": "UNIQUEPEP",
+                    "charge": 2,
+                    "channel": "raw",
+                    "condition": "case",
+                    "biological_replicate": 1,
+                    "run": "run1",
+                    "fraction": "1",
+                    "intensity": 100.0,
+                    "run_file_name": "run1",
+                    "sample_accession": "Sample1",
+                    "unique": True,
+                },
+                {
+                    "pg_accessions": ["P1", "P2"],
+                    "peptidoform": "SHAREDPEP",
+                    "sequence": "SHAREDPEP",
+                    "charge": 2,
+                    "channel": "raw",
+                    "condition": "case",
+                    "biological_replicate": 1,
+                    "run": "run1",
+                    "fraction": "1",
+                    "intensity": 80.0,
+                    "run_file_name": "run1",
+                    "sample_accession": "Sample1",
+                    "unique": False,
+                },
+            ]
+        )
+        captured_filter_builders = []
+
+        class FakeFeature:
+            def __init__(self, _parquet, filter_builder=None):
+                captured_filter_builders.append(filter_builder)
+
+            @property
+            def experimental_inference(self):
+                return (1, QuantificationCategory.LFQ, ["Sample1"], None)
+
+            def iter_samples(self):
+                yield ["Sample1"], feature_rows.copy()
+
+        monkeypatch.setattr("mokume.normalization.peptide.Feature", FakeFeature)
+
+        common_args = {
+            "parquet": "unused.parquet",
+            "sdrf": None,
+            "min_aa": 7,
+            "min_unique": 1,
+            "remove_ids": None,
+            "remove_decoy_contaminants": False,
+            "remove_low_frequency_peptides": False,
+            "skip_normalization": True,
+            "nmethod": "none",
+            "pnmethod": "none",
+            "log2": False,
+            "save_parquet": False,
+        }
+
+        unique_only_output = tmp_path / "unique_only.csv"
+        peptide_normalization(
+            **common_args,
+            output=str(unique_only_output),
+            keep_shared_peptides=False,
+        )
+        unique_only_df = pd.read_csv(unique_only_output)
+        assert set(unique_only_df["ProteinName"]) == {"P1"}
+
+        keep_shared_output = tmp_path / "keep_shared.csv"
+        peptide_normalization(
+            **{**common_args, "min_unique": 2},
+            output=str(keep_shared_output),
+            keep_shared_peptides=True,
+        )
+        keep_shared_df = pd.read_csv(keep_shared_output)
+        assert set(keep_shared_df["ProteinName"]) == {"P1", "P1;P2"}
+        assert captured_filter_builders[-1].require_unique is False
 
     def test_normalization_without_sdrf(self):
         """Test peptide normalization without SDRF (uses defaults)."""

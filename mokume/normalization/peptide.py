@@ -93,6 +93,7 @@ def peptide_normalization(
     irs_scope: str = "global",
     aggregation_level: str = AGGREGATION_LEVEL_SAMPLE,
     filter_config: Optional["PreprocessingFilterConfig"] = None,
+    keep_shared_peptides: bool = False,
 ) -> None:
     """
     Perform peptide normalization on a proteomics dataset.
@@ -137,6 +138,10 @@ def peptide_normalization(
         Level at which to aggregate intensities ("sample" or "run").
     filter_config : PreprocessingFilterConfig, optional
         Configuration for preprocessing filters.
+    keep_shared_peptides : bool, optional
+        Keep shared/non-unique peptide rows. When enabled, the unique-peptide
+        row filter and per-protein ``min_unique`` gate are skipped so a later
+        piBAQ step can allocate shared peptide intensity.
     """
 
     if os.path.exists(output):
@@ -160,7 +165,7 @@ def peptide_normalization(
             contaminant_patterns=filter_config.protein.contaminant_patterns,
             min_intensity=filter_config.intensity.min_intensity,
             min_peptide_length=min_aa,
-            require_unique=True,
+            require_unique=not keep_shared_peptides,
         )
     else:
         filter_builder = SQLFilterBuilder(
@@ -168,7 +173,7 @@ def peptide_normalization(
             contaminant_patterns=["CONTAMINANT", "ENTRAP", "DECOY"],
             min_intensity=0.0,
             min_peptide_length=min_aa,
-            require_unique=True,
+            require_unique=not keep_shared_peptides,
         )
 
     feature = Feature(parquet, filter_builder=filter_builder)
@@ -260,7 +265,8 @@ def peptide_normalization(
             logger.info("%s: Data preprocessing...", str(sample).upper())
             dataset_df = df[df["sample_accession"] == sample].copy()
 
-            dataset_df = dataset_df[dataset_df["unique"] == 1]
+            if not keep_shared_peptides:
+                dataset_df = dataset_df[dataset_df["unique"] == 1]
             dataset_df = dataset_df[PARQUET_COLUMNS]
 
             dataset_df = reformat_quantms_feature_table_quant_labels(
@@ -269,9 +275,10 @@ def peptide_normalization(
 
             dataset_df = apply_initial_filtering(dataset_df, min_aa, aggregation_level)
 
-            dataset_df = dataset_df.groupby(PROTEIN_NAME).filter(
-                lambda x: len(set(x[PEPTIDE_CANONICAL])) >= min_unique
-            )
+            if not keep_shared_peptides:
+                dataset_df = dataset_df.groupby(PROTEIN_NAME).filter(
+                    lambda x: len(set(x[PEPTIDE_CANONICAL])) >= min_unique
+                )
 
             if remove_decoy_contaminants:
                 dataset_df = remove_contaminants_entrapments_decoys(dataset_df)
