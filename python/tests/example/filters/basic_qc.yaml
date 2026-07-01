@@ -1,0 +1,23 @@
+# Basic QC Filters
+# A minimal configuration for standard quality control
+# Use case: General proteomics experiments with basic filtering needs
+
+name: basic_qc
+enabled: true
+log_filtered_counts: true
+
+intensity:
+  remove_zero_intensity: true
+
+peptide:
+  min_peptide_length: 7
+  max_peptide_length: 50
+
+protein:
+  min_unique_peptides: 2
+  remove_contaminants: true
+  remove_decoys: true
+  contaminant_patterns:
+    - CONTAMINANT
+    - ENTRAP
+    - DECOY

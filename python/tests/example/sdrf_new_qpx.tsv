@@ -1,0 +1,3 @@
+source name	comment[data file]	comment[label]	characteristics[organism part]	factor value[disease]	characteristics[biological replicate]	comment[fraction identifier]
+Sample_A_126	run_A.raw	126	brain	normal	1	1
+Sample_A_127N	run_A.raw	127N	brain	disease	1	1

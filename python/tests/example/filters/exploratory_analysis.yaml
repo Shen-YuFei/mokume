@@ -1,0 +1,25 @@
+# Exploratory Analysis Filters
+# Minimal filtering for data exploration and method development
+# Use case: Initial data exploration, pilot studies, method optimization
+
+name: exploratory_analysis
+enabled: true
+log_filtered_counts: true
+
+intensity:
+  remove_zero_intensity: true
+
+peptide:
+  fdr_threshold: 0.05               # Relaxed 5% FDR for exploration
+  min_peptide_length: 6             # Allow shorter peptides
+  max_peptide_length: 60            # Allow longer peptides
+
+protein:
+  fdr_threshold: 0.05               # Relaxed FDR
+  min_unique_peptides: 1            # Accept single peptide IDs
+  remove_contaminants: true
+  remove_decoys: true
+  contaminant_patterns:
+    - CONTAMINANT
+    - ENTRAP
+    - DECOY
