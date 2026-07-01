@@ -1,0 +1,74 @@
+{% set name = "mokume" %}
+{% set version = "0.1.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  # For a release build, switch to the GitHub release tarball + sha256.
+  # url: https://github.com/bigbio/mokume/archive/refs/tags/v{{ version }}.tar.gz
+  # sha256: <FILL_IN>
+  path: ../
+
+build:
+  number: 0
+  # The wheel bundles a compiled PyO3 extension plus a statically linked libhdf5
+  # built from C source, so the package is platform-specific and MUST NOT be
+  # noarch (an abi3 extension still only supports the platform it was built on).
+  script:
+    - {{ PYTHON }} -m pip install . -vv --no-build-isolation
+
+requirements:
+  build:
+    # Cross-compilation branch (e.g. osx-arm64): host tools must run on the build host.
+    - python                                 # [build_platform != target_platform]
+    - cross-python_{{ target_platform }}     # [build_platform != target_platform]
+    - maturin >=1.7,<2                       # [build_platform != target_platform]
+    - {{ stdlib('c') }}
+    - {{ compiler('c') }}
+    - {{ compiler('rust') }}
+    # hdf5-metno's `static` feature builds libhdf5 from C source via CMake and
+    # links it statically, so cmake + a make/ninja generator are mandatory.
+    - cmake
+    - make                                   # [unix]
+    - ninja                                  # [win]
+  host:
+    - python
+    - pip
+    - maturin >=1.7,<2
+  run:
+    # The core wheel (the mokume._mokume compute kernel + the mokume CLI) has no
+    # third-party runtime dependency: libhdf5 is linked statically and the Rust
+    # is self-contained. The scientific periphery is installed via pip extras.
+    - python
+
+test:
+  imports:
+    - mokume
+    - mokume._mokume          # the compiled extension is present and importable
+  requires:
+    - pip
+  commands:
+    - pip check
+    - mokume --help           # the console script dispatches through run_cli
+
+about:
+  home: https://github.com/bigbio/mokume
+  license: MIT
+  license_family: MIT
+  license_file: LICENSE
+  summary: Proteomics quantification toolkit — a Rust compute kernel with a Python periphery
+  description: |
+    mokume is a proteomics quantification toolkit (iBAQ, Top3, TopN, MaxLFQ,
+    normalization, imputation, differential expression, batch correction). The
+    compute-heavy kernel is implemented in Rust and exposed to Python through a
+    PyO3/maturin extension (mokume._mokume); the optional Python periphery
+    (plotting, tissue maps, interactive reports) is installable via pip extras.
+  dev_url: https://github.com/bigbio/mokume
+  doc_url: https://github.com/bigbio/mokume
+
+extra:
+  recipe-maintainers:
+    - ypriverol
+    - bigbio

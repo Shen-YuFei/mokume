@@ -1,0 +1,21 @@
+[package]
+name = "mokume-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Streaming QPX, SDRF and FASTA IO for mokume"
+
+[lints]
+workspace = true
+
+[dependencies]
+arrow = "58.3.0"
+csv = "1.4.0"
+mokume-core = { path = "../mokume-core" }
+parquet = "58.3.0"
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

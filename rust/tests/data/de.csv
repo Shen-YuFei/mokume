@@ -1,0 +1,5 @@
+ProteinName,log2FC,adj_pvalue,significance
+P1,2.0,0.001,UP
+P2,-1.8,0.002,DOWN
+P3,0.1,0.5,Unchanged
+P4,0.05,0.9,Unchanged

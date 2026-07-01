@@ -1,0 +1,19 @@
+[package]
+name = "mokume-golden-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Golden pipeline tests for mokume"
+
+[lints]
+workspace = true
+
+[dependencies]
+arrow = "58.3.0"
+csv = "1.4.0"
+mokume-core = { path = "../mokume-core" }
+mokume-pipeline = { path = "../mokume-pipeline" }
+parquet = "58.3.0"
+tempfile = "3"

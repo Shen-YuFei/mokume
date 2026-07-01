@@ -1,0 +1,15 @@
+[package]
+name = "mokume-stats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Statistical post-processing for mokume"
+
+[lints]
+workspace = true
+
+[dependencies]
+mokume-core = { path = "../mokume-core" }
+libm = "0.2.16"

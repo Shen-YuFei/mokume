@@ -15,6 +15,13 @@ pip install mokume-rs
     `mokume-rs` instructions on this page describe the wheel for when it is
     released.
 
+!!! warning "Install `mokume-rs` **or** `mokume` — never both"
+
+    Both distributions install the same `mokume` import package, so having both
+    in one environment makes pip silently overwrite files (it does not detect the
+    collision). Keep only one; to switch, `pip uninstall` the other first. Each
+    package warns at import time if it finds its sibling installed.
+
 `pip install mokume-rs` gives you the Rust compute kernel (the compiled
 `mokume._mokume` extension) and the thin Python API that drives it in-process.
 The kernel needs no third-party Python dependencies, so for standard

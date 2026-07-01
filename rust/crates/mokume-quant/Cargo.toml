@@ -1,0 +1,15 @@
+[package]
+name = "mokume-quant"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Protein quantification algorithms for mokume"
+
+[lints]
+workspace = true
+
+[dependencies]
+mokume-core = { path = "../mokume-core" }
+rayon = "1.12.0"
