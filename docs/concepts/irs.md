@@ -82,23 +82,41 @@ mokume features2proteins \
     --irs --irs-reference-regex "pool|bridge|control"
 ```
 
-### Python
+### Python (wheel)
 
 ```python
-from mokume.normalization.irs import (
-    IRSNormalizer,
-    detect_pooled_from_sdrf,
-    detect_plexes_from_sdrf,
+import mokume
+
+# Auto-detect references and plexes from the SDRF
+mokume.features2proteins(
+    parquet="data.parquet",
+    output="proteins.csv",
+    sdrf="experiment.sdrf.tsv",
+    quant_method="median",
+    irs=True,
+    irs_remove_reference=True,
 )
 
-# Detect references and plexes
-ref_samples = detect_pooled_from_sdrf("experiment.sdrf.tsv")
-sample_to_plex = detect_plexes_from_sdrf("experiment.sdrf.tsv")
-
-# Apply IRS
-normalizer = IRSNormalizer(reference_samples=ref_samples, stat="median")
-protein_df = normalizer.fit_transform(protein_df, sample_to_plex)
+# Explicit reference samples
+mokume.features2proteins(
+    parquet="data.parquet",
+    output="proteins.csv",
+    sdrf="experiment.sdrf.tsv",
+    irs=True,
+    irs_reference_samples="p1_11,p2_11",
+)
 ```
+
+Reference and plex detection happen inside the kernel from the SDRF — the wheel
+never recomputes them.
+
+!!! note "Channel-based IRS"
+    The SDRF-driven multi-plex IRS described here runs in `features2proteins`.
+    The `features2peptides` channel path (`--irs_channel` /
+    `--irs_autodetect_regex`) scales on the TMT `mixture` / `channel` columns and
+    is implemented for all three scopes (`--irs_scope global` / `by_mixture` /
+    `two_stage`); the reference channel is taken from `--irs_channel`, or
+    auto-detected from the SDRF when `--irs_autodetect_regex` is given.
 
 ## Options
 

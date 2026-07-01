@@ -1,6 +1,6 @@
 # Preprocessing Filters
 
-mokume provides a comprehensive filter system for quality control, configurable via YAML/JSON files or CLI options.
+mokume provides a configurable filter system for quality control, driven by YAML/JSON files or CLI options on the `features2peptides` command.
 
 ## Filter Categories
 
@@ -42,6 +42,19 @@ mokume provides a comprehensive filter system for quality control, configurable 
 | MinFeaturesFilter | `min_identified_features` | 0 | Min features per run |
 | MissingRateFilter | `max_missing_rate` | 1.0 | Max missing value rate |
 | SampleCorrelationFilter | `min_sample_correlation` | null | Min replicate correlation |
+
+!!! note "Group-level filters: what runs and what is a no-op"
+    The per-row filters (min-intensity floor, peptide length, charge states,
+    excluded modifications, missed cleavages) and the per-`(protein, sample)`
+    unique-peptide gate are wired and oracle-locked in the Rust kernel. Among the
+    **group-level** filters, CV threshold, quantile outlier removal, and the
+    run-QC checks (min-features, min-total-intensity, min-proteins) are
+    implemented via a pre-pass that applies them before the normalization median.
+    Replicate agreement reproduces Python's degenerate per-sample behaviour (a
+    `>= 2` threshold empties the output). `max-missing-rate`, `sample-correlation`,
+    `min-search-score`, and `min-coverage` are no-ops on QPX inputs — each warns
+    and passes rows through, matching Python's per-sample / column-absent skip.
+    Only an unknown `razor-peptide-handling` value returns `NotImplemented`.
 
 ## Configuration
 
@@ -101,36 +114,30 @@ mokume features2peptides \
     --output peptides.csv
 ```
 
-### Python API
+### Python (wheel)
+
+The filter config is built and applied entirely inside the kernel; the wheel
+wrapper passes the same flags as the CLI:
 
 ```python
-from mokume.preprocessing.filters import (
-    load_filter_config,
-    get_filter_pipeline,
-    generate_example_config,
+import mokume
+
+# Generate an example config
+mokume.features2peptides(generate_filter_config="filters.yaml")
+
+# Run with a config file plus CLI overrides
+mokume.features2peptides(
+    parquet="features.parquet",
+    sdrf="experiment.sdrf.tsv",
+    filter_config="filters.yaml",
+    filter_min_intensity=1000,
+    filter_min_unique_peptides=2,
+    output="peptides.csv",
 )
-from mokume.model.filters import PreprocessingFilterConfig
-
-# Generate example
-generate_example_config("filters.yaml")
-
-# Load from file
-config = load_filter_config("filters.yaml")
-
-# Or create programmatically
-config = PreprocessingFilterConfig(name="custom", enabled=True)
-config.intensity.min_intensity = 1000.0
-config.peptide.allowed_charge_states = [2, 3, 4]
-config.protein.min_unique_peptides = 2
-
-# Apply filters
-pipeline = get_filter_pipeline(config)
-filtered_df, results = pipeline.apply(df)
-
-# Check results
-for result in results:
-    print(f"{result.filter_name}: removed {result.removed_count} ({result.removal_rate:.1%})")
 ```
+
+Charge states and excluded modifications are passed as comma-separated strings
+(`filter_charge_states="2,3,4"`), matching the CLI flags.
 
 ## Pre-configured Templates
 
