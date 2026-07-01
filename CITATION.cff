@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+title: "mokume"
+message: "If you use mokume, please cite the following paper."
+type: software
+license: MIT
+repository-code: https://github.com/bigbio/mokume
+url: https://mokume.quantms.org
+keywords:
+  - proteomics
+  - protein-quantification
+  - ibaq
+  - mass-spectrometry
+preferred-citation:
+  type: article
+  title: "ibaqpy: A comprehensive Python library for proteomics absolute quantification"
+  journal: "Journal of Proteomics"
+  year: 2025
+  volume: "317"
+  start: 105440
+  doi: "10.1016/j.jprot.2025.105440"
+  authors:
+    - family-names: Zheng
+      given-names: Ping
+    - family-names: Dai
+      given-names: Chengxin
+    - family-names: Perez-Riverol
+      given-names: Yasset

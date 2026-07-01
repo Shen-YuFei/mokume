@@ -1,0 +1,145 @@
+# Build cross-platform abi3 Python wheels (+ sdist) for `pip install mokume-rs`.
+#
+# The Rust kernel is exposed to Python through the `mokume._mokume` PyO3
+# extension that maturin builds from `crates/mokume-py`. Because that crate
+# transitively depends on `mokume-cli` -> `hdf5-metno` (features = ["static"]),
+# every wheel statically compiles libhdf5 from C source at build time, so each
+# runner must provide cmake + a C compiler. The `abi3-py39` pyo3 feature yields a
+# single `cp39-abi3` wheel per platform that runs on CPython 3.9+.
+#
+# This workflow is BUILD-ONLY: it uploads wheels + an sdist as artifacts and does
+# not publish to PyPI. To add publishing later, append a tag-gated job using PyPI
+# Trusted Publishing (OIDC) with `permissions: id-token: write`.
+name: wheels
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    name: wheel ${{ matrix.os }}-${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: native x86_64 + native aarch64 runners (no QEMU emulation).
+          # cmake + gcc are installed inside the manylinux_2_28 (AlmaLinux 8)
+          # container via `before-script-linux`.
+          - os: linux
+            runner: ubuntu-24.04
+            target: x86_64
+            manylinux: "2_28"
+          - os: linux
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: "2_28"
+          # macOS: cmake + clang are preinstalled on the runner images.
+          # macos-15-intel is the current Intel runner (macos-13 was retired).
+          - os: macos
+            runner: macos-15-intel
+            target: x86_64
+          - os: macos
+            runner: macos-14
+            target: aarch64
+          # Windows: cmake + MSVC are preinstalled on the runner image.
+          - os: windows
+            runner: windows-latest
+            target: x64
+    env:
+      # Future-proof: if a runner image ships a CPython newer than the pinned
+      # pyo3's max-tested version, allow the abi3 build to proceed instead of
+      # erroring. A no-op when the runner Python is within the tested range.
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          # Match the repo's pinned toolchain (rust-toolchain.toml).
+          rust-toolchain: "1.96.0"
+          args: --release --out dist
+          sccache: "true"
+          # Runs inside the manylinux container before maturin. AlmaLinux 8 uses
+          # dnf; the older manylinux2014 (CentOS 7) uses yum -- guard for both.
+          before-script-linux: |
+            if command -v dnf >/dev/null 2>&1; then
+              dnf install -y cmake gcc gcc-c++ make
+            else
+              yum install -y cmake gcc gcc-c++ make
+            fi
+
+      - name: Smoke-test the built wheel
+        shell: bash
+        run: |
+          python -m venv smoke
+          if [ -f smoke/bin/activate ]; then . smoke/bin/activate; else . smoke/Scripts/activate; fi
+          python -m pip install --upgrade pip
+          pip install --no-index --find-links dist mokume-rs
+          python -c "import mokume._mokume as m; print('mokume', m.version()); assert m.version()"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: rust/dist/*.whl
+
+  # Install the built Linux wheel (+ the plotting extra) on a host runner and run
+  # the Python test suite against it -- exercises the binding, the relocated
+  # periphery commands, and the in-wheel `mokume` CLI on a real installed wheel.
+  test:
+    name: pytest (linux x86_64)
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - name: Install the built wheel + plotting extra + pytest
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install "$(ls dist/*.whl)[plotting]" pytest pyarrow
+      - name: Run the Python test suite
+        run: pytest rust/tests -q
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: rust/dist/*.tar.gz

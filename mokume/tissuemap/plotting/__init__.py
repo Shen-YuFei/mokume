@@ -1,1 +1,0 @@
-"""TissueMap plotting sub-package."""

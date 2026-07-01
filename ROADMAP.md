@@ -48,12 +48,13 @@ Based on comprehensive benchmarking comparing 7 algorithms × 3 quantification m
 ### Validated (Already Implemented)
 
 - [x] **Protein-level batch correction** - benchmark confirms most robust strategy
-- [x] **ComBat via inmoose** - with covariate support for preserving biological signal
+- [x] **ComBat** - native Rust implementation (oracle-verified against inmoose), with covariate support
 - [x] **MaxLFQ, Top3/TopN, iBAQ quantification** - all three tested, MaxLFQ recommended
 
 ### Evaluation Metrics to Consider
 
 From Quartet benchmark framework:
+
 - [ ] **SNR (Signal-to-Noise Ratio)**: Biological difference / technical variation
 - [ ] **Intraclass Correlation Coefficient (ICC)**: Reproducibility across batches
 - [ ] **Silhouette score**: Cluster separation for known groups
@@ -125,6 +126,7 @@ Based on benchmarking of DIA-based single-cell proteomics workflows covering sof
 ### Data Quality Considerations
 
 From SCP benchmarks:
+
 - Average missingness ~25% for good data, up to 70% with many batches
 - Sparsity reduction before analysis is critical
 - Cell-level QC more important than aggressive imputation
@@ -145,9 +147,8 @@ From SCP benchmarks:
 
 ### Normalization
 
-- [ ] VSN (Variance Stabilizing Normalization)
-- [ ] Quantile normalization
-- [ ] LOESS normalization for intensity-dependent bias
+- [x] Quantile normalization — in the Rust kernel (`features2proteins --sample-norm quantile`)
+- [x] LOESS normalization for intensity-dependent bias — in the Rust kernel (`features2proteins --sample-norm loess`)
 
 ### Quantification
 
@@ -156,6 +157,6 @@ From SCP benchmarks:
 
 ### Integration
 
-- [ ] Export to AnnData format for scanpy/single-cell ecosystem
-- [ ] Integration with downstream statistical tools (limma, DEqMS)
+- [x] Export to AnnData format — via tissuemap pipeline (`.h5ad`) and `correct-batches --export_anndata`
+- [x] Differential expression (limma, DEqMS, proDA, LimROTS, ROTS) — in the Rust kernel (`features2proteins --de`)
 - [ ] Nextflow/Snakemake workflow templates
