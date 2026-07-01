@@ -15,16 +15,13 @@ Imputation methods tested:
 Note: Imputation is expected to have minimal impact on TMT due to low missingness.
 """
 
-import sys
-from pathlib import Path
 import warnings
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Add parent to path for config import
-sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
     SAMPLE_CONDITIONS,
@@ -32,10 +29,7 @@ from config import (
     FIGURE_DPI, FIGURE_FORMAT,
     EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
 )
-
-# Add mokume to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from mokume.imputation import impute_missing_values
+from benchmark_utils import impute_values
 
 warnings.filterwarnings("ignore")
 
@@ -86,32 +80,25 @@ def get_species(protein_name: str) -> str:
 def apply_imputation(df: pd.DataFrame, method: str) -> pd.DataFrame:
     """Apply imputation method to handle missing values."""
     if method == "none":
-        # No imputation - return data as-is (complete cases will be used in metrics)
         return df.copy()
 
     elif method == "knn":
-        # K-Nearest Neighbors imputation
         df_clean = df.replace(0, np.nan)
-        return impute_missing_values(df_clean, method="knn", n_neighbors=5)
+        return impute_values(df_clean, method="knn", n_neighbors=5)
 
     elif method == "min":
-        # Minimum value imputation (for MNAR - below limit of detection)
         df_clean = df.replace(0, np.nan)
-        # Use global minimum or per-sample minimum
         global_min = df_clean.min().min()
-        # Shift down slightly to represent "below detection"
         fill_value = global_min * 0.5 if global_min > 0 else 1.0
-        return impute_missing_values(df_clean, method="constant", fill_value=fill_value)
+        return impute_values(df_clean, method="constant", fill_value=fill_value)
 
     elif method == "median":
-        # Median imputation
         df_clean = df.replace(0, np.nan)
-        return impute_missing_values(df_clean, method="median")
+        return impute_values(df_clean, method="median")
 
     elif method == "mean":
-        # Mean imputation
         df_clean = df.replace(0, np.nan)
-        return impute_missing_values(df_clean, method="mean")
+        return impute_values(df_clean, method="mean")
 
     else:
         raise ValueError(f"Unknown imputation method: {method}")
@@ -138,7 +125,6 @@ def compute_metrics(df: pd.DataFrame, use_complete_cases: bool = True) -> dict:
     """Compute all evaluation metrics."""
     col_to_condition = {str(col): get_condition(col) for col in df.columns}
 
-    # For "none" imputation, use complete cases only
     if use_complete_cases:
         df_eval = df.dropna()
     else:
@@ -192,7 +178,6 @@ def compute_metrics(df: pd.DataFrame, use_complete_cases: bool = True) -> dict:
     pct_complete = (n_proteins / n_proteins_total * 100) if n_proteins_total > 0 else 0
     pct_good_cv = (np.array(condition_cvs) < CV_THRESHOLDS["good"]).mean() * 100 if condition_cvs else 0
 
-    # Missing value statistics (on original data before imputation)
     pct_missing = df.isna().sum().sum() / (df.shape[0] * df.shape[1]) * 100
 
     return {
@@ -218,12 +203,10 @@ def run_benchmark(technology: str) -> list:
     print(f"\n  Quantification method: {quant_method}")
     print(f"  Imputation methods: {IMPUTATION_METHODS}")
 
-    # Load quantified data
     try:
         df_base = load_quantified_data(technology, quant_method)
         df_base = df_base.replace(0, np.nan)
 
-        # Report missing values
         total_values = df_base.shape[0] * df_base.shape[1]
         missing_values = df_base.isna().sum().sum()
         pct_missing = missing_values / total_values * 100
@@ -237,7 +220,6 @@ def run_benchmark(technology: str) -> list:
         print(f"  Testing {imp_method}...", end=" ")
 
         try:
-            # Apply imputation
             if imp_method == "none":
                 df_imputed = df_base.copy()
                 use_complete_cases = True
@@ -245,10 +227,7 @@ def run_benchmark(technology: str) -> list:
                 df_imputed = apply_imputation(df_base, imp_method)
                 use_complete_cases = False
 
-            # Apply standard normalization
             df_norm = apply_sample_normalization(df_imputed, "globalmedian")
-
-            # Compute metrics
             metrics = compute_metrics(df_norm, use_complete_cases=use_complete_cases)
 
             result = {
@@ -321,7 +300,6 @@ def plot_missing_value_impact(results_df: pd.DataFrame, output_path: Path):
         if len(tech_df) == 0:
             continue
 
-        # Scatter plot: n_proteins vs CV
         colors = plt.cm.Set2(np.linspace(0, 1, len(tech_df)))
 
         for i, (_, row) in enumerate(tech_df.iterrows()):
@@ -362,13 +340,11 @@ def main():
         results = run_benchmark(technology)
         all_results.extend(results)
 
-    # Save results
     if all_results:
         results_df = pd.DataFrame(all_results)
         results_df.to_csv(RESULTS_DIR / "imputation_benchmark.csv", index=False)
         print(f"\nResults saved to: {RESULTS_DIR / 'imputation_benchmark.csv'}")
 
-        # Generate plots
         print("\nGenerating plots...")
 
         plot_imputation_comparison(
@@ -381,7 +357,6 @@ def main():
             FIGURES_DIR / f"imputation_coverage_quality.{FIGURE_FORMAT}"
         )
 
-        # Summary
         print("\n" + "=" * 60)
         print("SUMMARY: Imputation Impact")
         print("=" * 60)
@@ -393,28 +368,23 @@ def main():
             if len(tech_df) == 0:
                 continue
 
-            # Report missing values
             pct_missing = tech_df["pct_missing"].iloc[0]
             print(f"  Missing values: {pct_missing:.2f}%")
 
-            # Best by coverage
             best_coverage = tech_df.loc[tech_df["n_proteins"].idxmax()]
             print(f"  Best coverage: {best_coverage['imputation']} "
                   f"(n={best_coverage['n_proteins']}, CV={best_coverage['within_cv']:.4f})")
 
-            # Best by CV
             best_cv = tech_df.loc[tech_df["within_cv"].idxmin()]
             print(f"  Best CV: {best_cv['imputation']} "
                   f"(n={best_cv['n_proteins']}, CV={best_cv['within_cv']:.4f})")
 
-            # Best by RMSE
             valid_rmse = tech_df[tech_df["fc_rmse"].notna()]
             if len(valid_rmse) > 0:
                 best_rmse = valid_rmse.loc[valid_rmse["fc_rmse"].idxmin()]
                 print(f"  Best RMSE: {best_rmse['imputation']} "
                       f"(RMSE={best_rmse['fc_rmse']:.3f})")
 
-            # Impact summary
             none_result = tech_df[tech_df["imputation"] == "none"]
             if len(none_result) > 0:
                 none_cv = none_result["within_cv"].iloc[0]

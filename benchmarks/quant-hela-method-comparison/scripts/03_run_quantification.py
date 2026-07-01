@@ -6,15 +6,15 @@ Run all protein quantification methods on prepared peptide data.
 Methods: iBAQ, rIBAQ, DirectLFQ, Top3, TopN, Sum
 """
 
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional, Dict, List
 
+import mokume
 import pandas as pd
-
-# Add parent directory to path for mokume imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import (
     ALL_DATASETS,
@@ -28,193 +28,86 @@ from config import (
 )
 
 
+def _run_method(
+    peptide_df: pd.DataFrame,
+    method: str,
+    **kwargs,
+) -> Optional[pd.DataFrame]:
+    """Save peptide DataFrame to temp parquet, run mokume.peptides2protein, return result."""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = os.path.join(tmpdir, "peptides.parquet")
+            output_file = os.path.join(tmpdir, "output.tsv")
+
+            peptide_df.to_parquet(input_file, index=False)
+
+            mokume.peptides2protein(
+                peptides=input_file,
+                method=method,
+                output=output_file,
+                **kwargs,
+            )
+
+            if os.path.exists(output_file):
+                return pd.read_csv(output_file, sep="\t")
+
+            print(f"  ERROR: {method} output file not generated")
+            return None
+
+    except Exception as e:
+        print(f"  ERROR running {method}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def run_ibaq(
     peptide_df: pd.DataFrame,
     fasta_path: Path,
     dataset_id: str,
 ) -> Optional[pd.DataFrame]:
-    """
-    Run iBAQ quantification.
-
-    Requires FASTA file for theoretical peptide calculation.
-    Uses the file-based peptides_to_protein function.
-    """
-    import tempfile
-    import os
-    import gzip
-    import shutil
-
+    """Run iBAQ quantification. Requires FASTA file for theoretical peptide calculation."""
     if not fasta_path.exists():
         print(f"  WARNING: FASTA file not found: {fasta_path}")
         return None
 
-    try:
-        from mokume.quantification import peptides_to_protein
-
-        # Create temporary files for input/output
-        with tempfile.TemporaryDirectory() as tmpdir:
-            input_file = os.path.join(tmpdir, "peptides.parquet")
-            output_file = os.path.join(tmpdir, "ibaq_output.tsv")
-
-            # Handle gzipped FASTA files
-            fasta_file = str(fasta_path)
-            if fasta_path.suffix == ".gz":
-                decompressed_fasta = os.path.join(tmpdir, "reference.fasta")
-                with gzip.open(fasta_path, 'rb') as f_in:
-                    with open(decompressed_fasta, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-                fasta_file = decompressed_fasta
-
-            # Save peptide data
-            peptide_df.to_parquet(input_file, index=False)
-
-            # Run iBAQ (file-based function)
-            peptides_to_protein(
-                fasta=fasta_file,
-                peptides=input_file,
-                enzyme=IBAQ_PARAMS["enzyme"],
-                normalize=True,
-                min_aa=IBAQ_PARAMS["min_aa"],
-                max_aa=IBAQ_PARAMS["max_aa"],
-                tpa=False,
-                ruler=False,
-                ploidy=2,
-                cpc=200.0,
-                organism="human",
-                output=output_file,
-                verbose=False,
-                qc_report="",
-            )
-
-            # Read results
-            if os.path.exists(output_file):
-                result = pd.read_csv(output_file, sep="\t")
-                return result
-            else:
-                print("  ERROR: iBAQ output file not generated")
-                return None
-
-    except Exception as e:
-        print(f"  ERROR running iBAQ: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    return _run_method(
+        peptide_df,
+        method="ibaq",
+        fasta=str(fasta_path),
+        enzyme=IBAQ_PARAMS["enzyme"],
+        normalize=True,
+        min_aa=IBAQ_PARAMS["min_aa"],
+        max_aa=IBAQ_PARAMS["max_aa"],
+    )
 
 
 def run_maxlfq(
     peptide_df: pd.DataFrame,
     min_peptides: int = 2,
 ) -> Optional[pd.DataFrame]:
-    """
-    Run MaxLFQ quantification.
-
-    Uses DirectLFQ if available, otherwise built-in implementation.
-    """
-    try:
-        from mokume.quantification import MaxLFQQuantification
-
-        maxlfq = MaxLFQQuantification(min_peptides=min_peptides, threads=-1)
-        result = maxlfq.quantify(
-            peptide_df,
-            protein_column="ProteinName",
-            peptide_column="PeptideSequence",
-            intensity_column="NormIntensity",
-            sample_column="SampleID",
-        )
-        return result
-
-    except Exception as e:
-        print(f"  ERROR running MaxLFQ: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    """Run MaxLFQ quantification."""
+    return _run_method(peptide_df, method="maxlfq")
 
 
 def run_top3(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """Run Top3 quantification."""
-    try:
-        from mokume.quantification import Top3Quantification
-
-        top3 = Top3Quantification()
-        result = top3.quantify(
-            peptide_df,
-            protein_column="ProteinName",
-            peptide_column="PeptideSequence",
-            intensity_column="NormIntensity",
-            sample_column="SampleID",
-        )
-        return result
-
-    except Exception as e:
-        print(f"  ERROR running Top3: {e}")
-        return None
+    return _run_method(peptide_df, method="top3")
 
 
 def run_topn(peptide_df: pd.DataFrame, n: int = 10) -> Optional[pd.DataFrame]:
     """Run TopN quantification."""
-    try:
-        from mokume.quantification import TopNQuantification
-
-        topn = TopNQuantification(n=n)
-        result = topn.quantify(
-            peptide_df,
-            protein_column="ProteinName",
-            peptide_column="PeptideSequence",
-            intensity_column="NormIntensity",
-            sample_column="SampleID",
-        )
-        return result
-
-    except Exception as e:
-        print(f"  ERROR running Top{n}: {e}")
-        return None
+    return _run_method(peptide_df, method="topn", topn_n=n)
 
 
 def run_sum(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """Run Sum (all peptides) quantification."""
-    try:
-        from mokume.quantification import AllPeptidesQuantification
-
-        sum_quant = AllPeptidesQuantification()
-        result = sum_quant.quantify(
-            peptide_df,
-            protein_column="ProteinName",
-            peptide_column="PeptideSequence",
-            intensity_column="NormIntensity",
-            sample_column="SampleID",
-        )
-        return result
-
-    except Exception as e:
-        print(f"  ERROR running Sum: {e}")
-        return None
+    return _run_method(peptide_df, method="sum")
 
 
 def run_directlfq(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """
-    Run DirectLFQ quantification directly.
-
-    DirectLFQ uses hierarchical normalization with variance-guided
-    pairwise alignment for accurate label-free quantification.
-    """
-    try:
-        from mokume.quantification import DirectLFQQuantification
-
-        directlfq = DirectLFQQuantification(min_nonan=1)
-        result = directlfq.quantify(
-            peptide_df,
-            protein_column="ProteinName",
-            peptide_column="PeptideSequence",
-            intensity_column="NormIntensity",
-            sample_column="SampleID",
-        )
-        return result
-
-    except Exception as e:
-        print(f"  ERROR running DirectLFQ: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    """Run DirectLFQ quantification."""
+    return _run_method(peptide_df, method="directlfq", min_nonan=1)
 
 
 def quantify_dataset(
