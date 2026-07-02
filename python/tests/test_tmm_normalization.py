@@ -8,11 +8,19 @@ Tests cover:
 - Known value validation
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from mokume.normalization.tmm import TMMNormalizer, tmm_normalize
+
+# Cecilia fixture (small real PXD020192 LFQ slice), reused for the pipeline
+# wiring test below.
+_EXAMPLE_DIR = os.path.join(os.path.dirname(__file__), "example")
+_PARQUET = os.path.join(_EXAMPLE_DIR, "feature_wide.parquet")
+_SDRF = os.path.join(_EXAMPLE_DIR, "PXD020192.sdrf.tsv")
 
 
 class TestTMMNormalizer:
@@ -337,6 +345,92 @@ class TestTMMNumericalAccuracy:
         # The normalization should have happened (result is different from input)
         # At minimum, the normalized data should preserve relative order within proteins
         assert result is not None
+
+
+class TestTMMSampleNormalizationWiring:
+    """TMM is wired into the peptide/sample normalization enum + pipeline."""
+
+    def test_from_str_resolves_tmm(self):
+        """PeptideNormalizationMethod.from_str('tmm') must return the TMM member."""
+        from mokume.model.normalization import PeptideNormalizationMethod
+
+        method = PeptideNormalizationMethod.from_str("tmm")
+        assert method is PeptideNormalizationMethod.TMM
+        # TMM needs the full matrix, so it must be dataset-level.
+        assert method.is_dataset_level is True
+
+    def test_tmm_in_cli_sample_normalization_choices(self):
+        """Both features2* commands derive choices from the enum names."""
+        from mokume.model.normalization import PeptideNormalizationMethod
+
+        choices = [p.name.lower() for p in PeptideNormalizationMethod]
+        assert "tmm" in choices
+
+    @pytest.mark.skipif(
+        not (os.path.exists(_PARQUET) and os.path.exists(_SDRF)),
+        reason="Dev feature_wide fixture not available",
+    )
+    def test_pipeline_runs_with_tmm_sample_normalization(self):
+        """End-to-end: the pipeline runs TMM and yields a finite protein matrix.
+
+        Also asserts the values differ from the ``none`` baseline, so a
+        no-op regression (TMM silently skipped) would be caught.
+        """
+        from mokume.pipeline.config import (
+            PipelineConfig,
+            InputConfig,
+            FilterConfig,
+            NormalizationConfig,
+            QuantificationConfig,
+            IRSConfig,
+            OutputConfig,
+        )
+        from mokume.pipeline.features_to_proteins import QuantificationPipeline
+
+        def _make(sample_method: str) -> PipelineConfig:
+            return PipelineConfig(
+                input=InputConfig(parquet=_PARQUET, sdrf=_SDRF),
+                filtering=FilterConfig(
+                    min_aa=7,
+                    min_unique_peptides=1,
+                    remove_contaminants=True,
+                ),
+                normalization=NormalizationConfig(
+                    run_method="median",
+                    sample_method=sample_method,
+                ),
+                quantification=QuantificationConfig(method="median"),
+                irs=IRSConfig(enabled=False),
+                output=OutputConfig(),
+            )
+
+        ds_tmm = QuantificationPipeline(_make("tmm")).run_dataset()
+        assert ds_tmm.proteins is not None
+        assert len(ds_tmm.proteins) > 0
+
+        tmm_wide = ds_tmm.proteins.set_index(ds_tmm.proteins.columns[0]).select_dtypes(
+            include=[np.number]
+        )
+        tmm_vals = tmm_wide.values
+        # At least some quantified values, and every non-NaN value finite.
+        assert np.isfinite(tmm_vals).any()
+        assert np.isfinite(tmm_vals[~np.isnan(tmm_vals)]).all()
+
+        # TMM must actually change the matrix relative to no normalization.
+        ds_none = QuantificationPipeline(_make("none")).run_dataset()
+        none_wide = ds_none.proteins.set_index(
+            ds_none.proteins.columns[0]
+        ).select_dtypes(include=[np.number])
+
+        common_idx = tmm_wide.index.intersection(none_wide.index)
+        common_cols = [c for c in tmm_wide.columns if c in none_wide.columns]
+        diff = (
+            tmm_wide.loc[common_idx, common_cols].values
+            - none_wide.loc[common_idx, common_cols].values
+        )
+        diff = diff[~np.isnan(diff)]
+        assert diff.size > 0
+        assert np.nanmax(np.abs(diff)) > 0.0
 
 
 if __name__ == "__main__":

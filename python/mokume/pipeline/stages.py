@@ -610,7 +610,7 @@ class LoadingStage:
 
         Dispatches to the matching ``NormalizationStage`` method when the
         configured peptide normalization is dataset-level (Hierarchical,
-        Quantile, MedianCenter, MeanCenter, Rlr, Loess).
+        Quantile, MedianCenter, MeanCenter, Rlr, Loess, TMM).
         """
         if sample_norm_method == PeptideNormalizationMethod.Hierarchical:
             combined_df = NormalizationStage(self.config).apply_hierarchical(
@@ -628,6 +628,8 @@ class LoadingStage:
             combined_df = NormalizationStage(self.config).apply_rlr(combined_df)
         elif sample_norm_method == PeptideNormalizationMethod.Loess:
             combined_df = NormalizationStage(self.config).apply_loess(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.TMM:
+            combined_df = NormalizationStage(self.config).apply_tmm(combined_df)
 
         return combined_df
 
@@ -1080,6 +1082,14 @@ class NormalizationStage:
 
         return self._apply_dataset_normalizer(
             df, LOESSNormalizer(), log_space=True, name="LOESS"
+        )
+
+    def apply_tmm(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply Trimmed Mean of M-values normalization (on linear intensities)."""
+        from mokume.normalization.tmm import TMMNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, TMMNormalizer(), log_space=False, name="TMM"
         )
 
     def apply_irs(self, protein_df: pd.DataFrame, dataset=None) -> pd.DataFrame:

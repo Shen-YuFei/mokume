@@ -279,6 +279,7 @@ class PeptideNormalizationMethod(Enum):
     MeanCenter = auto()  # Sample-level mean centering
     Rlr = auto()  # Robust Linear Regression (NormalyzerDE)
     Loess = auto()  # LOESS regression on MA plot (Yang 2002)
+    TMM = auto()  # Trimmed Mean of M-values (Robinson & Oshlack 2010)
 
     @classmethod
     def from_str(cls, name: str) -> "PeptideNormalizationMethod":
@@ -361,6 +362,7 @@ class PeptideNormalizationMethod(Enum):
             PeptideNormalizationMethod.MeanCenter,
             PeptideNormalizationMethod.Rlr,
             PeptideNormalizationMethod.Loess,
+            PeptideNormalizationMethod.TMM,
         )
 
     def __call__(self, dataset_df: pd.DataFrame, sample: str, med_map: dict):
@@ -424,6 +426,12 @@ def rlr_normalization(dataset_df, sample, med_map):
 @PeptideNormalizationMethod.Loess.register_replicate_fn
 def loess_normalization(dataset_df, sample, med_map):
     """Placeholder: LOESS normalization is applied at dataset level."""
+    return dataset_df
+
+
+@PeptideNormalizationMethod.TMM.register_replicate_fn
+def tmm_normalization(dataset_df, sample, med_map):
+    """Placeholder: TMM normalization is applied at dataset level."""
     return dataset_df
 
 
