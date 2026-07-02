@@ -264,7 +264,11 @@ def call_with_tools(
         kwargs["response_format"] = {"type": "json_object"}
         response = client.chat.completions.create(**kwargs)
         text = response.choices[0].message.content or ""
-        return json.loads(text)
+        parsed = json.loads(text)
+        # A top-level JSON array has no ``.get``; treat it as the configs list.
+        if isinstance(parsed, list):
+            return {"configs": parsed}
+        return parsed
     except Exception as exc:  # noqa: BLE001
         logger.warning("JSON mode failed (%s), falling back to raw parse", exc)
 

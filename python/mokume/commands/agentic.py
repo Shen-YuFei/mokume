@@ -10,13 +10,16 @@ from mokume.agentic.optimizer import optimize
 from mokume.normalization.irs import detect_condition_from_sdrf
 
 _ENV_KEY_MAP = {
-    "llm_api_key": "DEEPSEEK_API_KEY",
     "llm_base_url": "OPENAI_BASE_URL",
 }
 
 
 def _persist_to_dotenv(kwargs: dict) -> None:
-    """Save LLM settings to .env if provided via CLI and not already stored."""
+    """Save non-secret LLM settings to .env if provided via CLI and not already stored.
+
+    The API key is intentionally never written to disk; it must come from the
+    environment (DEEPSEEK_API_KEY / OPENAI_API_KEY).
+    """
     dotenv_path = Path.cwd() / ".env"
     existing = {}
     if dotenv_path.exists():
@@ -172,11 +175,24 @@ def agentic_cmd():
     help="Disable LLM, use rule-based mode only.",
 )
 @click.option(
+    "--save-env",
+    "save_env",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help=(
+        "Persist non-secret LLM settings (e.g. OPENAI_BASE_URL) to a .env file "
+        "in the current directory. The API key is never written; keep it in the "
+        "environment."
+    ),
+)
+@click.option(
     "--output-dir", "-o", default="./optimization", help="Output directory for results."
 )
 def optimize_cmd(**kwargs):
     """Run agentic optimization for differential expression analysis."""
-    _persist_to_dotenv(kwargs)
+    if kwargs["save_env"]:
+        _persist_to_dotenv(kwargs)
     pm = kwargs["protein_matrix"]
     sep = "\t" if pm.endswith(".tsv") else ","
     protein_df = pd.read_csv(pm, sep=sep)

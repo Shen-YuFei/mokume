@@ -14,20 +14,25 @@ def _direction_aware_tp_fp(
     de_df: pd.DataFrame,
     ground_truth: set[str],
     expected_direction: str = "UP",
-) -> tuple[int, int, int]:
-    """Count TP/FP/FN using direction-aware significance."""
+) -> tuple[int, int, int, int]:
+    """Count TP/FP/FN/TN using direction-aware significance."""
     sig = de_df[de_df["significance"] == expected_direction]
     protein_col = "protein" if "protein" in de_df.columns else de_df.columns[0]
     sig_proteins = set(sig[protein_col]) if protein_col in sig.columns else set()
+    tested_proteins = set(de_df[protein_col]) if protein_col in de_df.columns else set()
 
     # Fallback: use index if protein column not found
     if not sig_proteins and not sig.empty:
         sig_proteins = set(sig.index)
+    if not tested_proteins and not de_df.empty:
+        tested_proteins = set(de_df.index)
 
     tp = len(sig_proteins & ground_truth)
     fp = len(sig_proteins - ground_truth)
     fn = len(ground_truth - sig_proteins)
-    return tp, fp, fn
+    # Tested negatives (not in ground truth) that were not called significant.
+    tn = len((tested_proteins - ground_truth) - sig_proteins)
+    return tp, fp, fn, tn
 
 
 def _compute_auc(
@@ -113,13 +118,13 @@ def _fill_ground_truth(
     ground_truth: set[str],
 ) -> None:
     """Populate ground truth metrics on an EvaluationResult."""
-    tp, fp, fn = _direction_aware_tp_fp(de_df, ground_truth)
+    tp, fp, fn, tn = _direction_aware_tp_fp(de_df, ground_truth)
     result.tp = tp
     result.fp = fp
     result.fn = fn
     result.auc = _compute_auc(de_df, ground_truth)
     result.sensitivity = tp / max(tp + fn, 1)
-    result.specificity = 1.0 - (fp / max(tp + fp + fn, 1))
+    result.specificity = tn / max(tn + fp, 1)
 
 
 def evaluate(

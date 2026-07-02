@@ -21,7 +21,12 @@ from mokume.agentic.reporter import (
     save_outputs,
     save_state_snapshot,
 )
-from mokume.agentic.runner import PreprocessCache, run_experiment
+from mokume.agentic.runner import (
+    PreprocessCache,
+    _apply_imputation,
+    _apply_normalization,
+    run_experiment,
+)
 from mokume.agentic.state import (
     AgenticState,
     AuditEntry,
@@ -87,6 +92,22 @@ def _score_results(
     return results
 
 
+def _processed_matrix(cfg: CandidateConfig, ctx: RoundContext) -> pd.DataFrame:
+    """Return the per-config normalized/imputed matrix used by run_experiment.
+
+    CV / missingness must be measured on this processed matrix, not the raw
+    shared ``protein_df``; otherwise they are identical constants across every
+    candidate. When a cache is present the (norm, imp) prefix was just computed
+    by run_experiment, so this is a cheap hit returning the same matrix.
+    """
+    if ctx.cache is not None:
+        return ctx.cache.get_or_compute(
+            cfg.normalization, cfg.imputation, ctx.protein_df
+        )
+    normed_df = _apply_normalization(ctx.protein_df, cfg.normalization)
+    return _apply_imputation(normed_df, cfg.imputation)
+
+
 def _evaluate_one(cfg: CandidateConfig, ctx: RoundContext) -> EvaluationResult:
     """Run + evaluate a single config, returning a sentinel result on failure."""
     try:
@@ -101,7 +122,7 @@ def _evaluate_one(cfg: CandidateConfig, ctx: RoundContext) -> EvaluationResult:
         return evaluate(
             cfg,
             de_df,
-            ctx.protein_df,
+            _processed_matrix(cfg, ctx),
             ctx.sample_to_condition,
             ctx.ground_truth,
         )
@@ -277,7 +298,7 @@ def _run_one_contrast(
         cache=job.cache,
     )
     state = optimize_contrast(ctx, job.profile)
-    save_outputs(job.profile, state, job.config)
+    save_outputs(job.profile, state, contrast, job.config)
     return contrast_slug(contrast), state
 
 

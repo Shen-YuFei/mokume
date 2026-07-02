@@ -59,7 +59,7 @@ def test_save_outputs_creates_files():
             ],
         )
         config = AgenticConfig(output_dir=tmpdir, use_llm=False)
-        out = save_outputs(profile, state, config)
+        out = save_outputs(profile, state, ("A", "B"), config)
 
         assert (Path(out) / "summary.md").exists()
         assert (Path(out) / "best_config.yaml").exists()

@@ -157,10 +157,11 @@ def _llm_report(
 def save_outputs(
     profile: DataProfile,
     state: AgenticState,
+    contrast: tuple[str, str],
     config: AgenticConfig,
 ) -> Path:
-    """Save all optimization outputs to output_dir."""
-    out = Path(config.output_dir)
+    """Save all optimization outputs to the per-contrast output dir."""
+    out = Path(config.output_dir) / contrast_slug(contrast)
     out.mkdir(parents=True, exist_ok=True)
 
     results = _all_results(state)
