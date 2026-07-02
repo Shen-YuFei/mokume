@@ -1,14 +1,20 @@
 """
-QRILC (Quantile Regression Imputation of Left-Censored data).
+QRILC-style left-tail imputation (simplified approximation).
 
-Imputes missing values by drawing from the left tail of a truncated
-normal distribution fitted per sample via quantile regression on
-observed values.
+Imputes left-censored missing values by drawing from a normal centered just
+below the lowest observed value of each sample, clamping draws to that minimum.
+This is a lightweight approximation of QRILC, NOT the canonical method: unlike
+``imputeLCMD::impute.QRILC`` (Wei et al. 2018) it does not fit a truncated normal
+by quantile regression and does not use the per-column missingness fraction
+(``pNA``) to set the truncation quantile, so columns with very different missing
+rates get the same fill distribution. Use it as a fast left-shifted MNAR fill,
+not as a drop-in for imputeLCMD.
 
 References
 ----------
 - Wei R, et al. Missing Value Imputation Approach for Mass
-  Spectrometry-based Metabolomics Data. Sci Rep. 2018;8:663.
+  Spectrometry-based Metabolomics Data. Sci Rep. 2018;8:663
+  (the canonical method this routine approximates).
 """
 
 from __future__ import annotations
@@ -25,11 +31,13 @@ def impute_qrilc(
     data: pd.DataFrame,
     tune_sigma: float = 1.0,
 ) -> pd.DataFrame:
-    """Impute left-censored missing values via QRILC.
+    """Impute left-censored missing values with the simplified QRILC heuristic.
 
-    For each sample (column), a truncated normal distribution is fitted
-    to the lower tail of observed values.  Missing entries are replaced
-    by random draws from that distribution.
+    For each sample (column), missing entries are replaced by draws from a
+    normal centered at ``min(observed) - sd`` and clamped to ``min(observed)``.
+    This is the simplified left-tail approximation described in the module
+    docstring; it does not use the per-column missingness fraction and is not a
+    drop-in for canonical imputeLCMD QRILC.
 
     Parameters
     ----------

@@ -1,4 +1,4 @@
-.PHONY: lint fmt test test-py test-rs build clean pre-commit docs
+.PHONY: lint fmt test test-py test-rs build clean pre-commit docs vendor-sidecar vendor-sidecar-check
 
 lint: lint-py lint-rs  ## Run all linters
 
@@ -31,6 +31,12 @@ build-py:
 
 build-rs:
 	cd rust && cargo build --workspace
+
+vendor-sidecar:  ## Re-sync the identical shared files into rust/python/mokume
+	python rust/scripts/vendor_sidecar.py
+
+vendor-sidecar-check:  ## Fail if the vendored sidecar drifted from python/mokume
+	python rust/scripts/vendor_sidecar.py --check
 
 pre-commit:  ## Run pre-commit on all files
 	pre-commit run --all-files
