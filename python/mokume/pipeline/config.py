@@ -41,6 +41,7 @@ class InputConfig:
     parquet: str
     sdrf: Optional[str] = None
     fasta_file: Optional[str] = None
+    qpx_dir: Optional[str] = None
 
 
 @dataclass
@@ -319,6 +320,8 @@ class OutputConfig:
     highlight_genes: Optional[list] = None
     interactive_report: bool = False
     report_output: Optional[str] = None
+    export_anndata: bool = False
+    anndata_view: Optional[str] = None
 
 
 @dataclass

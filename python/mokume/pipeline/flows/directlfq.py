@@ -12,9 +12,15 @@ Flow:
     Convert back -> QpxDataset(.proteins)
 """
 
+import gc
+
+from mokume.core.constants import load_sdrf
 from mokume.core.dataset import QpxDataset
 from mokume.core.logger import get_logger
 from mokume.pipeline.config import PipelineConfig
+from mokume.pipeline.directlfq_streaming import (
+    estimate_protein_intensities_streamed,
+)
 from mokume.quantification.base import QuantificationMethod
 
 logger = get_logger("mokume.pipeline.flows.directlfq")
@@ -22,6 +28,13 @@ logger = get_logger("mokume.pipeline.flows.directlfq")
 
 def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
     """Execute the DirectLFQ quantification flow.
+
+    Mirrors ``QuantificationPipeline._run_directlfq_pipeline`` so that
+    ``run_pipeline`` yields a protein matrix identical to
+    ``run_dataset``: it loads through the streaming Arrow reader, runs
+    DirectLFQ sample normalization, then estimates protein intensities via
+    the streaming helper (which returns linear-scale intensities). Ion-table
+    export is intentionally unsupported on this streaming path.
 
     Parameters
     ----------
@@ -36,43 +49,49 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
         Dataset with proteins populated.
     """
     try:
-        import directlfq.protein_intensity_estimation as lfq_estimation
         import directlfq.normalization as lfq_norm
         import directlfq.config as lfq_config
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "DirectLFQ quantification requires the directlfq package.\n"
             "Install with: pip install directlfq\n"
             "Or: pip install mokume[directlfq]"
-        )
+        ) from exc
 
     from mokume.pipeline.stages import LoadingStage
 
     dataset = QpxDataset()
 
-    # Load and filter data
+    # Load and filter data as a streaming Arrow Table (single return value).
     loading = LoadingStage(config)
     logger.info("Loading and filtering data for DirectLFQ...")
-    filtered_df, sample_metadata = loading.load_for_directlfq()
-    dataset.features = filtered_df
-    if sample_metadata is not None:
-        dataset.sample_info = sample_metadata
-    dataset.record_step("loading", method="directlfq", rows_out=len(filtered_df))
-    logger.info(f"Filtered data: {len(filtered_df)} features")
+    filtered_table = loading.load_for_directlfq()
+    logger.info("Filtered data: %d features", filtered_table.num_rows)
 
-    # Validate schema
-    errors = dataset.validate_level("features")
-    if errors:
-        logger.warning("Schema validation warnings for features: %s", errors)
+    # Sample metadata comes from the SDRF (best-effort), not the loading method.
+    if config.input.sdrf:
+        try:
+            dataset.sample_info = load_sdrf(config.input.sdrf)
+        except (OSError, ValueError) as exc:  # pragma: no cover - best-effort
+            logger.debug("Could not load SDRF sample_info: %s", exc)
+    dataset.record_step("loading", method="directlfq", rows_out=filtered_table.num_rows)
 
-    # Convert to DirectLFQ format
+    # Convert to DirectLFQ format (zero-copy polars from the Arrow Table).
     logger.info("Converting to DirectLFQ format...")
-    directlfq_input = loading.convert_to_directlfq_format(filtered_df)
-    logger.info(f"DirectLFQ input shape: {directlfq_input.shape}")
+    directlfq_input = loading.convert_to_directlfq_format(filtered_table)
+    logger.info("DirectLFQ input shape: %s", directlfq_input.shape)
+    del filtered_table
+    gc.collect()
 
-    # Configure DirectLFQ
+    # The streaming estimator cannot emit a normalized ion table; refuse
+    # --export-ions rather than silently dropping it (mirrors run_dataset).
+    if config.output.export_ions:
+        raise ValueError(
+            "--export-ions is not supported by streaming DirectLFQ estimation; "
+            "normalized ion tables can be much larger than the protein matrix."
+        )
     lfq_config.set_global_protein_and_ion_id(protein_id="protein", quant_id="ion")
-    lfq_config.set_compile_normalized_ion_table(config.output.export_ions is not None)
+    lfq_config.set_compile_normalized_ion_table(False)
 
     # Run DirectLFQ normalization
     logger.info("Running DirectLFQ sample normalization...")
@@ -80,20 +99,17 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
         directlfq_input,
         num_samples_quadratic=config.quantification.directlfq_num_samples_quadratic,
     ).complete_dataframe
+    del directlfq_input
+    gc.collect()
 
-    # Run DirectLFQ protein estimation
+    # Run DirectLFQ protein estimation (streaming; returns linear intensities).
     logger.info("Running DirectLFQ protein estimation...")
-    protein_df, ion_df = lfq_estimation.estimate_protein_intensities(
+    protein_df = estimate_protein_intensities_streamed(
         normed_df,
         min_nonan=config.quantification.directlfq_min_nonan,
-        num_samples_quadratic=10,
+        num_samples_quadratic=config.quantification.directlfq_num_samples_quadratic,
         num_cores=config.quantification.directlfq_num_cores,
     )
-
-    # Export ions if requested
-    if config.output.export_ions and ion_df is not None:
-        logger.info(f"Exporting ions to {config.output.export_ions}")
-        ion_df.to_csv(config.output.export_ions)
 
     dataset.proteins = protein_df
     dataset.record_step(

@@ -131,8 +131,10 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
             rows_out=len(protein_df),
         )
 
-    # Batch correction
-    if config.batch.enabled:
+    # Batch correction. The Rust backend already applies ComBat inside the
+    # kernel (cli_args emits --batch-correction), so running it again here would
+    # double-correct the matrix; only the pure-Python backend needs this pass.
+    if config.batch.enabled and config.runtime.backend != "rust":
         protein_df = post_stage.apply_batch_correction(protein_df, dataset=dataset)
         dataset.proteins = protein_df
         dataset.record_step("batch_correction", method=config.batch.method)

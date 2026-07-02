@@ -41,15 +41,19 @@ class _BadLevelMethod(QuantificationMethod):
 
 @pytest.fixture(autouse=True)
 def _reset_registry():
-    """Reset registry before and after each test.
+    """Give each test a clean registry, then restore the full store.
 
-    After reset, we must reload all quantification submodules so
-    that @register decorators fire again and re-populate the store.
+    These tests reset/reload the global :class:`PluginRegistry`. We snapshot the
+    fully-populated store on entry and restore it on exit so the mutation does
+    not leak into other test modules (which would otherwise see an empty or
+    partially-populated registry — ``reset()`` alone left it cleared).
     """
     import importlib
     import mokume.quantification.topn
     import mokume.quantification.ratio
     import mokume.quantification as quant_mod
+
+    snapshot = {group: dict(store) for group, store in PluginRegistry._stores.items()}
 
     PluginRegistry.reset()
     # Reload submodules first (they have @register decorators)
@@ -57,8 +61,12 @@ def _reset_registry():
     importlib.reload(mokume.quantification.ratio)
     # Then reload __init__ which registers aliases
     importlib.reload(quant_mod)
-    yield
-    PluginRegistry.reset()
+    try:
+        yield
+    finally:
+        for group in PluginRegistry._stores:
+            PluginRegistry._stores[group].clear()
+            PluginRegistry._stores[group].update(snapshot.get(group, {}))
 
 
 # ---------------------------------------------------------------------------
