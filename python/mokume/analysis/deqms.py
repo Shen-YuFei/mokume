@@ -155,12 +155,47 @@ def _build_count_vector(
     proteins: list[str],
     peptide_counts: pd.Series | None,
 ) -> np.ndarray:
-    """Align peptide counts with the matrix row order; default to 1."""
+    """Align peptide counts with the matrix row order; default to 1.
+
+    Notes
+    -----
+    DEqMS's defining feature is the PSM/peptide-count covariate fed into
+    the spectra-count empirical-Bayes adjustment. If callers do not pass
+    ``peptide_counts`` (or no protein matches), every protein gets a
+    count of ``1`` and ``_spectra_count_ebayes`` degenerates to limma
+    plus uniform variance shrinkage - the DEqMS result becomes
+    effectively identical to limma. We emit a single warning so users
+    aware of this trade-off can choose to provide counts, while still
+    letting the call succeed (matching the original R DEqMS behaviour
+    when only intensity data is available).
+    """
     counts = np.ones(len(proteins), dtype=int)
     if peptide_counts is None:
+        logger.warning(
+            "DEqMS: no peptide_counts provided; falling back to count=1 per "
+            "protein. Results will be equivalent to limma + uniform EBayes. "
+            "Pass peptide_counts (unique peptides per protein) to enable the "
+            "spectra-count ebayes adjustment."
+        )
         return counts
     aligned = peptide_counts.reindex(proteins)
     valid = aligned.notna()
+    n_valid = int(valid.sum())
+    if n_valid == 0:
+        logger.warning(
+            "DEqMS: peptide_counts had zero overlap with the protein matrix "
+            "(checked %d proteins); falling back to count=1. Make sure the "
+            "Series index uses the same protein accessions as the matrix "
+            "(e.g. anchor_protein/UniProt IDs).",
+            len(proteins),
+        )
+    elif n_valid < len(proteins):
+        logger.info(
+            "DEqMS: peptide_counts covered %d/%d proteins; missing entries "
+            "default to count=1.",
+            n_valid,
+            len(proteins),
+        )
     counts[valid.values] = aligned[valid].astype(int).values
     return counts
 

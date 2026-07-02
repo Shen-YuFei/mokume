@@ -61,8 +61,17 @@ def _extradir(
     return data[idx[:, 0]] - data[idx[:, 1]]
 
 
-def _covSD(x: np.ndarray, h: int) -> dict:
-    """Stahel-Donoho robust covariance — matches rrcovNA:::.covSD."""
+def _covSD(x: np.ndarray, h: int, chunk_size: int = 50_000) -> dict:
+    """Stahel-Donoho robust covariance — matches rrcovNA:::.covSD.
+
+    The full ``Y = x @ A.T`` is materialised as ``(n_complete, n_pairs)``,
+    which can reach hundreds of GB for human-scale matrices (~10k complete
+    proteins, ~200 samples => ~5M pair directions => >150 GB). We compute
+    the per-direction medians/MADs and the per-row max distance in chunks
+    along the pair-direction axis. Median/abs/MAD operate per column and
+    ``np.max`` over chunks combines via row-wise ``np.maximum``, so the
+    chunked version is mathematically identical to the dense one.
+    """
     n, p = x.shape
     B = _extradir(x)
     norms = np.linalg.norm(B, axis=1)
@@ -71,12 +80,20 @@ def _covSD(x: np.ndarray, h: int) -> dict:
     norms = norms[keep]
     A = B / norms[:, np.newaxis]
 
-    Y = x @ A.T
-    medY = np.median(Y, axis=0)
-    madY = np.median(np.abs(Y - medY), axis=0) * 1.4826
-    madY = np.where(madY < 1e-12, 1e-12, madY)
-    Z = np.abs(Y - medY) / madY
-    d = np.max(Z, axis=1)
+    n_pairs = A.shape[0]
+    medY = np.empty(n_pairs)
+    madY = np.empty(n_pairs)
+    d = np.zeros(n)
+    for s in range(0, n_pairs, chunk_size):
+        e = min(s + chunk_size, n_pairs)
+        Y_chunk = x @ A[s:e].T
+        medY_chunk = np.median(Y_chunk, axis=0)
+        madY_chunk = np.median(np.abs(Y_chunk - medY_chunk), axis=0) * 1.4826
+        madY_chunk = np.where(madY_chunk < 1e-12, 1e-12, madY_chunk)
+        Z_chunk = np.abs(Y_chunk - medY_chunk) / madY_chunk
+        np.maximum(d, Z_chunk.max(axis=1), out=d)
+        medY[s:e] = medY_chunk
+        madY[s:e] = madY_chunk
 
     ds_ix = np.argsort(d, kind="stable")
     ds_vals = d[ds_ix]
