@@ -260,6 +260,7 @@ impl SdrfColumns {
                     headers,
                     &[
                         "factor value[cell line]",
+                        "characteristics[organism part]",
                         "characteristics[cell line]",
                         "characteristics[disease]",
                     ],

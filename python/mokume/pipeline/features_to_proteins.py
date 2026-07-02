@@ -217,7 +217,7 @@ class QuantificationPipeline:
         protein_df = estimate_protein_intensities_streamed(
             normed_df,
             min_nonan=self.config.quantification.directlfq_min_nonan,
-            num_samples_quadratic=10,
+            num_samples_quadratic=self.config.quantification.directlfq_num_samples_quadratic,
             num_cores=self.config.quantification.directlfq_num_cores,
         )
 
@@ -282,8 +282,8 @@ class QuantificationPipeline:
         logger.info("Running DirectLFQ protein estimation for MaxLFQ...")
         protein_df = estimate_protein_intensities_streamed(
             normed_df,
-            min_nonan=2,
-            num_samples_quadratic=10,
+            min_nonan=self.config.quantification.directlfq_min_nonan,
+            num_samples_quadratic=self.config.quantification.directlfq_num_samples_quadratic,
             num_cores=self.config.quantification.directlfq_num_cores,
         )
         if "protein" in protein_df.columns:

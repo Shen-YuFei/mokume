@@ -720,7 +720,12 @@ def test_maxlfq_pipeline_uses_directlfq_loader_when_safe(monkeypatch, lfq_datase
 
     result = QuantificationPipeline(cfg).run()
 
-    assert calls == {"loader": 1, "old_quantify": 0, "min_nonan": 2}
+    # min_nonan must flow from config (directlfq_min_nonan), not a hardcoded value.
+    assert calls == {
+        "loader": 1,
+        "old_quantify": 0,
+        "min_nonan": cfg.quantification.directlfq_min_nonan,
+    }
     assert list(result.columns) == [PROTEIN_NAME, "run_S1", "run_S2"]
     assert result[PROTEIN_NAME].tolist() == ["P12345"]
     assert pd.isna(result.loc[0, "run_S1"])

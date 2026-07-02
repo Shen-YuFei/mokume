@@ -216,6 +216,7 @@ class ConcentrationWeightByProteomicRuler:
         return histone_intensities
 
     def apply_ruler(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
+        protein_intensities = protein_intensities.copy()
         histone_intensity = self.total_histone_intensities(protein_intensities)
 
         protein_intensities[COPYNUMBER] = (

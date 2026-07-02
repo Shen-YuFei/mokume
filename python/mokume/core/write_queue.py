@@ -74,6 +74,7 @@ class WriteCSVTask(Thread):
         self.write_options = write_options | kwargs
         self._wrote_header = False
         self._queue = Queue()
+        self._exception = None
 
     def write(self, table: pd.DataFrame):
         """
@@ -88,10 +89,17 @@ class WriteCSVTask(Thread):
         self._queue.put(table)
 
     def close(self):
-        """Signal the thread to finish processing and close the file."""
+        """Signal the thread to finish processing and close the file.
+
+        Re-raises any exception the worker thread hit while writing, so a
+        failed write surfaces to the caller instead of silently reporting
+        success on a dead worker thread.
+        """
         logger.debug("Closing CSV writer queue for %s", self.path)
         self._queue.put(None)
         self.join()
+        if self._exception is not None:
+            raise self._exception
 
     def _write(self, table: pd.DataFrame):
         """
@@ -121,6 +129,7 @@ class WriteCSVTask(Thread):
             )
         except Exception as e:
             logger.error("Error writing to CSV file %s: %s", self.path, str(e))
+            self._exception = e
             raise
 
     def _close(self):
@@ -190,6 +199,7 @@ class WriteParquetTask(Thread):
         self._queue = Queue()
         self._writer = None
         self._schema = None
+        self._exception = None
 
     def write(self, table: pd.DataFrame):
         """
@@ -204,13 +214,22 @@ class WriteParquetTask(Thread):
         self._queue.put(table)
 
     def close(self):
-        """Signal the thread to finish processing and close the file."""
+        """Signal the thread to finish processing and close the file.
+
+        Re-raises any exception the worker thread hit while writing, so a
+        failed write surfaces to the caller instead of silently reporting
+        success on a dead worker thread.
+        """
         logger.debug("Closing Parquet writer queue for %s", self.path)
         self._queue.put(None)
         self.join()
+        if self._exception is not None:
+            raise self._exception
 
     def _close(self):
         logger.debug("Closing Parquet writer for %s", self.path)
+        if self._writer is None:
+            return
         self._writer.add_key_value_metadata(self.metadata)
         self._writer.close()
 
@@ -244,19 +263,21 @@ class WriteParquetTask(Thread):
             )
         except Exception as e:
             logger.error("Error writing to Parquet file %s: %s", self.path, str(e))
+            self._exception = e
             raise
 
     def run(self):
         """Continuously process the queue to write DataFrames to the Parquet file."""
-        while True:
-            try:
-                table: pd.DataFrame = self._queue.get(True)
-            except Empty:
-                continue
+        try:
+            while True:
+                try:
+                    table: pd.DataFrame = self._queue.get(True)
+                except Empty:
+                    continue
 
-            if table is None:
-                break
+                if table is None:
+                    break
 
-            self._write(table)
-
-        self._close()
+                self._write(table)
+        finally:
+            self._close()
