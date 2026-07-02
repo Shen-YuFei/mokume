@@ -1,6 +1,6 @@
 # correct-batches: Batch Correction
 
-The `correct-batches` command applies ComBat batch correction to already-quantified protein data. It reads multiple TSV files from a folder, combines them, and removes batch effects.
+The `correct-batches` command applies native Rust ComBat batch correction (oracle-verified vs inmoose) to already-quantified protein data. It reads multiple TSV files from a folder, combines them, and removes batch effects. Because ComBat is native in the kernel, no extra dependency is needed.
 
 !!! tip "Prefer the integrated pipeline"
     For most use cases, batch correction is easier to apply via `features2proteins --batch-correction`. Use this standalone command when you have pre-existing protein quantification files that need correction.
@@ -18,31 +18,31 @@ This page documents the standalone CLI command `mokume correct-batches`.
         -o corrected_ibaq.tsv
     ```
 
-=== "Python"
+=== "Python (wheel)"
+
+    The wheel wrapper maps keyword arguments to CLI flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`) and runs the same kernel in-process:
 
     ```python
-    from mokume.postprocessing import (
-        apply_batch_correction,
-        detect_batches,
-        extract_covariates_from_sdrf,
-        pivot_wider,
-    )
+    import mokume
 
-    # Reshape to wide format
-    df_wide = pivot_wider(
-        df, row_name="ProteinName", col_name="SampleID", values="Ibaq"
+    mokume.correct_batches(
+        folder="ibaq_folder/",
+        pattern="*ibaq.tsv",
+        output="corrected_ibaq.tsv",
     )
+    ```
 
-    # Detect batches from sample names
-    batch_indices = detect_batches(
-        sample_ids=df_wide.columns.tolist(),
-        method="sample_prefix",
-    )
+=== "Python (explicit argv)"
 
-    # Apply ComBat
-    df_corrected = apply_batch_correction(
-        df=df_wide, batch=batch_indices,
-    )
+    ```python
+    import mokume
+
+    mokume.run([
+        "correct-batches",
+        "--folder", "ibaq_folder/",
+        "--pattern", "*ibaq.tsv",
+        "--output", "corrected_ibaq.tsv",
+    ])
     ```
 
 ## CLI Options
@@ -52,40 +52,42 @@ This page documents the standalone CLI command `mokume correct-batches`.
 | `-f/--folder` | required | Folder containing TSV files |
 | `-p/--pattern` | `*ibaq.tsv` | File matching pattern |
 | `-o/--output` | required | Output file path |
-| `-sid/--sample_id_column` | `SampleID` | Sample ID column name |
-| `-pid/--protein_id_column` | `ProteinName` | Protein ID column name |
-| `-ibaq/--ibaq_raw_column` | `IBAQ` | Raw intensity column |
-| `--ibaq_corrected_column` | `IBAQ_BEC` | Corrected intensity column |
+| `--sample_id_column` / `--sid` | `SampleID` | Sample ID column name |
+| `--protein_id_column` / `--pid` | `ProteinName` | Protein ID column name |
+| `--ibaq_raw_column` / `--ibaq` | `Ibaq` | Raw intensity column |
+| `--ibaq_corrected_column` | `IbaqBec` | Corrected intensity column |
 | `--comment` | `#` | Comment character in files |
 | `--sep` | `\t` | Field separator |
 | `--export_anndata` | off | Export to AnnData h5ad format |
 
-## With Covariates (Python API)
+## With Covariates
 
-To preserve biological signal during batch correction, specify covariates:
+To preserve biological signal during batch correction, supply covariates. The
+standalone `correct-batches` command runs ComBat on the combined iBAQ folder and
+does **not** expose batch-method or covariate options. Covariate-aware correction
+is driven from the [`features2proteins`](features2proteins.md#batch-correction)
+flow, which extracts the covariates from the SDRF:
+
+```bash
+mokume features2proteins \
+    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --batch-correction \
+    --batch-method sample_prefix \
+    --batch-covariates "characteristics[sex],characteristics[tissue]"
+```
 
 ```python
-from mokume.postprocessing import (
-    apply_batch_correction,
-    detect_batches,
-    extract_covariates_from_sdrf,
-)
+import mokume
 
-batch_indices = detect_batches(
-    sample_ids=df_wide.columns.tolist(),
-    method="sample_prefix",
-)
-
-covariates = extract_covariates_from_sdrf(
-    "experiment.sdrf.tsv",
-    sample_ids=df_wide.columns.tolist(),
-    covariate_columns=["characteristics[sex]", "characteristics[tissue]"],
-)
-
-df_corrected = apply_batch_correction(
-    df=df_wide,
-    batch=batch_indices,
-    covs=covariates,
+mokume.features2proteins(
+    parquet="features.parquet",
+    output="proteins.csv",
+    sdrf="experiment.sdrf.tsv",
+    quant_method="maxlfq",
+    batch_correction=True,
+    batch_method="sample_prefix",
+    batch_covariates="characteristics[sex],characteristics[tissue]",
 )
 ```
 

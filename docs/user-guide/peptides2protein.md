@@ -25,35 +25,31 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
         -o proteins-maxlfq.tsv
     ```
 
-=== "Python"
+=== "Python (wheel)"
+
+    The wheel wrapper maps keyword arguments to CLI flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`) and runs the same kernel in-process:
 
     ```python
-    from mokume.quantification import (
-        TopNQuantification,
-        MaxLFQQuantification,
-        AllPeptidesQuantification,
-        peptides_to_protein,
-    )
-    import pandas as pd
+    import mokume
 
-    peptides = pd.read_csv("peptides.csv")
-
-    # TopN
-    top3 = TopNQuantification(n=3)
-    result = top3.quantify(
-        peptides,
-        protein_column="ProteinName",
-        peptide_column="PeptideSequence",
-        intensity_column="NormIntensity",
-        sample_column="SampleID",
+    # iBAQ (requires FASTA)
+    mokume.peptides2protein(
+        method="ibaq",
+        fasta="proteome.fasta",
+        peptides="peptides.csv",
+        output="proteins-ibaq.tsv",
     )
+
+    # TopN (no FASTA needed)
+    mokume.peptides2protein(method="top3", peptides="peptides.csv",
+                            output="proteins-top3.tsv")
     ```
 
 ## Methods
 
 ### iBAQ
 
-Intensity-Based Absolute Quantification. Divides summed peptide intensities by the number of theoretically observable peptides. **Requires a FASTA file**.
+Intensity-Based Absolute Quantification with the **piBAQ (paralog-aware iBAQ)** algorithm: per-protein proportional allocation when each family member has at least one detected proteotypic peptide, with automatic fallback to family-level rollup when one or more members have zero anchors (e.g. the actin family). See [Quantification Methods](../concepts/quantification.md#ibaq-pibaq-paralog-aware) for the underlying algorithm. **Requires a FASTA file**.
 
 ```bash
 mokume peptides2protein --method ibaq \
@@ -62,6 +58,32 @@ mokume peptides2protein --method ibaq \
     -e Trypsin \
     --normalize \
     --output proteins-ibaq.tsv
+```
+
+The output adds three metadata columns -- `FamilyId`, `FamilySize`, `EvidenceLevel` -- so users can audit which path each protein took. When `EvidenceLevel == "family_only"`, every member of the family carries the same iBAQ value (member-level resolution was not identifiable from the data); when it is `medium` or `high` the iBAQ is per-protein.
+
+#### Family Discovery Tuning
+
+Families are discovered automatically by collapsing UniProt isoform suffixes (`-2`, `-3`, ...) onto the canonical entry and then grouping proteins on the shared-peptide graph. Two CLI flags tune the auto-discovery; both are optional and rarely need adjustment.
+
+```bash
+# Lower the shared-peptide threshold for very tightly homologous families
+mokume peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+    --min-shared 1 -o out.tsv
+
+# Pin specific families with an audit-friendly YAML override
+mokume peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+    --families families.yaml -o out.tsv
+```
+
+The YAML schema is:
+
+```yaml
+families:
+  - name: ACT
+    members: [P60709, P63261, P68133]   # canonical accessions only
+  - name: HIST_H2A
+    members: [P0C0S5, Q96QV6, P04908]
 ```
 
 #### Full iBAQ with TPA and ProteomicRuler
@@ -83,9 +105,9 @@ mokume peptides2protein \
 ```
 
 ```python
-from mokume.quantification import peptides_to_protein
+import mokume
 
-peptides_to_protein(
+mokume.peptides2protein(
     fasta="proteome.fasta",
     peptides="peptides.csv",
     enzyme="Trypsin",
@@ -98,10 +120,17 @@ peptides_to_protein(
     output="proteins-ibaq.tsv",
     min_aa=7,
     max_aa=30,
-    verbose=True,
-    qc_report="QC.pdf",
 )
 ```
+
+!!! note "iBAQ enzyme coverage and the QC report"
+    iBAQ digests natively in Rust for the ported enzymes (Trypsin[/P], Lys-C[/P],
+    Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...). For any other
+    enzyme pyOpenMS knows (CNBr, V8-DE, ...) the kernel has no cleavage rule and
+    the command errors with a pointer to the pure-Python fallback
+    `mokume.peptides2protein_ibaq` (`ibaq` extra). The `--qc_report` PDF is plotting
+    periphery: `--verbose` prints a one-line pointer to `mokume.peptides2protein_qc`
+    (`plotting` extra), which draws the density / box plots from the kernel's table.
 
 ### TopN
 
@@ -119,16 +148,16 @@ mokume peptides2protein --method topn --topn_n 10 -p peptides.csv -o out.tsv
 ```
 
 ```python
-from mokume.quantification import TopNQuantification
+import mokume
 
-top3 = TopNQuantification(n=3)
-top5 = TopNQuantification(n=5)
-top10 = TopNQuantification(n=10)
+mokume.peptides2protein(method="top3", peptides="peptides.csv", output="out.tsv")
+mokume.peptides2protein(method="topn", topn_n=5, peptides="peptides.csv",
+                        output="out.tsv")
 ```
 
 ### MaxLFQ
 
-Delayed normalization with pairwise peptide ratios. Automatically uses DirectLFQ backend when installed, falling back to the built-in parallelized implementation.
+Delayed normalization with pairwise peptide ratios. `maxlfq` rolls the peptide matrix up with the native Rust DirectLFQ estimator (delegating to it with `min_nonan = 2`).
 
 ```bash
 mokume peptides2protein --method maxlfq \
@@ -138,36 +167,28 @@ mokume peptides2protein --method maxlfq \
 ```
 
 ```python
-from mokume.quantification import MaxLFQQuantification
+import mokume
 
-maxlfq = MaxLFQQuantification(min_peptides=2, threads=4)
-result = maxlfq.quantify(peptides)
-
-# Check which backend is active
-print(maxlfq.using_directlfq)  # True/False
-print(maxlfq.name)             # "MaxLFQ (DirectLFQ)" or "MaxLFQ (built-in)"
-
-# Force built-in implementation
-maxlfq_builtin = MaxLFQQuantification(min_peptides=2, force_builtin=True)
+mokume.peptides2protein(method="maxlfq", threads=4, peptides="peptides.csv",
+                        output="proteins-maxlfq.tsv")
 ```
 
 ### DirectLFQ
 
-Uses hierarchical normalization with variance-guided pairwise alignment. Requires `pip install mokume[directlfq]`.
+Uses hierarchical normalization with variance-guided pairwise alignment, native in the Rust kernel (no extra dependency).
 
 ```bash
 mokume peptides2protein --method directlfq \
+    --min_nonan 2 \
     -p peptides.csv \
     -o proteins-directlfq.tsv
 ```
 
 ```python
-from mokume.quantification import is_directlfq_available
+import mokume
 
-if is_directlfq_available():
-    from mokume.quantification import DirectLFQQuantification
-    directlfq = DirectLFQQuantification(min_nonan=2)
-    result = directlfq.quantify(peptides)
+mokume.peptides2protein(method="directlfq", min_nonan=2, peptides="peptides.csv",
+                        output="proteins-directlfq.tsv")
 ```
 
 ### Sum
@@ -180,21 +201,11 @@ mokume peptides2protein --method sum \
     -o proteins-sum.tsv
 ```
 
-## Factory Function
-
-The `get_quantification_method` factory automatically parses method names:
-
 ```python
-from mokume.quantification import get_quantification_method
+import mokume
 
-method = get_quantification_method("top3")    # TopNQuantification(n=3)
-method = get_quantification_method("top5")    # TopNQuantification(n=5)
-method = get_quantification_method("maxlfq", min_peptides=2, threads=-1)
-
-# Check available methods
-from mokume.quantification import list_quantification_methods
-print(list_quantification_methods())
-# {'top3': True, 'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
+mokume.peptides2protein(method="sum", peptides="peptides.csv",
+                        output="proteins-sum.tsv")
 ```
 
 ## CLI Options Reference
@@ -216,6 +227,8 @@ print(list_quantification_methods())
 | `--topn_n` | 3 | N for TopN quantification |
 | `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
 | `--min_nonan` | 1 | Min non-NaN values (DirectLFQ) |
+| `--families` | none | Optional YAML file with explicit family overrides (iBAQ only) |
+| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (iBAQ only) |
 | `-o/--output` | none | Output file path |
 | `--verbose` | off | Print distribution info |
 | `--qc_report` | QCprofile.pdf | Path for QC report PDF |

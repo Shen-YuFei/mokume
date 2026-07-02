@@ -1,0 +1,26 @@
+[package]
+name = "mokume-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Pipeline orchestration for mokume"
+
+[lints]
+workspace = true
+
+[dependencies]
+csv = "1.4.0"
+mokume-core = { path = "../mokume-core" }
+mokume-imputation = { version = "0.1.0", path = "../mokume-imputation" }
+mokume-io = { version = "0.1.0", path = "../mokume-io" }
+mokume-normalization = { version = "0.1.0", path = "../mokume-normalization" }
+mokume-quant = { version = "0.1.0", path = "../mokume-quant" }
+mokume-stats = { version = "0.1.0", path = "../mokume-stats" }
+rayon = "1.12.0"
+regex = "1.12.3"
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

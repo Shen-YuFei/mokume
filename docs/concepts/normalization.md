@@ -56,8 +56,12 @@ Applied after all samples are loaded, operating on the complete dataset:
 
 | Method | Description |
 |--------|-------------|
+| `quantile` | Quantile normalization — forces identical intensity distributions across samples |
+| `mediancenter` | Median centering — subtracts each sample's log2 median (location shift) |
+| `meancenter` | Mean centering — subtracts each sample's log2 mean (location shift) |
+| `rlr` | Robust Linear Regression against a reference profile (NormalyzerDE-style) |
+| `loess` | LOESS regression on MA-plot residuals (intensity-dependent bias) |
 | `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
-| `tmm` | Trimmed Mean of M-values (Robinson & Oshlack, 2010) |
 
 !!! tip "When to use hierarchical normalization"
     Use `--sample-normalization hierarchical` when you want DirectLFQ-style normalization **combined with a different quantification method** (e.g., iBAQ). This gives you the normalization quality of DirectLFQ with the quantification approach of your choice.
@@ -88,27 +92,65 @@ mokume features2proteins -p data.parquet -o out.csv \
 
 ### LOESS Normalization
 
-LOESS normalization is available as a standalone Python API utility for log2-scale matrices when you want to correct intensity-dependent bias using MA-style local regression.
-
-```python
-from mokume.normalization import loess_normalize
-
-normalized = loess_normalize(log2_df, frac=0.75, reference="median")
-```
-
-!!! note
-    LOESS is not currently exposed as a top-level `features2proteins` CLI normalization mode. It is most useful as a programmatic utility when you already have a matrix and want to test intensity-dependent bias correction explicitly.
-
-### TMM Normalization
-
-Trimmed Mean of M-values computes normalization factors robust to composition bias from highly abundant proteins. Based on Robinson & Oshlack (2010).
+LOESS normalization corrects intensity-dependent bias between samples by
+fitting local regression on MA-plot residuals (M = log2 sample / reference,
+A = log2 mean). Exposed via the pipeline as `--sample-normalization loess`
+or as a standalone utility on a log2-scale wide matrix.
 
 ```bash
 mokume features2proteins -p data.parquet -o out.csv \
-    --sample-normalization tmm
+    --sample-normalization loess
 ```
+
+LOESS runs natively in the Rust kernel (~2e-3 vs statsmodels lowess on real data).
+
+### Quantile Normalization
+
+Quantile normalization (`quantile`) makes every sample share an **identical
+intensity distribution**. Working on log2 peptide sums, it replaces each value
+with the cross-sample mean of all values at the same rank, so every column ends
+up with the same sorted profile. It is the strongest distributional correction
+available and assumes most features are unchanged across samples.
+
+```bash
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization quantile
+```
+
+Quantile normalization runs natively in the Rust kernel.
+
+### Median and Mean Centering
+
+Centering applies a **location shift in log2 space**: for each sample it
+subtracts that sample's log2 median (`mediancenter`) or log2 mean
+(`meancenter`), then maps the values back to linear scale
+($2^{\log_2 x - \text{center}}$). Unlike quantile normalization it only aligns
+the central level of each sample and leaves the within-sample spread untouched,
+making it a lighter-touch alternative when distributions are already similar.
+
+```bash
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization mediancenter   # or: meancenter
+```
+
+Both centering variants run natively in the Rust kernel.
+
+### RLR Normalization
+
+Robust Linear Regression (`rlr`) fits, in log2 space, a robust (IRLS) linear
+regression of each sample against a common reference profile and removes the
+fitted intensity-dependent bias. The robust fit down-weights the minority of
+genuinely changing proteins, so a handful of large fold-changes do not distort
+the normalization (the approach used by NormalyzerDE).
+
+```bash
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization rlr
+```
+
+RLR runs natively in the Rust kernel.
 
 ## DirectLFQ Mode
 
 !!! warning "DirectLFQ handles its own normalization"
-    When using `--quant-method directlfq`, mokume delegates **all processing** (normalization + quantification) to the DirectLFQ package. The `--run-normalization` and `--sample-normalization` options are ignored.
+    When using `--quant-method directlfq`, the kernel runs **all processing** (normalization + quantification) through the native Rust DirectLFQ estimator. The `--run-normalization` and `--sample-normalization` options are ignored.

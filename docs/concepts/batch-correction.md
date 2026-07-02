@@ -11,12 +11,7 @@ Common sources include:
 - Different reagent lots
 - Multi-site studies with different labs
 
-mokume uses the **ComBat algorithm** (via [inmoose](https://github.com/epigenelabs/inmoose)) to remove batch effects while preserving biological signal.
-
-!!! note "Optional dependency"
-    ```bash
-    pip install mokume[batch-correction]
-    ```
+mokume uses the **ComBat algorithm** to remove batch effects while preserving biological signal. ComBat is a native Rust implementation, oracle-verified against [inmoose](https://github.com/epigenelabs/inmoose) (~1e-6 / 1e-9). It needs no third-party Python dependency.
 
 ## Key Concepts
 
@@ -39,72 +34,78 @@ mokume uses the **ComBat algorithm** (via [inmoose](https://github.com/epigenela
 
 ### Integrated Pipeline (Recommended)
 
-```python
-from mokume.pipeline import QuantificationPipeline, PipelineConfig
-from mokume.pipeline.config import (
-    InputConfig, BatchCorrectionConfig, QuantificationConfig,
-)
+Run ComBat as part of `features2proteins` with `--batch-correction`. Batches are
+detected from the sample-name prefix (or an explicit SDRF column), and
+`--batch-covariates` names the SDRF columns whose biological signal to preserve.
 
-config = PipelineConfig(
-    input=InputConfig(parquet="data.parquet", sdrf="experiment.sdrf.tsv"),
-    quantification=QuantificationConfig(method="maxlfq"),
-    batch=BatchCorrectionConfig(
-        enabled=True,
-        method="sample_prefix",
-        covariates=["characteristics[sex]", "characteristics[organism part]"],
-    ),
-)
+=== "CLI"
 
-pipeline = QuantificationPipeline(config)
-proteins = pipeline.run()  # Returns batch-corrected protein matrix
-```
+    ```bash
+    mokume features2proteins \
+        -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
+        --quant-method maxlfq \
+        --batch-correction \
+        --batch-method sample_prefix \
+        --batch-covariates "characteristics[sex],characteristics[organism part]"
+    ```
 
-### CLI
+=== "Python (wheel)"
 
-```bash
-mokume features2proteins \
-    -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --quant-method maxlfq \
-    --batch-correction \
-    --batch-method sample_prefix \
-    --batch-covariates "characteristics[sex],characteristics[organism part]"
-```
+    ```python
+    import mokume
 
-### Low-Level API
+    mokume.features2proteins(
+        parquet="data.parquet",
+        output="proteins.csv",
+        sdrf="experiment.sdrf.tsv",
+        quant_method="maxlfq",
+        batch_correction=True,
+        batch_method="sample_prefix",
+        batch_covariates="characteristics[sex],characteristics[organism part]",
+    )
+    ```
 
-```python
-from mokume.postprocessing import (
-    apply_batch_correction,
-    detect_batches,
-    extract_covariates_from_sdrf,
-)
+The covariate columns are extracted from the SDRF (column match with a
+sample-substring fallback, `pd.factorize` encoding, single-value columns
+dropped) and fed to the covariate ComBat design. ComBat runs on the proteins
+with no missing cells; the rest are kept uncorrected.
 
-# Detect batches from sample names
-batch_indices = detect_batches(
-    sample_ids=df_wide.columns.tolist(),
-    method="sample_prefix",
-)
+### Standalone iBAQ correction
 
-# Extract covariates (biological signal to preserve)
-covariates = extract_covariates_from_sdrf(
-    "experiment.sdrf.tsv",
-    sample_ids=df_wide.columns.tolist(),
-    covariate_columns=["characteristics[sex]"],
-)
+To correct already-written iBAQ tables (e.g. when merging datasets), use the
+dedicated `correct-batches` command, which runs the sample-prefix ComBat flow
+over a folder of iBAQ TSVs:
 
-# Apply ComBat
-df_corrected = apply_batch_correction(
-    df=df_wide, batch=batch_indices, covs=covariates,
-)
-```
+=== "CLI"
+
+    ```bash
+    mokume correct-batches \
+        --folder ./ibaq_outputs --pattern "*ibaq.tsv" \
+        --output corrected.tsv
+    ```
+
+=== "Python (wheel)"
+
+    ```python
+    import mokume
+
+    mokume.correct_batches(folder="./ibaq_outputs", pattern="*ibaq.tsv",
+                           output="corrected.tsv")
+    ```
 
 ## Batch Detection Methods
 
 | Method | Description | Example |
 |--------|-------------|---------|
 | `sample_prefix` | Extract from sample name prefix | `PXD001-S1` &rarr; batch `PXD001` |
+| `column` | Explicit values from SDRF column (`--batch-column`) | User-specified |
 | `run` | Use run/reference file name | Each file is a batch |
-| `column` | Explicit values from SDRF column | User-specified |
+
+!!! warning "`--batch-method run` in the protein-matrix flow"
+    `--batch-method run` has no run-level mapping in the `features2proteins`
+    protein-matrix flow and **errors at runtime** (the same way Python raises
+    `run_info required`). Use `sample_prefix` or `column` here. The PCA + HDBSCAN
+    outlier-removal pass is unported (HDBSCAN is not reproducible cross-language).
 
 ## When to Use Batch Correction
 

@@ -11,7 +11,7 @@ with the paper's results using the Quartet multi-lab dataset.
 """
 
 import logging
-import sys
+import tempfile
 import time
 import warnings
 from pathlib import Path
@@ -19,17 +19,22 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 
+import mokume
+
+try:
+    from inmoose.pycombat import pycombat
+    _COMBAT_AVAILABLE = True
+except ImportError:
+    try:
+        from combat.pycombat import pycombat
+        _COMBAT_AVAILABLE = True
+    except ImportError:
+        _COMBAT_AVAILABLE = False
+
 warnings.filterwarnings("ignore")
 
-# Add mokume to path
-BENCHMARK_DIR = Path(__file__).parent.parent
-MOKUME_ROOT = BENCHMARK_DIR.parent.parent
-sys.path.insert(0, str(MOKUME_ROOT))
-
-from mokume.quantification.directlfq import is_directlfq_available, DirectLFQQuantification
-from mokume.postprocessing import is_batch_correction_available, apply_batch_correction
-
 # Paths
+BENCHMARK_DIR = Path(__file__).parent.parent
 REPO_DIR = BENCHMARK_DIR / "proteomics-batch-effect-correction-benchmarking"
 DATA_DIR = REPO_DIR / "data" / "rawfiles" / "MaxQuant"
 RESULTS_DIR = BENCHMARK_DIR / "results"
@@ -192,30 +197,52 @@ def run_ibaq_quantification(peptide_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_directlfq_quantification(peptide_df: pd.DataFrame) -> pd.DataFrame:
-    """Run DirectLFQ quantification using mokume's wrapper."""
+    """Run DirectLFQ quantification via mokume Rust kernel (file-based API)."""
     print("  Running DirectLFQ...")
 
-    if not is_directlfq_available():
-        print("  WARNING: DirectLFQ not available, skipping")
-        return pd.DataFrame()
-
-    # Prepare data for DirectLFQ (needs protein, peptide, intensity, sample columns)
+    # Prepare input: rename columns to the schema expected by the Rust kernel
     directlfq_input = peptide_df[["protein", "peptide", "intensity", "run_id"]].copy()
+    directlfq_input = directlfq_input.rename(columns={
+        "protein": "ProteinName",
+        "peptide": "PeptideSequence",
+        "intensity": "NormIntensity",
+        "run_id": "SampleID",
+    })
 
     try:
-        directlfq = DirectLFQQuantification(min_nonan=1)
-        result = directlfq.quantify(
-            directlfq_input,
-            protein_column="protein",
-            peptide_column="peptide",
-            intensity_column="intensity",
-            sample_column="run_id",
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_input = str(Path(tmpdir) / "peptides.parquet")
+            tmp_output = str(Path(tmpdir) / "directlfq_result.tsv")
 
-        # Convert to standard format
-        result = result.rename(columns={
-            "DirectLFQIntensity": "intensity"
-        })
+            directlfq_input.to_parquet(tmp_input, index=False)
+
+            mokume.peptides2protein(
+                peptides=tmp_input,
+                method="directlfq",
+                output=tmp_output,
+                min_nonan=1,
+            )
+
+            result = pd.read_csv(tmp_output, sep="\t")
+
+        # Normalise column names to lowercase for consistent downstream handling
+        result.columns = [c.lower() for c in result.columns]
+
+        # Map back to the standard schema (protein, run_id, intensity)
+        col_map = {}
+        for candidate in ["proteinname", "protein"]:
+            if candidate in result.columns:
+                col_map[candidate] = "protein"
+                break
+        for candidate in ["sampleid", "sample", "run_id"]:
+            if candidate in result.columns:
+                col_map[candidate] = "run_id"
+                break
+        for candidate in ["directlfqintensity", "intensity"]:
+            if candidate in result.columns:
+                col_map[candidate] = "intensity"
+                break
+        result = result.rename(columns=col_map)
 
         # Take log for consistency with other methods
         result["intensity"] = np.log(result["intensity"])
@@ -244,9 +271,9 @@ def pivot_to_matrix(protein_df: pd.DataFrame, meta_df: pd.DataFrame) -> pd.DataF
 
 
 def apply_combat_correction(protein_matrix: pd.DataFrame, meta_df: pd.DataFrame) -> pd.DataFrame:
-    """Apply ComBat batch correction at protein level."""
-    if not is_batch_correction_available():
-        print("  WARNING: inmoose not installed, skipping batch correction")
+    """Apply ComBat batch correction at protein level via inmoose/combat."""
+    if not _COMBAT_AVAILABLE:
+        print("  WARNING: inmoose/combat not installed, skipping batch correction")
         return protein_matrix
 
     print("  Applying ComBat batch correction...")
@@ -265,11 +292,7 @@ def apply_combat_correction(protein_matrix: pd.DataFrame, meta_df: pd.DataFrame)
     matrix_filled = matrix_filtered.fillna(matrix_filtered.median())
 
     try:
-        corrected = apply_batch_correction(
-            matrix_filled,
-            batch_indices,
-            kwargs={"par_prior": True}
-        )
+        corrected = pycombat(matrix_filled, batch_indices, par_prior=True)
         return corrected
     except Exception as e:
         print(f"  ComBat failed: {e}")
@@ -440,18 +463,15 @@ def run_benchmark():
     print(f"  iBAQ: {len(ibaq_matrix)} proteins, {time.time()-start:.1f}s")
     results["iBAQ"] = {"raw": ibaq_matrix}
 
-    # DirectLFQ
-    if is_directlfq_available():
-        start = time.time()
-        directlfq_proteins = run_directlfq_quantification(combined_peptides)
-        if len(directlfq_proteins) > 0:
-            directlfq_matrix = pivot_to_matrix(directlfq_proteins, combined_meta)
-            print(f"  DirectLFQ: {len(directlfq_matrix)} proteins, {time.time()-start:.1f}s")
-            results["DirectLFQ"] = {"raw": directlfq_matrix}
-        else:
-            print("  DirectLFQ: no results (failed or unavailable)")
+    # DirectLFQ (always available via Rust kernel)
+    start = time.time()
+    directlfq_proteins = run_directlfq_quantification(combined_peptides)
+    if len(directlfq_proteins) > 0:
+        directlfq_matrix = pivot_to_matrix(directlfq_proteins, combined_meta)
+        print(f"  DirectLFQ: {len(directlfq_matrix)} proteins, {time.time()-start:.1f}s")
+        results["DirectLFQ"] = {"raw": directlfq_matrix}
     else:
-        print("  DirectLFQ: not installed")
+        print("  DirectLFQ: no results (quantification failed)")
 
     # Apply batch correction
     print(f"\n{'=' * 70}")

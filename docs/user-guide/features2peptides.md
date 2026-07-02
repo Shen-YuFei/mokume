@@ -15,18 +15,35 @@ The `features2peptides` command normalizes feature-level mass spectrometry data 
         --output peptides.csv
     ```
 
-=== "Python"
+=== "Python (wheel)"
+
+    The wheel wrapper maps keyword arguments to CLI flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`) and runs the same kernel in-process:
 
     ```python
-    from mokume.normalization.peptide import peptide_normalization
+    import mokume
 
-    peptide_normalization(
+    mokume.features2peptides(
         parquet="features.parquet",
         sdrf="experiment.sdrf.tsv",
-        nmethod="median",
-        pnmethod="globalMedian",
+        run_normalization="median",
+        sample_normalization="globalmedian",
         output="peptides.csv",
     )
+    ```
+
+=== "Python (explicit argv)"
+
+    ```python
+    import mokume
+
+    mokume.run([
+        "features2peptides",
+        "--parquet", "features.parquet",
+        "--sdrf", "experiment.sdrf.tsv",
+        "--run-normalization", "median",
+        "--sample-normalization", "globalmedian",
+        "--output", "peptides.csv",
+    ])
     ```
 
 ## Processing Steps
@@ -65,13 +82,18 @@ The command performs these steps in order:
 |--------|-------------|
 | `globalMedian` | Adjust all samples to global median (default) |
 | `conditionMedian` | Adjust samples within each condition |
-| `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
-| `tmm` | Trimmed Mean of M-values normalization |
 | `none` | Skip sample normalization |
 
-!!! note
-    The CLI now uses `--run-normalization` and `--sample-normalization`.
-    The underlying Python function `peptide_normalization()` still uses the older parameter names `nmethod` and `pnmethod`.
+!!! note "Only scalar-per-sample methods change the peptide output"
+    In the peptide flow only the factor-based normalizers (`globalmedian` /
+    `conditionmedian`) are applied. The dataset-level methods
+    (`quantile`, `rlr`, `loess`, `hierarchical`,
+    `mediancenter`, `meancenter`) are accepted but are a deterministic **no-op**
+    here (same result as `--sample-normalization none`): they need the full
+    matrix, which the streaming peptide pass does not hold, and Python's
+    per-sample loop also leaves them unchanged. All of these methods **are** implemented and
+    oracle-verified in [`features2proteins`](features2proteins.md#normalization-options),
+    where the full matrix exists — run dataset-level normalization there.
 
 ## Filtering Options
 
@@ -90,6 +112,7 @@ mokume features2peptides \
 |--------|---------|-------------|
 | `--min_aa` | 7 | Minimum amino acid length |
 | `--min_unique` | 2 | Minimum unique peptides per protein |
+| `--keep-shared-peptides` | off | Keep shared/non-unique peptides and skip the unique-peptide gate |
 | `--remove_decoy_contaminants` | off | Remove decoys and contaminants |
 | `--remove_low_frequency_peptides` | off | Remove peptides in <20% of samples |
 | `--remove_ids` | none | File with protein IDs to exclude |
@@ -105,6 +128,15 @@ For labeled datasets, `features2peptides` also supports IRS-style scaling and co
 | `--irs_stat` | `median` | IRS per-run statistic: median or mean |
 | `--irs_scope` | `global` | IRS scaling scope: global, by_mixture, or two_stage |
 | `--aggregation_level` | `sample` | Aggregate intensities at sample or run level |
+
+!!! note "Channel-based IRS"
+    The channel IRS path (`--irs_channel` / `--irs_autodetect_regex`) scales on
+    the TMT `mixture` / `channel` columns and is implemented for all three scopes
+    (`--irs_scope global` / `by_mixture` / `two_stage`). The reference channel is
+    taken from `--irs_channel`, or auto-detected from the SDRF when
+    `--irs_autodetect_regex` is given. For cross-plex reference scaling driven by
+    the SDRF, see
+    [`features2proteins`](features2proteins.md#irs-normalization-multi-plex-tmt).
 
 ## Preprocessing Filters
 
@@ -145,6 +177,19 @@ mokume features2peptides \
 | `--filter-min-features` | Minimum identified features per run |
 | `--filter-max-missing-rate` | Maximum missing value rate (0.0-1.0) |
 
+!!! note "Group-level filters: what runs and what is a no-op"
+    The per-row filters (min-intensity floor, peptide length, charge states,
+    excluded modifications, missed cleavages) and the per-`(protein, sample)`
+    unique-peptide gate are wired in the kernel and oracle-locked vs Python.
+    Among the group-level filters, CV threshold (`--filter-cv-threshold`),
+    quantile outlier removal, and the run-QC checks `--filter-min-features` /
+    min-total-intensity / min-proteins are implemented via a pre-pass. Replicate
+    agreement reproduces Python's degenerate per-sample behaviour (a threshold
+    `>= 2` empties the output, matching the reference). `--filter-max-missing-rate`,
+    sample correlation, min-search-score, and min-coverage are no-ops on the QPX
+    streaming model — each warns and passes rows through, exactly as Python skips
+    them. Only an unknown `razor-peptide-handling` value returns `NotImplemented`.
+
 See [Preprocessing Filters](../concepts/preprocessing.md) for the full filter reference.
 
 ## Output Options
@@ -165,43 +210,44 @@ mokume features2peptides -p data.parquet -o peptides.csv --skip_normalization
 
 ## Python API
 
-```python
-from mokume.normalization.peptide import peptide_normalization
+The wheel exposes the same command as a thin wrapper; keyword arguments map to CLI
+flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`).
 
-peptide_normalization(
+```python
+import mokume
+
+mokume.features2peptides(
     parquet="features.parquet",
     sdrf="experiment.sdrf.tsv",
     min_aa=7,
     min_unique=2,
-    remove_ids=None,
     remove_decoy_contaminants=True,
     remove_low_frequency_peptides=True,
     output="peptides-norm.csv",
-    skip_normalization=False,
-    nmethod="median",
-    pnmethod="globalMedian",
+    run_normalization="median",
+    sample_normalization="globalmedian",
     log2=True,
-    save_parquet=False,
+    save_parquet=True,
 )
 ```
 
 ### With Preprocessing Filters
 
+Point the wrapper at a YAML/JSON filter config, or pass the per-filter overrides
+directly:
+
 ```python
-from mokume.normalization.peptide import peptide_normalization
-from mokume.model.filters import PreprocessingFilterConfig
+import mokume
 
-config = PreprocessingFilterConfig(name="custom", enabled=True)
-config.intensity.min_intensity = 1000.0
-config.peptide.allowed_charge_states = [2, 3, 4]
-config.protein.min_unique_peptides = 2
-
-peptide_normalization(
+mokume.features2peptides(
     parquet="features.parquet",
     sdrf="experiment.sdrf.tsv",
     output="peptides.csv",
-    nmethod="median",
-    pnmethod="globalMedian",
-    filter_config=config,
+    run_normalization="median",
+    sample_normalization="globalmedian",
+    filter_config="filters.yaml",
+    filter_min_intensity=1000,
+    filter_charge_states="2,3,4",
+    filter_min_unique_peptides=2,
 )
 ```

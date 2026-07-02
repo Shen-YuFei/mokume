@@ -12,18 +12,15 @@ Filters tested:
 Note: FDR/score filters not available as data is already pre-filtered by quantms.
 """
 
-import sys
-from pathlib import Path
 import warnings
 from itertools import product
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Add parent to path for config import
-sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     RESULTS_DIR, FIGURES_DIR,
     SAMPLE_CONDITIONS,
@@ -31,16 +28,11 @@ from config import (
     FIGURE_DPI, FIGURE_FORMAT,
     EXPECTED_FOLD_CHANGES, SPECIES_PATTERNS,
 )
-
-# Add mokume to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-
-# Import mokume filters
-from mokume.preprocessing.filters.peptide import (
-    PeptideLengthFilter,
-    MissedCleavageFilter,
+from benchmark_utils import (
+    filter_peptide_length,
+    filter_missed_cleavages,
+    filter_min_peptides,
 )
-from mokume.preprocessing.filters.protein import MinPeptideFilter
 
 warnings.filterwarnings("ignore")
 
@@ -55,28 +47,24 @@ LOCAL_DATA_DIR = LOCAL_DIR / "data" / "processed"
 # Filter Configurations to Test
 # =============================================================================
 
-# Peptide length filters
 PEPTIDE_LENGTH_CONFIGS = [
-    {"min_length": 7, "max_length": 50, "name": "len≥7"},   # Default
-    {"min_length": 8, "max_length": 50, "name": "len≥8"},   # Stricter
-    {"min_length": 9, "max_length": 50, "name": "len≥9"},   # Most strict
+    {"min_length": 7, "max_length": 50, "name": "len>=7"},
+    {"min_length": 8, "max_length": 50, "name": "len>=8"},
+    {"min_length": 9, "max_length": 50, "name": "len>=9"},
 ]
 
-# Missed cleavage filters
 MISSED_CLEAVAGE_CONFIGS = [
-    {"max_missed_cleavages": 2, "name": "mc≤2"},  # Permissive
-    {"max_missed_cleavages": 1, "name": "mc≤1"},  # Default
-    {"max_missed_cleavages": 0, "name": "mc=0"},  # Strict
+    {"max_missed_cleavages": 2, "name": "mc<=2"},
+    {"max_missed_cleavages": 1, "name": "mc<=1"},
+    {"max_missed_cleavages": 0, "name": "mc=0"},
 ]
 
-# Minimum peptides per protein
 MIN_PEPTIDE_CONFIGS = [
-    {"min_unique_peptides": 1, "name": "pep≥1"},  # Permissive
-    {"min_unique_peptides": 2, "name": "pep≥2"},  # Default
-    {"min_unique_peptides": 3, "name": "pep≥3"},  # Strict
+    {"min_unique_peptides": 1, "name": "pep>=1"},
+    {"min_unique_peptides": 2, "name": "pep>=2"},
+    {"min_unique_peptides": 3, "name": "pep>=3"},
 ]
 
-# Default quantification method per technology
 DEFAULT_QUANT = {
     "tmt": "sum",
     "lfq": "directlfq"
@@ -121,30 +109,26 @@ def apply_filters(
     """Apply preprocessing filters to peptide data."""
     df_filtered = df.copy()
 
-    # Peptide length filter
-    length_filter = PeptideLengthFilter(
+    df_filtered = filter_peptide_length(
+        df_filtered,
         min_length=min_length,
         max_length=50,
-        sequence_column="PeptideSequence"
+        sequence_column="PeptideSequence",
     )
-    df_filtered, _ = length_filter.apply(df_filtered)
 
-    # Missed cleavage filter
-    mc_filter = MissedCleavageFilter(
+    df_filtered = filter_missed_cleavages(
+        df_filtered,
         max_missed_cleavages=max_missed_cleavages,
         sequence_column="PeptideSequence",
-        enzyme="trypsin"
+        enzyme="trypsin",
     )
-    df_filtered, _ = mc_filter.apply(df_filtered)
 
-    # Minimum peptides filter
-    pep_filter = MinPeptideFilter(
-        min_peptides=1,
+    df_filtered = filter_min_peptides(
+        df_filtered,
         min_unique_peptides=min_unique_peptides,
         protein_column="ProteinName",
-        peptide_column="PeptideSequence"
+        peptide_column="PeptideSequence",
     )
-    df_filtered, _ = pep_filter.apply(df_filtered)
 
     return df_filtered
 
@@ -207,7 +191,6 @@ def compute_metrics(df: pd.DataFrame) -> dict:
                 expected_fcs = np.array(expected_fcs)
                 fc_rmse = np.sqrt(np.mean((observed_fcs - expected_fcs) ** 2))
 
-    # Quality metrics
     n_proteins = len(df)
     pct_good_cv = (np.array(condition_cvs) < CV_THRESHOLDS["good"]).mean() * 100 if condition_cvs else 0
 
@@ -237,7 +220,6 @@ def run_benchmark(technology: str) -> list:
         print(f"  Skipping {technology}: {e}")
         return results
 
-    # Test all combinations
     total = len(PEPTIDE_LENGTH_CONFIGS) * len(MISSED_CLEAVAGE_CONFIGS) * len(MIN_PEPTIDE_CONFIGS)
     count = 0
 
@@ -249,7 +231,6 @@ def run_benchmark(technology: str) -> list:
         print(f"  [{count}/{total}] {combo_name}...", end=" ")
 
         try:
-            # Apply filters
             df_filtered = apply_filters(
                 df_peptides,
                 min_length=len_cfg["min_length"],
@@ -263,17 +244,15 @@ def run_benchmark(technology: str) -> list:
                 print("No peptides left, skipping")
                 continue
 
-            # Quantify
             df_quant = quantify_sum(df_filtered)
             df_quant = df_quant.replace(0, np.nan).dropna(thresh=3)
 
-            # Normalize (global median)
+            # Global median normalization
             global_median = df_quant.median().median()
             sample_medians = df_quant.median()
             factors = global_median / sample_medians
             df_norm = df_quant * factors
 
-            # Compute metrics
             metrics = compute_metrics(df_norm)
 
             result = {
@@ -310,20 +289,17 @@ def plot_filter_heatmap(results_df: pd.DataFrame, output_path: Path):
         if len(tech_df) == 0:
             continue
 
-        # Create pivot table for length × missed cleavages (for min_pep=2)
         for ax_idx, (metric, title, cmap) in enumerate([
             ("within_cv", "Within-Condition CV", "RdYlGn_r"),
             ("n_proteins", "Proteins Quantified", "RdYlGn"),
         ]):
             ax = axes[tech_idx, ax_idx]
 
-            # Filter for default min_pep=2
             subset = tech_df[tech_df["min_unique_peptides"] == 2].copy()
 
             if len(subset) == 0:
                 continue
 
-            # Pivot: length × missed cleavages
             pivot = subset.pivot(
                 index="min_length",
                 columns="max_missed_cleavages",
@@ -351,7 +327,6 @@ def plot_coverage_quality_tradeoff(results_df: pd.DataFrame, output_path: Path):
         if len(tech_df) == 0:
             continue
 
-        # Color by stringency (number of strict filters)
         tech_df["stringency"] = (
             (tech_df["min_length"] - 7) +
             (2 - tech_df["max_missed_cleavages"]) +
@@ -368,7 +343,6 @@ def plot_coverage_quality_tradeoff(results_df: pd.DataFrame, output_path: Path):
             edgecolor="black"
         )
 
-        # Label extremes
         best_cv = tech_df.loc[tech_df["within_cv"].idxmin()]
         best_n = tech_df.loc[tech_df["n_proteins"].idxmax()]
 
@@ -411,8 +385,6 @@ def plot_individual_filter_impact(results_df: pd.DataFrame, output_path: Path):
                 if len(tech_df) == 0:
                     continue
 
-                # Get mean metric for each filter value
-                # (averaging over other filter combinations)
                 means = tech_df.groupby(filter_col)[metric].mean()
 
                 ax.plot(means.index, means.values, "o-",
@@ -448,13 +420,11 @@ def main():
         results = run_benchmark(technology)
         all_results.extend(results)
 
-    # Save results
     if all_results:
         results_df = pd.DataFrame(all_results)
         results_df.to_csv(RESULTS_DIR / "preprocessing_filters.csv", index=False)
         print(f"\nResults saved to: {RESULTS_DIR / 'preprocessing_filters.csv'}")
 
-        # Generate plots
         print("\nGenerating plots...")
 
         plot_filter_heatmap(
@@ -472,7 +442,6 @@ def main():
             FIGURES_DIR / f"filter_individual_impact.{FIGURE_FORMAT}"
         )
 
-        # Summary
         print("\n" + "=" * 60)
         print("SUMMARY: Filter Impact")
         print("=" * 60)
@@ -484,24 +453,20 @@ def main():
             if len(tech_df) == 0:
                 continue
 
-            # Best by CV
             best_cv = tech_df.loc[tech_df["within_cv"].idxmin()]
             print(f"  Best CV: {best_cv['filter_combo']} "
                   f"(CV={best_cv['within_cv']:.4f}, n={best_cv['n_proteins']})")
 
-            # Best coverage
             best_n = tech_df.loc[tech_df["n_proteins"].idxmax()]
             print(f"  Most proteins: {best_n['filter_combo']} "
                   f"(CV={best_n['within_cv']:.4f}, n={best_n['n_proteins']})")
 
-            # Best RMSE
             valid_rmse = tech_df[tech_df["fc_rmse"].notna()]
             if len(valid_rmse) > 0:
                 best_rmse = valid_rmse.loc[valid_rmse["fc_rmse"].idxmin()]
                 print(f"  Best RMSE: {best_rmse['filter_combo']} "
                       f"(RMSE={best_rmse['fc_rmse']:.3f})")
 
-            # Default comparison (len≥7, mc≤2, pep≥2)
             default = tech_df[
                 (tech_df["min_length"] == 7) &
                 (tech_df["max_missed_cleavages"] == 2) &
@@ -509,11 +474,10 @@ def main():
             ]
             if len(default) > 0:
                 d = default.iloc[0]
-                print("\n  Default (len≥7, mc≤2, pep≥2):")
+                print("\n  Default (len>=7, mc<=2, pep>=2):")
                 print(f"    CV={d['within_cv']:.4f}, n={d['n_proteins']}, "
                       f"RMSE={d['fc_rmse']:.3f}")
 
-            # Individual filter impact
             print("\n  Filter impact (mean change from baseline):")
             baseline = tech_df[
                 (tech_df["min_length"] == 7) &
@@ -524,7 +488,6 @@ def main():
                 base_cv = baseline.iloc[0]["within_cv"]
                 base_n = baseline.iloc[0]["n_proteins"]
 
-                # Length impact
                 for l in [8, 9]:
                     subset = tech_df[(tech_df["min_length"] == l) &
                                     (tech_df["max_missed_cleavages"] == 2) &
@@ -532,7 +495,7 @@ def main():
                     if len(subset) > 0:
                         cv_change = (subset.iloc[0]["within_cv"] - base_cv) / base_cv * 100
                         n_change = subset.iloc[0]["n_proteins"] - base_n
-                        print(f"    len≥{l}: CV {cv_change:+.1f}%, proteins {n_change:+d}")
+                        print(f"    len>={l}: CV {cv_change:+.1f}%, proteins {n_change:+d}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,37 @@
+name: Sidecar Drift
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "python/mokume/**"
+      - "rust/python/mokume/**"
+      - "rust/scripts/vendor_sidecar.py"
+      - ".github/workflows/sidecar-drift.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "python/mokume/**"
+      - "rust/python/mokume/**"
+      - "rust/scripts/vendor_sidecar.py"
+      - ".github/workflows/sidecar-drift.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: sidecar drift guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check vendored sidecar is in sync with python/mokume
+        run: python rust/scripts/vendor_sidecar.py --check

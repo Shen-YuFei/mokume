@@ -30,9 +30,16 @@ Compares TMT and LFQ on same samples (PXD007683).
 ## Running Benchmarks
 
 ```bash
+pip install "mokume[analysis]"   # compute kernel + analysis extras
 cd benchmarks/<benchmark-name>
 python scripts/run_benchmark.py
 ```
+
+Quantification calls go through the Rust kernel via `mokume.peptides2protein()` /
+`mokume.features2proteins()` (file-based, in-process through PyO3). Normalization,
+imputation, and filter benchmarks that test individual components use numpy / scipy
+/ scikit-learn directly (the Rust kernel bundles these internally but does not
+expose them as standalone Python APIs).
 
 ## Data Policy
 
@@ -45,6 +52,6 @@ benchmarks/<benchmark-name>/
 ├── README.md           # Overview, results, methodology (expandable)
 ├── scripts/            # Benchmark scripts
 ├── data/               # GIT-IGNORED: large data files
-├── results/            # CSV metrics
+├── results/            # CSV metrics (baselines from the original mokume_py runs)
 └── figures/            # PNG visualizations
 ```

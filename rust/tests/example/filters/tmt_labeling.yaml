@@ -1,0 +1,32 @@
+# TMT/iTRAQ Labeling Experiment Filters
+# Optimized for multiplexed labeling experiments
+# Use case: TMT-10plex, TMT-16plex, iTRAQ experiments
+
+name: tmt_labeling
+enabled: true
+log_filtered_counts: true
+
+intensity:
+  min_intensity: 500.0              # TMT reporter ions can be low
+  cv_threshold: 0.4                 # Allow higher CV for labeled samples
+  remove_zero_intensity: true
+
+peptide:
+  allowed_charge_states: [2, 3, 4, 5]  # TMT-labeled peptides can have higher charges
+  max_missed_cleavages: 2
+  fdr_threshold: 0.01
+  min_peptide_length: 7
+  max_peptide_length: 40
+
+protein:
+  min_unique_peptides: 2
+  remove_contaminants: true
+  remove_decoys: true
+  contaminant_patterns:
+    - CONTAMINANT
+    - ENTRAP
+    - DECOY
+
+run_qc:
+  min_identified_features: 1000     # TMT experiments typically have more IDs
+  max_missing_rate: 0.2             # TMT should have fewer missing values

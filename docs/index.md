@@ -5,9 +5,13 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**A comprehensive proteomics quantification library for the quantms ecosystem.**
+**A proteomics quantification toolkit for the quantms ecosystem: a Rust compute kernel with a Python periphery.**
 
-The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (木目金), a Japanese metalworking technique that fuses multiple metal layers into distinctive patterns — similar to how this library melds peptide intensities into unified protein expression profiles.
+The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (木目金), a Japanese metalworking technique that fuses multiple metal layers into distinctive patterns — similar to how this toolkit melds peptide intensities into unified protein expression profiles.
+
+mokume ships as two front-ends over one Rust compute kernel: a standalone CLI binary `mokume` (built with cargo, no Python) and a PyO3/maturin wheel (`pip install mokume-rs`) that runs the same kernel in-process through the compiled `mokume._mokume` extension. The numbers are single-sourced in Rust; the Python periphery (plotting, tissue maps, interactive reports) only reads the kernel's TSV/parquet output and never recomputes them.
+
+![The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage](assets/pipeline.svg){ width="100%" }
 
 ---
 
@@ -17,7 +21,7 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
     ---
 
-    iBAQ, TopN, MaxLFQ, DirectLFQ, Sum, Ratio — choose the right method for your experiment.
+    iBAQ (piBAQ: paralog-aware iBAQ with family fallback), TopN, MaxLFQ, DirectLFQ, Sum, Ratio — choose the right method for your experiment.
 
     [:octicons-arrow-right-24: Quantification methods](concepts/quantification.md)
 
@@ -25,7 +29,7 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
     ---
 
-    Feature-level, sample-level, hierarchical, and TMM normalization with a unified pipeline.
+    Feature-level, sample-level, and hierarchical normalization with a unified pipeline.
 
     [:octicons-arrow-right-24: Normalization](concepts/normalization.md)
 
@@ -33,7 +37,7 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
     ---
 
-    Remove technical variation while preserving biological signal using ComBat.
+    Remove technical variation while preserving biological signal using native Rust ComBat (oracle-verified vs inmoose).
 
     [:octicons-arrow-right-24: Batch correction](concepts/batch-correction.md)
 
@@ -57,7 +61,7 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
     ---
 
-    LimROTS, DEqMS, and proDA with BH or IHW FDR correction — choose by discovery vs precision priority.
+    LimROTS, DEqMS, proDA, limma, and ROTS with BH or IHW FDR correction — choose by discovery vs precision priority.
 
     [:octicons-arrow-right-24: Differential Expression](concepts/differential-expression.md)
 
@@ -65,9 +69,9 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
     ---
 
-    Build per-dataset tissue atlases with AdaTiSS tissue-specificity scoring, AnnData outputs, and atlas plots.
+    Build per-dataset tissue atlases with AdaTiSS tissue-specificity scoring, AnnData outputs, and atlas plots — a Python periphery command (`tissuemap` extra).
 
-    [:octicons-arrow-right-24: TissueMap workflow](user-guide/tissuemap.md)
+    [:octicons-arrow-right-24: TissueMap workflow](periphery/tissuemap.md)
 
 -   :material-rocket-launch-outline:{ .lg .middle } **One-Step Pipeline**
 
@@ -85,7 +89,7 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
 - **Standard LFQ / TMT quantification** — start with [`features2proteins`](user-guide/features2proteins.md)
 - **Need more control before protein summarization** — use the two-step path via [`features2peptides`](user-guide/features2peptides.md) and [`peptides2protein`](user-guide/peptides2protein.md)
-- **Tissue atlas analysis** — use [`tissuemap`](user-guide/tissuemap.md)
+- **Tissue atlas analysis** — use the [`tissuemap`](periphery/tissuemap.md) periphery command (wheel only, `tissuemap` extra)
 
 ## Quick Example
 
@@ -100,18 +104,19 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
         --quant-method maxlfq
     ```
 
-=== "Python"
+=== "Python (wheel)"
 
     ```python
-    from mokume.pipeline import QuantificationPipeline, PipelineConfig
-    from mokume.pipeline.config import InputConfig, QuantificationConfig
+    import mokume
 
-    config = PipelineConfig(
-        input=InputConfig(parquet="features.parquet", sdrf="experiment.sdrf.tsv"),
-        quantification=QuantificationConfig(method="maxlfq"),
+    # The wheel runs the same Rust kernel in-process (no subprocess); kwargs map
+    # to CLI flags (key=value -> --key value, with _ rewritten to -).
+    mokume.features2proteins(
+        parquet="features.parquet",
+        output="proteins.csv",
+        sdrf="experiment.sdrf.tsv",
+        quant_method="maxlfq",
     )
-    pipeline = QuantificationPipeline(config)
-    proteins = pipeline.run()
     ```
 
 ---

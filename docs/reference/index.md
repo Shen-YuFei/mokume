@@ -1,18 +1,14 @@
 # Reference
 
-Comprehensive reference documentation for mokume's CLI commands, Python API, configuration options, output columns, TissueMap, differential expression, imputation, and LOESS capabilities.
+Reference documentation for mokume's CLI commands, the wheel's Python API, output columns, and the periphery commands (TissueMap, t-SNE, DE plots, interactive reports).
 
 ## [CLI Reference](cli.md)
 
-All mokume commands and their options in one place, including `features2proteins`, `correct-batches`, `tissuemap`, and `tsne-visualization`.
+The four compute subcommands of the `mokume` binary and their options: `features2proteins`, `features2peptides`, `peptides2protein`, and `correct-batches`.
 
 ## [Python API](python-api.md)
 
-Key classes and functions for programmatic usage: quantification methods, differential expression, normalization, imputation, TissueMap, preprocessing filters, data reshaping, FASTA handling, and AnnData creation.
-
-## [Configuration](configuration.md)
-
-PipelineConfig and TissueMapConfig dataclass structures, plus preprocessing filter YAML format.
+The thin `pip install mokume-rs` wheel: the in-process compute wrappers (`mokume.features2proteins(...)`, `mokume.run([...])`, ...) and the Python periphery functions (t-SNE, tissue maps, DE plots, interactive reports, QC, the missforest fallback).
 
 ## [Computed Values](computed-values.md)
 

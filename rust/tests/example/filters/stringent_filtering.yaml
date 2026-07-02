@@ -1,0 +1,46 @@
+# Stringent Filtering Configuration
+# High-confidence filtering for publication-quality results
+# Use case: When you need high-confidence protein identifications
+
+name: stringent_filtering
+enabled: true
+strict_mode: false
+log_filtered_counts: true
+
+intensity:
+  min_intensity: 1000.0           # Remove low-intensity noise
+  cv_threshold: 0.3               # Max 30% CV across replicates
+  min_replicate_agreement: 2      # Must be detected in at least 2 replicates
+  quantile_lower: 0.01            # Remove bottom 1% outliers
+  quantile_upper: 0.99            # Remove top 1% outliers
+  remove_zero_intensity: true
+
+peptide:
+  allowed_charge_states: [2, 3, 4]  # Only common charge states
+  exclude_modifications:
+    - Oxidation                     # Often variable/artifactual
+  max_missed_cleavages: 2           # Allow up to 2 missed cleavages
+  fdr_threshold: 0.01               # 1% peptide FDR
+  min_peptide_length: 7
+  max_peptide_length: 30            # Exclude very long peptides
+  require_unique_peptides: false
+
+protein:
+  fdr_threshold: 0.01               # 1% protein FDR
+  min_peptides: 1
+  min_unique_peptides: 2            # At least 2 unique peptides
+  razor_peptide_handling: keep
+  protein_grouping: none
+  remove_contaminants: true
+  remove_decoys: true
+  contaminant_patterns:
+    - CONTAMINANT
+    - ENTRAP
+    - DECOY
+    - REV_                          # Common decoy prefix
+
+run_qc:
+  min_total_intensity: 100000000.0  # Minimum total intensity per run
+  min_identified_features: 500      # At least 500 features per run
+  min_identified_proteins: 100      # At least 100 proteins per run
+  max_missing_rate: 0.3             # Max 30% missing values per run

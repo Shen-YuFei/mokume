@@ -1,0 +1,30 @@
+strictness: medium
+test-warnings: false
+doc-warnings: false
+
+ignore-paths:
+  - tests
+  - benchmarks
+
+uses:
+  - flask  # placeholder; we just disable django/celery autodetect
+
+autodetect: false
+
+pylint:
+  disable:
+    - C0114  # missing-module-docstring
+    - C0115  # missing-class-docstring
+    - C0116  # missing-function-docstring
+  options:
+    # Scientific code: dataclasses aggregate many fields, helper
+    # functions take many tabular inputs, and analysis pipelines
+    # accumulate intermediates. Defaults (5 / 7 / 15) are too tight.
+    max-args: 6
+    max-attributes: 25
+    max-locals: 18
+    max-positional-arguments: 6
+
+mccabe:
+  options:
+    max-complexity: 15
