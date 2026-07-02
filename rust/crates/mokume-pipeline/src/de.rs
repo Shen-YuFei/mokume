@@ -943,6 +943,18 @@ mod tests {
         ),
     ];
 
+    // limma's AveExpr is the row mean of the log2 expression matrix over ALL
+    // samples (limma's Amean), independent of the contrast -- NOT the log2FC.
+    // Computed as mean(log2(RAW[row])); deterministic and cell-exact.
+    const EXPECTED_AVE_EXPR: &[(&str, f64)] = &[
+        ("P1", 10.96584974099084),
+        ("P2", 13.959371292060668),
+        ("P3", 7.994562299032412),
+        ("P4", 20.5),
+        ("P5", 5.499981214541417),
+        ("P6", 8.954019282642177),
+    ];
+
     fn temp_dir(tag: &str) -> TestResult<std::path::PathBuf> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         Ok(tempfile::Builder::new()
@@ -1170,8 +1182,14 @@ mod tests {
             assert_close(parse(fields, 2)?, pvalue, "pvalue", protein);
             assert_close(parse(fields, 3)?, adj, "adj_pvalue", protein);
             assert_close(parse(fields, 4)?, t_stat, "t_stat", protein);
-            // AveExpr == log2FC for the limma port.
-            assert_close(parse(fields, 5)?, log2fc, "AveExpr", protein);
+            // AveExpr is the row mean of the log2 matrix (limma's Amean), not
+            // the log2FC.
+            let ave_expr = EXPECTED_AVE_EXPR
+                .iter()
+                .find(|&&(p, _)| p == protein)
+                .map(|&(_, v)| v)
+                .ok_or_else(|| format!("missing AveExpr for {protein}"))?;
+            assert_close(parse(fields, 5)?, ave_expr, "AveExpr", protein);
             assert_eq!(
                 fields.get(6).map(String::as_str),
                 Some("0"),
@@ -1368,18 +1386,18 @@ mod tests {
         Ok(())
     }
 
-    // ROTS log2FC is `nanmean(B) - nanmean(A)` (rots.py:313) -- the OPPOSITE sign
-    // convention from limma's design-matrix coefficient -- so P1 (low in A, high
-    // in B) is +2.0 here, not the -2.0 the limma table shows. Captured from
-    // numpy on log2(RAW): nanmean(B)-nanmean(A) per protein. Deterministic and
-    // cell-exact regardless of the RNG.
+    // ROTS log2FC is `nanmean(A) - nanmean(B)` (rots.py:313) -- the SAME sign
+    // convention as limma's design-matrix coefficient and limrots -- so P1 (low
+    // in A, high in B) is -2.0, matching the limma table. Captured from numpy on
+    // log2(RAW): nanmean(A)-nanmean(B) per protein. Deterministic and cell-exact
+    // regardless of the RNG.
     const EXPECTED_ROTS_LOG2FC: &[(&str, f64)] = &[
-        ("P1", 2.0004868432854863),
-        ("P2", -2.0090616097754097),
-        ("P3", -0.015910691677656352),
-        ("P4", 1.0),
-        ("P5", 1.0),
-        ("P6", -0.09175595082658106),
+        ("P1", -2.0004868432854863),
+        ("P2", 2.0090616097754097),
+        ("P3", 0.015910691677656352),
+        ("P4", -1.0),
+        ("P5", -1.0),
+        ("P6", 0.09175595082658106),
     ];
 
     // Pipeline wiring test for `--de-method rots`. ROTS is a faithful RNG-based
@@ -1388,8 +1406,8 @@ mod tests {
     // This test asserts the structural contract that IS deterministic:
     //   (1) the rots-specific header (a single `d_stat` extra column, no
     //       AveExpr/B, no peptide_count);
-    //   (2) log2FC cell-exact vs Python (the deterministic nanmean(B)-nanmean(A),
-    //       in ROTS' sign convention);
+    //   (2) log2FC cell-exact vs Python (the deterministic nanmean(A)-nanmean(B),
+    //       the same sign convention as limma/limrots);
     //   (3) every pvalue/adj_pvalue in [0,1] and the rows sorted by adj_pvalue;
     //   (4) the d_stat column is finite.
     // The deterministic ROTS helpers (compute_d_stat/group_stats/calculate_p/

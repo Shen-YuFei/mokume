@@ -10,8 +10,10 @@
 //! Steps mirror the reference operation-by-operation: cell-means least squares
 //! (`lmFit`), the `[1, -1]` contrast (`contrasts.fit`), empirical-Bayes
 //! variance moderation (`squeezeVar` via the legacy equal-df `fitFDist`), and
-//! the moderated t / two-sided p-value (`eBayes`). The `AveExpr == log2FC` and
-//! `B == 0` quirks of the Python implementation are reproduced.
+//! the moderated t / two-sided p-value (`eBayes`). `AveExpr` is the per-protein
+//! row mean of the pre-contrast expression over finite cells (limma's
+//! `Amean = rowMeans(y)`), matching the Python reference; the `B == 0` quirk of
+//! the Python implementation is reproduced.
 //!
 //! Missing values are supported per protein: [`GroupFit`] sums and counts only
 //! the finite cells of each group, so the per-protein residual df and unscaled
@@ -59,6 +61,7 @@ const MIN_PER_GROUP: usize = 2;
 #[derive(Debug, Clone)]
 pub(crate) struct LimmaModeration {
     pub log2_fold_change: f64,
+    pub ave_expr: f64,
     pub mean_a: f64,
     pub mean_b: f64,
     pub count_a: usize,
@@ -115,6 +118,7 @@ pub(crate) fn run_limma_moderation(
                 *index,
                 LimmaModeration {
                     log2_fold_change: fit.log2_fold_change,
+                    ave_expr: fit.ave_expr,
                     mean_a: fit.mean_a,
                     mean_b: fit.mean_b,
                     count_a: fit.count_a,
@@ -146,7 +150,7 @@ pub(crate) fn run_limma(rows: &[&[f64]], n_a: usize, n_b: usize) -> Vec<(usize, 
                 index,
                 LimmaStats {
                     log2_fold_change: moderation.log2_fold_change,
-                    ave_expr: moderation.log2_fold_change,
+                    ave_expr: moderation.ave_expr,
                     t_statistic: moderation.t_statistic,
                     p_value: moderation.p_value,
                     mean_a: moderation.mean_a,
@@ -163,6 +167,7 @@ pub(crate) fn run_limma(rows: &[&[f64]], n_a: usize, n_b: usize) -> Vec<(usize, 
 /// `contrasts.fit` for the `[1, -1]` contrast).
 struct GroupFit {
     log2_fold_change: f64,
+    ave_expr: f64,
     mean_a: f64,
     mean_b: f64,
     count_a: usize,
@@ -201,8 +206,12 @@ impl GroupFit {
         };
         // contrasts.fit for [1, -1]: stdev_unscaled = sqrt(1/n_a + 1/n_b).
         let stdev_unscaled = (1.0 / count_a as f64 + 1.0 / count_b as f64).sqrt();
+        // AveExpr = row mean of the pre-contrast expression over finite cells
+        // (limma's `Amean = rowMeans(y)`), matching `np.nanmean(mat, axis=1)`.
+        let ave_expr = (sum_a + sum_b) / (count_a + count_b) as f64;
         Some(Self {
             log2_fold_change: mean_a - mean_b,
+            ave_expr,
             mean_a,
             mean_b,
             count_a,
@@ -592,6 +601,8 @@ mod tests {
         assert_eq!(stats.len(), 6);
 
         let expected_logfc = [-2.0, 2.0, 0.0, -1.0, -1.0, -0.06666666666666643];
+        // AveExpr = row mean over all finite cells (limma `Amean`), != log2FC.
+        let expected_ave_expr = [11.0, 14.0, 8.0, 20.5, 5.5, 9.033_333_333_333_333];
         let expected_t = [
             -16.365735545639872,
             16.365735545639872,
@@ -611,7 +622,7 @@ mod tests {
         for (index, (row_index, stat)) in stats.iter().enumerate() {
             assert_eq!(*row_index, index);
             assert_close(stat.log2_fold_change, expected_logfc[index], 1e-9);
-            assert_close(stat.ave_expr, expected_logfc[index], 1e-9);
+            assert_close(stat.ave_expr, expected_ave_expr[index], 1e-9);
             assert_close(stat.t_statistic, expected_t[index], 1e-6);
             assert_close(stat.p_value, expected_p[index], 1e-9);
         }
@@ -656,6 +667,17 @@ mod tests {
             -1.400_000_000_000_000_4,
             -1.1,
         ];
+        // AveExpr = row mean over finite cells (limma `Amean`), NA-aware, != log2FC.
+        let expected_ave_expr = [
+            11.0,
+            13.819_999_999_999_999,
+            8.01,
+            21.5,
+            5.5,
+            9.033_333_333_333_333,
+            11.45,
+            3.44,
+        ];
         let expected_t = [
             -16.050_021_365_458_303,
             14.217_054_789_305_822,
@@ -692,7 +714,7 @@ mod tests {
         for (index, (row_index, stat)) in stats.iter().enumerate() {
             assert_eq!(*row_index, index);
             assert_close(stat.log2_fold_change, expected_logfc[index], 1e-9);
-            assert_close(stat.ave_expr, expected_logfc[index], 1e-9);
+            assert_close(stat.ave_expr, expected_ave_expr[index], 1e-9);
             assert_close(stat.t_statistic, expected_t[index], 1e-9);
             assert_close(stat.p_value, expected_p[index], 1e-9);
             assert_eq!((stat.n_a, stat.n_b), expected_counts[index]);

@@ -25,7 +25,7 @@
 //!     index).
 //!   - `_calculate_p` (rots.py:230): two-pointer count of permuted |d| values
 //!     `>=` each observed |d|, scattered back to original order.
-//!   - `log2FC` (rots.py:313): `nanmean(B) - nanmean(A)`, deterministic.
+//!   - `log2FC` (rots.py:313): `nanmean(A) - nanmean(B)`, deterministic.
 //!
 //! WHAT IS NOT MATCHED: the exact stochastic stream. The bootstrap/permutation
 //! here uses a small self-contained splitmix64 PRNG (no external `rand`
@@ -632,8 +632,8 @@ fn rots_two_group_seeded(
         };
         let (mean_a, count_a) = nan_mean_count(&row[..n_a]);
         let (mean_b, count_b) = nan_mean_count(&row[n_a..]);
-        // log2FC = nanmean(B) - nanmean(A), deterministic (rots.py:313).
-        let log2_fold_change = mean_b - mean_a;
+        // log2FC = nanmean(A) - nanmean(B), deterministic (rots.py:313).
+        let log2_fold_change = mean_a - mean_b;
         let p_value = p_values[position];
         let adj_p_value = adjusted[position];
         let significance = classify(
@@ -902,44 +902,46 @@ mod tests {
     }
 
     // Deterministic log2FC oracle (protein, log2FC) from rots_e2e_oracle.py.
+    // log2FC = nanmean(A) - nanmean(B) (rots.py:313), so these are the negation
+    // of the raw nanmean(B) - nanmean(A) draws captured from the oracle.
     const E2E_LOG2FC: &[(usize, f64)] = &[
-        (0, 2.3194578965825734),
-        (1, 2.931353656903349),
-        (2, 2.0977123988471753),
-        (3, 0.9602528723815524),
-        (4, 3.1187316602549),
-        (5, 1.3732610141404162),
-        (6, -0.6534347030345558),
-        (7, -0.18229245477504286),
-        (8, 0.08872443593928736),
-        (9, -1.233392283025486),
-        (10, -0.9518595362316393),
-        (11, -0.32522117747048007),
-        (12, -0.18440244273792494),
-        (13, 0.044205566044979605),
-        (14, 0.5677719771180847),
-        (15, -0.022735918751076056),
-        (16, -0.4190151627149028),
-        (17, -0.8166528743519947),
-        (18, -0.8351899914488765),
-        (19, 0.6444003491502173),
-        (20, 1.3867569584436854),
-        (21, 0.8770610325497419),
-        (22, -0.9413520718320889),
-        (23, 1.0399964650885156),
-        (24, -0.6658888175338671),
-        (25, 1.4855932509659233),
-        (26, -0.019778429193756608),
-        (27, 1.6099247963736314),
-        (28, -0.4258634750602255),
-        (29, -0.44572816568048523),
+        (0, -2.3194578965825734),
+        (1, -2.931353656903349),
+        (2, -2.0977123988471753),
+        (3, -0.9602528723815524),
+        (4, -3.1187316602549),
+        (5, -1.3732610141404162),
+        (6, 0.6534347030345558),
+        (7, 0.18229245477504286),
+        (8, -0.08872443593928736),
+        (9, 1.233392283025486),
+        (10, 0.9518595362316393),
+        (11, 0.32522117747048007),
+        (12, 0.18440244273792494),
+        (13, -0.044205566044979605),
+        (14, -0.5677719771180847),
+        (15, 0.022735918751076056),
+        (16, 0.4190151627149028),
+        (17, 0.8166528743519947),
+        (18, 0.8351899914488765),
+        (19, -0.6444003491502173),
+        (20, -1.3867569584436854),
+        (21, -0.8770610325497419),
+        (22, 0.9413520718320889),
+        (23, -1.0399964650885156),
+        (24, 0.6658888175338671),
+        (25, -1.4855932509659233),
+        (26, 0.019778429193756608),
+        (27, -1.6099247963736314),
+        (28, 0.4258634750602255),
+        (29, 0.44572816568048523),
     ];
 
     // Stochastic-wrapper property test. NOT bit-exact vs Python: ROTS is RNG-
     // driven and Python's own output is seed-unstable (the selected a1 and the
     // adj_pvalues move ~1e-1 between numpy seeds), so we deliberately do not
     // assert cell equality against numpy's PCG64 stream. We DO assert:
-    //   - log2FC cell-exact (it is the deterministic nanmean(B)-nanmean(A));
+    //   - log2FC cell-exact (it is the deterministic nanmean(A)-nanmean(B));
     //   - every p-value in [0,1] and finite;
     //   - d_stat finite for every protein;
     //   - the d_stat ranking is sane (the spiked-in proteins 0..6 dominate the

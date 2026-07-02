@@ -378,13 +378,17 @@ def _ebayes(fit: LmFitResult) -> EBayesResult:
 # ---------------------------------------------------------------------------
 
 
-def _top_table(fit: EBayesResult, coef: int = 0) -> pd.DataFrame:
-    """Extract a results table from an eBayes fit."""
+def _top_table(fit: EBayesResult, amean: np.ndarray, coef: int = 0) -> pd.DataFrame:
+    """Extract a results table from an eBayes fit.
+
+    ``amean`` is the per-protein average expression (row means of the
+    pre-contrast expression matrix), matching limma's ``AveExpr``.
+    """
     return pd.DataFrame(
         {
             "ProteinName": fit.gene_names,
             "log2FC": fit.coefficients[:, coef],
-            "AveExpr": np.nanmean(fit.coefficients, axis=1),
+            "AveExpr": amean,
             "t_stat": fit.t_stat[:, coef],
             "pvalue": fit.p_value[:, coef],
             "B": np.zeros(len(fit.gene_names)),
@@ -433,7 +437,8 @@ def run_limma(
     contrasts = np.array([[1.0], [-1.0]])
     fit_c = _contrasts_fit(fit, contrasts)
     fit_eb = _ebayes(fit_c)
-    raw = _top_table(fit_eb, coef=0)
+    amean = np.nanmean(mat, axis=1)
+    raw = _top_table(fit_eb, amean, coef=0)
 
     return finalize_de_result(
         raw,

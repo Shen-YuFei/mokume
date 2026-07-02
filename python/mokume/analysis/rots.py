@@ -310,7 +310,7 @@ def run_rots(
 
     a_data = mat[:, :n_a]
     b_data = mat[:, n_a:]
-    logfc = np.nanmean(b_data, axis=1) - np.nanmean(a_data, axis=1)
+    logfc = np.nanmean(a_data, axis=1) - np.nanmean(b_data, axis=1)
 
     raw = pd.DataFrame(
         {
