@@ -48,6 +48,15 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
     quant_method_name = config.quantification.method.lower()
     logger.info(f"Starting pipeline with quant_method={quant_method_name}")
 
+    # The Rust backend routes every method through the kernel flow. The kernel
+    # owns method dispatch via ``--quant-method``, so it needs neither the
+    # Python plugin registry nor an input_level lookup.
+    if config.runtime.backend == "rust":
+        import mokume.pipeline.flows.rust as _rust_flow
+
+        dataset = _rust_flow.run(None, config)
+        return _postprocess(dataset, config)
+
     # Ensure built-in methods are registered
     import mokume.quantification  # noqa: F401
 

@@ -69,10 +69,15 @@ class RuntimeConfig:
         connection opened by :class:`mokume.io.feature.Feature`.
     duckdb_threads : Optional[int]
         Number of threads DuckDB may use. Must be >= 1.
+    backend : str
+        Which quantification kernel to route ``run_pipeline`` through:
+        ``"python"`` (default) runs the pure-Python flows; ``"rust"`` delegates
+        the features-to-proteins path to the compiled ``mokume-rs`` kernel.
     """
 
     duckdb_memory: Optional[str] = None
     duckdb_threads: Optional[int] = None
+    backend: str = "python"
 
     def __post_init__(self) -> None:
         if self.duckdb_memory is not None and not _MEMORY_LIMIT_RE.match(
@@ -84,6 +89,10 @@ class RuntimeConfig:
             )
         if self.duckdb_threads is not None and self.duckdb_threads < 1:
             raise ValueError(f"duckdb_threads must be >= 1; got {self.duckdb_threads}")
+        if self.backend not in {"python", "rust"}:
+            raise ValueError(
+                f'backend must be "python" or "rust"; got {self.backend!r}'
+            )
 
     def effective_workers(
         self,
