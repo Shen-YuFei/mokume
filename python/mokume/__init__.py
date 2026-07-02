@@ -7,6 +7,7 @@ quantification), Top3, TopN, and MaxLFQ.
 """
 
 import importlib.metadata
+import logging
 import warnings
 
 from mokume.core.logging_config import initialize_logging
@@ -40,6 +41,19 @@ __version__ = "0.1.0"
 # Initialize logging with default settings
 # Users can override these settings by calling initialize_logging with their own settings
 initialize_logging()
+
+# Auto-load all built-in plugins so `import mokume` (or the first registry
+# access) populates every registration group. `_plugins` imports each plugin
+# module in isolation and swallows optional-dependency ImportErrors, so this is
+# guarded once more here against any unexpected import-time failure to keep
+# `import mokume` robust.
+try:
+    from mokume import _plugins as _plugins  # noqa: F401  (import for side effects)
+except Exception:  # pragma: no cover - defensive; plugins are optional at import
+    logging.getLogger(__name__).debug(
+        "Plugin auto-loading failed; plugins can still be registered on demand.",
+        exc_info=True,
+    )
 
 __all__ = [
     "__version__",

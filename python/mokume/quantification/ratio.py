@@ -25,11 +25,13 @@ from mokume.core.constants import (
     SAMPLE_ID,
 )
 from mokume.core.logger import get_logger
+from mokume.core.registry import PluginRegistry
 from mokume.io.feature import SQLFilterBuilder
 
 logger = get_logger("mokume.quantification.ratio")
 
 
+@PluginRegistry.register("quantification", "ratio")
 class RatioQuantification:
     """
     Ratio-based TMT quantification following the PS protocol.

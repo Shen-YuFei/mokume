@@ -21,6 +21,7 @@ from typing import Optional
 
 from mokume.quantification.base import ProteinQuantificationMethod
 from mokume.core.logger import get_logger
+from mokume.core.registry import PluginRegistry
 from mokume.core.constants import (
     PROTEIN_NAME,
     PEPTIDE_CANONICAL,
@@ -57,6 +58,7 @@ def _import_directlfq():
     return lfq_manager
 
 
+@PluginRegistry.register("quantification", "directlfq")
 class DirectLFQQuantification(ProteinQuantificationMethod):
     """
     DirectLFQ protein quantification using intensity traces.

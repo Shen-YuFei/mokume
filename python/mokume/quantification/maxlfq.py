@@ -37,6 +37,7 @@ from joblib import Parallel, delayed
 
 from mokume.quantification.base import ProteinQuantificationMethod
 from mokume.core.logger import get_logger
+from mokume.core.registry import PluginRegistry
 from mokume.core.constants import (
     PROTEIN_NAME,
     PEPTIDE_CANONICAL,
@@ -254,6 +255,7 @@ def _process_protein(
     return results
 
 
+@PluginRegistry.register("quantification", "maxlfq")
 class MaxLFQQuantification(ProteinQuantificationMethod):
     """
     MaxLFQ protein quantification with automatic DirectLFQ integration.

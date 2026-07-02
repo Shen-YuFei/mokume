@@ -23,7 +23,8 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional
 
-from mokume.core.constants import PROTEIN_NAME
+from mokume.core.constants import PROTEIN_NAME, load_sdrf
+from mokume.core.dataset import QpxDataset
 from mokume.core.logger import get_logger
 from mokume.pipeline.config import (
     PipelineConfig,
@@ -86,6 +87,22 @@ class QuantificationPipeline:
         self.quantification = QuantificationStage(config)
         self.imputation = ImputationStage(config)
         self.postprocessing = PostprocessingStage(config)
+        # Intermediate tables/flags captured during a run() for run_dataset() to
+        # attach to the QpxDataset. Populated as a side effect by the
+        # standard-flow / ratio-flow helpers; never changes run()'s contract.
+        # Held in a single dict to keep the pipeline's attribute surface small.
+        self._run_capture: dict = self._empty_capture()
+
+    @staticmethod
+    def _empty_capture() -> dict:
+        """Return a fresh, empty per-run capture state."""
+        return {
+            "peptides": None,
+            "psms": None,
+            "ratio_refs": None,
+            "ratio_sample_to_plex": None,
+            "irs_applied": False,
+        }
 
     def _validate_config(self):
         """Validate configuration and check for required parameters."""
@@ -126,6 +143,9 @@ class QuantificationPipeline:
         quant_method = self.config.quantification.method.lower()
         logger.info("Starting pipeline with quant_method=%s", quant_method)
 
+        # Reset per-run capture state so run_dataset() reflects only this run.
+        self._run_capture = self._empty_capture()
+
         if quant_method == "directlfq":
             protein_df = self._run_directlfq_pipeline()
         elif quant_method == "maxlfq" and self._can_run_maxlfq_directlfq_pipeline():
@@ -139,6 +159,7 @@ class QuantificationPipeline:
         # handle cross-plex normalization via per-plex reference division)
         if self.config.irs.enabled and quant_method != "ratio":
             protein_df = self.normalization.apply_irs(protein_df)
+            self._run_capture["irs_applied"] = True
 
         # Apply coverage filter if configured (generic, works with any method)
         if self.config.quantification.coverage_threshold is not None:
@@ -172,6 +193,90 @@ class QuantificationPipeline:
             self.postprocessing.generate_interactive_report(protein_df, de_results)
 
         return protein_df
+
+    def run_dataset(self) -> QpxDataset:
+        """Execute the pipeline and return results as a :class:`QpxDataset`.
+
+        This is a thin wrapper around :meth:`run`: it runs the exact same
+        quantification workflow (so protein values are identical to the legacy
+        ``run() -> DataFrame`` path), then packages the wide protein matrix and
+        any intermediate tables captured during the run into a hierarchical
+        :class:`~mokume.core.dataset.QpxDataset` with provenance metadata.
+
+        The dataset levels populated depend on the flow:
+
+        * ``proteins`` -- always set to the wide (protein x sample) matrix
+          returned by :meth:`run`.
+        * ``peptides`` -- the assembled, normalized peptide table, when the
+          standard (mokume-native) flow produced one.
+        * ``psms`` -- the loaded PSM table, for the ratio flow.
+        * ``sample_info`` -- SDRF metadata when an SDRF file was configured.
+
+        Provenance (``dataset.uns["provenance"]["steps"]``) records at least a
+        ``loading`` step and a ``quantification`` step; an
+        ``irs_normalization`` step is appended when IRS ran.
+
+        Returns
+        -------
+        QpxDataset
+            Dataset with the protein matrix, intermediate levels, sample
+            metadata, and recorded provenance.
+        """
+        quant_method = self.config.quantification.method
+
+        # Run the legacy pipeline unchanged; this also populates the
+        # self._run_capture dict (peptides / psms / ratio refs / irs flag).
+        protein_df = self.run()
+        capture = self._run_capture
+
+        dataset = QpxDataset()
+        dataset.proteins = protein_df
+        if capture["peptides"] is not None:
+            dataset.peptides = capture["peptides"]
+        if capture["psms"] is not None:
+            dataset.psms = capture["psms"]
+
+        # Sample metadata from the SDRF, when one is configured. Loading is
+        # best-effort: a malformed/absent SDRF must not sink an otherwise
+        # successful quantification run, so file/parse errors are logged and
+        # sample_info is simply left unset.
+        if self.config.input.sdrf:
+            try:
+                dataset.sample_info = load_sdrf(self.config.input.sdrf)
+            except (OSError, ValueError) as exc:  # pragma: no cover - best-effort
+                logger.debug("Could not load SDRF sample_info: %s", exc)
+
+        # --- Provenance -------------------------------------------------
+        rows_in = None
+        if capture["peptides"] is not None:
+            rows_in = len(capture["peptides"])
+        elif capture["psms"] is not None:
+            rows_in = len(capture["psms"])
+
+        dataset.record_step(
+            "loading",
+            parquet=str(self.config.input.parquet),
+            sdrf=str(self.config.input.sdrf) if self.config.input.sdrf else None,
+            rows_out=rows_in,
+        )
+        dataset.record_step(
+            "quantification",
+            method=quant_method,
+            rows_out=len(protein_df) if isinstance(protein_df, pd.DataFrame) else None,
+        )
+        if capture["irs_applied"]:
+            dataset.record_step("irs_normalization", stat=self.config.irs.stat)
+
+        # Ratio flow exposes its detected reference samples for downstream
+        # consumers (mirrors main's cecilia integration contract).
+        if quant_method.lower() == "ratio" and capture["ratio_refs"] is not None:
+            sample_to_plex = capture["ratio_sample_to_plex"] or {}
+            dataset.uns["ratio_config"] = {
+                "reference_samples": list(capture["ratio_refs"]),
+                "n_plexes": len(set(sample_to_plex.values())) if sample_to_plex else 0,
+            }
+
+        return dataset
 
     def _run_directlfq_pipeline(self) -> pd.DataFrame:
         """Run pipeline using DirectLFQ package."""
@@ -300,6 +405,10 @@ class QuantificationPipeline:
         peptide_df = self.loading.load_for_mokume()
         logger.info("Processed peptides: %d rows", len(peptide_df))
 
+        # Capture the assembled peptide table so run_dataset() can attach it to
+        # the QpxDataset peptides level without reloading the parquet.
+        self._run_capture["peptides"] = peptide_df
+
         # Export peptides if requested
         if self.config.output.export_peptides:
             logger.info("Exporting peptides to %s", self.config.output.export_peptides)
@@ -321,6 +430,12 @@ class QuantificationPipeline:
         logger.info("Running ratio-based quantification (PS protocol)...")
 
         psm_df, ref_samples, sample_to_plex = self.loading.load_for_ratio()
+
+        # Capture the PSM table and detected references so run_dataset() can
+        # attach them to the QpxDataset without reloading the parquet.
+        self._run_capture["psms"] = psm_df
+        self._run_capture["ratio_refs"] = ref_samples
+        self._run_capture["ratio_sample_to_plex"] = sample_to_plex
 
         # Run ratio quantification
         ratio_quant = RatioQuantification(
