@@ -48,6 +48,12 @@ class RatioQuantification:
         How to merge fractions: "mean" (PS protocol) or "max" (mokume default).
     """
 
+    # Data level this method consumes; maps to the ``ratio`` flow in the
+    # pipeline runner's ``FLOW_DISPATCH``. Ratio quantification is
+    # instantiated directly by ``pipeline.flows.ratio`` (not via the
+    # PluginRegistry), so this is pure dispatch metadata.
+    input_level: str = "psms"
+
     def __init__(
         self,
         reference_samples: list[str],

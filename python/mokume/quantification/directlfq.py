@@ -131,6 +131,15 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
     def name(self) -> str:
         return "DirectLFQ"
 
+    @property
+    def input_level(self) -> str:
+        """DirectLFQ consumes raw per-ion feature intensities.
+
+        Maps to the ``directlfq`` flow in the pipeline runner's
+        ``FLOW_DISPATCH``.
+        """
+        return "peptides_raw"
+
     def _prepare_input_file(
         self,
         peptide_df: pd.DataFrame,

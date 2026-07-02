@@ -38,6 +38,21 @@ class ProteinQuantificationMethod(ABC):
         """Return the name of the quantification method."""
         pass
 
+    @property
+    def input_level(self) -> str:
+        """Return the data level this method consumes.
+
+        Used by the pipeline runner (``FLOW_DISPATCH``) to select the
+        appropriate flow. Defaults to ``"peptides"`` for methods that
+        operate on assembled, normalized peptide intensities (iBAQ, TopN,
+        sum, median). Subclasses override this to declare a different
+        level (e.g. ``"psms"`` for ratio, ``"peptides_raw"`` for DirectLFQ).
+
+        Must be one of the values in
+        :data:`mokume.core.registry.VALID_INPUT_LEVELS`.
+        """
+        return "peptides"
+
     @abstractmethod
     def quantify(
         self,
@@ -100,3 +115,7 @@ class ProteinQuantificationMethod(ABC):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"
+
+
+# Back-compat alias: main-derived runner/flows import QuantificationMethod
+QuantificationMethod = ProteinQuantificationMethod
