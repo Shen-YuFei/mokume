@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more">
+        <meta name="description" content="A proteomics quantification toolkit: a Rust compute kernel with a Python periphery">
       
       
         <meta name="author" content="BigBio Team">
@@ -18,14 +18,14 @@
         <link rel="prev" href="../">
       
       
-        <link rel="next" href="../python-api/">
+        <link rel="next" href="../python-api-package/">
       
       
         
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
@@ -119,6 +119,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -345,7 +347,29 @@
   
     
   
-  User Guide
+  User Guide (CLI)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../periphery/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python Periphery
 
         </a>
       </li>
@@ -466,6 +490,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -578,6 +606,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-vs-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI vs Wheel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -596,6 +680,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -727,6 +815,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../concepts/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/imputation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Imputation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../concepts/batch-correction/" class="md-nav__link">
         
   
@@ -832,8 +976,6 @@
       
         
       
-        
-      
     
     
     
@@ -860,7 +1002,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide
+    User Guide (CLI)
   
 
     
@@ -882,7 +1024,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide
+    User Guide (CLI)
   
 
           </label>
@@ -904,7 +1046,7 @@
   <span class="md-ellipsis">
     
   
-    features2proteins: Unified Pipeline
+    features2proteins
   
 
     
@@ -932,7 +1074,7 @@
   <span class="md-ellipsis">
     
   
-    features2peptides: Peptide Normalization
+    features2peptides
   
 
     
@@ -960,7 +1102,7 @@
   <span class="md-ellipsis">
     
   
-    peptides2protein: Protein Quantification
+    peptides2protein
   
 
     
@@ -988,7 +1130,117 @@
   <span class="md-ellipsis">
     
   
-    batch-correct: Batch Correction
+    correct-batches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../periphery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Periphery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python Periphery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../periphery/tissuemap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tissue Proteome Atlas
   
 
     
@@ -1009,7 +1261,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/visualization/" class="md-nav__link">
+      <a href="../../periphery/visualization/" class="md-nav__link">
         
   
   
@@ -1017,6 +1269,34 @@
     
   
     Visualization & Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../periphery/analysis-fallbacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Fallbacks
   
 
     
@@ -1076,7 +1356,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -1098,14 +1378,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1284,6 +1564,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#imputation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Imputation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#differential-expression" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1310,6 +1601,17 @@
     <span class="md-ellipsis">
       
         Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#duckdb-resource-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DuckDB Resource Limits
       
     </span>
   </a>
@@ -1356,6 +1658,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#tmt-itraq" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TMT / ITRAQ
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#filter-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1394,10 +1707,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tsne-visualization" class="md-nav__link">
+  <a href="#periphery-tissue-maps-t-sne" class="md-nav__link">
     <span class="md-ellipsis">
       
-        tsne-visualization
+        Periphery (tissue maps, t-SNE)
       
     </span>
   </a>
@@ -1420,14 +1733,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../python-api/" class="md-nav__link">
+      <a href="../python-api-package/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Python API
+    Python API (package)
   
 
     
@@ -1448,14 +1761,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/" class="md-nav__link">
+      <a href="../python-api/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Configuration
+    Python API (wheel)
   
 
     
@@ -1558,7 +1871,13 @@
 
 
 <h1 id="cli-reference">CLI Reference<a class="headerlink" href="#cli-reference" title="Anchor link to this section">&para;</a></h1>
-<p>mokume provides four main commands. Use <code>mokume --help</code> or <code>mokume &lt;command&gt; --help</code> for details.</p>
+<p>The <code>mokume</code> binary is the Rust compute kernel's command-line entry point. It exposes exactly four compute subcommands — <code>features2proteins</code>, <code>features2peptides</code>, <code>peptides2protein</code>, and <code>correct-batches</code> — and shells out to nothing. Most users start with <code>features2proteins</code> for quantification workflows.
+Use <code>mokume --help</code> or <code>mokume &lt;command&gt; --help</code> for details.</p>
+<p>The same <code>mokume</code> command is available two ways: as a standalone Rust binary (built with <code>cargo</code>, no Python) and from the <code>pip install mokume-rs</code> wheel, which runs the identical kernel in-process through the <code>mokume._mokume</code> extension. The flag surface below is single-sourced in Rust and is identical for both.</p>
+<div class="admonition note">
+<p class="admonition-title">Plotting, tissue maps, and reports live in the Python wheel</p>
+<p>The visualization periphery — t-SNE, tissue-proteome maps, DE plots, interactive HTML reports, iBAQ QC — is <strong>not</strong> part of this CLI. It ships in the <code>pip install mokume-rs</code> wheel as <code>mokume.tsne_visualization(...)</code>, <code>mokume.tissuemap(...)</code>, <code>mokume.de_plots([...])</code>, <code>mokume.interactive_report([...])</code>, and <code>mokume.peptides2protein_qc(...)</code>. See the <a href="../python-api/">Python API</a>. These commands read the tables the kernel wrote and never recompute the numbers.</p>
+</div>
 <h2 id="features2proteins">features2proteins<a class="headerlink" href="#features2proteins" title="Anchor link to this section">&para;</a></h2>
 <p>The unified pipeline: features to protein quantification in one step.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
@@ -1632,7 +1951,7 @@
 <tr>
 <td><code>--quant-method</code></td>
 <td><code>maxlfq</code></td>
-<td>Method: maxlfq, directlfq, ibaq, topn, sum, median, ratio</td>
+<td>Method: maxlfq, directlfq, ibaq, topn, top3, sum, median, ratio, abd (TMT abundance), intensity (TMT reporter), spectral_count</td>
 </tr>
 <tr>
 <td><code>--fasta</code></td>
@@ -1674,12 +1993,12 @@
 <tr>
 <td><code>--run-normalization</code></td>
 <td><code>median</code></td>
-<td>Run-level: median, mean, iqr, max, max_min, none</td>
+<td>Run-level: median, mean, max, global, max_min, iqr, none</td>
 </tr>
 <tr>
 <td><code>--sample-normalization</code></td>
 <td><code>globalMedian</code></td>
-<td>Sample-level: globalMedian, conditionMedian, hierarchical, none</td>
+<td>Sample-level: globalMedian, conditionMedian, hierarchical, quantile, mediancenter, meancenter, rlr, loess, none</td>
 </tr>
 <tr>
 <td><code>--normalization-proteins</code></td>
@@ -1790,12 +2109,84 @@
 <td>Detection method: sample_prefix, run, column</td>
 </tr>
 <tr>
+<td><code>--batch-column</code></td>
+<td>none</td>
+<td>SDRF column used when <code>--batch-method=column</code></td>
+</tr>
+<tr>
 <td><code>--batch-covariates</code></td>
 <td>none</td>
 <td>Comma-separated SDRF columns to preserve</td>
 </tr>
+<tr>
+<td><code>--batch-parametric</code> / <code>--batch-nonparametric</code></td>
+<td>parametric</td>
+<td>ComBat estimation mode</td>
+</tr>
+<tr>
+<td><code>--batch-mean-only</code></td>
+<td>off</td>
+<td>Only adjust batch means</td>
+</tr>
+<tr>
+<td><code>--batch-ref</code></td>
+<td>none</td>
+<td>Reference batch ID</td>
+</tr>
 </tbody>
 </table>
+<p>ComBat is a native Rust implementation, oracle-verified against inmoose (parametric ~1e-6, covariate / non-parametric / <code>ref_batch</code> / <code>mean_only</code> paths included). It runs on the proteins with no missing cells; the rest are kept uncorrected.</p>
+<div class="admonition warning">
+<p class="admonition-title"><code>--batch-method run</code> is unsupported in the protein-matrix flow</p>
+<p>The protein-matrix flow has no run-level mapping, so <code>--batch-method run</code> errors at runtime (the same gate Python's <code>_detect_batch_indices</code> enforces). Use <code>sample_prefix</code> (default) or <code>column</code> (with <code>--batch-column</code>). The PCA + HDBSCAN outlier-removal pass is not ported.</p>
+</div>
+<h3 id="imputation">Imputation<a class="headerlink" href="#imputation" title="Anchor link to this section">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--impute</code></td>
+<td>off</td>
+<td>Enable missing-value imputation on the protein matrix</td>
+</tr>
+<tr>
+<td><code>--impute-method</code></td>
+<td><code>none</code></td>
+<td>Method: none, knn, minprob, mindet, qrilc, missforest, seqknn, impseq, gms, bpca, impseqrob</td>
+</tr>
+<tr>
+<td><code>--impute-quantile</code></td>
+<td>0.01</td>
+<td>Quantile for MinProb/MinDet/QRILC low-tail draw</td>
+</tr>
+<tr>
+<td><code>--impute-shift</code></td>
+<td>1.6</td>
+<td>MinProb shift in standard deviations</td>
+</tr>
+<tr>
+<td><code>--impute-scale</code></td>
+<td>0.3</td>
+<td>MinProb scale factor for the imputation distribution sigma</td>
+</tr>
+<tr>
+<td><code>--impute-n-neighbors</code></td>
+<td>5</td>
+<td>Number of neighbours for KNN/SeqKNN</td>
+</tr>
+</tbody>
+</table>
+<p>Imputation runs in log2 space (the matrix is transformed before imputation and back to linear afterwards) so that censored-aware methods like MinProb/MinDet/QRILC behave correctly. The imputation step is applied after coverage filtering and before batch correction in the pipeline.</p>
+<div class="admonition note">
+<p class="admonition-title"><code>missforest</code> is wheel-only</p>
+<p>Every method above runs in the native Rust kernel except <code>missforest</code>, which wraps scikit-learn's <code>IterativeImputer</code> (<code>RandomForestRegressor</code>) and cannot be reproduced bit-for-bit cross-language. The kernel accepts it but returns a clear error pointing to the wheel's <code>mokume.impute(matrix, method="missforest")</code> (the <code>analysis</code> extra), which runs the pure-Python imputer.</p>
+</div>
 <h3 id="differential-expression">Differential Expression<a class="headerlink" href="#differential-expression" title="Anchor link to this section">&para;</a></h3>
 <table>
 <thead>
@@ -1813,13 +2204,28 @@
 </tr>
 <tr>
 <td><code>--de-contrasts</code></td>
-<td>all pairs</td>
-<td>Comma-separated contrasts (e.g., "A-B,A-C")</td>
+<td>—</td>
+<td>Comma-separated contrasts (e.g., <code>"A vs B,A vs C"</code>)</td>
+</tr>
+<tr>
+<td><code>--de-contrasts-file</code></td>
+<td>—</td>
+<td>TSV file with columns <code>group1</code>, <code>group2</code></td>
 </tr>
 <tr>
 <td><code>--de-method</code></td>
-<td><code>ttest</code></td>
-<td>Method: ttest or limma</td>
+<td><code>auto</code></td>
+<td>Method: auto, limrots, limma, deqms, proda, rots, ensemble</td>
+</tr>
+<tr>
+<td><code>--de-ensemble-methods</code></td>
+<td><code>limrots,deqms,proda</code></td>
+<td>Comma-separated DE methods used when <code>--de-method=ensemble</code></td>
+</tr>
+<tr>
+<td><code>--de-ensemble-min-k</code></td>
+<td>2</td>
+<td>Minimum ensemble members that must agree on direction</td>
 </tr>
 <tr>
 <td><code>--de-log2fc</code></td>
@@ -1832,59 +2238,33 @@
 <td>Maximum FDR threshold</td>
 </tr>
 <tr>
+<td><code>--de-fdr-method</code></td>
+<td><code>bh</code></td>
+<td>FDR correction: bh or ihw</td>
+</tr>
+<tr>
 <td><code>--de-output</code></td>
-<td>auto</td>
-<td>Output file for DE results</td>
+<td>none</td>
+<td>DE results file; with multiple contrasts each is written as <code>&lt;stem&gt;_&lt;A-B&gt;.&lt;ext&gt;</code></td>
 </tr>
 </tbody>
 </table>
+<p>Contrasts must be explicitly provided via <code>--de-contrasts</code> and/or <code>--de-contrasts-file</code>. Both can be combined.</p>
+<p><code>--de-method auto</code> selects <code>deqms</code> for <code>directlfq</code> quantification and <code>limrots</code> for other quantification methods. All methods run in the native Rust kernel — no R or rpy2 required. Deterministic methods (limma / deqms) are cell-exact against the Python reference; RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change cell-exactly and p-values at rank level.</p>
+<p><code>--de-method ensemble</code> runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least <code>--de-ensemble-min-k</code> members agree on direction and the Fisher-combined p-value passes the FDR threshold.</p>
 <h3 id="plots-reports">Plots &amp; Reports<a class="headerlink" href="#plots-reports" title="Anchor link to this section">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Default</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--plot-dir</code></td>
-<td>none</td>
-<td>Output directory for plots</td>
-</tr>
-<tr>
-<td><code>--plot-volcano</code></td>
-<td>off</td>
-<td>Generate volcano plots</td>
-</tr>
-<tr>
-<td><code>--plot-heatmap</code></td>
-<td>off</td>
-<td>Generate heatmaps</td>
-</tr>
-<tr>
-<td><code>--plot-pca</code></td>
-<td>off</td>
-<td>Generate PCA plots</td>
-</tr>
-<tr>
-<td><code>--highlight-genes</code></td>
-<td>none</td>
-<td>Comma-separated gene names to highlight</td>
-</tr>
-<tr>
-<td><code>--interactive-report</code></td>
-<td>off</td>
-<td>Generate interactive HTML QC report</td>
-</tr>
-<tr>
-<td><code>--report-output</code></td>
-<td>auto</td>
-<td>Output path for HTML report</td>
-</tr>
-</tbody>
-</table>
+<p><code>features2proteins</code> is pure compute and writes no figures. The kernel emits the protein-matrix CSV and (with <code>--de-output</code>) one DE result CSV per contrast; render plots and HTML reports from those CSVs with the wheel periphery:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">mokume</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># DE volcano / heatmap / PCA from the kernel CSVs (plotting extra):</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">mokume</span><span class="o">.</span><span class="n">de_plots</span><span class="p">([</span><span class="s2">&quot;--protein-matrix&quot;</span><span class="p">,</span> <span class="s2">&quot;proteins.csv&quot;</span><span class="p">,</span> <span class="s2">&quot;--plot-dir&quot;</span><span class="p">,</span> <span class="s2">&quot;plots&quot;</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>                 <span class="s2">&quot;--volcano&quot;</span><span class="p">,</span> <span class="s2">&quot;--heatmap&quot;</span><span class="p">,</span> <span class="s2">&quot;--pca&quot;</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>                 <span class="s2">&quot;--contrast&quot;</span><span class="p">,</span> <span class="s2">&quot;c1&quot;</span><span class="p">,</span> <span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">,</span> <span class="s2">&quot;de.csv&quot;</span><span class="p">])</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># interactive HTML report (reports extra):</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">mokume</span><span class="o">.</span><span class="n">interactive_report</span><span class="p">([</span><span class="s2">&quot;--protein-matrix&quot;</span><span class="p">,</span> <span class="s2">&quot;proteins.csv&quot;</span><span class="p">,</span> <span class="s2">&quot;--report-output&quot;</span><span class="p">,</span> <span class="s2">&quot;report.html&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+<p>Pass <code>--help</code> to either (<code>python -m mokume.commands.de_plots --help</code>) for the full flag set.</p>
 <h3 id="export">Export<a class="headerlink" href="#export" title="Anchor link to this section">&para;</a></h3>
 <table>
 <thead>
@@ -1907,10 +2287,45 @@
 </tr>
 </tbody>
 </table>
+<h3 id="duckdb-resource-limits">DuckDB Resource Limits<a class="headerlink" href="#duckdb-resource-limits" title="Anchor link to this section">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--duckdb-memory</code></td>
+<td>DuckDB autoconfig (~80% of total RAM)</td>
+<td>DuckDB memory limit (e.g. <code>80GB</code>, <code>16384MB</code>). See note below.</td>
+</tr>
+<tr>
+<td><code>--duckdb-threads</code></td>
+<td>all cores</td>
+<td>Number of threads DuckDB may use</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title"><code>--duckdb-memory</code> is not a hard process cap</p>
+<p>The flag only sizes DuckDB's internal buffer pool. PyArrow, polars, and pandas each
+have their own independent allocators, so the surrounding Python process can grow to
+<strong>2-3x</strong> the DuckDB limit on wide pivots (e.g. PXD030304 at 5798 samples peaks
+~94 GB of process RSS with <code>--duckdb-memory 40GB</code>). For production environments
+that require a hard ceiling, layer one of these on top of mokume:</p>
+<ul>
+<li><strong>systemd / cgroup</strong>: <code>systemd-run --scope -p MemoryMax=80G -- mokume features2proteins ...</code></li>
+<li><strong>SLURM</strong>: <code>sbatch --mem=80G ...</code></li>
+<li><strong>Docker / k8s</strong>: <code>resources.limits.memory: 80Gi</code></li>
+</ul>
+</div>
 <hr />
 <h2 id="features2peptides">features2peptides<a class="headerlink" href="#features2peptides" title="Anchor link to this section">&para;</a></h2>
 <p>Feature-level to peptide-level normalization.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mokume<span class="w"> </span>features2peptides<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mokume<span class="w"> </span>features2peptides<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
 </span></code></pre></div>
 <h3 id="core-options">Core Options<a class="headerlink" href="#core-options" title="Anchor link to this section">&para;</a></h3>
 <table>
@@ -1948,6 +2363,11 @@
 <td>Minimum unique peptides per protein</td>
 </tr>
 <tr>
+<td><code>--keep-shared-peptides</code></td>
+<td>off</td>
+<td>Keep shared/non-unique peptides and skip the unique-peptide gate</td>
+</tr>
+<tr>
 <td><code>--remove_ids</code></td>
 <td>none</td>
 <td>File with protein IDs to exclude</td>
@@ -1977,7 +2397,7 @@
 <tr>
 <td><code>--run-normalization</code></td>
 <td><code>median</code></td>
-<td>Feature normalization: mean, median, iqr, none</td>
+<td>Feature normalization: median, mean, max, global, max_min, iqr, none</td>
 </tr>
 <tr>
 <td><code>--sample-normalization</code></td>
@@ -2001,6 +2421,51 @@
 </tr>
 </tbody>
 </table>
+<div class="admonition note">
+<p class="admonition-title">Only factor-based sample normalization changes the peptide output</p>
+<p>In <code>features2peptides</code>, only the scalar-per-sample methods (<code>globalMedian</code> / <code>conditionMedian</code>) are applied; the cross-sample distribution-alignment methods (<code>quantile</code>, <code>rlr</code>, <code>loess</code>, <code>hierarchical</code>, <code>mediancenter</code>, <code>meancenter</code>) are accepted but are a deterministic no-op here (same as <code>none</code>), because the streaming peptide loop cannot see the full matrix and Python's per-sample loop also leaves them unchanged. All are implemented and oracle-verified in <code>features2proteins</code>, where the full matrix exists.</p>
+</div>
+<h3 id="tmt-itraq">TMT / ITRAQ<a class="headerlink" href="#tmt-itraq" title="Anchor link to this section">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--irs_channel</code></td>
+<td>none</td>
+<td>Explicit pooled/reference channel label</td>
+</tr>
+<tr>
+<td><code>--irs_autodetect_regex</code></td>
+<td>none</td>
+<td>Regex to detect pooled samples from SDRF</td>
+</tr>
+<tr>
+<td><code>--irs_stat</code></td>
+<td><code>median</code></td>
+<td>IRS per-run statistic</td>
+</tr>
+<tr>
+<td><code>--irs_scope</code></td>
+<td><code>global</code></td>
+<td>IRS scaling scope: global, by_mixture, or two_stage</td>
+</tr>
+<tr>
+<td><code>--aggregation_level</code></td>
+<td><code>sample</code></td>
+<td>Aggregate at sample or run level</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Channel-based IRS in <code>features2peptides</code></p>
+<p>The <code>--irs_channel</code> / <code>--irs_autodetect_regex</code> channel path scales on the TMT <code>mixture</code> / <code>channel</code> columns and is implemented for all three <code>--irs_scope</code> values (<code>global</code> / <code>by_mixture</code> / <code>two_stage</code>); the reference channel is taken from <code>--irs_channel</code> or auto-detected from the SDRF via <code>--irs_autodetect_regex</code>. SDRF-driven multi-plex IRS is also available in <code>features2proteins</code> (<code>--irs</code> with <code>--irs-reference-samples</code> / <code>--irs-sdrf-column</code>).</p>
+</div>
 <h3 id="filter-configuration">Filter Configuration<a class="headerlink" href="#filter-configuration" title="Anchor link to this section">&para;</a></h3>
 <table>
 <thead>
@@ -2063,10 +2528,14 @@
 </tr>
 </tbody>
 </table>
+<div class="admonition note">
+<p class="admonition-title">Group-level filters: what runs and what is a no-op</p>
+<p>The per-row filters (min-intensity floor, peptide length, charge states, excluded modifications, missed cleavages) and the per-<code>(protein, sample)</code> unique-peptide gate run natively and are oracle-locked vs Python. Among the <strong>group-level</strong> filters, CV threshold, quantile outlier removal, and the run-QC checks <code>--filter-min-features</code> / min-total-intensity / min-proteins are implemented via a pre-pass; replicate agreement reproduces Python's degenerate per-sample behaviour (a <code>&gt;= 2</code> threshold empties the output); and <code>--filter-max-missing-rate</code>, sample-correlation, min-search-score, and min-coverage are no-ops that warn and pass rows through (matching Python's per-sample / column-absent skip). Only an unknown <code>razor-peptide-handling</code> value returns <code>NotImplemented</code>.</p>
+</div>
 <hr />
 <h2 id="peptides2protein">peptides2protein<a class="headerlink" href="#peptides2protein" title="Anchor link to this section">&para;</a></h2>
 <p>Protein quantification from normalized peptide data.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mokume<span class="w"> </span>peptides2protein<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>mokume<span class="w"> </span>peptides2protein<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -2090,7 +2559,7 @@
 <tr>
 <td><code>--method</code></td>
 <td><code>ibaq</code></td>
-<td>Method: ibaq, top3, top5, top10, topn, maxlfq, sum, directlfq</td>
+<td>Method: ibaq, top3, topn, maxlfq, sum, directlfq</td>
 </tr>
 <tr>
 <td><code>-e/--enzyme</code></td>
@@ -2153,6 +2622,26 @@
 <td>Min non-NaN for DirectLFQ</td>
 </tr>
 <tr>
+<td><code>--families</code></td>
+<td>none</td>
+<td>YAML file with explicit family overrides (iBAQ only; see <a href="../../user-guide/peptides2protein/#family-discovery-tuning">user guide</a>)</td>
+</tr>
+<tr>
+<td><code>--min-shared</code></td>
+<td>2</td>
+<td>Minimum shared peptides for auto-family discovery (iBAQ only)</td>
+</tr>
+<tr>
+<td><code>--min-anchors</code></td>
+<td>1</td>
+<td>Minimum anchor peptides per family member (iBAQ only)</td>
+</tr>
+<tr>
+<td><code>--high-anchor-threshold</code></td>
+<td>3</td>
+<td>Anchors required for an <code>EvidenceLevel</code> of <code>high</code> (iBAQ only)</td>
+</tr>
+<tr>
 <td><code>-o/--output</code></td>
 <td>required</td>
 <td>Output file path</td>
@@ -2160,19 +2649,28 @@
 <tr>
 <td><code>--verbose</code></td>
 <td>off</td>
-<td>Print distribution info</td>
+<td>Print a pointer to the wheel QC report command</td>
 </tr>
 <tr>
 <td><code>--qc_report</code></td>
 <td>QCprofile.pdf</td>
-<td>QC report PDF path</td>
+<td>QC report path echoed by <code>--verbose</code></td>
 </tr>
 </tbody>
 </table>
+<p>Use <code>--method topn --topn_n 5</code> or <code>--method topn --topn_n 10</code> for Top5 or Top10-style quantification. <code>--output</code> is required for every method.</p>
+<div class="admonition note">
+<p class="admonition-title">iBAQ for unported enzymes lives in the wheel</p>
+<p>The native iBAQ path digests proteins for the ported pyOpenMS enzymes (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...), oracle-locked against pyOpenMS. For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific cleavage, ...) the kernel has no cleavage rule and fails with an error pointing to the wheel: <code>mokume.peptides2protein_ibaq(peptides=..., fasta=..., enzyme="CNBr", output=...)</code> (the <code>ibaq</code> extra), which computes the whole iBAQ table in pure Python.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title"><code>--verbose</code> no longer draws a QC PDF</p>
+<p>QC plotting moved to the wheel. On the iBAQ path <code>--verbose</code> prints a one-line pointer to <code>mokume.peptides2protein_qc(protein_table=..., qc_report=...)</code> (the <code>plotting</code> extra), which draws the same density / box plots from the kernel's output table; it writes no PDF itself.</p>
+</div>
 <hr />
 <h2 id="correct-batches">correct-batches<a class="headerlink" href="#correct-batches" title="Anchor link to this section">&para;</a></h2>
 <p>Standalone batch correction for pre-quantified data.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>mokume<span class="w"> </span>correct-batches<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>mokume<span class="w"> </span>correct-batches<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -2199,23 +2697,23 @@
 <td>Output file path</td>
 </tr>
 <tr>
-<td><code>-sid/--sample_id_column</code></td>
+<td><code>--sample_id_column</code> / <code>--sid</code></td>
 <td><code>SampleID</code></td>
 <td>Sample ID column</td>
 </tr>
 <tr>
-<td><code>-pid/--protein_id_column</code></td>
+<td><code>--protein_id_column</code> / <code>--pid</code></td>
 <td><code>ProteinName</code></td>
 <td>Protein ID column</td>
 </tr>
 <tr>
-<td><code>-ibaq/--ibaq_raw_column</code></td>
-<td><code>IBAQ</code></td>
+<td><code>--ibaq_raw_column</code> / <code>--ibaq</code></td>
+<td><code>Ibaq</code></td>
 <td>Raw intensity column</td>
 </tr>
 <tr>
 <td><code>--ibaq_corrected_column</code></td>
-<td><code>IBAQ_BEC</code></td>
+<td><code>IbaqBec</code></td>
 <td>Corrected intensity column</td>
 </tr>
 <tr>
@@ -2235,32 +2733,16 @@
 </tr>
 </tbody>
 </table>
+<p>ComBat here is the native Rust implementation, oracle-verified against inmoose. The <code>.h5ad</code> written by <code>--export_anndata</code> is Rust-native and verified to round-trip through <code>anndata.read_h5ad</code>. This command does not expose batch-method or covariate options; for those, use <code>features2proteins --batch-correction</code>.</p>
 <hr />
-<h2 id="tsne-visualization">tsne-visualization<a class="headerlink" href="#tsne-visualization" title="Anchor link to this section">&para;</a></h2>
-<p>t-SNE dimensionality reduction visualization.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>mokume<span class="w"> </span>tsne-visualization<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span>
+<h2 id="periphery-tissue-maps-t-sne">Periphery (tissue maps, t-SNE)<a class="headerlink" href="#periphery-tissue-maps-t-sne" title="Anchor link to this section">&para;</a></h2>
+<p>Tissue-proteome maps and t-SNE visualization are <strong>not</strong> CLI subcommands — they ship in the <code>pip install mokume-rs</code> wheel and read the kernel's output tables:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">mokume</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">mokume</span><span class="o">.</span><span class="n">tissuemap</span><span class="p">(</span><span class="n">scan_dir</span><span class="o">=</span><span class="s2">&quot;./data&quot;</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;./out&quot;</span><span class="p">)</span>     <span class="c1"># tissuemap extra</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">mokume</span><span class="o">.</span><span class="n">tsne_visualization</span><span class="p">(</span><span class="n">folder</span><span class="o">=</span><span class="s2">&quot;./proteins&quot;</span><span class="p">,</span> <span class="n">pattern</span><span class="o">=</span><span class="s2">&quot;proteins.tsv&quot;</span><span class="p">)</span>  <span class="c1"># plotting extra</span>
 </span></code></pre></div>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Default</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>-f/--folder</code></td>
-<td>required</td>
-<td>Folder with protein files</td>
-</tr>
-<tr>
-<td><code>-o/--pattern</code></td>
-<td><code>proteins.tsv</code></td>
-<td>File matching pattern</td>
-</tr>
-</tbody>
-</table>
+<p>Each is also runnable as <code>python -m mokume.commands.tissuemap --help</code> / <code>python -m mokume.commands.visualize --help</code>. See the <a href="../python-api/">Python API</a> for the full periphery surface and the matching extras.</p>
 
 
 
@@ -2315,13 +2797,13 @@
         
         
           
-          <a href="../python-api/" class="md-footer__link md-footer__link--next" aria-label="Next: Python API">
+          <a href="../python-api-package/" class="md-footer__link md-footer__link--next" aria-label="Next: Python API (package)">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Python API
+                Python API (package)
               </div>
             </div>
             <div class="md-footer__button md-icon">

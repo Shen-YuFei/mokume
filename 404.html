@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more">
+        <meta name="description" content="A proteomics quantification toolkit: a Rust compute kernel with a Python periphery">
       
       
         <meta name="author" content="BigBio Team">
@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="/assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
@@ -113,6 +113,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="/assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("/",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -334,7 +336,29 @@
   
     
   
-  User Guide
+  User Guide (CLI)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="/periphery/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python Periphery
 
         </a>
       </li>
@@ -453,6 +477,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -565,6 +593,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="/cli-vs-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI vs Wheel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -583,6 +667,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -714,6 +802,62 @@
   
   
     <li class="md-nav__item">
+      <a href="/concepts/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="/concepts/imputation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Imputation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="/concepts/batch-correction/" class="md-nav__link">
         
   
@@ -819,8 +963,6 @@
       
         
       
-        
-      
     
     
     
@@ -847,7 +989,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide
+    User Guide (CLI)
   
 
     
@@ -869,7 +1011,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide
+    User Guide (CLI)
   
 
           </label>
@@ -891,7 +1033,7 @@
   <span class="md-ellipsis">
     
   
-    features2proteins: Unified Pipeline
+    features2proteins
   
 
     
@@ -919,7 +1061,7 @@
   <span class="md-ellipsis">
     
   
-    features2peptides: Peptide Normalization
+    features2peptides
   
 
     
@@ -947,7 +1089,7 @@
   <span class="md-ellipsis">
     
   
-    peptides2protein: Protein Quantification
+    peptides2protein
   
 
     
@@ -975,7 +1117,117 @@
   <span class="md-ellipsis">
     
   
-    batch-correct: Batch Correction
+    correct-batches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="/periphery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Periphery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python Periphery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="/periphery/tissuemap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tissue Proteome Atlas
   
 
     
@@ -996,7 +1248,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/user-guide/visualization/" class="md-nav__link">
+      <a href="/periphery/visualization/" class="md-nav__link">
         
   
   
@@ -1004,6 +1256,34 @@
     
   
     Visualization & Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="/periphery/analysis-fallbacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Fallbacks
   
 
     
@@ -1060,7 +1340,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1082,14 +1362,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1136,14 +1416,14 @@
   
   
     <li class="md-nav__item">
-      <a href="/reference/python-api/" class="md-nav__link">
+      <a href="/reference/python-api-package/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Python API
+    Python API (package)
   
 
     
@@ -1164,14 +1444,14 @@
   
   
     <li class="md-nav__item">
-      <a href="/reference/configuration/" class="md-nav__link">
+      <a href="/reference/python-api/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Configuration
+    Python API (wheel)
   
 
     

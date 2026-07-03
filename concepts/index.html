@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more">
+        <meta name="description" content="A proteomics quantification toolkit: a Rust compute kernel with a Python periphery">
       
       
         <meta name="author" content="BigBio Team">
@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://mokume.quantms.org/concepts/">
       
       
-        <link rel="prev" href="../quickstart/">
+        <link rel="prev" href="../cli-vs-wheel/">
       
       
         <link rel="next" href="quantification/">
@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
@@ -119,6 +119,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -347,7 +349,29 @@
   
     
   
-  User Guide
+  User Guide (CLI)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../periphery/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python Periphery
 
         </a>
       </li>
@@ -466,6 +490,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -578,6 +606,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-vs-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI vs Wheel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -598,6 +682,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -730,6 +818,62 @@
   
   
     <li class="md-nav__item">
+      <a href="differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="imputation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Imputation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="batch-correction/" class="md-nav__link">
         
   
@@ -835,8 +979,6 @@
       
         
       
-        
-      
     
     
     
@@ -863,7 +1005,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide
+    User Guide (CLI)
   
 
     
@@ -885,7 +1027,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide
+    User Guide (CLI)
   
 
           </label>
@@ -907,7 +1049,7 @@
   <span class="md-ellipsis">
     
   
-    features2proteins: Unified Pipeline
+    features2proteins
   
 
     
@@ -935,7 +1077,7 @@
   <span class="md-ellipsis">
     
   
-    features2peptides: Peptide Normalization
+    features2peptides
   
 
     
@@ -963,7 +1105,7 @@
   <span class="md-ellipsis">
     
   
-    peptides2protein: Protein Quantification
+    peptides2protein
   
 
     
@@ -991,7 +1133,117 @@
   <span class="md-ellipsis">
     
   
-    batch-correct: Batch Correction
+    correct-batches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../periphery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Periphery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python Periphery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../periphery/tissuemap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tissue Proteome Atlas
   
 
     
@@ -1012,7 +1264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../user-guide/visualization/" class="md-nav__link">
+      <a href="../periphery/visualization/" class="md-nav__link">
         
   
   
@@ -1020,6 +1272,34 @@
     
   
     Visualization & Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../periphery/analysis-fallbacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Fallbacks
   
 
     
@@ -1076,7 +1356,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1098,14 +1378,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1152,14 +1432,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/python-api/" class="md-nav__link">
+      <a href="../reference/python-api-package/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Python API
+    Python API (package)
   
 
     
@@ -1180,14 +1460,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/configuration/" class="md-nav__link">
+      <a href="../reference/python-api/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Configuration
+    Python API (wheel)
   
 
     
@@ -1303,6 +1583,12 @@
 <h2 id="irs-normalization">IRS Normalization<a class="headerlink" href="#irs-normalization" title="Anchor link to this section">&para;</a></h2>
 <p>For multi-plex TMT experiments, Internal Reference Scaling uses shared reference channels across plexes to make protein intensities comparable.</p>
 <p><a href="irs/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> IRS Normalization</a></p>
+<h2 id="differential-expression">Differential Expression<a class="headerlink" href="#differential-expression" title="Anchor link to this section">&para;</a></h2>
+<p>Differential expression analysis identifies proteins whose abundance changes significantly between conditions. mokume offers LimROTS, DEqMS, proDA, limma, ROTS, and a top-k consensus ensemble — each suited to different priorities.</p>
+<p><a href="differential-expression/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Differential Expression</a></p>
+<h2 id="missing-value-imputation">Missing Value Imputation<a class="headerlink" href="#missing-value-imputation" title="Anchor link to this section">&para;</a></h2>
+<p>Mass-spectrometry-based proteomics produces sparse intensity matrices. mokume's <code>ImputationStage</code> integrates 13 censored-aware, MAR, and matrix-completion methods into the pipeline (after coverage filtering, before batch correction).</p>
+<p><a href="imputation/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Imputation</a></p>
 <h2 id="preprocessing-filters">Preprocessing Filters<a class="headerlink" href="#preprocessing-filters" title="Anchor link to this section">&para;</a></h2>
 <p>Quality control filters remove low-quality features before quantification. mokume provides a comprehensive, configurable filter system.</p>
 <p><a href="preprocessing/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Preprocessing Filters</a></p>
@@ -1343,7 +1629,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../quickstart/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Quick Start">
+          <a href="../cli-vs-wheel/" class="md-footer__link md-footer__link--prev" aria-label="Previous: CLI vs Wheel">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1353,7 +1639,7 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Quick Start
+                CLI vs Wheel
               </div>
             </div>
           </a>

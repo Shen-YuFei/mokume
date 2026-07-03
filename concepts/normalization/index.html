@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more">
+        <meta name="description" content="A proteomics quantification toolkit: a Rust compute kernel with a Python periphery">
       
       
         <meta name="author" content="BigBio Team">
@@ -18,14 +18,14 @@
         <link rel="prev" href="../quantification/">
       
       
-        <link rel="next" href="../batch-correction/">
+        <link rel="next" href="../differential-expression/">
       
       
         
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
@@ -119,6 +119,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -347,7 +349,29 @@
   
     
   
-  User Guide
+  User Guide (CLI)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../periphery/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python Periphery
 
         </a>
       </li>
@@ -466,6 +490,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -578,6 +606,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-vs-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI vs Wheel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -598,6 +682,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -840,10 +928,43 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tmm-normalization" class="md-nav__link">
+  <a href="#loess-normalization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TMM Normalization
+        LOESS Normalization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quantile-normalization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quantile Normalization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#median-and-mean-centering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Median and Mean Centering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rlr-normalization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RLR Normalization
       
     </span>
   </a>
@@ -870,6 +991,62 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../imputation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Imputation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -987,8 +1164,6 @@
       
         
       
-        
-      
     
     
     
@@ -1015,7 +1190,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide
+    User Guide (CLI)
   
 
     
@@ -1037,7 +1212,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide
+    User Guide (CLI)
   
 
           </label>
@@ -1059,7 +1234,7 @@
   <span class="md-ellipsis">
     
   
-    features2proteins: Unified Pipeline
+    features2proteins
   
 
     
@@ -1087,7 +1262,7 @@
   <span class="md-ellipsis">
     
   
-    features2peptides: Peptide Normalization
+    features2peptides
   
 
     
@@ -1115,7 +1290,7 @@
   <span class="md-ellipsis">
     
   
-    peptides2protein: Protein Quantification
+    peptides2protein
   
 
     
@@ -1143,7 +1318,117 @@
   <span class="md-ellipsis">
     
   
-    batch-correct: Batch Correction
+    correct-batches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../periphery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Periphery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python Periphery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../periphery/tissuemap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tissue Proteome Atlas
   
 
     
@@ -1164,7 +1449,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/visualization/" class="md-nav__link">
+      <a href="../../periphery/visualization/" class="md-nav__link">
         
   
   
@@ -1172,6 +1457,34 @@
     
   
     Visualization & Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../periphery/analysis-fallbacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Fallbacks
   
 
     
@@ -1228,7 +1541,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1250,14 +1563,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1304,14 +1617,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/python-api/" class="md-nav__link">
+      <a href="../../reference/python-api-package/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Python API
+    Python API (package)
   
 
     
@@ -1332,14 +1645,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/configuration/" class="md-nav__link">
+      <a href="../../reference/python-api/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Configuration
+    Python API (wheel)
   
 
     
@@ -1541,12 +1854,28 @@
 </thead>
 <tbody>
 <tr>
-<td><code>hierarchical</code></td>
-<td>DirectLFQ-style hierarchical clustering normalization</td>
+<td><code>quantile</code></td>
+<td>Quantile normalization — forces identical intensity distributions across samples</td>
 </tr>
 <tr>
-<td><code>tmm</code></td>
-<td>Trimmed Mean of M-values (Robinson &amp; Oshlack, 2010)</td>
+<td><code>mediancenter</code></td>
+<td>Median centering — subtracts each sample's log2 median (location shift)</td>
+</tr>
+<tr>
+<td><code>meancenter</code></td>
+<td>Mean centering — subtracts each sample's log2 mean (location shift)</td>
+</tr>
+<tr>
+<td><code>rlr</code></td>
+<td>Robust Linear Regression against a reference profile (NormalyzerDE-style)</td>
+</tr>
+<tr>
+<td><code>loess</code></td>
+<td>LOESS regression on MA-plot residuals (intensity-dependent bias)</td>
+</tr>
+<tr>
+<td><code>hierarchical</code></td>
+<td>DirectLFQ-style hierarchical clustering normalization</td>
 </tr>
 </tbody>
 </table>
@@ -1570,15 +1899,50 @@
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span>--sample-normalization<span class="w"> </span>hierarchical<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span>--normalization-proteins<span class="w"> </span>housekeeping_proteins.txt
 </span></code></pre></div>
-<h3 id="tmm-normalization">TMM Normalization<a class="headerlink" href="#tmm-normalization" title="Anchor link to this section">&para;</a></h3>
-<p>Trimmed Mean of M-values computes normalization factors robust to composition bias from highly abundant proteins. Based on Robinson &amp; Oshlack (2010).</p>
+<h3 id="loess-normalization">LOESS Normalization<a class="headerlink" href="#loess-normalization" title="Anchor link to this section">&para;</a></h3>
+<p>LOESS normalization corrects intensity-dependent bias between samples by
+fitting local regression on MA-plot residuals (M = log2 sample / reference,
+A = log2 mean). Exposed via the pipeline as <code>--sample-normalization loess</code>
+or as a standalone utility on a log2-scale wide matrix.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>data.parquet<span class="w"> </span>-o<span class="w"> </span>out.csv<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span>--sample-normalization<span class="w"> </span>tmm
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span>--sample-normalization<span class="w"> </span>loess
 </span></code></pre></div>
+<p>LOESS runs natively in the Rust kernel (~2e-3 vs statsmodels lowess on real data).</p>
+<h3 id="quantile-normalization">Quantile Normalization<a class="headerlink" href="#quantile-normalization" title="Anchor link to this section">&para;</a></h3>
+<p>Quantile normalization (<code>quantile</code>) makes every sample share an <strong>identical
+intensity distribution</strong>. Working on log2 peptide sums, it replaces each value
+with the cross-sample mean of all values at the same rank, so every column ends
+up with the same sorted profile. It is the strongest distributional correction
+available and assumes most features are unchanged across samples.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>data.parquet<span class="w"> </span>-o<span class="w"> </span>out.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span>--sample-normalization<span class="w"> </span>quantile
+</span></code></pre></div>
+<p>Quantile normalization runs natively in the Rust kernel.</p>
+<h3 id="median-and-mean-centering">Median and Mean Centering<a class="headerlink" href="#median-and-mean-centering" title="Anchor link to this section">&para;</a></h3>
+<p>Centering applies a <strong>location shift in log2 space</strong>: for each sample it
+subtracts that sample's log2 median (<code>mediancenter</code>) or log2 mean
+(<code>meancenter</code>), then maps the values back to linear scale
+($2^{\log_2 x - \text{center}}$). Unlike quantile normalization it only aligns
+the central level of each sample and leaves the within-sample spread untouched,
+making it a lighter-touch alternative when distributions are already similar.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>data.parquet<span class="w"> </span>-o<span class="w"> </span>out.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>--sample-normalization<span class="w"> </span>mediancenter<span class="w">   </span><span class="c1"># or: meancenter</span>
+</span></code></pre></div>
+<p>Both centering variants run natively in the Rust kernel.</p>
+<h3 id="rlr-normalization">RLR Normalization<a class="headerlink" href="#rlr-normalization" title="Anchor link to this section">&para;</a></h3>
+<p>Robust Linear Regression (<code>rlr</code>) fits, in log2 space, a robust (IRLS) linear
+regression of each sample against a common reference profile and removes the
+fitted intensity-dependent bias. The robust fit down-weights the minority of
+genuinely changing proteins, so a handful of large fold-changes do not distort
+the normalization (the approach used by NormalyzerDE).</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>data.parquet<span class="w"> </span>-o<span class="w"> </span>out.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span>--sample-normalization<span class="w"> </span>rlr
+</span></code></pre></div>
+<p>RLR runs natively in the Rust kernel.</p>
 <h2 id="directlfq-mode">DirectLFQ Mode<a class="headerlink" href="#directlfq-mode" title="Anchor link to this section">&para;</a></h2>
 <div class="admonition warning">
 <p class="admonition-title">DirectLFQ handles its own normalization</p>
-<p>When using <code>--quant-method directlfq</code>, mokume delegates <strong>all processing</strong> (normalization + quantification) to the DirectLFQ package. The <code>--run-normalization</code> and <code>--sample-normalization</code> options are ignored.</p>
+<p>When using <code>--quant-method directlfq</code>, the kernel runs <strong>all processing</strong> (normalization + quantification) through the native Rust DirectLFQ estimator. The <code>--run-normalization</code> and <code>--sample-normalization</code> options are ignored.</p>
 </div>
 
 
@@ -1634,13 +1998,13 @@
         
         
           
-          <a href="../batch-correction/" class="md-footer__link md-footer__link--next" aria-label="Next: Batch Correction">
+          <a href="../differential-expression/" class="md-footer__link md-footer__link--next" aria-label="Next: Differential Expression">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Batch Correction
+                Differential Expression
               </div>
             </div>
             <div class="md-footer__button md-icon">

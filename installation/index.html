@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more">
+        <meta name="description" content="A proteomics quantification toolkit: a Rust compute kernel with a Python periphery">
       
       
         <meta name="author" content="BigBio Team">
@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
@@ -119,6 +119,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -347,7 +349,29 @@
   
     
   
-  User Guide
+  User Guide (CLI)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../periphery/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python Periphery
 
         </a>
       </li>
@@ -462,6 +486,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -689,6 +717,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-vs-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI vs Wheel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -707,6 +791,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -838,6 +926,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../concepts/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/imputation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Imputation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../concepts/batch-correction/" class="md-nav__link">
         
   
@@ -943,8 +1087,6 @@
       
         
       
-        
-      
     
     
     
@@ -971,7 +1113,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide
+    User Guide (CLI)
   
 
     
@@ -993,7 +1135,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide
+    User Guide (CLI)
   
 
           </label>
@@ -1015,7 +1157,7 @@
   <span class="md-ellipsis">
     
   
-    features2proteins: Unified Pipeline
+    features2proteins
   
 
     
@@ -1043,7 +1185,7 @@
   <span class="md-ellipsis">
     
   
-    features2peptides: Peptide Normalization
+    features2peptides
   
 
     
@@ -1071,7 +1213,7 @@
   <span class="md-ellipsis">
     
   
-    peptides2protein: Protein Quantification
+    peptides2protein
   
 
     
@@ -1099,7 +1241,117 @@
   <span class="md-ellipsis">
     
   
-    batch-correct: Batch Correction
+    correct-batches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../periphery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Periphery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python Periphery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../periphery/tissuemap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tissue Proteome Atlas
   
 
     
@@ -1120,7 +1372,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../user-guide/visualization/" class="md-nav__link">
+      <a href="../periphery/visualization/" class="md-nav__link">
         
   
   
@@ -1128,6 +1380,34 @@
     
   
     Visualization & Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../periphery/analysis-fallbacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Fallbacks
   
 
     
@@ -1184,7 +1464,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1206,14 +1486,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1260,14 +1540,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/python-api/" class="md-nav__link">
+      <a href="../reference/python-api-package/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Python API
+    Python API (package)
   
 
     
@@ -1288,14 +1568,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/configuration/" class="md-nav__link">
+      <a href="../reference/python-api/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Configuration
+    Python API (wheel)
   
 
     
@@ -1399,53 +1679,111 @@
 
 <h1 id="installation">Installation<a class="headerlink" href="#installation" title="Anchor link to this section">&para;</a></h1>
 <h2 id="from-pypi">From PyPI<a class="headerlink" href="#from-pypi" title="Anchor link to this section">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume-rs
 </span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title"><code>mokume-rs</code> is not on PyPI yet</p>
+<p>The Rust wheel has not been published to PyPI yet, so <code>pip install mokume-rs</code>
+does not work today. Until it ships, either install the pure-Python package
+(<code>pip install mokume</code> — same <code>import mokume</code> API) or build the wheel from
+source: <code>pip install ./rust</code> (needs the Rust toolchain and cmake). The
+<code>mokume-rs</code> instructions on this page describe the wheel for when it is
+released.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Install <code>mokume-rs</code> <strong>or</strong> <code>mokume</code> — never both</p>
+<p>Both distributions install the same <code>mokume</code> import package, so having both
+in one environment makes pip silently overwrite files (it does not detect the
+collision). Keep only one; to switch, <code>pip uninstall</code> the other first. Each
+package warns at import time if it finds its sibling installed.</p>
+</div>
+<p><code>pip install mokume-rs</code> gives you the Rust compute kernel (the compiled
+<code>mokume._mokume</code> extension) and the thin Python API that drives it in-process.
+The kernel needs no third-party Python dependencies, so for standard
+quantification workflows the core package is enough. Extras pull in only the
+Python periphery libraries; install one when you need a specific periphery
+command.</p>
+<div class="admonition note">
+<p class="admonition-title">Standalone CLI binary</p>
+<p>The kernel also ships as a standalone CLI binary <code>mokume</code>, built from
+<code>rust/crates/mokume-cli</code> with cargo and requiring no Python at all. The wheel and
+the binary expose the same four compute subcommands over the same kernel.</p>
+</div>
 <h3 id="optional-extras">Optional Extras<a class="headerlink" href="#optional-extras" title="Anchor link to this section">&para;</a></h3>
-<p>mokume uses optional dependencies for specialized features:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:5"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><input id="__tabbed_1_5" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">DirectLFQ</label><label for="__tabbed_1_2">Plotting</label><label for="__tabbed_1_3">Batch Correction</label><label for="__tabbed_1_4">Interactive Reports</label><label for="__tabbed_1_5">Everything</label></div>
+<p>mokume uses optional dependencies for the periphery commands:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:6"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><input id="__tabbed_1_5" name="__tabbed_1" type="radio" /><input id="__tabbed_1_6" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Plotting</label><label for="__tabbed_1_2">Interactive Reports</label><label for="__tabbed_1_3">TissueMap</label><label for="__tabbed_1_4">iBAQ</label><label for="__tabbed_1_5">Analysis</label><label for="__tabbed_1_6">Everything</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume<span class="o">[</span>directlfq<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume-rs<span class="o">[</span>plotting<span class="o">]</span>
 </span></code></pre></div>
-<p>Enables DirectLFQ quantification and the DirectLFQ backend for MaxLFQ.</p>
+<p>Enables the t-SNE visualization, DE plots, and iBAQ QC report periphery
+commands (numpy, pandas, scipy, scikit-learn, matplotlib, seaborn).</p>
 </div>
 <div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume<span class="o">[</span>plotting<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume-rs<span class="o">[</span>reports<span class="o">]</span>
 </span></code></pre></div>
-<p>Enables volcano plots, heatmaps, PCA, and box plots (matplotlib + seaborn).</p>
+<p>Enables the interactive HTML report periphery command (plotly).</p>
 </div>
 <div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume<span class="o">[</span>batch-correction<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume-rs<span class="o">[</span>tissuemap<span class="o">]</span>
 </span></code></pre></div>
-<p>Enables ComBat batch correction via the inmoose package.</p>
+<p>Enables the <code>mokume.tissuemap</code> periphery command for per-dataset tissue atlas
+analysis, including AdaTiSS tissue-specificity scoring, embeddings, and atlas
+plots (scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow).</p>
 </div>
 <div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume<span class="o">[</span>reports<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume-rs<span class="o">[</span>ibaq<span class="o">]</span>
 </span></code></pre></div>
-<p>Enables interactive HTML reports with plotly.</p>
+<p>Enables the pure-Python <code>mokume.peptides2protein_ibaq</code> fallback for enzymes
+the Rust kernel does not digest (pyopenms, pyarrow, PyYAML, numpy, pandas,
+scipy).</p>
 </div>
 <div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume<span class="o">[</span>all<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume-rs<span class="o">[</span>analysis<span class="o">]</span>
 </span></code></pre></div>
-<p>Installs all optional dependencies.</p>
+<p>Enables the QC / workflow-comparison reports and the pure-Python method
+fallback the Rust kernel does not reproduce — <code>mokume.impute(method="missforest")</code>
+— plus <code>mokume.qc_report</code>
+and <code>mokume.workflow_comparison</code> (numpy, pandas, scipy, scikit-learn).</p>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume-rs<span class="o">[</span>all<span class="o">]</span>
+</span></code></pre></div>
+<p>Installs all optional periphery dependencies.</p>
 </div>
 </div>
 </div>
 <h2 id="from-source">From Source<a class="headerlink" href="#from-source" title="Anchor link to this section">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/bigbio/mokume
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="nb">cd</span><span class="w"> </span>mokume
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>pip<span class="w"> </span>install<span class="w"> </span>.
+<p>The wheel is built with maturin, which compiles the <code>mokume-py</code> PyO3 crate into
+the <code>mokume._mokume</code> extension and packages it with the Python periphery. The
+maturin project lives in <code>rust/</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/bigbio/mokume
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nb">cd</span><span class="w"> </span>mokume
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>pip<span class="w"> </span>install<span class="w"> </span>./rust<span class="w">            </span><span class="c1"># builds the extension via the maturin backend</span>
+</span></code></pre></div>
+<p>For a development checkout, build the extension in place with <code>maturin develop</code>
+run from <code>rust/</code>; the periphery is plain Python and needs no build step. The
+standalone CLI binary is built from the same workspace:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--manifest-path<span class="w"> </span>rust/Cargo.toml<span class="w"> </span>-p<span class="w"> </span>mokume-cli
 </span></code></pre></div>
 <h2 id="using-conda">Using Conda<a class="headerlink" href="#using-conda" title="Anchor link to this section">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>mamba<span class="w"> </span>env<span class="w"> </span>create<span class="w"> </span>-f<span class="w"> </span>environment.yaml
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>conda<span class="w"> </span>activate<span class="w"> </span>mokume
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>pip<span class="w"> </span>install<span class="w"> </span>.
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>mamba<span class="w"> </span>env<span class="w"> </span>create<span class="w"> </span>-f<span class="w"> </span>rust/environment.yaml
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>conda<span class="w"> </span>activate<span class="w"> </span>mokume
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>pip<span class="w"> </span>install<span class="w"> </span>./rust
 </span></code></pre></div>
 <h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Anchor link to this section">&para;</a></h2>
 <ul>
-<li>Python &gt;= 3.9</li>
-<li>Core dependencies: numpy, pandas, scipy, scikit-learn, pyopenms, pyarrow, duckdb, click, anndata</li>
+<li>Python &gt;= 3.9 (for the wheel) — the standalone CLI binary needs no Python</li>
+<li>The compute kernel needs <strong>no third-party Python dependencies</strong>; the periphery
+  extras pull in numpy, pandas, scipy, scikit-learn, pyopenms, pyarrow, plotly,
+  scanpy, and friends only for the periphery commands you run</li>
+<li>The quantification methods (DirectLFQ, MaxLFQ, iBAQ), ComBat batch correction,
+  DE methods (limma, DEqMS, proDA, LimROTS, ROTS), and most imputation methods
+  run in the <strong>native Rust kernel</strong> — no R or rpy2 required. ComBat is
+  oracle-verified against inmoose</li>
+<li>A method stays in the Python periphery because the kernel cannot reproduce
+  it cross-language: the <code>missforest</code> imputer (<code>mokume.impute</code>), in the
+  <code>analysis</code> extra</li>
 </ul>
 
 

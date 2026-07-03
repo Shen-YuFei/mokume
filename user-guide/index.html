@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more">
+        <meta name="description" content="A proteomics quantification toolkit: a Rust compute kernel with a Python periphery">
       
       
         <meta name="author" content="BigBio Team">
@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
@@ -119,6 +119,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -347,7 +349,29 @@
   
     
   
-  User Guide
+  User Guide (CLI)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../periphery/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python Periphery
 
         </a>
       </li>
@@ -466,6 +490,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -578,6 +606,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-vs-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI vs Wheel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -596,6 +680,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -727,6 +815,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../concepts/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/imputation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Imputation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../concepts/batch-correction/" class="md-nav__link">
         
   
@@ -834,8 +978,6 @@
       
         
       
-        
-      
     
     
     
@@ -863,7 +1005,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide
+    User Guide (CLI)
   
 
     
@@ -885,7 +1027,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide
+    User Guide (CLI)
   
 
           </label>
@@ -907,7 +1049,7 @@
   <span class="md-ellipsis">
     
   
-    features2proteins: Unified Pipeline
+    features2proteins
   
 
     
@@ -935,7 +1077,7 @@
   <span class="md-ellipsis">
     
   
-    features2peptides: Peptide Normalization
+    features2peptides
   
 
     
@@ -963,7 +1105,7 @@
   <span class="md-ellipsis">
     
   
-    peptides2protein: Protein Quantification
+    peptides2protein
   
 
     
@@ -991,7 +1133,117 @@
   <span class="md-ellipsis">
     
   
-    batch-correct: Batch Correction
+    correct-batches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../periphery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Periphery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python Periphery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../periphery/tissuemap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tissue Proteome Atlas
   
 
     
@@ -1012,7 +1264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="visualization/" class="md-nav__link">
+      <a href="../periphery/visualization/" class="md-nav__link">
         
   
   
@@ -1020,6 +1272,34 @@
     
   
     Visualization & Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../periphery/analysis-fallbacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Fallbacks
   
 
     
@@ -1076,7 +1356,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1098,14 +1378,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1152,14 +1432,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/python-api/" class="md-nav__link">
+      <a href="../reference/python-api-package/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Python API
+    Python API (package)
   
 
     
@@ -1180,14 +1460,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/configuration/" class="md-nav__link">
+      <a href="../reference/python-api/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Configuration
+    Python API (wheel)
   
 
     
@@ -1290,18 +1570,19 @@
 
 
 <h1 id="user-guide">User Guide<a class="headerlink" href="#user-guide" title="Anchor link to this section">&para;</a></h1>
-<p>This section covers the practical usage of each mokume command, with complete examples for both CLI and Python API.</p>
-<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Anchor link to this section">&para;</a></h2>
+<p>This section covers the practical usage of each mokume command. mokume is a toolkit: a Rust compute kernel with a Python periphery. The kernel ships both as a standalone CLI binary (<code>mokume</code>, built with cargo, no Python) and as a PyO3/maturin wheel (<code>pip install mokume-rs</code>) that imports the compiled <code>mokume._mokume</code> extension and runs the same commands in-process — no subprocess delegation. The numbers are single-sourced in Rust; the Python periphery reads the kernel's TSV/parquet output and never recomputes.</p>
+<h2 id="compute-commands">Compute commands<a class="headerlink" href="#compute-commands" title="Anchor link to this section">&para;</a></h2>
+<p>The CLI binary exposes exactly four compute subcommands. Each can also be driven from the wheel through a thin keyword wrapper (<code>mokume.&lt;command&gt;(**kwargs)</code>) or with an explicit argument list (<code>mokume.run([...])</code>).</p>
 <h3 id="features2proteins-unified-pipeline"><a href="features2proteins/">features2proteins: Unified Pipeline</a><a class="headerlink" href="#features2proteins-unified-pipeline" title="Anchor link to this section">&para;</a></h3>
-<p>The recommended entry point. Takes raw feature data and produces a protein quantification matrix in one step, with optional normalization, batch correction, IRS, differential expression, and visualization.</p>
+<p>The recommended entry point. Takes raw feature data and produces a protein quantification matrix in one step, with optional normalization, batch correction, IRS, imputation, and differential expression.</p>
 <h3 id="features2peptides-peptide-normalization"><a href="features2peptides/">features2peptides: Peptide Normalization</a><a class="headerlink" href="#features2peptides-peptide-normalization" title="Anchor link to this section">&para;</a></h3>
 <p>Normalizes and filters feature-level data into peptide intensities. Use this when you need fine-grained control over the normalization step before quantification.</p>
 <h3 id="peptides2protein-protein-quantification"><a href="peptides2protein/">peptides2protein: Protein Quantification</a><a class="headerlink" href="#peptides2protein-protein-quantification" title="Anchor link to this section">&para;</a></h3>
 <p>Quantifies proteins from normalized peptide data. Supports iBAQ (with TPA and ProteomicRuler), TopN, MaxLFQ, DirectLFQ, and Sum.</p>
-<h3 id="batch-correct-batch-correction"><a href="batch-correct/">batch-correct: Batch Correction</a><a class="headerlink" href="#batch-correct-batch-correction" title="Anchor link to this section">&para;</a></h3>
-<p>Standalone batch correction for already-quantified protein data. Combines multiple files and applies ComBat correction.</p>
-<h3 id="visualization-reports"><a href="visualization/">Visualization &amp; Reports</a><a class="headerlink" href="#visualization-reports" title="Anchor link to this section">&para;</a></h3>
-<p>PCA, t-SNE, volcano plots, heatmaps, and interactive HTML QC reports.</p>
+<h3 id="correct-batches-batch-correction"><a href="batch-correct/">correct-batches: Batch Correction</a><a class="headerlink" href="#correct-batches-batch-correction" title="Anchor link to this section">&para;</a></h3>
+<p>Standalone batch correction for already-quantified protein data. Combines multiple files and applies native Rust ComBat (oracle-verified vs inmoose) correction.</p>
+<h2 id="periphery-wheel-only">Periphery (wheel-only)<a class="headerlink" href="#periphery-wheel-only" title="Anchor link to this section">&para;</a></h2>
+<p>Plotting, tissue maps, and interactive reports are not CLI subcommands; they live in the Python wheel under <code>mokume.commands</code> and are reached through periphery functions such as <code>mokume.tsne_visualization</code>, <code>mokume.tissuemap</code>, <code>mokume.de_plots</code>, and <code>mokume.interactive_report</code>. They read the tables the kernel produced. Install the relevant extra (<code>plotting</code>, <code>reports</code>, <code>tissuemap</code>, <code>ibaq</code>, <code>analysis</code>, or <code>all</code>) to pull in the periphery libraries. The agentic workflow search lives in the separate <code>mokume_py</code> package and is not part of this toolkit.</p>
 
 
 
@@ -1356,13 +1637,13 @@
         
         
           
-          <a href="features2proteins/" class="md-footer__link md-footer__link--next" aria-label="Next: features2proteins: Unified Pipeline">
+          <a href="features2proteins/" class="md-footer__link md-footer__link--next" aria-label="Next: features2proteins">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                features2proteins: Unified Pipeline
+                features2proteins
               </div>
             </div>
             <div class="md-footer__button md-icon">

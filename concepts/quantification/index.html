@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more">
+        <meta name="description" content="A proteomics quantification toolkit: a Rust compute kernel with a Python periphery">
       
       
         <meta name="author" content="BigBio Team">
@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
@@ -119,6 +119,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -347,7 +349,29 @@
   
     
   
-  User Guide
+  User Guide (CLI)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../periphery/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python Periphery
 
         </a>
       </li>
@@ -466,6 +490,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -578,6 +606,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-vs-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI vs Wheel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -598,6 +682,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -756,10 +844,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ibaq" class="md-nav__link">
+  <a href="#ibaq-pibaq-paralog-aware" class="md-nav__link">
     <span class="md-ellipsis">
       
-        iBAQ
+        iBAQ (piBAQ: Paralog-Aware)
       
     </span>
   </a>
@@ -822,6 +910,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tmt-abundance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TMT Abundance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tmt-reporter-intensity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TMT Reporter Intensity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectral-count" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spectral Count
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#standard-output-format" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -856,6 +977,62 @@
     
   
     Normalization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../imputation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Imputation
   
 
     
@@ -981,8 +1158,6 @@
       
         
       
-        
-      
     
     
     
@@ -1009,7 +1184,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide
+    User Guide (CLI)
   
 
     
@@ -1031,7 +1206,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide
+    User Guide (CLI)
   
 
           </label>
@@ -1053,7 +1228,7 @@
   <span class="md-ellipsis">
     
   
-    features2proteins: Unified Pipeline
+    features2proteins
   
 
     
@@ -1081,7 +1256,7 @@
   <span class="md-ellipsis">
     
   
-    features2peptides: Peptide Normalization
+    features2peptides
   
 
     
@@ -1109,7 +1284,7 @@
   <span class="md-ellipsis">
     
   
-    peptides2protein: Protein Quantification
+    peptides2protein
   
 
     
@@ -1137,7 +1312,117 @@
   <span class="md-ellipsis">
     
   
-    batch-correct: Batch Correction
+    correct-batches
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../periphery/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Periphery
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python Periphery
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../periphery/tissuemap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tissue Proteome Atlas
   
 
     
@@ -1158,7 +1443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user-guide/visualization/" class="md-nav__link">
+      <a href="../../periphery/visualization/" class="md-nav__link">
         
   
   
@@ -1166,6 +1451,34 @@
     
   
     Visualization & Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../periphery/analysis-fallbacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Fallbacks
   
 
     
@@ -1222,7 +1535,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1244,14 +1557,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1298,14 +1611,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/python-api/" class="md-nav__link">
+      <a href="../../reference/python-api-package/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Python API
+    Python API (package)
   
 
     
@@ -1326,14 +1639,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/configuration/" class="md-nav__link">
+      <a href="../../reference/python-api/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Configuration
+    Python API (wheel)
   
 
     
@@ -1444,8 +1757,7 @@
 <th>Method</th>
 <th>Description</th>
 <th style="text-align: center;">Requires FASTA</th>
-<th>Class</th>
-<th style="text-align: center;">Optional Dep</th>
+<th><code>--quant-method</code></th>
 </tr>
 </thead>
 <tbody>
@@ -1453,55 +1765,67 @@
 <td><strong>iBAQ</strong></td>
 <td>Intensity-Based Absolute Quantification</td>
 <td style="text-align: center;">Yes</td>
-<td><code>peptides_to_protein()</code></td>
-<td style="text-align: center;">No</td>
+<td><code>ibaq</code></td>
 </tr>
 <tr>
 <td><strong>TopN</strong></td>
 <td>Average of N most intense peptides</td>
 <td style="text-align: center;">No</td>
-<td><code>TopNQuantification</code></td>
-<td style="text-align: center;">No</td>
+<td><code>topn</code> / <code>top3</code></td>
 </tr>
 <tr>
 <td><strong>MaxLFQ</strong></td>
 <td>Delayed normalization with parallelization</td>
 <td style="text-align: center;">No</td>
-<td><code>MaxLFQQuantification</code></td>
-<td style="text-align: center;">No*</td>
+<td><code>maxlfq</code></td>
 </tr>
 <tr>
 <td><strong>DirectLFQ</strong></td>
 <td>Intensity traces with hierarchical alignment</td>
 <td style="text-align: center;">No</td>
-<td><code>DirectLFQQuantification</code></td>
-<td style="text-align: center;">Yes**</td>
+<td><code>directlfq</code></td>
 </tr>
 <tr>
 <td><strong>Sum</strong></td>
 <td>Sum of all peptide intensities</td>
 <td style="text-align: center;">No</td>
-<td><code>AllPeptidesQuantification</code></td>
-<td style="text-align: center;">No</td>
+<td><code>sum</code></td>
 </tr>
 <tr>
 <td><strong>Ratio</strong></td>
 <td>Log2 sample/reference per plex (PS protocol)</td>
 <td style="text-align: center;">No</td>
-<td><code>RatioQuantification</code></td>
+<td><code>ratio</code></td>
+</tr>
+<tr>
+<td><strong>TMT Abundance</strong></td>
+<td>Median of log2 peptide intensities</td>
 <td style="text-align: center;">No</td>
+<td><code>abd</code></td>
+</tr>
+<tr>
+<td><strong>TMT Reporter Intensity</strong></td>
+<td>Sum of raw reporter intensities</td>
+<td style="text-align: center;">No</td>
+<td><code>intensity</code></td>
 </tr>
 <tr>
 <td><strong>Median</strong></td>
 <td>Median of peptide intensities</td>
 <td style="text-align: center;">No</td>
-<td>Built-in</td>
+<td><code>median</code></td>
+</tr>
+<tr>
+<td><strong>Spectral Count</strong></td>
+<td>Count of distinct peptides per (protein, sample)</td>
 <td style="text-align: center;">No</td>
+<td><code>spectral_count</code></td>
 </tr>
 </tbody>
 </table>
-<p>* MaxLFQ automatically uses DirectLFQ when installed for best accuracy, falling back to built-in implementation otherwise.</p>
-<p>** DirectLFQ requires: <code>pip install mokume[directlfq]</code></p>
+<p>All methods are implemented in the native Rust kernel (no third-party Python
+extras). MaxLFQ and DirectLFQ are native Rust ports — DirectLFQ is no longer a
+separate Python dependency.</p>
 <h2 id="choosing-a-method">Choosing a Method<a class="headerlink" href="#choosing-a-method" title="Anchor link to this section">&para;</a></h2>
 <pre class="mermaid"><code>graph TD
     A[What type of experiment?] --&gt; B{Label-free?}
@@ -1514,20 +1838,89 @@
     C --&gt; I{Multi-plex with&lt;br/&gt;reference channels?}
     I --&gt;|Yes| J[Ratio + IRS]
     I --&gt;|No| K[Median or&lt;br/&gt;Sum + IRS]</code></pre>
-<h2 id="ibaq">iBAQ<a class="headerlink" href="#ibaq" title="Anchor link to this section">&para;</a></h2>
-<p><strong>Intensity-Based Absolute Quantification</strong> divides summed peptide intensities by the number of theoretically observable peptides, enabling comparison of absolute protein amounts across proteins within a sample.</p>
+<h2 id="ibaq-pibaq-paralog-aware">iBAQ (piBAQ: Paralog-Aware)<a class="headerlink" href="#ibaq-pibaq-paralog-aware" title="Anchor link to this section">&para;</a></h2>
+<p><strong>Intensity-Based Absolute Quantification</strong> divides summed peptide intensities by the number of theoretically observable peptides per protein, enabling comparison of absolute protein amounts across proteins within a sample.</p>
 <p>$$\text{iBAQ} = \frac{\sum \text{peptide intensities}}{\text{theoretical peptide count}}$$</p>
-<p>iBAQ requires a <strong>FASTA file</strong> to compute theoretical peptide counts via in-silico digestion.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mokume.quantification</span><span class="w"> </span><span class="kn">import</span> <span class="n">peptides_to_protein</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">peptides_to_protein</span><span class="p">(</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">fasta</span><span class="o">=</span><span class="s2">&quot;proteome.fasta&quot;</span><span class="p">,</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">peptides</span><span class="o">=</span><span class="s2">&quot;peptides.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">enzyme</span><span class="o">=</span><span class="s2">&quot;Trypsin&quot;</span><span class="p">,</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">normalize</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">output</span><span class="o">=</span><span class="s2">&quot;proteins-ibaq.tsv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
+<p>mokume's default iBAQ implementation is <strong>anchor-gated and family-aware</strong>: peptides are assigned to canonical entries only <strong>unless</strong> an alternative isoform has its own uniquely mappable peptide. The proportional shared-peptide allocation is gpGrouper-style (<a href="https://www.mcponline.org/content/17/11/2270">Saltzman et al. 2018 <em>MCP</em> 17:2270</a>), and the underlying iBAQ definition follows the original <a href="https://doi.org/10.1038/nature10098">Schwanhäusser et al. 2011 <em>Nature</em> 473:337</a> (<code>sum peptide intensities / theoretical peptide count</code>). Concretely:</p>
+<ul>
+<li><strong>Per-protein proportional allocation</strong> (the main path) when every member of a protein family has at least one detected proteotypic peptide. Shared-peptide intensities are split across members weighted by their unique-anchor counts (gpGrouper-style).</li>
+<li><strong>Family-level rollup fallback</strong> when one or more members have zero detected proteotypic peptides (e.g. the actin family, where Actc1 / Actb / Actg1 share &gt;99% identity). The whole family receives a single iBAQ from the union of family peptide intensities divided by the family-restricted proteotypic peptide count.</li>
+</ul>
+<p>Family discovery proceeds in two layers:</p>
+<ol>
+<li><strong>UniProt isoform collapse</strong> — accessions of the form <code>P05067-2</code>, <code>P70255-3</code> are folded onto their canonical entry (<code>P05067</code>, <code>P70255</code>). This matches the UniProt convention and absorbs the bulk of "non-canonical isoform with no unique peptide" cases.</li>
+<li><strong>Shared-peptide connected components</strong> — proteins are grouped into a family when they share at least <code>min_shared</code> (default 2) digested peptides. Singleton families are equivalent to the per-protein baseline.</li>
+</ol>
+<p>Power users can override either layer via <code>--families families.yaml</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">families</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ACT</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">members</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">P60709</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">P63261</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">P68133</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># canonical accessions</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">HIST_H2A</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nt">members</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">P0C0S5</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">Q96QV6</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">P04908</span><span class="p p-Indicator">]</span>
 </span></code></pre></div>
+<p>iBAQ requires a <strong>FASTA file</strong> to compute theoretical peptide counts via in-silico digestion.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">CLI</label><label for="__tabbed_1_2">Python (wheel)</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mokume<span class="w"> </span>peptides2protein<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span>--fasta<span class="w"> </span>proteome.fasta<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span>--peptides<span class="w"> </span>peptides.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span>--enzyme<span class="w"> </span>Trypsin<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span>--normalize<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span>--method<span class="w"> </span>ibaq<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span>--output<span class="w"> </span>proteins-ibaq.tsv
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">mokume</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">mokume</span><span class="o">.</span><span class="n">peptides2protein</span><span class="p">(</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">fasta</span><span class="o">=</span><span class="s2">&quot;proteome.fasta&quot;</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">peptides</span><span class="o">=</span><span class="s2">&quot;peptides.csv&quot;</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">enzyme</span><span class="o">=</span><span class="s2">&quot;Trypsin&quot;</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">normalize</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">method</span><span class="o">=</span><span class="s2">&quot;ibaq&quot;</span><span class="p">,</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">output</span><span class="o">=</span><span class="s2">&quot;proteins-ibaq.tsv&quot;</span><span class="p">,</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>iBAQ enzymes outside the Rust-ported pyOpenMS set (e.g. <code>CNBr</code>, or
+context-dependent rules like <code>proline endopeptidase</code>) are computed in pure
+Python via <code>mokume.peptides2protein_ibaq</code> (<code>pip install mokume-rs[ibaq]</code>); the
+kernel errors with a pointer there.</p>
+</div>
+<p>The piBAQ output adds three metadata columns to the per-protein long-format table so users can audit which path each protein took:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FamilyId</code></td>
+<td>string</td>
+<td>Canonical accession of the family representative (largest digested-peptide set)</td>
+</tr>
+<tr>
+<td><code>FamilySize</code></td>
+<td>int</td>
+<td>Number of canonical members in the family (1 = singleton, isolated protein)</td>
+</tr>
+<tr>
+<td><code>EvidenceLevel</code></td>
+<td>enum</td>
+<td><code>high</code> (≥3 unique anchors) / <code>medium</code> (1-2 anchors) / <code>family_only</code> (zero anchors → fallback aggregation triggered)</td>
+</tr>
+</tbody>
+</table>
+<p>When <code>EvidenceLevel == "family_only"</code>, every member of the family carries the same iBAQ value — member-level resolution was not identifiable from the data.</p>
 <p>Additional iBAQ-derived values:</p>
 <table>
 <thead>
@@ -1560,15 +1953,11 @@
 </tr>
 </tbody>
 </table>
+<p>For TPA mode the molecular weight follows the same family-aware rule: per-protein MW for the proportional branch, sum of family MWs for the rollup fallback (so the family-level TPA matches the family-level iBAQ semantics).</p>
 <h2 id="topn">TopN<a class="headerlink" href="#topn" title="Anchor link to this section">&para;</a></h2>
-<p>Averages the <strong>N most intense peptides</strong> per protein per sample. Top3 is the most common choice (based on the Top3 method by Silva et al.), but any N is supported.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mokume.quantification</span><span class="w"> </span><span class="kn">import</span> <span class="n">TopNQuantification</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">top3</span> <span class="o">=</span> <span class="n">TopNQuantification</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">top3</span><span class="o">.</span><span class="n">quantify</span><span class="p">(</span><span class="n">peptides</span><span class="p">)</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Also: top5, top10, etc.</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">top10</span> <span class="o">=</span> <span class="n">TopNQuantification</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<p>Averages the <strong>N most intense peptides</strong> per protein per sample. Top3 is the most common choice (based on the Top3 method by Silva et al.), but any N is supported via <code>--topn</code>.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span>--quant-method<span class="w"> </span>topn<span class="w"> </span>--topn<span class="w"> </span><span class="m">3</span>
 </span></code></pre></div>
 <div class="admonition tip">
 <p class="admonition-title">Tip</p>
@@ -1576,51 +1965,66 @@
 </div>
 <h2 id="maxlfq">MaxLFQ<a class="headerlink" href="#maxlfq" title="Anchor link to this section">&para;</a></h2>
 <p>The <strong>MaxLFQ algorithm</strong> (Cox et al., 2014) uses delayed normalization with pairwise peptide ratios to estimate protein intensities. It's particularly robust to missing values.</p>
-<p>mokume provides two implementations:</p>
-<ol>
-<li><strong>DirectLFQ backend</strong> (default when installed) — variance-guided pairwise alignment from the DirectLFQ package</li>
-<li><strong>Built-in fallback</strong> — parallelized peptide trace alignment achieving ~0.95 Spearman correlation with DIA-NN's MaxLFQ</li>
-</ol>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mokume.quantification</span><span class="w"> </span><span class="kn">import</span> <span class="n">MaxLFQQuantification</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">maxlfq</span> <span class="o">=</span> <span class="n">MaxLFQQuantification</span><span class="p">(</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">min_peptides</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>    <span class="c1"># Min peptides for MaxLFQ (uses median for fewer)</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">threads</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>         <span class="c1"># Parallel cores (-1 for all)</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">maxlfq</span><span class="o">.</span><span class="n">quantify</span><span class="p">(</span><span class="n">peptides</span><span class="p">)</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="c1"># Check which backend is active</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="nb">print</span><span class="p">(</span><span class="n">maxlfq</span><span class="o">.</span><span class="n">using_directlfq</span><span class="p">)</span>  <span class="c1"># True/False</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">maxlfq</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>             <span class="c1"># &quot;MaxLFQ (DirectLFQ)&quot; or &quot;MaxLFQ (built-in)&quot;</span>
+<p>In the native Rust kernel, MaxLFQ rolls the peptide matrix up with the DirectLFQ estimator (delegating with <code>min_nonan = 2</code>). It is real-data parity-checked against the Python reference — cell-exact on PXD003539 within the f32 tolerance tier.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>--quant-method<span class="w"> </span>maxlfq
 </span></code></pre></div>
 <h2 id="directlfq">DirectLFQ<a class="headerlink" href="#directlfq" title="Anchor link to this section">&para;</a></h2>
-<p><strong>DirectLFQ</strong> (Ammar et al., 2023) uses hierarchical normalization with variance-guided pairwise alignment. When used as the quantification method, it handles both normalization and quantification.</p>
+<p><strong>DirectLFQ</strong> (Ammar et al., 2023) uses hierarchical normalization with variance-guided pairwise alignment. When used as the quantification method, it handles both normalization and quantification. It is a native Rust port of the DirectLFQ estimator — no separate Python dependency is needed.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>When <code>--quant-method directlfq</code> is selected, mokume delegates <strong>all processing</strong> to the DirectLFQ package. Run and sample normalization settings are ignored.</p>
+<p>When <code>--quant-method directlfq</code> is selected, the kernel handles <strong>all processing</strong> through the DirectLFQ estimator. Run and sample normalization settings are ignored.</p>
 </div>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mokume<span class="o">[</span>directlfq<span class="o">]</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span>--quant-method<span class="w"> </span>directlfq
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span>--quant-method<span class="w"> </span>directlfq
 </span></code></pre></div>
 <h2 id="sum-all-peptides">Sum (All Peptides)<a class="headerlink" href="#sum-all-peptides" title="Anchor link to this section">&para;</a></h2>
 <p>Simply sums all peptide intensities per protein per sample. The simplest approach, useful as a baseline.</p>
 <h2 id="ratio-ps-protocol">Ratio (PS Protocol)<a class="headerlink" href="#ratio-ps-protocol" title="Anchor link to this section">&para;</a></h2>
 <p>For <strong>multi-plex TMT experiments with reference channels</strong>, the ratio method computes log2(sample/reference) per PSM per plex, then aggregates to protein level via median.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>PSM intensities → average fractions → divide by reference → log2
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>→ median by peptide → median by protein → wide matrix
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>PSM intensities → average fractions → divide by reference → log2
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>→ median by peptide → median by protein → wide matrix
 </span></code></pre></div>
 <p>This method requires an SDRF file to detect reference samples and plexes.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span>-s<span class="w"> </span>experiment.sdrf.tsv<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span>--quant-method<span class="w"> </span>ratio<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span>--coverage-threshold<span class="w"> </span><span class="m">0</span>.65
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span>-s<span class="w"> </span>experiment.sdrf.tsv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span>--quant-method<span class="w"> </span>ratio<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span>--coverage-threshold<span class="w"> </span><span class="m">0</span>.65
 </span></code></pre></div>
 <div class="admonition info">
 <p class="admonition-title">Info</p>
 <p>Ratio quantification handles cross-plex normalization inherently via per-plex reference division. The <code>--irs</code> flag is ignored for ratio mode.</p>
+</div>
+<h2 id="tmt-abundance">TMT Abundance<a class="headerlink" href="#tmt-abundance" title="Anchor link to this section">&para;</a></h2>
+<p>The <code>abd</code> method computes protein abundance as the <strong>median of log2-transformed peptide intensities</strong> per (protein, sample). Non-positive intensities are treated as missing.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span>--quant-method<span class="w"> </span>abd
+</span></code></pre></div>
+<h2 id="tmt-reporter-intensity">TMT Reporter Intensity<a class="headerlink" href="#tmt-reporter-intensity" title="Anchor link to this section">&para;</a></h2>
+<p>The <code>intensity</code> method computes protein abundance as the <strong>sum of raw reporter intensities</strong> per (protein, sample) in linear space — no log transform, no aggregation choice.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span>--quant-method<span class="w"> </span>intensity
+</span></code></pre></div>
+<h2 id="spectral-count">Spectral Count<a class="headerlink" href="#spectral-count" title="Anchor link to this section">&para;</a></h2>
+<p>The simplest count-based quantification: protein abundance is the number of
+distinct peptides (modification-stripped sequences) per (protein, sample).
+Useful as a baseline for label-free
+workflows and for sanity-checking peptide identification depth across
+samples.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>mokume<span class="w"> </span>features2proteins<span class="w"> </span>-p<span class="w"> </span>features.parquet<span class="w"> </span>-o<span class="w"> </span>proteins.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span>--quant-method<span class="w"> </span>spectral_count
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Because the <code>features2proteins</code> pipeline aggregates features to the
+canonical peptide before quantification, the count returned here is
+<strong>distinct peptides (modification-stripped sequences) per (protein,
+sample)</strong>, not a raw PSM count. Two peptidoforms of the same sequence
+(e.g. with and without a modification) collapse to one, and both the
+Rust and Python builds produce the same count. Use it as an
+identification-depth indicator rather than as a strict spectral-count
+quantification.</p>
 </div>
 <h2 id="standard-output-format">Standard Output Format<a class="headerlink" href="#standard-output-format" title="Anchor link to this section">&para;</a></h2>
 <p>All quantification methods produce a standard <code>Intensity</code> column in long format, which the pipeline converts to wide format (proteins x samples) for the final output.</p>
