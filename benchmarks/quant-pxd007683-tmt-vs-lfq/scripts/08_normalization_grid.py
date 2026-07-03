@@ -6,7 +6,7 @@ Tests all sample-level and post-quantification normalization methods
 with MaxLFQ quantification (the best performer from previous benchmarks).
 
 Combinations tested:
-- Sample Normalization: none, globalmedian, conditionmedian, hierarchical, tmm
+- Sample Normalization: none, globalmedian, conditionmedian, hierarchical
 - Post Normalization: none, quantile, median_center
 
 Total: 5 × 3 = 15 combinations per technology = 30 total
@@ -41,9 +41,8 @@ warnings.filterwarnings("ignore")
 # Normalization Methods to Test
 # =============================================================================
 
-SAMPLE_NORMALIZATIONS = ["none", "globalmedian", "conditionmedian", "hierarchical", "tmm"]
+SAMPLE_NORMALIZATIONS = ["none", "globalmedian", "conditionmedian", "hierarchical"]
 POST_NORMALIZATIONS = ["none", "quantile", "median_center"]
-
 
 def get_default_quant_method(technology: str) -> str:
     """
@@ -60,7 +59,6 @@ def get_default_quant_method(technology: str) -> str:
     else:
         return "directlfq"  # DirectLFQ for label-free
 
-
 def load_quantified_data(technology: str, method: str = None) -> pd.DataFrame:
     """Load pre-quantified data from benchmarks-local."""
     if method is None:
@@ -75,11 +73,9 @@ def load_quantified_data(technology: str, method: str = None) -> pd.DataFrame:
     df_wide = df.pivot(index="ProteinName", columns="SampleID", values="Intensity")
     return df_wide
 
-
 def get_condition(sample_id: str) -> str:
     """Get condition for a sample ID."""
     return SAMPLE_CONDITIONS.get(str(sample_id), "Unknown")
-
 
 def get_species(protein_name: str) -> str:
     """Identify species from protein name."""
@@ -89,7 +85,6 @@ def get_species(protein_name: str) -> str:
             if pattern.upper() in protein_upper:
                 return species
     return "unknown"
-
 
 # =============================================================================
 # Normalization Functions
@@ -125,27 +120,14 @@ def apply_sample_normalization(df: pd.DataFrame, method: str) -> pd.DataFrame:
         return result
 
     elif method == "hierarchical":
-        # Use mokume's hierarchical normalizer
-        from mokume.normalization.hierarchical import HierarchicalSampleNormalizer
+        from benchmark_utils import hierarchical_normalize
 
-        # Work in log2 space
         df_log = np.log2(df.replace(0, np.nan))
-        normalizer = HierarchicalSampleNormalizer(min_overlap=10)
-        df_normalized = normalizer.fit_transform(df_log)
-        # Convert back to linear space
+        df_normalized = hierarchical_normalize(df_log, min_overlap=10)
         return 2 ** df_normalized
-
-    elif method == "tmm":
-        # Use mokume's TMM normalizer
-        from mokume.normalization.tmm import TMMNormalizer
-
-        df_clean = df.replace(0, np.nan)
-        tmm = TMMNormalizer()
-        return tmm.fit_transform(df_clean)
 
     else:
         raise ValueError(f"Unknown sample normalization: {method}")
-
 
 def apply_post_normalization(df: pd.DataFrame, method: str) -> pd.DataFrame:
     """Apply post-quantification normalization."""
@@ -184,7 +166,6 @@ def apply_post_normalization(df: pd.DataFrame, method: str) -> pd.DataFrame:
 
     else:
         raise ValueError(f"Unknown post normalization: {method}")
-
 
 # =============================================================================
 # Evaluation Metrics
@@ -292,7 +273,6 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         "pct_good_cv": pct_good_cv,
     }
 
-
 # =============================================================================
 # Main Benchmark
 # =============================================================================
@@ -354,7 +334,6 @@ def run_benchmark(technology: str) -> list:
 
     return results
 
-
 def plot_heatmap(results_df: pd.DataFrame, metric: str, output_path: Path):
     """Plot heatmap of metric across normalizations."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -389,7 +368,6 @@ def plot_heatmap(results_df: pd.DataFrame, metric: str, output_path: Path):
     plt.tight_layout()
     plt.savefig(output_path, dpi=FIGURE_DPI)
     plt.close()
-
 
 def plot_comparison_bars(results_df: pd.DataFrame, output_path: Path):
     """Plot bar comparison of best methods."""
@@ -427,7 +405,6 @@ def plot_comparison_bars(results_df: pd.DataFrame, output_path: Path):
     plt.tight_layout()
     plt.savefig(output_path, dpi=FIGURE_DPI)
     plt.close()
-
 
 def main():
     """Run Phase 1: Normalization Grid Benchmark."""
@@ -502,7 +479,6 @@ def main():
                 baseline = baseline.iloc[0]
                 print(f"  Baseline: CV={baseline['within_cv']:.4f}, "
                       f"RMSE={baseline['fc_rmse']:.3f}")
-
 
 if __name__ == "__main__":
     main()

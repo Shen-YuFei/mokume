@@ -1,0 +1,27 @@
+name: Audit
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ["rust/**/Cargo.toml", "rust/Cargo.lock"]
+  pull_request:
+    branches: [main, dev]
+    paths: ["rust/**/Cargo.toml", "rust/Cargo.lock"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run audit
+        run: cargo audit

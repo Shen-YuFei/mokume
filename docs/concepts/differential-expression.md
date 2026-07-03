@@ -1,14 +1,16 @@
 # Differential Expression
 
-Differential expression (DE) analysis identifies proteins whose abundance changes significantly between experimental conditions. mokume provides three statistical methods, each with distinct strengths.
+Differential expression (DE) analysis identifies proteins whose abundance changes significantly between experimental conditions. mokume provides a catalog of statistical methods implemented in the native Rust kernel, each with distinct strengths.
 
 ## Overview
 
-| Method | Model | Key Feature | Needs Peptide Counts | Optional Dep |
-|--------|-------|-------------|:--------------------:|:------------:|
-| **LimROTS** | Reproducibility-optimized t-statistic | Bootstrap-tuned smoothing | No | No |
-| **DEqMS** | Empirical Bayes with peptide-count weighting | Variance stabilization by spectrum count | Yes | No |
-| **proDA** | Probabilistic dropout model | Dropout-aware likelihood | No | No |
+| Method | Model | Key Feature | Needs Peptide Counts |
+|--------|-------|-------------|:--------------------:|
+| **LimROTS** | Reproducibility-optimized t-statistic | Bootstrap-tuned smoothing | No |
+| **DEqMS** | Empirical Bayes with peptide-count weighting | Variance stabilization by spectrum count | Yes |
+| **proDA** | Probabilistic dropout model | Dropout-aware likelihood | No |
+| **limma** | Moderated t-test (empirical Bayes) | Stable baseline, small-sample friendly | No |
+| **ROTS** | Reproducibility-optimized statistic | Data-adaptive test statistic | No |
 
 ## Choosing a Method
 
@@ -24,6 +26,38 @@ graph TD
 
 !!! tip "`--de-method auto`"
     When set to `auto` (the default), mokume selects **DEqMS** for DirectLFQ quantification and **LimROTS** for all other methods. You can always override this with `--de-method`.
+
+!!! note "No R required"
+    All DE methods run in the native Rust kernel. No R, rpy2, or Bioconductor packages are needed. The deterministic kernels (limma / deqms) are cell-exact on real data; the RNG/optimizer-driven methods (rots / limrots / proda) are faithful-not-bit-exact (log2FC cell-exact, p-value rank-level).
+
+## From Python
+
+The pure-Python package exposes the same methods through the
+`DifferentialExpression` class. Pass a protein matrix (proteins × samples) and a
+sample → condition mapping; it returns one result table per contrast:
+
+```python
+from mokume.analysis import DifferentialExpression
+
+# protein_df: a DataFrame with ProteinName + one intensity column per sample
+# sample_to_condition: {"sampleA": "Treatment", "sampleB": "Control", ...}
+de = DifferentialExpression(method="limrots", fdr_method="bh")
+results = de.run_comparisons(
+    protein_df,
+    sample_to_condition,
+    contrasts=[("Treatment", "Control")],
+)
+
+# results["Treatment-Control"] -> ProteinName, log2FC, pvalue, adj_pvalue, significance
+table = results["Treatment-Control"]
+```
+
+`method` accepts any of `limrots`, `deqms`, `proda`, `limma`, or `rots`
+(the `ensemble` consensus is exposed through the CLI / `run_ensemble`,
+not this class); `fdr_method` is `bh` (default) or `ihw`. LimROTS and ROTS report
+their own permutation-based FDR, which an `ihw` request leaves untouched. The
+Rust build runs the same methods through the CLI shown below (and the in-process
+wheel binding).
 
 ## LimROTS
 
@@ -44,15 +78,12 @@ where $\alpha_1$ and $\alpha_2$ are optimized via bootstrap to maximize reproduc
 - Lower sensitivity than DEqMS — may miss real differential proteins
 - Computationally more expensive due to bootstrap iterations
 
-```python
-from mokume.analysis import DifferentialExpression
-
-de = DifferentialExpression(
-    method="limrots",
-    fdr_method="bh",
-    fdr_threshold=0.05,
-    log2fc_threshold=0.5,
-)
+```bash
+mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de --de-contrasts "A vs B" \
+    --de-method limrots \
+    --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
+    --de-output de_results.csv
 ```
 
 ## DEqMS
@@ -75,17 +106,15 @@ where $d_0$ and $s^2_0$ are prior degrees of freedom and variance estimated via 
 - Requires peptide count information (automatically provided by the pipeline)
 - LOESS variance fitting can be unstable on small datasets, falling back to constant variance
 
-```python
-from mokume.analysis import DifferentialExpression
-
-de = DifferentialExpression(
-    method="deqms",
-    peptide_counts=peptide_counts,  # dict: protein -> count
-    fdr_method="bh",
-    fdr_threshold=0.05,
-    log2fc_threshold=0.5,
-)
+```bash
+mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de --de-contrasts "A vs B" \
+    --de-method deqms \
+    --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
+    --de-output de_results.csv
 ```
+
+Peptide counts are supplied automatically by the pipeline.
 
 ## proDA
 
@@ -107,19 +136,95 @@ where $\rho$ and $\zeta$ are per-sample dropout midpoint and width parameters es
 - More conservative, especially on low fold-change contrasts
 - Dropout model adds computational overhead and may over-regularize on clean datasets with few missing values
 
-```python
-from mokume.analysis import DifferentialExpression
-
-de = DifferentialExpression(
-    method="proda",
-    fdr_method="bh",
-    fdr_threshold=0.05,
-    log2fc_threshold=0.5,
-)
+```bash
+mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de --de-contrasts "A vs B" \
+    --de-method proda \
+    --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
+    --de-output de_results.csv
 ```
 
 !!! note "When to use proDA"
     proDA is most valuable when your protein matrix has **>30% missing values** and you suspect missingness is abundance-dependent (MNAR). On clean matrices with few missing values, LimROTS or DEqMS will typically outperform.
+
+## limma
+
+**limma** (Ritchie et al., 2015) fits linear models to log-expression data and uses empirical Bayes moderation of standard errors. It is the most widely used method in genomics and a stable baseline for proteomics.
+
+**Strengths:**
+
+- Extremely well-validated across thousands of studies
+- Robust with small sample sizes (n ≥ 2 per group)
+- Fast and computationally lightweight
+
+**Weaknesses:**
+
+- Does not account for peptide-count information
+- May be less powerful than DEqMS when peptide counts are available
+
+```bash
+mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de --de-contrasts "A vs B" \
+    --de-method limma \
+    --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
+    --de-output de_results.csv
+```
+
+## ROTS
+
+**ROTS** (Suomi et al., 2017) optimizes a test statistic for maximal reproducibility across bootstrap resamples. Unlike LimROTS (which also incorporates limma empirical Bayes), ROTS uses only the bootstrap-optimized statistic without shrinkage priors.
+
+**Strengths:**
+
+- Data-adaptive: optimizes its own test statistic shape
+- Good performance across diverse data types
+
+**Weaknesses:**
+
+- Computationally expensive (bootstrap iterations)
+- May be redundant with LimROTS in most scenarios
+
+```bash
+mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de --de-contrasts "A vs B" \
+    --de-method rots \
+    --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
+    --de-output de_results.csv
+```
+
+## Ensemble (top-k consensus)
+
+The `ensemble` method runs several individual DE methods on the same
+contrast and combines their per-protein verdicts using a top-k consensus
+rule: a protein is called significant only when at least `min_k` member
+methods agree on direction (UP or DOWN) and the Fisher-combined p-value
+passes the FDR threshold.
+
+**Output columns** include the median log2FC across members, the
+Fisher-combined p-value (BH-adjusted), `n_methods_up`, `n_methods_down`,
+and `methods_significant` (comma-separated list of members that called
+the protein).
+
+**Strengths:**
+
+- Higher precision than any single method by requiring agreement
+- Naturally robust to method-specific failure modes
+- Output exposes per-protein method agreement for downstream inspection
+
+**Weaknesses:**
+
+- Cost scales with the number of member methods
+- May lose sensitivity for proteins that only one method can detect
+
+```bash
+mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de --de-contrasts "A vs B" \
+    --de-method ensemble \
+    --de-ensemble-methods limrots,deqms,proda \
+    --de-ensemble-min-k 2 \
+    --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
+    --de-output de_results.csv
+```
 
 ## FDR Correction
 

@@ -1,0 +1,21 @@
+"python":
+  - changed-files:
+      - any-glob-to-any-file:
+          - python/**/*
+
+"rust":
+  - changed-files:
+      - any-glob-to-any-file:
+          - rust/**/*
+
+"docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**/*
+          - mkdocs.yml
+
+"ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**/*
+          - .pre-commit-config.yaml

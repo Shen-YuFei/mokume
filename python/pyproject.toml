@@ -1,0 +1,118 @@
+# PEP 621 project metadata (used by uv, pip, hatchling, and other standard tools)
+[project]
+name = "mokume"
+version = "0.1.0"
+description = "A comprehensive proteomics quantification library supporting multiple methods (iBAQ, Top3, TopN, MaxLFQ, DirectLFQ)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Yasset Perez-Riverol", email = "ypriverol@gmail.com" },
+    { name = "Dai Chengxin", email = "chengxin2024@126.com" },
+    { name = "Julianus Pfeuffer", email = "jule.pf@gmail.com" },
+    { name = "Joshua Klein", email = "joshua.adam.klein@gmail.com" },
+    { name = "Enrique Audain", email = "enrique.audain.martinez@uni-oldenburg.de" },
+    { name = "Ping Zheng", email = "zprobot80@gmail.com" }
+]
+keywords = [
+    "quantms",
+    "proteomics",
+    "mass-spectrometry",
+    "data-analysis",
+    "big data",
+    "ibaq",
+    "quantification"
+]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Development Status :: 4 - Beta"
+]
+dependencies = [
+    "numpy<2.1.0",
+    "click",
+    "pandas",
+    "pyarrow>=16.1.0",
+    "duckdb>=0.10.1",
+    "qnorm",
+    "scipy>=1.10",
+    "joblib",
+    "typing_extensions>=4.6.3",
+]
+
+[project.optional-dependencies]
+plotting = ["matplotlib", "seaborn>=0.13.2", "scikit-learn"]
+reports = ["plotly>=5.0", "scikit-learn"]
+directlfq = ["directlfq>=0.3.0", "pyyaml>=6.0", "polars>=1.0"]
+batch-correction = ["combat>=0.3", "scikit-learn"]
+inmoose = ["combat>=0.3", "scikit-learn"]  # Deprecated alias, use batch-correction instead
+tissuemap = ["scanpy>=1.9", "combat>=0.3", "umap-learn>=0.5", "matplotlib", "seaborn>=0.13.2", "scikit-learn", "anndata"]
+agentic = ["pyyaml>=6.0", "openai>=1.30", "python-dotenv>=0.20", "scikit-learn"]
+agentic-core = ["pyyaml>=6.0"]
+ibaq = ["pyopenms"]
+imputation = ["scikit-learn"]
+analysis = ["statsmodels>=0.13"]
+h5ad = ["anndata"]
+all = ["directlfq>=0.3.0", "pyyaml>=6.0", "polars>=1.0", "combat>=0.3", "matplotlib", "seaborn>=0.13.2", "plotly>=5.0", "scanpy>=1.9", "umap-learn>=0.5", "scikit-learn", "pyopenms", "statsmodels>=0.13", "anndata", "openai>=1.30", "python-dotenv>=0.20"]
+dev = ["pytest>=8.0", "pytest-cov>=4.0", "flake8>=7.0"]
+
+[project.scripts]
+mokume = "mokume.mokume_cli:main"
+
+[project.urls]
+Documentation = "https://mokume.quantms.org"
+GitHub = "https://github.com/bigbio/mokume/"
+PyPi = "https://pypi.org/project/mokume/"
+Quantms = "https://quantms.org"
+LICENSE = "https://github.com/bigbio/mokume/blob/main/LICENSE"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mokume"]
+
+[tool.hatch.build.targets.sdist]
+include = ["mokume", "tests", "README.md"]
+
+[tool.pytest.ini_options]
+# Show print output during tests (needed for quantification comparison tables)
+addopts = "-v -s --tb=short"
+# Test paths
+testpaths = ["tests"]
+# Markers for test categorization
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "comparison: marks tests that print comparison tables",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+
+[tool.bandit.assert_used]
+skips = ["*/test_*.py", "*/tests/*"]
+
+[tool.pylint.design]
+# Scientific code: dataclasses aggregate many fields, helper
+# functions take many tabular inputs, and analysis pipelines
+# accumulate intermediates. Defaults (5 / 7 / 15) are too tight.
+max-args = 6
+max-attributes = 25
+max-locals = 18
+max-positional-arguments = 6
+
+[tool.pylint."MESSAGES CONTROL"]
+# C0114/0115/0116: missing module/class/function docstrings; already covered
+# by the project documentation policy and ruff/pydocstyle in pre-commit.
+disable = ["C0114", "C0115", "C0116"]
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 99
+target-version = ["py39"]

@@ -1,0 +1,101 @@
+use mokume_core::{PeptideId, QuantMethod, SampleId};
+
+mod directlfq_aligned;
+mod maxlfq;
+
+pub use directlfq_aligned::{direct_lfq_aligned, DirectLfqIon};
+pub use maxlfq::{max_lfq, max_lfq_with_samples};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PeptideMeasurement {
+    pub peptide: PeptideId,
+    pub sample: SampleId,
+    pub intensity: f64,
+}
+
+pub fn supported_methods() -> &'static [QuantMethod] {
+    &[
+        QuantMethod::DirectLfq,
+        QuantMethod::Ibaq,
+        QuantMethod::MaxLfq,
+        QuantMethod::TopN,
+        QuantMethod::Sum,
+        QuantMethod::Median,
+        QuantMethod::Ratio,
+        QuantMethod::Abd,
+        QuantMethod::Intensity,
+        QuantMethod::SpectralCount,
+    ]
+}
+
+pub(crate) fn sample_order(measurements: &[PeptideMeasurement]) -> Vec<SampleId> {
+    let mut samples = measurements
+        .iter()
+        .filter(|measurement| measurement.intensity.is_finite() && measurement.intensity > 0.0)
+        .map(|measurement| measurement.sample)
+        .collect::<Vec<_>>();
+    samples.sort_by_key(|sample| sample.get());
+    samples.dedup();
+    samples
+}
+
+pub(crate) fn median(values: &mut Vec<f64>) -> Option<f64> {
+    values.retain(|value| value.is_finite());
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    let midpoint = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        Some((values[midpoint - 1] + values[midpoint]) / 2.0)
+    } else {
+        Some(values[midpoint])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{max_lfq, PeptideMeasurement};
+    use mokume_core::{PeptideId, SampleId};
+
+    #[test]
+    fn max_lfq_preserves_two_sample_ratio() {
+        let measurements = vec![
+            PeptideMeasurement {
+                peptide: PeptideId::new(0),
+                sample: SampleId::new(0),
+                intensity: 100.0,
+            },
+            PeptideMeasurement {
+                peptide: PeptideId::new(0),
+                sample: SampleId::new(1),
+                intensity: 200.0,
+            },
+            PeptideMeasurement {
+                peptide: PeptideId::new(1),
+                sample: SampleId::new(0),
+                intensity: 400.0,
+            },
+            PeptideMeasurement {
+                peptide: PeptideId::new(1),
+                sample: SampleId::new(1),
+                intensity: 800.0,
+            },
+        ];
+
+        let quantities = max_lfq(&measurements);
+        let sample_0 = value_for(&quantities, SampleId::new(0));
+        let sample_1 = value_for(&quantities, SampleId::new(1));
+
+        assert!((sample_0 - 500.0).abs() < 1e-6);
+        assert!((sample_1 - 1000.0).abs() < 1e-6);
+        assert!((sample_1 / sample_0 - 2.0).abs() < 1e-6);
+    }
+
+    fn value_for(quantities: &[(SampleId, f64)], sample: SampleId) -> f64 {
+        quantities
+            .iter()
+            .find_map(|(candidate, value)| (*candidate == sample).then_some(*value))
+            .unwrap_or(0.0)
+    }
+}

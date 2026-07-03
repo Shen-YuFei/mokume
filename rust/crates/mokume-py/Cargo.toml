@@ -1,0 +1,27 @@
+[package]
+name = "mokume-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "PyO3 bindings exposing the mokume Rust compute kernel to Python"
+
+[lib]
+# Built by maturin into the `mokume._mokume` extension module that the
+# `python/mokume/` package imports.
+name = "_mokume"
+crate-type = ["cdylib"]
+
+[dependencies]
+# This crate is the Python FFI boundary, so — unlike the pure-compute crates —
+# it deliberately does NOT opt into the workspace `unsafe_code = "forbid"` lint
+# (PyO3's `#[pymodule]`/`#[pyfunction]` macros expand to unsafe FFI glue). The
+# compute kernel crates keep `unsafe_code = "forbid"`.
+# `abi3-py39` builds against the CPython stable ABI (limited API) with a 3.9
+# floor, so one `cp39-abi3` wheel per platform covers Python 3.9+ instead of a
+# wheel per minor version. The floor matches `requires-python = ">=3.9"`.
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
+# Reuse the CLI's single-source clap parsing + dispatch via `run_from_args`, so
+# the flag -> config mapping is not duplicated across the binary and the wheel.
+mokume-cli = { path = "../mokume-cli" }

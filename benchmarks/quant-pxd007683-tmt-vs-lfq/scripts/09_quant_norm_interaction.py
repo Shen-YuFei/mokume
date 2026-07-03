@@ -7,7 +7,7 @@ Tests whether the best normalization method varies by quantification method.
 Combinations tested:
 - TMT Quantification: sum, top3, top10, maxlfq, ibaq (NO directlfq - designed for LFQ)
 - LFQ Quantification: sum, top3, top10, maxlfq, directlfq, ibaq
-- Sample Normalization: none, globalmedian, hierarchical, tmm
+- Sample Normalization: none, globalmedian, hierarchical
 
 Note: MaxLFQ is included for comparison but is NOT recommended for TMT.
 """
@@ -44,8 +44,7 @@ QUANT_METHODS_TMT = ["sum", "top3", "top10", "ibaq"]  # NO directlfq, maxlfq not
 QUANT_METHODS_LFQ = ["sum", "top3", "top10", "maxlfq", "directlfq", "ibaq"]
 
 # Sample normalizations to test
-SAMPLE_NORMALIZATIONS = ["none", "globalmedian", "hierarchical", "tmm"]
-
+SAMPLE_NORMALIZATIONS = ["none", "globalmedian", "hierarchical"]
 
 def load_quantified_data(technology: str, method: str) -> pd.DataFrame:
     """Load pre-quantified data from benchmarks-local."""
@@ -58,11 +57,9 @@ def load_quantified_data(technology: str, method: str) -> pd.DataFrame:
     df_wide = df.pivot(index="ProteinName", columns="SampleID", values="Intensity")
     return df_wide
 
-
 def get_condition(sample_id: str) -> str:
     """Get condition for a sample ID."""
     return SAMPLE_CONDITIONS.get(str(sample_id), "Unknown")
-
 
 def get_species(protein_name: str) -> str:
     """Identify species from protein name."""
@@ -72,7 +69,6 @@ def get_species(protein_name: str) -> str:
             if pattern.upper() in protein_upper:
                 return species
     return "unknown"
-
 
 # =============================================================================
 # Normalization Functions
@@ -90,21 +86,13 @@ def apply_sample_normalization(df: pd.DataFrame, method: str) -> pd.DataFrame:
         return df * factors
 
     elif method == "hierarchical":
-        from mokume.normalization.hierarchical import HierarchicalSampleNormalizer
+        from benchmark_utils import hierarchical_normalize
         df_log = np.log2(df.replace(0, np.nan))
-        normalizer = HierarchicalSampleNormalizer(min_overlap=10)
-        df_normalized = normalizer.fit_transform(df_log)
+        df_normalized = hierarchical_normalize(df_log, min_overlap=10)
         return 2 ** df_normalized
-
-    elif method == "tmm":
-        from mokume.normalization.tmm import TMMNormalizer
-        df_clean = df.replace(0, np.nan)
-        tmm = TMMNormalizer()
-        return tmm.fit_transform(df_clean)
 
     else:
         raise ValueError(f"Unknown sample normalization: {method}")
-
 
 # =============================================================================
 # Evaluation Metrics
@@ -167,7 +155,6 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         "pct_good_cv": pct_good_cv,
     }
 
-
 # =============================================================================
 # Main Benchmark
 # =============================================================================
@@ -226,7 +213,6 @@ def run_benchmark(technology: str) -> list:
 
     return results
 
-
 def plot_interaction_heatmap(results_df: pd.DataFrame, metric: str, output_path: Path):
     """Plot heatmap showing quant × norm interaction."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -262,7 +248,6 @@ def plot_interaction_heatmap(results_df: pd.DataFrame, metric: str, output_path:
     plt.savefig(output_path, dpi=FIGURE_DPI)
     plt.close()
 
-
 def plot_best_combinations(results_df: pd.DataFrame, output_path: Path):
     """Plot best method combinations."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -296,7 +281,6 @@ def plot_best_combinations(results_df: pd.DataFrame, output_path: Path):
     plt.tight_layout()
     plt.savefig(output_path, dpi=FIGURE_DPI)
     plt.close()
-
 
 def plot_quant_comparison(results_df: pd.DataFrame, output_path: Path):
     """Plot quantification method comparison (best norm for each)."""
@@ -348,7 +332,6 @@ def plot_quant_comparison(results_df: pd.DataFrame, output_path: Path):
     plt.tight_layout()
     plt.savefig(output_path, dpi=FIGURE_DPI)
     plt.close()
-
 
 def main():
     """Run Phase 2: Quantification × Normalization Interaction Benchmark."""
@@ -422,7 +405,6 @@ def main():
                 quant_df = tech_df[tech_df["quant_method"] == quant]
                 best = quant_df.loc[quant_df["within_cv"].idxmin()]
                 print(f"    {quant}: {best['sample_norm']} (CV={best['within_cv']:.4f})")
-
 
 if __name__ == "__main__":
     main()

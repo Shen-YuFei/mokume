@@ -1,0 +1,20 @@
+---
+engines:
+  flake8:
+    options:
+      per-file-ignores: "tests/*:S101"
+  bandit:
+    exclude_paths:
+      - "tests/**"
+  pylint:
+    options:
+      disable: "arguments-differ,unexpected-keyword-arg,no-value-for-parameter"
+  markdownlint:
+    options:
+      MD013: false
+      MD046: false
+  opengrep:
+    exclude_paths: []
+exclude_paths:
+  - "docs/spec/**"
+  - ".github/workflows/**"

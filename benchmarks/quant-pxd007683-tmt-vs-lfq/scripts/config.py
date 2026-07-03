@@ -124,7 +124,6 @@ NORMALIZATION_METHODS = [
     "quantile",          # Quantile normalization
     "total_intensity",   # Total intensity normalization
     "hierarchical",      # Hierarchical sample alignment
-    "tmm",               # Trimmed Mean of M-values (robust to composition bias)
 ]
 
 # Imputation methods
@@ -217,7 +216,6 @@ METHOD_COLORS = {
     "directlfq": "#e31a1c",
     "ibaq": "#fdbf6f",
 }
-
 
 # =============================================================================
 # Helper Functions

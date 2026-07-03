@@ -1,0 +1,15 @@
+[package]
+name = "mokume-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Core data model and configuration for mokume"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

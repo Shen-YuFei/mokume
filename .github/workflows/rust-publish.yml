@@ -1,0 +1,141 @@
+# Publish the cross-platform `mokume-rs` wheels (+ sdist) to PyPI when a GitHub
+# Release is published -- the Rust-wheel counterpart of the pure-Python
+# `python-publish.yml`, using the same release-only trigger and the same
+# `PYPI_API_TOKEN` secret.
+#
+# `wheels.yml` builds the same wheels as artifacts on push / PR for CI; it does
+# not publish. A release-only workflow cannot reuse another workflow's run
+# artifacts, so this one rebuilds the platform wheels + sdist -- with the same
+# maturin matrix as `wheels.yml`, so a released wheel matches what CI built --
+# and then uploads them. To use PyPI Trusted Publishing (OIDC) instead of a
+# token, drop `password:` from the publish job and add `id-token: write`.
+name: rust-publish
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: wheel ${{ matrix.os }}-${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: native x86_64 + native aarch64 runners (no QEMU emulation).
+          # cmake + gcc are installed inside the manylinux_2_28 (AlmaLinux 8)
+          # container via `before-script-linux`.
+          - os: linux
+            runner: ubuntu-24.04
+            target: x86_64
+            manylinux: "2_28"
+          - os: linux
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: "2_28"
+          # macOS: cmake + clang are preinstalled on the runner images.
+          # macos-15-intel is the current Intel runner (macos-13 was retired).
+          - os: macos
+            runner: macos-15-intel
+            target: x86_64
+          - os: macos
+            runner: macos-14
+            target: aarch64
+          # Windows: cmake + MSVC are preinstalled on the runner image.
+          - os: windows
+            runner: windows-latest
+            target: x64
+    env:
+      # Future-proof: if a runner image ships a CPython newer than the pinned
+      # pyo3's max-tested version, allow the abi3 build to proceed instead of
+      # erroring. A no-op when the runner Python is within the tested range.
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          # Match the repo's pinned toolchain (rust-toolchain.toml).
+          rust-toolchain: "1.96.0"
+          args: --release --out dist
+          sccache: "true"
+          # Runs inside the manylinux container before maturin. AlmaLinux 8 uses
+          # dnf; the older manylinux2014 (CentOS 7) uses yum -- guard for both.
+          before-script-linux: |
+            if command -v dnf >/dev/null 2>&1; then
+              dnf install -y cmake gcc gcc-c++ make
+            else
+              yum install -y cmake gcc gcc-c++ make
+            fi
+
+      - name: Smoke-test the built wheel
+        shell: bash
+        run: |
+          python -m venv smoke
+          if [ -f smoke/bin/activate ]; then . smoke/bin/activate; else . smoke/Scripts/activate; fi
+          python -m pip install --upgrade pip
+          pip install --no-index --find-links dist mokume-rs
+          python -c "import mokume._mokume as m; print('mokume', m.version()); assert m.version()"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: rust/dist/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: rust/dist/*.tar.gz
+
+  # Gather every platform wheel + the sdist and upload them under `mokume-rs`.
+  # `PYPI_API_TOKEN` must be able to publish `mokume-rs` (an account-scoped
+  # token, or a mokume-rs project token stored under this name).
+  publish:
+    name: publish to PyPI
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/

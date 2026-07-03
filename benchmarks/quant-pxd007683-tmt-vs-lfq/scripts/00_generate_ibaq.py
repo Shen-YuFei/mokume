@@ -5,29 +5,26 @@ Generate iBAQ quantification for PXD007683 benchmark.
 This script:
 1. Downloads the FASTA file if not present
 2. Loads peptide-level data
-3. Computes iBAQ values using mokume
+3. Computes iBAQ values using theoretical tryptic peptide counts
 4. Saves results to parquet files
 """
 
-import sys
-from pathlib import Path
 import shutil
 import urllib.request
 import urllib.parse
 import warnings
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
 
-# Add parent to path for config import
-sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     DATA_DIR, LOCAL_DATA_DIR, LOCAL_QUANTIFIED_DIR,
     FASTA_URL, FASTA_PATH,
 )
-
-# Add mokume to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+from benchmark_utils import (
+    parse_fasta, count_theoretical_peptides, get_accession,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -71,11 +68,9 @@ def compute_ibaq(technology: str) -> pd.DataFrame:
     pd.DataFrame
         DataFrame with iBAQ values per protein per sample
     """
-    from mokume.quantification.ibaq import extract_fasta
-    from mokume.core.constants import (
-        PROTEIN_NAME, SAMPLE_ID, NORM_INTENSITY,
-        get_accession,
-    )
+    PROTEIN_NAME = "ProteinName"
+    SAMPLE_ID = "SampleID"
+    NORM_INTENSITY = "NormIntensity"
 
     # Load peptide-level data
     peptide_path = LOCAL_DATA_DIR / f"{technology}_peptides.parquet"
@@ -92,7 +87,6 @@ def compute_ibaq(technology: str) -> pd.DataFrame:
     # Extract individual accessions from protein groups (e.g., "sp|P12345|NAME;sp|P67890|NAME")
     protein_accessions = set()
     for prot in all_proteins:
-        # Split protein groups and extract accession
         for p in str(prot).split(";"):
             acc = get_accession(p.strip())
             if acc:
@@ -100,28 +94,24 @@ def compute_ibaq(technology: str) -> pd.DataFrame:
 
     print(f"  Found {len(protein_accessions)} unique protein accessions")
 
-    # Get theoretical peptide counts from FASTA
+    # Parse FASTA and compute theoretical peptide counts
     print("  Computing theoretical peptides from FASTA...")
-    try:
-        peptide_counts, mw_dict, found_proteins = extract_fasta(
-            fasta=str(FASTA_PATH),
-            enzyme="Trypsin",
-            proteins=list(protein_accessions),
-            min_aa=7,
-            max_aa=30,
-            tpa=False,  # Don't need molecular weights
-        )
-        print(f"  Found {len(found_proteins)} proteins in FASTA ({len(peptide_counts)} with peptide counts)")
-    except ValueError as e:
-        print(f"  Warning: {e}")
-        # Try with a subset of proteins
-        peptide_counts = {}
-        found_proteins = set()
+    fasta_proteins = parse_fasta(str(FASTA_PATH))
+
+    peptide_counts = {}
+    found_proteins = set()
+    for acc in protein_accessions:
+        if acc in fasta_proteins:
+            seq = fasta_proteins[acc]
+            n_pep = count_theoretical_peptides(seq, enzyme="Trypsin", min_aa=7, max_aa=30)
+            peptide_counts[acc] = n_pep
+            found_proteins.add(acc)
+
+    print(f"  Found {len(found_proteins)} proteins in FASTA ({len(peptide_counts)} with peptide counts)")
 
     # Create mapping from full protein name to accession
     protein_to_accession = {}
     for prot in all_proteins:
-        # Use the first accession in the group
         for p in str(prot).split(";"):
             acc = get_accession(p.strip())
             if acc and acc in found_proteins:
@@ -142,7 +132,6 @@ def compute_ibaq(technology: str) -> pd.DataFrame:
         protein_intensities = sample_df.groupby(PROTEIN_NAME)[NORM_INTENSITY].sum()
 
         for protein, intensity in protein_intensities.items():
-            # Get accession and theoretical peptide count
             accession = protein_to_accession.get(protein)
 
             if accession and accession in peptide_counts:

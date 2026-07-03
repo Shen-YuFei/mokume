@@ -1,0 +1,50 @@
+# Dev environment for mokume (Rust + PyO3/maturin).
+#   conda env create -f environment.yaml
+#   conda activate mokume
+#   maturin develop   # compile and install the mokume._mokume extension in place
+name: mokume
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # --- Python ---
+  - python >=3.9
+  - pip
+
+  # --- Rust toolchain (builds the extension + the CLI binary) ---
+  # rust-toolchain.toml pins 1.96.0; conda-forge's rust may differ. To match CI
+  # exactly, prefer `rustup default 1.96.0`; conda's rust is fine otherwise
+  # (the abi3 + stdlib features are not version-sensitive).
+  - rust >=1.96
+  - maturin >=1.7,<2
+
+  # --- Native build deps (hdf5-metno static builds libhdf5 from C via CMake) ---
+  - cmake
+  - make          # use ninja on Windows
+  - c-compiler    # conda-forge metapackage: gcc / clang / MSVC per platform
+
+  # --- Test / lint (matches the pyproject pylint/bandit config) ---
+  - pytest
+  - pylint
+  - bandit
+  - pre-commit
+  - prospector
+  - ruff
+
+  # --- Optional scientific stack (periphery commands / golden tests) ---
+  # Mirrors pyproject's [project.optional-dependencies].all.
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - plotly
+  - anndata
+  - pyarrow
+  - pyyaml
+  - pyopenms        # from the bioconda / openms channel
+  - pip:
+      - scanpy
+      - umap-learn
+      - combat

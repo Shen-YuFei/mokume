@@ -1,470 +1,182 @@
 # Python API
 
-## Quantification
+`pip install mokume-rs` gives you a thin Python wheel over the Rust compute kernel, in the PyO3/maturin layout used by projects such as polars and pydantic-core (Python imports a compiled Rust extension). There is **no** rich class-based API any more: the compute numbers are single-sourced in Rust and exposed in-process through the `mokume._mokume` extension, and the Python periphery only reads the tables the kernel writes.
 
-### Factory Function
+The package has two layers:
 
-```python
-from mokume.quantification import get_quantification_method, list_quantification_methods
-
-# Create method by name
-method = get_quantification_method("top3")        # TopNQuantification(n=3)
-method = get_quantification_method("top10")       # TopNQuantification(n=10)
-method = get_quantification_method("maxlfq", min_peptides=2, n_jobs=4)
-
-# List available methods
-available = list_quantification_methods()
-# {'top3': True, 'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
-```
-
-### TopNQuantification
+- **Compute wrappers** — `mokume.features2proteins(...)`, `mokume.features2peptides(...)`, `mokume.peptides2protein(...)`, `mokume.correct_batches(...)`, plus `mokume.run([...])` and `mokume.version()`. These run the same clap parsing + dispatch the standalone `mokume` binary uses, **in-process, no subprocess**.
+- **Periphery** — plotting, tissue maps, DE plots, interactive reports, iBAQ QC, and the pure-Python method fallback (`missforest`). These live in `mokume.commands.*` / `mokume.reports.*` and are reached through the ergonomic wrappers below. Each needs an [install extra](#install-extras).
 
 ```python
-from mokume.quantification import TopNQuantification
+import mokume
 
-quant = TopNQuantification(n=3)  # or n=5, n=10, etc.
-result = quant.quantify(
-    peptides,
-    protein_column="ProteinName",
-    peptide_column="PeptideSequence",
-    intensity_column="NormIntensity",
-    sample_column="SampleID",
-)
-```
-
-### MaxLFQQuantification
-
-```python
-from mokume.quantification import MaxLFQQuantification
-
-quant = MaxLFQQuantification(
-    min_peptides=2,      # Min peptides for MaxLFQ (uses median for fewer)
-    threads=4,           # Parallel cores (-1 for all)
-    force_builtin=False, # Force built-in implementation
-)
-result = quant.quantify(peptides, protein_column="ProteinName", ...)
-
-# Check backend
-quant.using_directlfq  # True/False
-quant.name             # "MaxLFQ (DirectLFQ)" or "MaxLFQ (built-in)"
-```
-
-### DirectLFQQuantification
-
-```python
-from mokume.quantification import is_directlfq_available
-
-if is_directlfq_available():
-    from mokume.quantification import DirectLFQQuantification
-    quant = DirectLFQQuantification(min_nonan=2)
-    result = quant.quantify(peptides, protein_column="ProteinName", ...)
-```
-
-### AllPeptidesQuantification (Sum)
-
-```python
-from mokume.quantification import AllPeptidesQuantification
-
-quant = AllPeptidesQuantification()
-result = quant.quantify(peptides, protein_column="ProteinName", ...)
-```
-
-### peptides_to_protein (iBAQ)
-
-```python
-from mokume.quantification import peptides_to_protein
-
-peptides_to_protein(
-    fasta="proteome.fasta",
-    peptides="peptides.csv",
-    enzyme="Trypsin",
-    normalize=True,
-    tpa=True,
-    ruler=True,
-    ploidy=2,
-    cpc=200,
-    organism="human",
-    output="proteins-ibaq.tsv",
-    min_aa=7,
-    max_aa=30,
-    verbose=True,
-    qc_report="QC.pdf",
-)
+mokume.version()   # the kernel version string
 ```
 
 ---
 
-## Pipeline
+## Compute wrappers
 
-### PipelineConfig
+Each compute wrapper maps keyword arguments to CLI flags and runs the kernel in-process. The flags are exactly those documented in the [CLI Reference](cli.md) — the wrappers add no surface of their own.
 
 ```python
-from mokume.pipeline import QuantificationPipeline, PipelineConfig
-from mokume.pipeline.config import (
-    InputConfig,
-    FilterConfig,
-    NormalizationConfig,
-    QuantificationConfig,
-    IRSConfig,
-    BatchCorrectionConfig,
-    DEConfig,
-    OutputConfig,
-)
+import mokume
 
-config = PipelineConfig(
-    input=InputConfig(
-        parquet="data.parquet",
-        sdrf="experiment.sdrf.tsv",
-        fasta_file="proteome.fasta",
-    ),
-    filtering=FilterConfig(
-        min_aa=7,
-        min_unique_peptides=2,
-        remove_contaminants=True,
-    ),
-    normalization=NormalizationConfig(
-        run_method="median",
-        sample_method="globalMedian",
-    ),
-    quantification=QuantificationConfig(
-        method="maxlfq",
-    ),
-)
+# feature parquet -> protein matrix (+ optional DE)
+mokume.features2proteins(parquet="features.parquet", output="proteins.csv")
 
-pipeline = QuantificationPipeline(config)
-proteins = pipeline.run()
+# feature parquet -> peptide-level output
+mokume.features2peptides(parquet="features.parquet", output="peptides.csv")
+
+# peptide-level input -> protein quantities
+mokume.peptides2protein(method="ibaq", peptides="peptides.parquet",
+                        fasta="proteome.fasta", output="proteins.tsv")
+
+# ComBat batch-effect correction on iBAQ output
+mokume.correct_batches(folder="ibaq_dir", output="corrected.tsv")
 ```
 
-### features_to_proteins (functional)
+### kwargs → flags rule
+
+Each wrapper translates `**kwargs` into a CLI argument list:
+
+| keyword form | becomes | example |
+|--------------|---------|---------|
+| `key=value` | `--key value` (`_` → `-`) | `quant_method="ibaq"` → `--quant-method ibaq` |
+| `key=True` | `--key` (a bare flag) | `batch_correction=True` → `--batch-correction` |
+| `key=[a, b]` | the flag repeated | `de=[...]` style list → flag once per item |
+| `key=None` / `key=False` | skipped | omitted entirely |
 
 ```python
-from mokume.pipeline import features_to_proteins
-
-proteins = features_to_proteins(
-    parquet="data.parquet",
+mokume.features2proteins(
+    parquet="features.parquet",
     output="proteins.csv",
     sdrf="experiment.sdrf.tsv",
     quant_method="maxlfq",
-    run_normalization="median",
-    sample_normalization="globalMedian",
     batch_correction=True,
-    batch_method="sample_prefix",
-    batch_covariates=["characteristics[sex]"],
+    batch_covariates="characteristics[sex]",
+    de=True,
+    de_contrasts="NASH vs HL",
+    duckdb_threads=24,
 )
 ```
+
+### `mokume.run([...])` — full control
+
+When you need flags a keyword cannot express (e.g. a repeated `--contrast KEY A B CSV`), pass the argument vector verbatim. `run` accepts the subcommand name as the first element:
+
+```python
+mokume.run(["features2proteins", "--parquet", "x.parquet", "--output", "y.csv"])
+mokume.run(["correct-batches", "--folder", "ibaq_dir", "--output", "corrected.tsv"])
+```
+
+`mokume.run` and the four wrappers raise on a dispatch failure and surface clap's usage errors; they never tear down the hosting interpreter.
 
 ---
 
-## Differential Expression
+## Periphery
+
+The periphery reads the tables the kernel wrote — it never recomputes the numbers, so the cells in the plots match the cells in the kernel output. Each command lives in `mokume.commands.<name>` with a `main(argv)` entry point (runnable as `python -m mokume.commands.<name>`) and most have an ergonomic wrapper on the top-level package.
+
+### Visualization
 
 ```python
-from mokume.analysis import DifferentialExpression
+import mokume
 
-sample_to_condition = {
-    "S1": "HL",
-    "S2": "HL",
-    "S3": "NASH",
-    "S4": "NASH",
-}
+# t-SNE over a folder of protein files (plotting extra)
+mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")
 
-de = DifferentialExpression(
-    method="limrots",
-    fdr_method="ihw",
-    log2fc_threshold=0.5,
-    fdr_threshold=0.05,
-)
+# per-dataset tissue proteome analysis (tissuemap extra)
+mokume.tissuemap(scan_dir="./data", output_dir="./out")
 
-result = de.run(protein_df, sample_to_condition, ("NASH", "HL"))
+# iBAQ QC report from a protein table (plotting extra)
+mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
 ```
 
+`de_plots` and `interactive_report` take an explicit argv (the per-contrast `--contrast KEY A B CSV` flag repeats, which keyword arguments cannot express):
+
 ```python
-from mokume.analysis import DifferentialExpression
+# DE volcano / heatmap / PCA from kernel-written CSVs (plotting extra)
+mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
+                 "--volcano", "--contrast", "c1", "A", "B", "de.csv"])
 
-deqms = DifferentialExpression(
-    method="deqms",
-    peptide_counts=peptide_counts,
-    fdr_method="bh",
-)
-
-results = deqms.run_comparisons(
-    protein_df,
-    sample_to_condition,
-    [("NASH", "HL"), ("NASH", "Control")],
-)
+# interactive HTML report from kernel CSVs (reports extra)
+mokume.interactive_report(["--protein-matrix", "proteins.csv", "--report-output", "report.html"])
 ```
 
----
+Run `python -m mokume.commands.de_plots --help` / `python -m mokume.commands.interactive_report --help` for the flags.
 
-## Normalization
-
-### Peptide Normalization Pipeline
+### QC and workflow-comparison reports
 
 ```python
-from mokume.normalization.peptide import peptide_normalization
-
-peptide_normalization(
-    parquet="features.parquet",
+# single-matrix QC report: PCA / t-SNE / silhouette / CV / missing-value / DE-quality
+path = mokume.qc_report(
+    protein_matrix="proteins.csv",
     sdrf="experiment.sdrf.tsv",
-    min_aa=7,
-    min_unique=2,
-    remove_ids=None,
-    remove_decoy_contaminants=True,
-    remove_low_frequency_peptides=True,
-    output="peptides.csv",
-    skip_normalization=False,
-    nmethod="median",          # Feature-level: median, mean, max, global, max_min, iqr, none
-    pnmethod="globalMedian",   # Sample-level: globalMedian, conditionMedian, hierarchical, tmm, none
-    log2=True,
-    save_parquet=False,
+    output="qc.html",
+    de_results="de.csv",     # optional
+)
+
+# compare several quantification workflows in one HTML report
+path = mokume.workflow_comparison(
+    workflows=[
+        {"name": "maxlfq", "protein_matrix": "maxlfq.csv", "sdrf": "x.sdrf.tsv"},
+        {"name": "ibaq",   "protein_matrix": "ibaq.csv",   "sdrf": "x.sdrf.tsv"},
+    ],
+    output="comparison.html",
 )
 ```
 
-The Python function keeps the historical parameter names `nmethod` and `pnmethod`, even though the CLI now uses `--run-normalization` and `--sample-normalization`.
+Both need the `analysis` extra. For volcano gene-highlighting, call `mokume.reports.qc_report.generate_qc_report` directly.
 
-### IRS Normalization
+### Pure-Python method fallbacks
+
+A method not reproducible bit-for-bit in the Rust kernel: the kernel's `features2proteins` errors point here (needs the `analysis` extra):
 
 ```python
-from mokume.normalization.irs import (
-    IRSNormalizer,
-    detect_pooled_from_sdrf,
-    detect_plexes_from_sdrf,
-)
-
-ref_samples = detect_pooled_from_sdrf("experiment.sdrf.tsv")
-sample_to_plex = detect_plexes_from_sdrf("experiment.sdrf.tsv")
-
-normalizer = IRSNormalizer(reference_samples=ref_samples, stat="median")
-protein_df = normalizer.fit_transform(protein_df, sample_to_plex)
+# missforest — wraps scikit-learn's IterativeImputer
+mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
 ```
 
-### LOESS Normalization
+`mokume.impute` also reaches every other supported method (`knn`, `minprob`, `qrilc`, ...); it accepts a wide protein-matrix CSV path or a DataFrame and returns the imputed DataFrame, writing `output` if given.
+
+### iBAQ for unported enzymes
+
+The native iBAQ path digests proteins for the ported pyOpenMS enzymes (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...). For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific cleavage, ...) the kernel has no cleavage rule and points you here — the whole iBAQ table is then computed in pure Python (the `ibaq` extra):
 
 ```python
-from mokume.normalization import LOESSNormalizer, loess_normalize
-
-# Apply to a sample x protein matrix on log2 scale
-loess_df = loess_normalize(log2_df, frac=0.75, reference="median")
-
-normalizer = LOESSNormalizer(frac=0.75, reference="median")
-loess_df = normalizer.fit_transform(log2_df)
-```
-
-### Imputation Utilities
-
-```python
-from mokume.imputation import impute_censored
-
-minprob_df = impute_censored(
-    data,
-    method="minprob",
-    quantile=0.01,
-    shift=1.6,
-    scale=0.3,
-)
-
-mindet_df = impute_censored(data, method="mindet", quantile=0.01)
-knn_df = impute_censored(data, method="knn", n_neighbors=5)
+mokume.peptides2protein_ibaq(peptides="peptides.parquet", fasta="proteome.fasta",
+                             enzyme="CNBr", output="proteins.tsv")
 ```
 
 ---
 
-## TissueMap Pipeline
+## Install extras { #install-extras }
 
-```python
-from pathlib import Path
+The compute path (the `mokume._mokume` extension) needs **no** third-party Python dependencies. Install only the extra for the periphery command you run:
 
-from mokume.tissuemap.config import InputConfig, OutputConfig, TissueMapConfig, load_config
-from mokume.tissuemap.pipeline import TissueMapPipeline
-
-config = TissueMapConfig(
-    n_jobs=8,
-    input=InputConfig(scan_dir=Path("QPX_data/tissues-mq/PXD016999")),
-    output=OutputConfig(output_dir=Path("./tissuemap_results")),
-)
-
-TissueMapPipeline(config).run()
+```bash
+pip install mokume-rs                 # compute kernel + Python API
+pip install "mokume-rs[plotting]"     # + t-SNE / DE plots / iBAQ QC report
+pip install "mokume-rs[tissuemap]"    # + per-dataset tissue proteome analysis
+pip install "mokume-rs[reports]"      # + interactive HTML DE report
+pip install "mokume-rs[ibaq]"         # + pure-Python iBAQ for unported enzymes
+pip install "mokume-rs[analysis]"     # + QC / comparison reports + missforest
+pip install "mokume-rs[all]"          # everything
 ```
 
-```python
-from pathlib import Path
+| Wrapper | Extra | Third-party libraries |
+|---------|-------|------------------------|
+| `mokume.tsne_visualization` | `plotting` | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
+| `mokume.peptides2protein_qc` | `plotting` | numpy, pandas, matplotlib, seaborn |
+| `mokume.de_plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
+| `mokume.interactive_report` | `reports` | numpy, pandas, plotly |
+| `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
+| `mokume.peptides2protein_ibaq` | `ibaq` | pyopenms, pyarrow, PyYAML, numpy, pandas, scipy |
+| `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
+| `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
 
-from mokume.tissuemap.config import load_config
-from mokume.tissuemap.pipeline import TissueMapPipeline
+The exact dependency lists are declared in `pyproject.toml`'s `[project.optional-dependencies]`. The retired `directlfq` and `batch-correction` extras are gone: DirectLFQ and ComBat are now native Rust and need no extra.
 
-config = load_config(
-    Path("tissuemap.yaml"),
-    overrides={
-        "input.scan_dir": "QPX_data/tissues-mq",
-        "output.output_dir": "./tissuemap_results",
-        "n_jobs": 8,
-    },
-)
-
-TissueMapPipeline(config).run()
-```
-
----
-
-## Preprocessing Filters
-
-```python
-from mokume.preprocessing.filters import (
-    load_filter_config,
-    save_filter_config,
-    generate_example_config,
-    get_filter_pipeline,
-)
-from mokume.model.filters import PreprocessingFilterConfig
-
-# Generate example
-generate_example_config("filters.yaml")
-
-# Load from file
-config = load_filter_config("filters.yaml")
-
-# Create programmatically
-config = PreprocessingFilterConfig(name="custom", enabled=True)
-config.intensity.min_intensity = 1000.0
-config.peptide.allowed_charge_states = [2, 3, 4]
-config.protein.min_unique_peptides = 2
-config.run_qc.max_missing_rate = 0.5
-
-# Apply CLI-style overrides
-config.apply_overrides({
-    "min_intensity": 500,
-    "charge_states": [2, 3],
-    "max_missing_rate": 0.3,
-})
-
-# Save
-save_filter_config(config, "my_filters.yaml")
-
-# Apply
-pipeline = get_filter_pipeline(config)
-filtered_df, results = pipeline.apply(df)
-
-for result in results:
-    print(f"{result.filter_name}: removed {result.removed_count} ({result.removal_rate:.1%})")
-
-summary = pipeline.summary(results)
-print(f"Total removed: {summary['total_removed']} / {summary['total_input']}")
-```
-
----
-
-## Postprocessing
-
-### Batch Correction
-
-```python
-from mokume.postprocessing import (
-    apply_batch_correction,
-    detect_batches,
-    extract_covariates_from_sdrf,
-)
-
-batch_indices = detect_batches(
-    sample_ids=df_wide.columns.tolist(),
-    method="sample_prefix",  # "sample_prefix", "run", or "column"
-)
-
-covariates = extract_covariates_from_sdrf(
-    "experiment.sdrf.tsv",
-    sample_ids=df_wide.columns.tolist(),
-    covariate_columns=["characteristics[sex]"],
-)
-
-df_corrected = apply_batch_correction(
-    df=df_wide, batch=batch_indices, covs=covariates,
-)
-```
-
-### Data Reshaping
-
-```python
-from mokume.postprocessing.reshape import (
-    pivot_wider,
-    pivot_longer,
-    remove_samples_low_protein_number,
-    remove_missing_values,
-    describe_expression_metrics,
-)
-
-# Long to wide
-df_wide = pivot_wider(df, row_name="ProteinName", col_name="SampleID", values="Ibaq")
-
-# Wide to long
-df_long = pivot_longer(df_wide, row_name="ProteinName", col_name="SampleID", values="Ibaq")
-
-# Quality filtering
-df = remove_samples_low_protein_number(df, min_protein_num=100)
-df = remove_missing_values(df, missingness_percentage=20, expression_column="Ibaq")
-
-# Statistics
-metrics = describe_expression_metrics(df)
-```
-
----
-
-## IO
-
-### AnnData
-
-```python
-from mokume.io.parquet import create_anndata
-
-adata = create_anndata(
-    df,
-    obs_col="SampleID",
-    var_col="ProteinName",
-    value_col="Ibaq",
-    layer_cols=["IbaqNorm", "IbaqLog"],
-    obs_metadata_cols=["Condition"],
-    var_metadata_cols=["GeneName"],
-)
-adata.write("proteins.h5ad")
-```
-
-### FASTA
-
-```python
-from mokume.io.fasta import (
-    load_fasta,
-    digest_protein,
-    extract_fasta,
-    get_protein_molecular_weights,
-)
-
-proteins = load_fasta("proteome.fasta")
-
-peptides = digest_protein(
-    sequence="MKWVTFISLLFLFSSAYS...",
-    enzyme="Trypsin",
-    min_aa=7, max_aa=30,
-)
-
-unique_peptide_counts, mw_dict, found_proteins = extract_fasta(
-    fasta="proteome.fasta",
-    enzyme="Trypsin",
-    proteins=["P12345", "P67890"],
-    min_aa=7, max_aa=30,
-    tpa=True,
-)
-
-mw_dict = get_protein_molecular_weights("proteome.fasta", ["P12345", "P67890"])
-```
-
----
-
-## Organism Metadata
-
-```python
-from mokume.model.organism import OrganismDescription
-
-organisms = OrganismDescription.registered_organisms()
-# ['human', 'mouse', 'yeast', 'drome', 'caeel', 'schpo']
-
-human = OrganismDescription.get("human")
-print(human.genome_size)
-print(human.histone_entries)
-```
+!!! note "Agentic workflows are a separate package"
+    The agentic / LLM-driven workflow layer is **not** part of this wheel; it lives in the separate `mokume_py` package.

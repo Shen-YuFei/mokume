@@ -1,0 +1,42 @@
+# DIA (Data-Independent Acquisition) Filters
+# Optimized for DIA-NN, Spectronaut, or similar DIA analysis
+# Use case: Label-free DIA proteomics experiments
+
+name: dia_analysis
+enabled: true
+log_filtered_counts: true
+
+intensity:
+  min_intensity: 100.0              # DIA has good sensitivity
+  cv_threshold: 0.25                # DIA typically has lower CV
+  min_replicate_agreement: 2        # Require detection in multiple samples
+  quantile_lower: 0.0
+  quantile_upper: 1.0
+  remove_zero_intensity: true
+
+peptide:
+  allowed_charge_states: [2, 3, 4]
+  exclude_modifications:
+    - Oxidation                     # Often variable
+    - Deamidated                    # Can be artifactual
+  max_missed_cleavages: 1           # DIA libraries often use strict digestion
+  fdr_threshold: 0.01
+  min_peptide_length: 7
+  max_peptide_length: 30
+  require_unique_peptides: false    # DIA handles shared peptides well
+
+protein:
+  fdr_threshold: 0.01
+  min_unique_peptides: 2
+  razor_peptide_handling: keep      # DIA tools handle razor peptides
+  remove_contaminants: true
+  remove_decoys: true
+  contaminant_patterns:
+    - CONTAMINANT
+    - ENTRAP
+    - DECOY
+
+run_qc:
+  min_identified_features: 2000     # DIA typically identifies many peptides
+  min_identified_proteins: 500      # DIA has good depth
+  max_missing_rate: 0.1             # DIA has fewer missing values

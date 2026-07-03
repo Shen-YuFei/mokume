@@ -1,5 +1,5 @@
 site_name: mokume
-site_description: A comprehensive proteomics quantification library supporting iBAQ, TopN, MaxLFQ, DirectLFQ, and more
+site_description: "A proteomics quantification toolkit: a Rust compute kernel with a Python periphery"
 site_author: BigBio Team
 site_url: https://mokume.quantms.org/
 
@@ -8,22 +8,22 @@ repo_url: https://github.com/bigbio/mokume
 
 theme:
   name: material
-  custom_dir: docs/overrides
-  font: false
   palette:
     - scheme: default
-      primary: blue
+      primary: indigo
       accent: indigo
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: blue
+      primary: indigo
       accent: indigo
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
   features:
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
     - navigation.path
@@ -36,6 +36,7 @@ theme:
     - search.highlight
     - search.share
     - toc.follow
+    - toc.integrate
     - content.code.copy
     - content.code.annotate
     - content.tabs.link
@@ -96,43 +97,60 @@ plugins:
   - search:
       lang:
         - en
+  # API reference rendered from the pure-Python package source. mkdocstrings-python
+  # uses griffe's static analysis (it parses python/mokume, it does not import it),
+  # so the docs build needs only mkdocstrings[python] -- not the package's runtime
+  # dependencies.
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [python]
+          options:
+            docstring_style: numpy
+            show_root_heading: true
+            show_source: false
+            show_signature_annotations: true
+            members_order: source
+
+exclude_docs: |
+  internal/*
 
 nav:
-  - Getting Started:
+  - Home:
       - Home: index.md
       - Installation: installation.md
       - Quick Start: quickstart.md
-      - Community: community.md
-  - Library:
+      - Architecture: architecture.md
+      - CLI vs Wheel: cli-vs-wheel.md
+  - Concepts:
       - concepts/index.md
       - Quantification Methods: concepts/quantification.md
       - Normalization: concepts/normalization.md
       - Differential Expression: concepts/differential-expression.md
+      - Imputation: concepts/imputation.md
       - Batch Correction: concepts/batch-correction.md
       - IRS Normalization: concepts/irs.md
-      - Preprocessing: concepts/preprocessing.md
-  - CLI:
+      - Preprocessing Filters: concepts/preprocessing.md
+  - User Guide (CLI):
       - user-guide/index.md
-      - "features2proteins: Unified Pipeline": user-guide/features2proteins.md
-      - "features2peptides: Peptide Normalization": user-guide/features2peptides.md
-      - "peptides2protein: Protein Quantification": user-guide/peptides2protein.md
-      - "correct-batches: Batch Correction": user-guide/batch-correct.md
-      - "tissuemap: Tissue Proteome Atlas": user-guide/tissuemap.md
-      - Visualization & Reports: user-guide/visualization.md
+      - features2proteins: user-guide/features2proteins.md
+      - features2peptides: user-guide/features2peptides.md
+      - peptides2protein: user-guide/peptides2protein.md
+      - correct-batches: user-guide/batch-correct.md
+  - Python Periphery:
+      - periphery/index.md
+      - Tissue Proteome Atlas: periphery/tissuemap.md
+      - Visualization & Reports: periphery/visualization.md
+      - Analysis Fallbacks: periphery/analysis-fallbacks.md
   - Reference:
       - reference/index.md
-      - CLI Options: reference/cli.md
-      - Python API: reference/python-api.md
-      - Configuration: reference/configuration.md
+      - CLI Reference: reference/cli.md
+      - Python API (package): reference/python-api-package.md
+      - Python API (wheel): reference/python-api.md
       - Computed Values: reference/computed-values.md
-
-extra_css:
-  - https://quantms.org/css/quantms-theme.css
+  - Community: community.md
 
 extra:
-  analytics:
-    provider: google
-    property: G-6PL70G5VC1
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/bigbio/mokume

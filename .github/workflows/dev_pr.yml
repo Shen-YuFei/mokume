@@ -1,0 +1,24 @@
+name: PR Labels
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: Auto-label
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/labeler@8558fd74291d67161a8a78ce36a881fa63b766a9 # v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/workflows/dev_pr/labeler.yml
+          sync-labels: true
