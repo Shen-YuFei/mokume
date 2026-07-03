@@ -32,6 +32,14 @@ each sample clears TMM's >=10-valid-feature guard, making TMM actually shift the
 output; the sparse ``feature_wide`` fixture has too few overlapping features, so
 TMM legitimately falls back to factor 1.0 in BOTH implementations and equals the
 un-normalized result.
+
+The ``feature_wide_multiform`` fixture is ``feature_wide_dense`` with a second
+peptidoform per canonical (``"<seq>(Oxidation)"``, intensity ``* 0.6 + 1000``),
+so every canonical carries two peptidoforms and the peptidoform -> canonical
+collapse actually merges rows (the 1:1 dense/sparse fixtures never do). Its
+goldens (``feature_wide_multiform_{median,sum}_tmm_python.csv`` and
+``feature_wide_multiform_median_rlr_python.csv``) are produced the same way with
+``normalization=NormalizationConfig(sample_method=...)``.
 """
 
 from pathlib import Path
@@ -46,6 +54,9 @@ mokume = pytest.importorskip("mokume")
 REPO = Path(__file__).resolve().parents[2]
 FEATURE_PARQUET = REPO / "rust" / "tests" / "example" / "feature_wide.parquet"
 DENSE_PARQUET = REPO / "rust" / "tests" / "example" / "feature_wide_dense.parquet"
+MULTIFORM_PARQUET = (
+    REPO / "rust" / "tests" / "example" / "feature_wide_multiform.parquet"
+)
 GOLDEN_DIR = REPO / "rust" / "tests" / "example"
 
 
@@ -180,4 +191,51 @@ def test_rust_tmm_is_not_a_noop_on_dense(method, tmp_path):
     assert max_diff > 1.0, (
         f"tmm/{method}: TMM produced output identical to none on the dense "
         f"fixture (max abs diff {max_diff:.4g}) -- TMM is a no-op"
+    )
+
+
+@pytest.mark.parametrize(
+    "quant, norm",
+    [
+        ("median", "tmm"),
+        ("sum", "tmm"),
+        ("median", "rlr"),
+    ],
+)
+def test_rust_matches_python_multiform_collapse(quant, norm, tmp_path):
+    """Rust matches pure-Python when a canonical carries multiple peptidoforms.
+
+    The ``feature_wide`` and ``feature_wide_dense`` fixtures carry a single
+    peptidoform per canonical peptide, so the peptidoform -> canonical collapse
+    that ``finalize`` performs on the ``median`` quant path is a no-op there and
+    never exercises how the dataset normalizers write canonical-keyed values back
+    into the cells. ``feature_wide_multiform`` packs two peptidoforms per
+    canonical, so the collapse actually merges rows.
+
+    This pins two invariants on that path: TMM scales the original peptidoforms
+    in place (its per-sample factor commutes with the sum/median collapse), and
+    the writeback family (``rlr`` here as the representative) stays correct when
+    ``finalize`` re-collapses the already-canonical values. A regression that
+    reintroduced a double-collapse would diverge from the pure-Python golden.
+    """
+    golden = GOLDEN_DIR / f"feature_wide_multiform_{quant}_{norm}_python.csv"
+    rust_df = _canonical(
+        _rust_features2proteins(
+            quant,
+            tmp_path / f"rust_multiform_{quant}_{norm}.csv",
+            parquet=MULTIFORM_PARQUET,
+            sample_normalization=norm,
+        )
+    )
+    py_df = _canonical(pd.read_csv(golden))
+
+    assert list(rust_df.index) == list(py_df.index), "protein sets differ"
+    assert list(rust_df.columns) == list(py_df.columns), "sample columns differ"
+
+    rust_vals = rust_df.to_numpy(dtype=float)
+    py_vals = py_df.to_numpy(dtype=float)
+    assert np.allclose(rust_vals, py_vals, rtol=1e-6, atol=1e-2), (
+        f"{norm}/{quant}: Rust diverges from the pure-Python golden on the "
+        f"multi-peptidoform collapse path "
+        f"(max abs diff {np.max(np.abs(rust_vals - py_vals)):.4g})"
     )
