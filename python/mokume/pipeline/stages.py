@@ -610,7 +610,7 @@ class LoadingStage:
 
         Dispatches to the matching ``NormalizationStage`` method when the
         configured peptide normalization is dataset-level (Hierarchical,
-        Quantile, MedianCenter, MeanCenter, Rlr, Loess).
+        Quantile, MedianCenter, MeanCenter, Rlr, Loess, TMM).
         """
         if sample_norm_method == PeptideNormalizationMethod.Hierarchical:
             combined_df = NormalizationStage(self.config).apply_hierarchical(
@@ -628,6 +628,8 @@ class LoadingStage:
             combined_df = NormalizationStage(self.config).apply_rlr(combined_df)
         elif sample_norm_method == PeptideNormalizationMethod.Loess:
             combined_df = NormalizationStage(self.config).apply_loess(combined_df)
+        elif sample_norm_method == PeptideNormalizationMethod.TMM:
+            combined_df = NormalizationStage(self.config).apply_tmm(combined_df)
 
         return combined_df
 
@@ -1082,8 +1084,20 @@ class NormalizationStage:
             df, LOESSNormalizer(), log_space=True, name="LOESS"
         )
 
-    def apply_irs(self, protein_df: pd.DataFrame) -> pd.DataFrame:
+    def apply_tmm(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply Trimmed Mean of M-values normalization (on linear intensities)."""
+        from mokume.normalization.tmm import TMMNormalizer
+
+        return self._apply_dataset_normalizer(
+            df, TMMNormalizer(), log_space=False, name="TMM"
+        )
+
+    def apply_irs(self, protein_df: pd.DataFrame, dataset=None) -> pd.DataFrame:
         """Apply Internal Reference Scaling normalization for multi-plex TMT data.
+
+        The optional ``dataset`` parameter is accepted for compatibility with
+        the metadata-driven pipeline runner (``pipeline.runner``); it is not
+        used by the IRS algorithm itself.
 
         Detection priority for reference samples:
         1. characteristics[pooled sample] column in SDRF
@@ -1166,8 +1180,14 @@ class NormalizationStage:
 
         return protein_df
 
-    def apply_coverage_filter(self, protein_df: pd.DataFrame) -> pd.DataFrame:
-        """Apply coverage filter using condition mapping from SDRF."""
+    def apply_coverage_filter(
+        self, protein_df: pd.DataFrame, dataset=None
+    ) -> pd.DataFrame:
+        """Apply coverage filter using condition mapping from SDRF.
+
+        The optional ``dataset`` parameter is accepted for compatibility with
+        the pipeline runner (``pipeline.runner``) and is otherwise unused.
+        """
         from mokume.quantification.ratio import apply_coverage_filter
         from mokume.normalization.irs import detect_condition_from_sdrf
 
@@ -1600,11 +1620,16 @@ class PostprocessingStage:
         corrected_df = corrected_matrix.reset_index()
         return corrected_df.rename(columns={"index": protein_col})
 
-    def apply_batch_correction(self, protein_df: pd.DataFrame) -> pd.DataFrame:
+    def apply_batch_correction(
+        self, protein_df: pd.DataFrame, dataset=None
+    ) -> pd.DataFrame:
         """Apply batch correction after protein quantification.
 
         Batch = technical variation to REMOVE (from runs/files)
         Covariates = biological signal to PRESERVE (from SDRF characteristics)
+
+        The optional ``dataset`` parameter is accepted for compatibility with
+        the pipeline runner (``pipeline.runner``) and is otherwise unused.
         """
         if not is_batch_correction_available():
             raise ImportError(
@@ -1806,8 +1831,14 @@ class PostprocessingStage:
             self._save_de_result(result, key, len(contrasts))
         return all_results
 
-    def run_differential_expression(self, protein_df: pd.DataFrame) -> Optional[dict]:
-        """Run differential expression analysis."""
+    def run_differential_expression(
+        self, protein_df: pd.DataFrame, dataset=None
+    ) -> Optional[dict]:
+        """Run differential expression analysis.
+
+        The optional ``dataset`` parameter is accepted for compatibility with
+        the pipeline runner (``pipeline.runner``) and is otherwise unused.
+        """
         from mokume.normalization.irs import detect_condition_from_sdrf
 
         if not self.config.input.sdrf:
@@ -1961,9 +1992,16 @@ class PostprocessingStage:
         logger.info("PCA plot saved to %s", output_file)
 
     def generate_plots(
-        self, protein_df: pd.DataFrame, de_results: Optional[dict] = None
+        self,
+        protein_df: pd.DataFrame,
+        de_results: Optional[dict] = None,
+        dataset=None,
     ):
-        """Generate requested plots."""
+        """Generate requested plots.
+
+        The optional ``dataset`` parameter is accepted for compatibility with
+        the pipeline runner (``pipeline.runner``) and is otherwise unused.
+        """
         from mokume.plotting import is_plotting_available
 
         if not is_plotting_available():
@@ -1986,8 +2024,14 @@ class PostprocessingStage:
         )
         self._generate_pca_plot(protein_df, sample_to_condition, plot_dir)
 
-    def generate_interactive_report(self, protein_df: pd.DataFrame, de_results: dict):
-        """Generate interactive HTML report for DE results."""
+    def generate_interactive_report(
+        self, protein_df: pd.DataFrame, de_results: dict, dataset=None
+    ):
+        """Generate interactive HTML report for DE results.
+
+        The optional ``dataset`` parameter is accepted for compatibility with
+        the pipeline runner (``pipeline.runner``) and is otherwise unused.
+        """
         from mokume.reports import is_interactive_available
 
         if not is_interactive_available():

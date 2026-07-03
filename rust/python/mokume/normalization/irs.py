@@ -349,17 +349,26 @@ def _shorten_factor_label(raw_label: str) -> str:
     return next(iter(parts.values()), raw_label)
 
 
-def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
+def detect_condition_from_sdrf(
+    sdrf_path: str,
+    factor_col: str | None = None,
+) -> dict[str, str]:
     """
-    Detect sample-to-condition mapping from SDRF factor value columns.
+    Detect sample-to-condition mapping from an SDRF column.
 
-    Looks for the first ``factor value[*]`` column and maps each source name
-    (and each run file name, if available) to its condition.
+    By default the first ``factor value[*]`` column is used. Pass
+    ``factor_col`` to point at any other column (e.g. ``"characteristics[
+    disease]"``) when the dataset's primary factor is not biologically
+    informative for the contrast of interest (this happens with cell-line
+    panels where ``factor value[cell line]`` has only one sample per group).
 
     Parameters
     ----------
     sdrf_path : str
         Path to the SDRF TSV file.
+    factor_col : str, optional
+        Explicit SDRF column to use as the condition source. When ``None``
+        (default), the first ``factor value[*]`` column is used.
 
     Returns
     -------
@@ -372,12 +381,20 @@ def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
     """
     sdrf = load_sdrf(sdrf_path)
 
-    # Find factor value columns
-    factor_cols = [c for c in sdrf.columns if c.startswith("factor value[")]
-    if not factor_cols:
-        raise ValueError("No 'factor value[*]' columns found in SDRF")
-
-    factor_col = factor_cols[0]
+    if factor_col is None:
+        factor_cols = [c for c in sdrf.columns if c.startswith("factor value[")]
+        if not factor_cols:
+            raise ValueError("No 'factor value[*]' columns found in SDRF")
+        factor_col = factor_cols[0]
+    elif factor_col not in sdrf.columns:
+        raise ValueError(
+            f"Column '{factor_col}' not in SDRF; available factor/characteristics: "
+            + ", ".join(
+                c
+                for c in sdrf.columns
+                if c.startswith("factor value[") or c.startswith("characteristics[")
+            )
+        )
     sample_to_condition = {}
     for _, row in sdrf.drop_duplicates(subset=["source name"]).iterrows():
         sample_to_condition[row["source name"]] = _shorten_factor_label(
@@ -390,7 +407,14 @@ def detect_condition_from_sdrf(sdrf_path: str) -> dict[str, str]:
         for _, row in sdrf.iterrows():
             condition = _shorten_factor_label(str(row[factor_col]))
             raw_name = str(row[data_file_col])
-            stem = re.sub(r"\.(raw|mzML|d)$", "", raw_name, flags=re.IGNORECASE)
+            # Strip any of the common MS raw-file extensions (single or
+            # archive-wrapped) so the stem matches run-level matrix columns.
+            stem = re.sub(
+                r"\.(raw|mzML|mzXML|mgf|wiff|wiff2|wiff\.scan|baf|yep|fid|d|d\.zip|raw\.zip)$",
+                "",
+                raw_name,
+                flags=re.IGNORECASE,
+            )
             for variant in (raw_name, stem, raw_name.upper(), stem.upper()):
                 if variant and variant not in sample_to_condition:
                     sample_to_condition[variant] = condition

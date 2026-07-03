@@ -34,6 +34,7 @@ from mokume.agentic.state import (
     EvaluationResult,
     RoundResult,
 )
+from mokume.core.dataset import QpxDataset
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.agentic.optimizer")
@@ -352,3 +353,33 @@ def optimize(
     )
 
     return all_states
+
+
+def optimize_from_dataset(
+    dataset: QpxDataset,
+    sample_to_condition: dict[str, str],
+    config: AgenticConfig,
+    ground_truth: set[str] | None = None,
+    peptide_counts: pd.Series | None = None,
+) -> dict[str, AgenticState]:
+    """Run :func:`optimize` on the protein matrix carried by a QpxDataset.
+
+    QpxDataset entry point for the agentic optimizer. It pulls the
+    materialised wide protein matrix (protein id in the first column, one
+    column per sample -- exactly the layout the pipeline flows produce) from
+    ``dataset`` and delegates to :func:`optimize`. The DataFrame-based
+    :func:`optimize` API is unchanged; this is a thin, additive convenience.
+    """
+    protein_df = dataset.get_level("proteins")
+    if protein_df is None:
+        raise ValueError(
+            "QpxDataset has no 'proteins' level; run the pipeline "
+            "(run_pipeline / QuantificationPipeline.run_dataset) first."
+        )
+    return optimize(
+        protein_df,
+        sample_to_condition,
+        config,
+        ground_truth=ground_truth,
+        peptide_counts=peptide_counts,
+    )

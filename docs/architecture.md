@@ -85,3 +85,20 @@ Rust-ported set (see [CLI vs Wheel](cli-vs-wheel.md) and
 to the Rust track and does **not** appear in the Rust top-level CLI. It lives in
 the separate `mokume_py` Python package and is out of scope for this kernel +
 wheel.
+
+## The pure-Python package and its compute backends
+
+Separately from the wheel, the pure-Python `pip install mokume` package carries a
+full OOP compute pipeline: a `QpxDataset` container, a `PluginRegistry` of
+quantification / normalization / imputation / harmonization methods, and
+`run_pipeline(config) -> QpxDataset`. By default it computes in pure Python; set
+`RuntimeConfig.backend = "rust"` to route the same configuration through the
+compiled `mokume._mokume` kernel instead (it raises a clear error when the kernel
+is not installed).
+
+Because the pure-Python package has its **own** implementation of the compute —
+distinct from the Rust kernel — a pure-Python result and a Rust-backend result
+agree **within floating-point tolerance** (the kernel computes in `f32`), not
+bit-for-bit as the wheel's wrappers do against the binary. This equivalence is
+asserted for `features2proteins` in `rust/tests/test_rust_python_equivalence.py`.
+The API is documented under [Python API (package)](reference/python-api-package.md).

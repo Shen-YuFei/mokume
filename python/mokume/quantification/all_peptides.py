@@ -10,6 +10,7 @@ from typing import Optional
 import pandas as pd
 
 from mokume.quantification.base import ProteinQuantificationMethod
+from mokume.core.registry import PluginRegistry
 from mokume.core.constants import (
     PROTEIN_NAME,
     PEPTIDE_CANONICAL,
@@ -18,6 +19,7 @@ from mokume.core.constants import (
 )
 
 
+@PluginRegistry.register("quantification", "sum")
 class AllPeptidesQuantification(ProteinQuantificationMethod):
     """
     All peptides protein quantification method.
