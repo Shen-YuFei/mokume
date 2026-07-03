@@ -12,6 +12,7 @@ The flag names and their allowed values were verified against
 ``mokume features2proteins --help`` from the installed ``mokume-rs`` wheel.
 """
 
+import re
 from typing import List
 
 from mokume.pipeline.config import PipelineConfig
@@ -48,8 +49,17 @@ def build_features2proteins_argv(config: PipelineConfig, output_path: str) -> Li
     argv += ["--output", output_path]
     argv += ["--output-format", "python-compatible"]
 
-    # Quantification method.
-    argv += ["--quant-method", config.quantification.method.lower()]
+    # Quantification method. The kernel only understands ``top3`` and the
+    # generic ``topn`` (with ``--topn N``); a ``top{N}`` request for any other N
+    # is translated to ``topn`` + ``--topn N``. Every other method forwards
+    # verbatim (lower-cased).
+    method = config.quantification.method.lower()
+    topn_match = re.fullmatch(r"top(\d+)", method)
+    if topn_match and topn_match.group(1) != "3":
+        argv += ["--quant-method", "topn"]
+        argv += ["--topn", topn_match.group(1)]
+    else:
+        argv += ["--quant-method", method]
 
     # Filtering.
     argv += ["--min-aa", str(config.filtering.min_aa)]
@@ -82,9 +92,9 @@ def build_features2proteins_argv(config: PipelineConfig, output_path: str) -> Li
         str(quant.directlfq_num_samples_quadratic),
     ]
 
-    # Batch correction.
-    if config.batch.enabled:
-        argv += ["--batch-correction"]
-        argv += ["--batch-method", config.batch.method]
+    # Batch correction is intentionally NOT emitted: under the Python-owned
+    # post-processing model the kernel only loads, filters, normalizes and
+    # quantifies. ComBat runs in ``runner._postprocess`` for both backends, so
+    # emitting ``--batch-correction`` here would double-correct the matrix.
 
     return argv

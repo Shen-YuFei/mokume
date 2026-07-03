@@ -86,6 +86,7 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
     These steps apply regardless of which flow was used:
     - IRS normalization (multi-plex TMT)
     - Coverage filter
+    - Imputation
     - Batch correction
     - Differential expression
     - Plotting and reports
@@ -102,7 +103,11 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
     QpxDataset
         Updated dataset.
     """
-    from mokume.pipeline.stages import NormalizationStage, PostprocessingStage
+    from mokume.pipeline.stages import (
+        ImputationStage,
+        NormalizationStage,
+        PostprocessingStage,
+    )
 
     protein_df = dataset.proteins
     if protein_df is None:
@@ -131,10 +136,18 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
             rows_out=len(protein_df),
         )
 
-    # Batch correction. The Rust backend already applies ComBat inside the
-    # kernel (cli_args emits --batch-correction), so running it again here would
-    # double-correct the matrix; only the pure-Python backend needs this pass.
-    if config.batch.enabled and config.runtime.backend != "rust":
+    # Imputation (after the coverage filter, before batch correction). This
+    # mirrors QuantificationPipeline.run(): the Rust kernel only loads, filters,
+    # normalizes and quantifies, so imputation runs in Python for both backends.
+    if config.imputation.enabled:
+        protein_df = ImputationStage(config).impute(protein_df)
+        dataset.proteins = protein_df
+        dataset.record_step("imputation", method=config.imputation.method)
+
+    # Batch correction. The Rust kernel does not apply batch correction, so this
+    # pass runs in Python for both backends (after imputation), keeping the two
+    # backends on an identical post-processing path.
+    if config.batch.enabled:
         protein_df = post_stage.apply_batch_correction(protein_df, dataset=dataset)
         dataset.proteins = protein_df
         dataset.record_step("batch_correction", method=config.batch.method)

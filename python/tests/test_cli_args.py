@@ -120,15 +120,32 @@ def test_directlfq_cores_emitted_when_set() -> None:
     assert _flag_value(argv, "--directlfq-cores") == "4"
 
 
-def test_batch_correction_flags() -> None:
+def test_batch_correction_flags_never_emitted() -> None:
+    # Batch correction is Python-owned post-processing, so the kernel argv must
+    # never carry --batch-correction / --batch-method -- even when batch is
+    # enabled. Emitting them would double-correct the matrix.
     off = build_features2proteins_argv(_minimal_config(), "out.csv")
     assert "--batch-correction" not in off
     assert "--batch-method" not in off
 
     config = _minimal_config(batch=BatchCorrectionConfig(enabled=True, method="run"))
     on = build_features2proteins_argv(config, "out.csv")
-    assert "--batch-correction" in on
-    assert _flag_value(on, "--batch-method") == "run"
+    assert "--batch-correction" not in on
+    assert "--batch-method" not in on
+
+
+def test_top3_forwarded_as_top3() -> None:
+    config = _minimal_config(quantification=QuantificationConfig(method="top3"))
+    argv = build_features2proteins_argv(config, "out.csv")
+    assert _flag_value(argv, "--quant-method") == "top3"
+    assert "--topn" not in argv
+
+
+def test_topn_other_than_three_translated_to_topn_flag() -> None:
+    config = _minimal_config(quantification=QuantificationConfig(method="top5"))
+    argv = build_features2proteins_argv(config, "out.csv")
+    assert _flag_value(argv, "--quant-method") == "topn"
+    assert _flag_value(argv, "--topn") == "5"
 
 
 def test_normalization_run_method_lowercased() -> None:
