@@ -160,11 +160,11 @@ class LoessFeatureNormalizerPlugin(FeatureNormalizer):
     def name(self) -> str:
         return "loess"
 
-    def transform_series(self, series: pd.Series) -> pd.Series:
+    def transform_series(self, series: pd.Series) -> float:
         # LOESS is a cross-sample method; the base-class per-run pathway
         # (which would call this) is not used because normalize() is
-        # overridden. Return the series unchanged as a safe identity.
-        return series
+        # overridden. Return a harmless scalar matching the base signature.
+        return 1.0
 
     def normalize(
         self,
@@ -215,10 +215,11 @@ class QuantileFeatureNormalizerPlugin(FeatureNormalizer):
     def name(self) -> str:
         return "quantile"
 
-    def transform_series(self, series: pd.Series) -> pd.Series:
+    def transform_series(self, series: pd.Series) -> float:
         # Quantile normalization is a cross-sample method; the base-class
         # per-run pathway is not used because normalize() is overridden.
-        return series
+        # Return a harmless scalar matching the base signature.
+        return 1.0
 
     def normalize(
         self,

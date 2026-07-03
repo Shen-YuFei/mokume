@@ -47,8 +47,13 @@ class FeatureNormalizer(ABC):
         """Human-readable normalizer name."""
 
     @abstractmethod
-    def transform_series(self, series: pd.Series) -> pd.Series:
-        """Apply normalization to a single intensity series (one run).
+    def transform_series(self, series: pd.Series) -> float:
+        """Compute a scalar summary metric for a single run's intensities.
+
+        ``normalize()`` sums these per-run scalars, averages them across
+        the runs in a sample, and rescales each run so its metric equals
+        the sample average. The metric must therefore be a single float
+        (e.g., ``series.median()``), never a Series.
 
         Parameters
         ----------
@@ -57,8 +62,8 @@ class FeatureNormalizer(ABC):
 
         Returns
         -------
-        pd.Series
-            Transformed metric (e.g., series / series.median()).
+        float
+            Scalar per-run metric used to balance runs within a sample.
         """
 
     def normalize(
