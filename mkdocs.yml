@@ -131,6 +131,12 @@ nav:
       - Batch Correction: concepts/batch-correction.md
       - IRS Normalization: concepts/irs.md
       - Preprocessing Filters: concepts/preprocessing.md
+  - Examples:
+      - examples/index.md
+      - Quantification: examples/quantification.md
+      - Differential Expression: examples/differential-expression.md
+      - Absolute Expression: examples/absolute-expression.md
+      - Full Pipeline: examples/pipeline.md
   - User Guide (CLI):
       - user-guide/index.md
       - features2proteins: user-guide/features2proteins.md
