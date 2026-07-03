@@ -90,6 +90,30 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
     )
     ```
 
+=== "Python (package)"
+
+    The pure-Python `mokume` package (`pip install ./python`) exposes a
+    class-based API. Build a `PipelineConfig`, run it, and read the protein
+    matrix off the returned `QpxDataset`:
+
+    ```python
+    from mokume.pipeline.config import PipelineConfig, InputConfig, QuantificationConfig
+    from mokume.pipeline.runner import run_pipeline
+
+    config = PipelineConfig(
+        input=InputConfig(
+            parquet="features.parquet",
+            sdrf="experiment.sdrf.tsv",
+        ),
+        quantification=QuantificationConfig(method="maxlfq"),
+    )
+    dataset = run_pipeline(config)                    # QpxDataset with .proteins populated
+    protein_matrix = dataset.get_level("proteins")   # protein x sample DataFrame
+    ```
+
+    See [Python API (package)](reference/python-api-package.md) for the full
+    OOP surface (`QpxDataset`, backend selection, the plugin registry).
+
 !!! note "Plots and reports are periphery commands"
 
     `features2proteins` no longer accepts `--plot-*` / `--interactive-report`

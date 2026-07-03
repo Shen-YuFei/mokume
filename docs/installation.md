@@ -97,19 +97,29 @@ mokume uses optional dependencies for the periphery commands:
 
 ## From Source
 
-The wheel is built with maturin, which compiles the `mokume-py` PyO3 crate into
-the `mokume._mokume` extension and packages it with the Python periphery. The
-maturin project lives in `rust/`:
+mokume builds from two project roots, one per distribution:
 
-```bash
-git clone https://github.com/bigbio/mokume
-cd mokume
-pip install ./rust            # builds the extension via the maturin backend
-```
+- **`mokume` (pure Python)** — `python/pyproject.toml` uses standard PEP 621
+  metadata with the **hatchling** build backend
+  (`build-backend = "hatchling.build"`, not Poetry). Install it from source with:
 
-For a development checkout, build the extension in place with `maturin develop`
-run from `rust/`; the periphery is plain Python and needs no build step. The
-standalone CLI binary is built from the same workspace:
+  ```bash
+  git clone https://github.com/bigbio/mokume
+  cd mokume
+  pip install ./python          # builds the mokume package via the hatchling backend
+  ```
+
+- **`mokume-rs` (Rust wheel)** — the wheel is built with maturin, which compiles
+  the `mokume-py` PyO3 crate into the `mokume._mokume` extension and packages it
+  with the Python periphery. The maturin project lives in `rust/`:
+
+  ```bash
+  pip install ./rust            # builds the extension via the maturin backend
+  ```
+
+For a development checkout of the Rust wheel, build the extension in place with
+`maturin develop` run from `rust/`; the periphery is plain Python and needs no
+build step. The standalone CLI binary is built from the same workspace:
 
 ```bash
 cargo build --release --manifest-path rust/Cargo.toml -p mokume-cli
