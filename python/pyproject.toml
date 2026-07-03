@@ -5,7 +5,7 @@ version = "0.1.0"
 description = "A comprehensive proteomics quantification library supporting multiple methods (iBAQ, Top3, TopN, MaxLFQ, DirectLFQ)"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Yasset Perez-Riverol", email = "ypriverol@gmail.com" },
     { name = "Dai Chengxin", email = "chengxin2024@126.com" },
