@@ -24,7 +24,7 @@ requirements:
     - python>=3.9
     - scikit-learn
     - pyopenms
-    - numpy<2.1.0
+    - numpy<2.3.0
     - click
     - pandas
     - matplotlib
