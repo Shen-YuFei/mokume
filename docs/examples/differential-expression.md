@@ -189,12 +189,12 @@ sample lists:
     statistics (`t_stat`/`AveExpr`/`B` for limma, `sca_t` for deqms, `d_stat` for
     rots-family methods).
 
-!!! warning "R-backed methods"
+!!! note "Pure-Python reimplementations"
 
-    `deqms`, `proda`, `limma`, and `limrots` are Python reimplementations of their
-    R counterparts. When the corresponding R package is unavailable the code falls
-    back to the Python path automatically — see
-    [Analysis Fallbacks](../periphery/analysis-fallbacks.md).
+    `deqms`, `proda`, `limma`, and `limrots` are standalone Python reimplementations
+    of their R counterparts, built on numpy/scipy. They never call R or rpy2 — there
+    is no runtime R dependency and no R-to-Python fallback; the Python path always
+    runs.
 
 ## (c) Agentic optimization (no LLM required)
 

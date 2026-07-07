@@ -316,10 +316,16 @@ fn compute_tmm_factor(y_sample: &[f64], y_ref: &[f64], n_sample: f64, n_ref: f64
     2.0f64.powf(tmm_log)
 }
 
-/// Ascending argsort matching `np.argsort` default: a stable sort that breaks
-/// ties by original index. Sorts values with `f64::total_cmp` so ordering is
-/// deterministic; `np.argsort` on distinct keys is deterministic and this
-/// stable tie-break reproduces its behaviour when keys collide.
+/// Ascending argsort with a deterministic, stable tie-break (ties broken by
+/// original index), sorting values with `f64::total_cmp`. On DISTINCT keys this
+/// matches `np.argsort`. On exactly-equal keys it does NOT: numpy's default
+/// `kind="quicksort"` is an unstable introsort, so tied elements may land in a
+/// different order. TMM's double trimming can therefore keep a different subset
+/// of features from the Python reference when M/A values tie exactly at a trim
+/// boundary — rare for continuous intensities, possible for quantized/duplicated
+/// values (spectral counts, imputed floors, identical peptidoform sums). edgeR
+/// itself averages ranks over ties, so no tie order is uniquely correct;
+/// original-index order is chosen here for reproducibility.
 fn stable_argsort(values: &[f64]) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..values.len()).collect();
     indices.sort_by(|&a, &b| values[a].total_cmp(&values[b]).then(a.cmp(&b)));

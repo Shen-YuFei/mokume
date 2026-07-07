@@ -30,8 +30,12 @@ case, ``input=InputConfig(parquet='.../feature_wide_dense.parquet')``. The dense
 fixture packs 20 shared canonical peptides across every one of the 10 samples so
 each sample clears TMM's >=10-valid-feature guard, making TMM actually shift the
 output; the sparse ``feature_wide`` fixture has too few overlapping features, so
-TMM legitimately falls back to factor 1.0 in BOTH implementations and equals the
-un-normalized result.
+TMM legitimately falls back to factor 1.0 in BOTH implementations. The sparse TMM
+golden still does NOT equal the un-normalized golden, though: selecting any
+dataset-normalization method routes the data through the peptidoform -> canonical
+collapse (aggfunc='sum'), which changes per-protein sums on this fixture. Because
+every sparse factor is 1.0, the sparse case pins only the guard/fallback + collapse
+path; active TMM rescaling is validated solely by the dense and multiform fixtures.
 
 The ``feature_wide_multiform`` fixture is ``feature_wide_dense`` with a second
 peptidoform per canonical (``"<seq>(Oxidation)"``, intensity ``* 0.6 + 1000``),
