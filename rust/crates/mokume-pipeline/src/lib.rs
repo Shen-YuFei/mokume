@@ -2416,9 +2416,8 @@ fn apply_tmm_to_peptide_cells(
     // (2) Build the deterministic row order: every (protein, canonical) key that
     // appears in any cell, sorted by id so all columns share the same row order.
     let mut row_keys: Vec<QuantilePeptideKey> = summed_cells
-        .values()
-        .zip(summed_cells.keys())
-        .flat_map(|(peptides, cell)| {
+        .iter()
+        .flat_map(|(cell, peptides)| {
             peptides.keys().map(move |peptide| QuantilePeptideKey {
                 protein: cell.protein,
                 peptide: *peptide,
@@ -2467,8 +2466,9 @@ fn apply_tmm_to_peptide_cells(
         .collect();
 
     // (4) Populate the column-major wide matrix. Missing (protein, canonical) x
-    // sample entries stay 0.0, which `tmm_norm_factors` reads as NaN (Python's
-    // pivot fills gaps with NaN and `replace(0, NaN)` maps zeros the same way).
+    // sample entries stay 0.0, which `tmm_norm_factors` treats as missing by
+    // filtering them out — the same outcome as Python, whose pivot fills gaps
+    // with NaN and `replace(0, NaN)` maps zeros to NaN before `skipna` drops them.
     let mut matrix: Vec<Vec<f64>> = vec![vec![0.0; row_keys.len()]; sample_ids.len()];
     for (cell, peptides) in &summed_cells {
         let Some(&column) = sample_column.get(&cell.sample) else {
