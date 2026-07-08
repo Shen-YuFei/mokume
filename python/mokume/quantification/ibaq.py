@@ -419,9 +419,17 @@ def _proportional_branch(
             columns=[PROTEIN_NAME, *group_keys, NORM_INTENSITY]
         )
 
-    combined = pd.concat([anchor_int, shared_contrib], ignore_index=True)
-    if combined.empty:
+    # Concatenate only the non-empty branch frames. The empty placeholders
+    # above are object-dtype (``pd.DataFrame(columns=...)`` has no values to
+    # infer from); including one in the concat lets newer pandas (3.0 dropped
+    # the legacy "exclude empty/all-NA entries when inferring result dtypes"
+    # rule) poison ``NormIntensity`` to object. That object dtype then flows
+    # through the groupby-sum into an object-dtype iBAQ and breaks the
+    # ``np.log10`` step in :func:`normalize_ibaq`.
+    parts = [frame for frame in (anchor_int, shared_contrib) if not frame.empty]
+    if not parts:
         return pd.DataFrame()
+    combined = pd.concat(parts, ignore_index=True)
     grouped = (
         combined.groupby([PROTEIN_NAME, *group_keys], dropna=False, observed=True)[
             NORM_INTENSITY
