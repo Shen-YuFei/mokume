@@ -243,9 +243,21 @@ class ConcentrationWeightByProteomicRuler:
     def __call__(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
         return self.apply_ruler(protein_intensities)
 
-    def apply_by_condition(self, protein_intensities: pd.DataFrame):
-        protein_intensities = protein_intensities.groupby([CONDITION]).apply(self)
-        return protein_intensities
+    def apply_by_condition(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
+        # Apply the ruler independently per condition. pandas 3.0 excludes the
+        # grouping column from ``apply``'s result, silently dropping
+        # ``Condition`` from the output table; older pandas kept it. We keep the
+        # original per-condition computation unchanged and only realign the
+        # label when it is missing. ``group_keys=False`` preserves the original
+        # row index, so the assignment maps each row to its own condition; we
+        # then restore the original column order (pandas 3.0 appends the
+        # re-added column) so the output schema matches across pandas versions.
+        result = protein_intensities.groupby([CONDITION], group_keys=False).apply(self)
+        if CONDITION not in result.columns:
+            result[CONDITION] = protein_intensities[CONDITION]
+            added = [c for c in result.columns if c not in protein_intensities.columns]
+            result = result[list(protein_intensities.columns) + added]
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -419,9 +431,17 @@ def _proportional_branch(
             columns=[PROTEIN_NAME, *group_keys, NORM_INTENSITY]
         )
 
-    combined = pd.concat([anchor_int, shared_contrib], ignore_index=True)
-    if combined.empty:
+    # Concatenate only the non-empty branch frames. The empty placeholders
+    # above are object-dtype (``pd.DataFrame(columns=...)`` has no values to
+    # infer from); including one in the concat lets newer pandas (3.0 dropped
+    # the legacy "exclude empty/all-NA entries when inferring result dtypes"
+    # rule) poison ``NormIntensity`` to object. That object dtype then flows
+    # through the groupby-sum into an object-dtype iBAQ and breaks the
+    # ``np.log10`` step in :func:`normalize_ibaq`.
+    parts = [frame for frame in (anchor_int, shared_contrib) if not frame.empty]
+    if not parts:
         return pd.DataFrame()
+    combined = pd.concat(parts, ignore_index=True)
     grouped = (
         combined.groupby([PROTEIN_NAME, *group_keys], dropna=False, observed=True)[
             NORM_INTENSITY

@@ -243,9 +243,21 @@ class ConcentrationWeightByProteomicRuler:
     def __call__(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
         return self.apply_ruler(protein_intensities)
 
-    def apply_by_condition(self, protein_intensities: pd.DataFrame):
-        protein_intensities = protein_intensities.groupby([CONDITION]).apply(self)
-        return protein_intensities
+    def apply_by_condition(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
+        # Apply the ruler independently per condition. pandas 3.0 excludes the
+        # grouping column from ``apply``'s result, silently dropping
+        # ``Condition`` from the output table; older pandas kept it. We keep the
+        # original per-condition computation unchanged and only realign the
+        # label when it is missing. ``group_keys=False`` preserves the original
+        # row index, so the assignment maps each row to its own condition; we
+        # then restore the original column order (pandas 3.0 appends the
+        # re-added column) so the output schema matches across pandas versions.
+        result = protein_intensities.groupby([CONDITION], group_keys=False).apply(self)
+        if CONDITION not in result.columns:
+            result[CONDITION] = protein_intensities[CONDITION]
+            added = [c for c in result.columns if c not in protein_intensities.columns]
+            result = result[list(protein_intensities.columns) + added]
+        return result
 
 
 # ---------------------------------------------------------------------------
