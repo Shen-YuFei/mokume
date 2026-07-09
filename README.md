@@ -125,6 +125,62 @@ component-style API (see [below](#differential-expression) and the
 additionally exposes an in-process `mokume.features2proteins(...)` binding that
 runs the whole pipeline with no subprocess.
 
+## Running different analyses
+
+One `features2proteins` command drives every workflow — swap a flag to change
+the analysis. Each snippet is a complete run; deeper options are one link away.
+
+**Relative quantification** — pick a method with `--quant-method` (`maxlfq`,
+`directlfq`, `top3`/`topn`, `sum`, ...):
+
+```bash
+mokume features2proteins \
+  --parquet features.parquet --sdrf samples.sdrf.tsv \
+  --quant-method maxlfq \
+  --output proteins.csv
+```
+
+**Absolute expression (iBAQ)** — add a FASTA to get iBAQ / piBAQ / TPA
+abundances instead of relative intensities:
+
+```bash
+mokume features2proteins \
+  --parquet features.parquet --sdrf samples.sdrf.tsv \
+  --quant-method ibaq --fasta proteome.fasta \
+  --output proteins_ibaq.csv
+```
+
+**Differential expression** — append `--de` and one or more contrasts to any of
+the above (see [Differential expression](#differential-expression) for methods
+and FDR control):
+
+```bash
+mokume features2proteins \
+  --parquet features.parquet --sdrf samples.sdrf.tsv \
+  --quant-method maxlfq \
+  --de --de-contrasts "Treatment-Control" \
+  --output proteins.csv --de-output de_results
+```
+
+**Python pipeline** — the same run as a configurable object, returning a
+`QpxDataset` you can inspect level by level:
+
+```python
+from mokume.pipeline.config import PipelineConfig, InputConfig, QuantificationConfig
+from mokume.pipeline.runner import run_pipeline
+
+config = PipelineConfig(
+    input=InputConfig(parquet="features.parquet", sdrf="samples.sdrf.tsv"),
+    quantification=QuantificationConfig(method="maxlfq"),
+)
+proteins = run_pipeline(config).get_level("proteins")  # proteins x samples matrix
+```
+
+Runnable examples per analysis: [quantification methods](docs/examples/quantification.md)
+· [absolute expression / iBAQ](docs/examples/absolute-expression.md)
+· [differential expression](docs/examples/differential-expression.md)
+· [full Python pipeline](docs/examples/pipeline.md).
+
 ## Commands
 
 | Command | What it does |

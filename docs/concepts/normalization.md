@@ -61,6 +61,7 @@ Applied after all samples are loaded, operating on the complete dataset:
 | `meancenter` | Mean centering — subtracts each sample's log2 mean (location shift) |
 | `rlr` | Robust Linear Regression against a reference profile (NormalyzerDE-style) |
 | `loess` | LOESS regression on MA-plot residuals (intensity-dependent bias) |
+| `tmm` | Trimmed Mean of M-values — robust to composition bias from highly abundant proteins |
 | `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
 
 !!! tip "When to use hierarchical normalization"
@@ -149,6 +150,21 @@ mokume features2proteins -p data.parquet -o out.csv \
 ```
 
 RLR runs natively in the Rust kernel.
+
+### TMM Normalization
+
+Trimmed Mean of M-values (`tmm`) picks a reference sample and, for every other
+sample, computes a single scaling factor from the trimmed mean of the log2 ratios
+(M-values) against that reference, down-weighting features at the extremes of
+intensity and fold change. Trimming makes the factor **robust to composition bias
+from highly abundant proteins**, so a few dominant proteins do not drag the whole
+sample up or down (the edgeR/limma approach adapted for proteomics). Implemented
+in `mokume.normalization.tmm.TMMNormalizer`.
+
+```bash
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization tmm
+```
 
 ## DirectLFQ Mode
 

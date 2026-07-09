@@ -13,7 +13,7 @@ pub use run::{
 };
 pub use sample::{
     condition_median_sample_factors, global_median_sample_factors,
-    parse_sample_normalization_method, SampleNormalizationMethod,
+    parse_sample_normalization_method, tmm_norm_factors, SampleNormalizationMethod,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

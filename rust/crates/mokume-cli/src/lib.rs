@@ -133,6 +133,7 @@ struct Features2PeptidesArgs {
         "meancenter",
         "rlr",
         "loess",
+        "tmm",
     ], ignore_case = true)]
     sample_normalization: String,
 
@@ -365,6 +366,7 @@ struct Features2ProteinsArgs {
         "meancenter",
         "rlr",
         "loess",
+        "tmm",
     ], ignore_case = true)]
     sample_normalization: String,
 
