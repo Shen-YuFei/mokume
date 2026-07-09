@@ -147,18 +147,23 @@ mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical \
     --normalization-proteins housekeeping.txt
 
-# Quantile / MedianCenter / MeanCenter / RLR / LOESS (dataset-level)
+# Quantile / MedianCenter / MeanCenter / RLR / LOESS / TMM (dataset-level)
 mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization quantile
 
 mokume features2proteins -p data.parquet -o out.csv \
     --sample-normalization loess
+
+mokume features2proteins -p data.parquet -o out.csv \
+    --sample-normalization tmm
 ```
 
 !!! note "Dataset-level normalizers"
-    `quantile`, `mediancenter`, `meancenter`, `rlr`, and `loess` are
-    dataset-level normalizers applied after peptide aggregation, all native in the
-    Rust kernel.
+    `quantile`, `mediancenter`, `meancenter`, `rlr`, `loess`, and `tmm` are
+    dataset-level normalizers applied after peptide aggregation, all native in
+    the Rust kernel. `tmm` (Trimmed Mean of M-values,
+    `mokume.normalization.tmm.TMMNormalizer`) is robust to composition bias from
+    highly abundant proteins.
 
 - `globalMedian` is the default and a good general-purpose starting point.
 - `hierarchical` is useful when you want DirectLFQ-style normalization with a non-DirectLFQ quantification method.

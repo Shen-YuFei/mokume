@@ -1,0 +1,51 @@
+# Examples
+
+Worked, copy-pasteable examples for each kind of analysis mokume supports. Every
+command and snippet on these pages is run against the small fixtures shipped in
+the repository (`python/tests/example/`), so you can reproduce them without your
+own data:
+
+- `feature_wide.parquet` — a 500-feature QPX slice from PXD020192 (10 samples).
+- `PXD020192.sdrf.tsv` — the matching SDRF metadata.
+- `PXD017834-peptides.csv` — a normalized peptide table used for iBAQ.
+- `Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta` — a human
+  UniProt FASTA used as the iBAQ digestion reference.
+
+Each page uses the same three tabs you saw in the [Quick Start](../quickstart.md):
+
+- **CLI** — the `mokume` kernel binary (or `mokume.run([...])` from the wheel).
+- **Python (wheel)** — the thin keyword wrappers exposed by `pip install mokume-rs`
+  (`mokume.features2proteins(...)`, `mokume.peptides2protein(...)`). These call
+  the same Rust kernel in-process.
+- **Python (package)** — the pure-Python `mokume` package (`pip install mokume`),
+  which exposes the object-oriented `PipelineConfig` / `QpxDataset` API plus the
+  `mokume.analysis` and `mokume.agentic` modules.
+
+See [CLI vs Wheel](../cli-vs-wheel.md) for the full picture of which surface does
+what.
+
+## Analysis pages
+
+### [Quantification](quantification.md)
+
+Turn features into a protein matrix with MaxLFQ, DirectLFQ, TopN, Sum, or Median.
+Covers all three surfaces and how the quant method is selected.
+
+### [Differential Expression](differential-expression.md)
+
+Test proteins for abundance changes between conditions. Covers the kernel's
+`--de` flags, the Python `DifferentialExpression` class and the standalone
+`run_*` functions, and the LLM-free agentic optimizer.
+
+### [Absolute Expression](absolute-expression.md)
+
+Estimate per-protein copy numbers and concentrations with iBAQ, TPA, and the
+ProteomicRuler. Explains every computed column
+(`Ibaq`, `IbaqNorm`, `TPA`, `CopyNumber`, `EvidenceLevel`, ...).
+
+### [Full Pipeline](pipeline.md)
+
+Wire quantification, normalization, imputation, batch correction, IRS, and DE
+into one `PipelineConfig` and run it through `run_pipeline` /
+`QuantificationPipeline.run_dataset`. Shows the `QpxDataset` result API and how
+to switch to the Rust backend.
