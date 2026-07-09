@@ -51,7 +51,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: rust/target
           key: ${{ runner.os }}-rust-${{ hashFiles('rust/Cargo.lock') }}
