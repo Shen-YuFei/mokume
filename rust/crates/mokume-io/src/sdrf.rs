@@ -476,7 +476,11 @@ mod tests {
             "/data/Run_Condition_A_01.raw",
             "Run_Condition_A_01",
         ] {
-            assert_eq!(normalize_file_key(name), "run_condition_a_01", "key for {name}");
+            assert_eq!(
+                normalize_file_key(name),
+                "run_condition_a_01",
+                "key for {name}"
+            );
         }
     }
 
