@@ -140,20 +140,42 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
             .transpose()?
             .flatten();
 
-        for entry in intensity_entries(intensities, row)? {
+        let entries = intensity_entries(intensities, row)?;
+        // In quantms.io LFQ the per-run intensities are labeled by run file (the
+        // row's anchor run appears among them); in isobaric (TMT/iTRAQ) the labels
+        // are reporter channels and never equal a run file. When the labels are
+        // runs, the run/sample for each intensity is its own `label`, not the row's
+        // anchor `run_file_name` -- otherwise every run collapses onto the anchor
+        // sample and all other runs are dropped (see mokume-io qpx tests).
+        let row_key = crate::sdrf::normalize_file_key(&run_file_name);
+        let labels_are_runs = entries.iter().any(|entry| {
+            entry
+                .label
+                .as_deref()
+                .is_some_and(|label| crate::sdrf::normalize_file_key(label) == row_key)
+        });
+        for entry in entries {
             if entry.intensity.is_finite() {
+                let (entry_run_file_name, entry_label) = if labels_are_runs {
+                    (
+                        entry.label.clone().unwrap_or_else(|| run_file_name.clone()),
+                        None,
+                    )
+                } else {
+                    (run_file_name.clone(), entry.label)
+                };
                 records.push(QpxFeatureRecord {
                     sequence: sequence.clone(),
                     peptidoform: peptidoform.clone(),
                     charge,
-                    run_file_name: run_file_name.clone(),
+                    run_file_name: entry_run_file_name,
                     sample_accession: entry.sample_accession,
                     protein_accessions: protein_accessions.clone(),
                     anchor_protein: anchor_protein.clone(),
                     unique,
                     is_decoy,
                     pg_global_qvalue,
-                    label: entry.label,
+                    label: entry_label,
                     intensity: entry.intensity,
                 });
             }
@@ -508,6 +530,50 @@ mod tests {
     }
 
     #[test]
+    fn routes_lfq_run_labels_to_distinct_runs() -> Result<(), Box<dyn std::error::Error>> {
+        // LFQ: the intensity labels are run files (the row's anchor run appears
+        // among them), so each intensity must map to its own run/sample instead of
+        // collapsing onto the anchor `run_file_name`.
+        let intensities = lfq_run_intensities()?;
+        let proteins = new_qpx_proteins()?;
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("sequence", DataType::Utf8, false),
+            Field::new("peptidoform", DataType::Utf8, false),
+            Field::new("charge", DataType::Int16, false),
+            Field::new("run_file_name", DataType::Utf8, false),
+            Field::new("anchor_protein", DataType::Utf8, false),
+            Field::new("unique", DataType::Boolean, false),
+            Field::new("is_decoy", DataType::Boolean, false),
+            Field::new("intensities", intensities.data_type().clone(), true),
+            Field::new("pg_accessions", proteins.data_type().clone(), true),
+        ]));
+        let batch = arrow::record_batch::RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec!["PEPTIDEK"])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["PEPTIDEK"])) as ArrayRef,
+                Arc::new(Int16Array::from(vec![2])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["Run_A_01.mzML"])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["sp|P12345|PROT_HUMAN"])) as ArrayRef,
+                Arc::new(BooleanArray::from(vec![true])) as ArrayRef,
+                Arc::new(BooleanArray::from(vec![false])) as ArrayRef,
+                intensities,
+                proteins,
+            ],
+        )?;
+
+        let records = flatten_qpx_batch(&batch)?;
+
+        assert_eq!(records.len(), 3);
+        let runs: Vec<_> = records.iter().map(|r| r.run_file_name.as_str()).collect();
+        assert_eq!(runs, ["Run_A_01.mzML", "Run_B_01.mzML", "Run_B_02.mzML"]);
+        // LFQ has no reporter channel; run-file labels must not leak into `label`.
+        assert!(records.iter().all(|record| record.label.is_none()));
+        assert_eq!(records[1].intensity, 20.0);
+        Ok(())
+    }
+
+    #[test]
     fn reads_integer_unique_and_decoy_flags() -> Result<(), Box<dyn std::error::Error>> {
         let intensities = new_qpx_intensities()?;
         let proteins = new_qpx_proteins()?;
@@ -593,6 +659,33 @@ mod tests {
         append_string_field(builder.values(), 0, "TMT127")?;
         append_f32_field(builder.values(), 1, 2000.0)?;
         builder.values().append(true);
+        builder.append(true);
+        Ok(Arc::new(builder.finish()) as ArrayRef)
+    }
+
+    fn lfq_run_intensities() -> Result<ArrayRef, Box<dyn std::error::Error>> {
+        // Labels are run files; the anchor run (`Run_A_01.mzML`) appears among them.
+        let fields = Fields::from(vec![
+            Field::new("label", DataType::Utf8, false),
+            Field::new("intensity", DataType::Float32, false),
+        ]);
+        let struct_builder = StructBuilder::new(
+            fields,
+            vec![
+                Box::new(StringBuilder::new()),
+                Box::new(Float32Builder::new()),
+            ],
+        );
+        let mut builder = ListBuilder::new(struct_builder);
+        for (label, value) in [
+            ("Run_A_01.mzML", 10.0f32),
+            ("Run_B_01.mzML", 20.0),
+            ("Run_B_02.mzML", 30.0),
+        ] {
+            append_string_field(builder.values(), 0, label)?;
+            append_f32_field(builder.values(), 1, value)?;
+            builder.values().append(true);
+        }
         builder.append(true);
         Ok(Arc::new(builder.finish()) as ArrayRef)
     }
