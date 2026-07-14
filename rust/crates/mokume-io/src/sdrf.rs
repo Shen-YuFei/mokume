@@ -305,10 +305,20 @@ fn push_key(keys: &mut Vec<String>, value: &str) {
 }
 
 pub fn normalize_file_key(value: &str) -> String {
-    basename(value)
+    let key = basename(value)
         .trim()
         .trim_start_matches("file://")
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    // Strip a trailing run extension so the SDRF `comment[data file]` key matches
+    // the QPX `run_file_name`, which is stored extension-less. Without this the
+    // per-feature SDRF lookup misses and the Condition column falls back to the
+    // run filename. Mirrors `mokume-pipeline` de.rs::strip_run_extension.
+    for ext in [".raw", ".mzml", ".d", ".wiff"] {
+        if let Some(stem) = key.strip_suffix(ext) {
+            return stem.to_owned();
+        }
+    }
+    key
 }
 
 pub fn normalize_label_key(value: &str) -> String {
@@ -450,6 +460,41 @@ mod tests {
 
         assert_eq!(pooled.pooled_sample.as_deref(), Some("pooled"));
         assert_eq!(other.pooled_sample.as_deref(), Some("not pooled"));
+        Ok(())
+    }
+
+    #[test]
+    fn normalize_file_key_strips_run_extensions() {
+        // The QPX `run_file_name` is stored extension-less while the SDRF
+        // `comment[data file]` carries a run extension; both must normalize to
+        // the same key so the per-feature lookup matches.
+        for name in [
+            "Run_Condition_A_01.raw",
+            "Run_Condition_A_01.mzML",
+            "Run_Condition_A_01.d",
+            "Run_Condition_A_01.wiff",
+            "/data/Run_Condition_A_01.raw",
+            "Run_Condition_A_01",
+        ] {
+            assert_eq!(normalize_file_key(name), "run_condition_a_01", "key for {name}");
+        }
+    }
+
+    #[test]
+    fn lookup_matches_extensionless_run_key() -> Result<()> {
+        // Regression: SDRF data files carry `.raw`, but the QPX run key is
+        // extension-less. Without extension stripping the lookup misses and the
+        // Condition column falls back to the run filename.
+        let input = concat!(
+            "source name\tcomment[data file]\tfactor value[group]\n",
+            "A1\tRun_Condition_A_01.raw\tA\n",
+            "B1\tRun_Condition_B_01.raw\tB\n",
+        );
+        let table = SdrfTable::from_reader(input.as_bytes())?;
+        let a = table
+            .lookup("Run_Condition_A_01", None)
+            .ok_or_else(|| invalid_input("missing extension-less lookup"))?;
+        assert_eq!(a.condition.as_deref(), Some("A"));
         Ok(())
     }
 }

@@ -4642,6 +4642,16 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
 
     validate_features_to_proteins(config)?;
     validate_implemented_subset(config)?;
+    if let Some(method) = ignored_directlfq_sample_normalization(config) {
+        warn!(
+            sample_normalization = method,
+            quant_method = %config.quantification,
+            "`--sample-normalization {method}` has no effect on the DirectLFQ route \
+             (used by `directlfq` and, unless `maxlfq.force_builtin` is set, `maxlfq`): \
+             DirectLFQ performs its own internal sample normalization, so mokume does \
+             not apply another. The protein matrix is unchanged by this option."
+        );
+    }
     configure_thread_pool(config.runtime.threads.or(config.directlfq.cores));
 
     let sdrf = config
@@ -5283,6 +5293,34 @@ fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
 /// they center the summed-canonical-peptide matrix in log2 space, NOT the raw
 /// per-feature intensities, so they belong on the cell path rather than the
 /// ingest-time factor path.
+/// Returns the requested `--sample-normalization` method name when it is a
+/// dataset-level method that will be silently ignored because the effective
+/// quantification route is DirectLFQ (which performs its own internal sample
+/// normalization; see `Aggregation::applies_dataset_normalization`). Used to warn
+/// the user rather than dropping the option silently.
+fn ignored_directlfq_sample_normalization(config: &FeatureToProteinsConfig) -> Option<&str> {
+    let routes_to_directlfq = config.quantification == QuantMethod::DirectLfq
+        || (config.quantification == QuantMethod::MaxLfq && !config.maxlfq.force_builtin);
+    if !routes_to_directlfq {
+        return None;
+    }
+    match parse_sample_normalization_method(&config.normalization.sample_method)
+        .ok()
+        .flatten()
+    {
+        Some(
+            SampleNormalizationMethod::Quantile
+            | SampleNormalizationMethod::Rlr
+            | SampleNormalizationMethod::Loess
+            | SampleNormalizationMethod::Hierarchical
+            | SampleNormalizationMethod::MedianCenter
+            | SampleNormalizationMethod::MeanCenter
+            | SampleNormalizationMethod::Tmm,
+        ) => Some(config.normalization.sample_method.as_str()),
+        _ => None,
+    }
+}
+
 fn dataset_sample_normalization_method(
     config: &FeatureToProteinsConfig,
 ) -> Result<Option<SampleNormalizationMethod>> {
