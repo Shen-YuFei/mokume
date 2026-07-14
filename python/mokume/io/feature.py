@@ -215,15 +215,39 @@ class Feature:
         self._has_is_decoy = "is_decoy" in cols
         self._has_anchor_protein = "anchor_protein" in cols
 
+        # New-QPX LFQ vs TMT discriminator. In LFQ the ``intensities.label`` names
+        # the run each (possibly MBR-transferred) intensity belongs to, so it — not
+        # the row's anchor ``run_file_name`` — is the per-run/per-sample key. In TMT
+        # the label is a reporter channel and ``run_file_name`` is the run. Detect by
+        # checking whether every distinct label is a member of the run_file_name
+        # domain (true for LFQ, never for TMT channels).
+        self._label_is_run = False
+        if self._is_new_qpx:
+            try:
+                n_off = self.parquet_db.execute(
+                    "SELECT count(*) FROM ("
+                    " SELECT DISTINCT unnest.label AS lbl"
+                    " FROM parquet_db_raw, UNNEST(intensities) AS unnest"
+                    ") WHERE lbl NOT IN"
+                    " (SELECT DISTINCT run_file_name FROM parquet_db_raw)"
+                ).fetchone()[0]
+                self._label_is_run = n_off == 0
+            except duckdb.Error as exc:
+                logger.debug("label-is-run detection failed: %s", exc)
+
     def _create_unnest_view(self) -> None:
         """Create the long-format DuckDB view by unnesting intensities."""
         if self._is_new_qpx:
+            # LFQ: the intensity's owning run is its label (keep run_file_name only
+            # as provenance). TMT: label is a channel, run stays run_file_name.
+            run_key = "unnest.label" if self._label_is_run else "run_file_name"
             unnest_sql = (
-                "run_file_name as sample_accession,\n"
+                f"{run_key} as sample_accession,\n"
                 "                    unnest.label as channel,\n"
                 "                    unnest.intensity"
             )
-            sa_default = "run_file_name"
+            sa_default = run_key
+            run_expr = run_key
         else:
             unnest_sql = (
                 "unnest.sample_accession,\n"
@@ -231,6 +255,7 @@ class Feature:
                 "                    unnest.intensity"
             )
             sa_default = "unnest.sample_accession"
+            run_expr = self._run_col
 
         charge_col, run_col = self._charge_col, self._run_col
         # Normalize pg_accessions: extract accession strings from struct if needed
@@ -265,7 +290,7 @@ class Feature:
                     unnest_sql,
                     ",",
                     " ",
-                    run_col,
+                    run_expr,
                     " as run,",
                     " ",
                     sa_default,
