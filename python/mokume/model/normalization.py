@@ -142,10 +142,17 @@ class FeatureNormalizationMethod(Enum):
         map_ = {}
         total = 0
         for run in runs:
-            run = str(run)
-            run_m = self.normalize_replicates(
-                df.loc[df[TECHREPLICATE] == run, NORM_INTENSITY]
-            )
+            values = df.loc[df[TECHREPLICATE] == run, NORM_INTENSITY]
+            if self == FeatureNormalizationMethod.Mean:
+                run_m = values.mean()
+            elif self == FeatureNormalizationMethod.Median:
+                run_m = values.median()
+            elif self == FeatureNormalizationMethod.Max:
+                run_m = values.max()
+            elif self == FeatureNormalizationMethod.Global:
+                run_m = values.sum()
+            else:
+                run_m = self.normalize_replicates(values)
             map_[run] = run_m
             total += run_m
         sample_average_metric = total / len(runs)
@@ -182,7 +189,6 @@ class FeatureNormalizationMethod(Enum):
                     # intensity by a replicate-level statistic, relative to the sample
                     # average over that replicate statistic.
                     for run in runs:
-                        run = str(run)
                         run_intensity = df.loc[
                             (df[SAMPLE_ID] == sample) & (df[TECHREPLICATE] == run),
                             NORM_INTENSITY,

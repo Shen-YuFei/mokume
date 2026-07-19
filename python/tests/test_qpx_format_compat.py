@@ -11,6 +11,7 @@ Legacy QPX format columns:
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 # Arrow type constants for new QPX format
 _NEW_INTENSITIES_TYPE = pa.list_(
@@ -42,7 +43,13 @@ _NEW_QPX_SCHEMA = pa.schema(
 )
 
 
-def _make_new_qpx_parquet(path: str) -> None:
+def _make_new_qpx_parquet(
+    path: str,
+    *,
+    reverse_rows: bool = False,
+    reverse_intensities: bool = False,
+    missing_reporter_label: bool = False,
+) -> None:
     """Create a mock parquet file in new QPX format (matches latest QPX schema).
 
     Key differences from legacy:
@@ -100,6 +107,7 @@ def _make_new_qpx_parquet(path: str) -> None:
             [
                 {"label": "TMT126", "intensity": 1000.0},
                 {"label": "TMT127", "intensity": 2000.0},
+                {"label": "UNMAPPED_ZERO", "intensity": 0.0},
             ],
             [
                 {"label": "TMT126", "intensity": 3000.0},
@@ -111,7 +119,48 @@ def _make_new_qpx_parquet(path: str) -> None:
             ],
         ],
     }
+    if missing_reporter_label:
+        data["intensities"][0][0]["label"] = None
+    if reverse_intensities:
+        data["intensities"] = [list(reversed(values)) for values in data["intensities"]]
+    if reverse_rows:
+        data = {column: list(reversed(values)) for column, values in data.items()}
     table = pa.table(data, schema=_NEW_QPX_SCHEMA)
+    pq.write_table(table, path)
+
+
+def _make_lfq_qpx_parquet(path: str) -> None:
+    protein = {
+        "accession": "sp|P12345|PROT_HUMAN",
+        "start": 10,
+        "end": 18,
+        "pre": "K",
+        "post": "A",
+    }
+    table = pa.table(
+        {
+            "sequence": ["PEPTIDEA", "PEPTIDEB"],
+            "peptidoform": ["PEPTIDEA", "PEPTIDEB"],
+            "pg_accessions": [[protein], [protein]],
+            "anchor_protein": [protein["accession"], protein["accession"]],
+            "charge": [2, 2],
+            "run_file_name": ["Run_A.raw", "Run_B.mzML"],
+            "unique": [True, True],
+            "is_decoy": [False, False],
+            "intensities": [
+                [
+                    {"label": "run_a", "intensity": 10.0},
+                    {"label": "RUN_B.wiff", "intensity": 20.0},
+                    {"label": "UNMAPPED_ZERO", "intensity": 0.0},
+                ],
+                [
+                    {"label": "run_a", "intensity": 30.0},
+                    {"label": "RUN_B.wiff", "intensity": 40.0},
+                ],
+            ],
+        },
+        schema=_NEW_QPX_SCHEMA,
+    )
     pq.write_table(table, path)
 
 
@@ -162,6 +211,162 @@ def _make_legacy_qpx_parquet(path: str) -> None:
     }
     table = pa.table(data, schema=schema)
     pq.write_table(table, path)
+
+
+def _write_sdrf(path, rows) -> None:
+    lines = ["source name\tcomment[data file]\tcomment[label]\tfactor value[group]\n"]
+    lines.extend("\t".join(row) + "\n" for row in rows)
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+class TestQpxSdrfIdentity:
+    """Test that each new-QPX intensity has one SDRF owner."""
+
+    def test_exact_mapping_preserves_identity_under_sdrf_reordering(self, tmp_path):
+        rows = [
+            ("sample-r1-126", "/data/RUN1.mzML", "AC=MS:1;NT=TMT126", "A"),
+            ("sample-r1-127", "run1.raw", "TMT127", "B"),
+            ("sample-r2-126", "RUN2.wiff", "tmt126", "C"),
+            ("sample-r2-127", "run2.d", "TMT127", "D"),
+        ]
+        expected = {
+            ("sample-r1-126", "A"): 4000.0,
+            ("sample-r1-127", "B"): 6000.0,
+            ("sample-r2-126", "C"): 1500.0,
+            ("sample-r2-127", "D"): 2500.0,
+        }
+
+        cases = [
+            (rows, False, False),
+            (list(reversed(rows)), False, False),
+            (rows, True, True),
+        ]
+        for index, (ordered_rows, reverse_rows, reverse_intensities) in enumerate(
+            cases
+        ):
+            parquet_file = tmp_path / f"new-qpx-{index}.feature.parquet"
+            sdrf_file = tmp_path / f"mapping-{index}.sdrf.tsv"
+            _make_new_qpx_parquet(
+                str(parquet_file),
+                reverse_rows=reverse_rows,
+                reverse_intensities=reverse_intensities,
+            )
+            _write_sdrf(sdrf_file, ordered_rows)
+            from mokume.io.feature import Feature
+
+            feature = Feature(str(parquet_file))
+            feature.enrich_with_sdrf(str(sdrf_file))
+            observed = {
+                (sample, condition): intensity
+                for sample, condition, intensity in feature.parquet_db.execute(
+                    "SELECT sample_accession, condition, sum(intensity) FROM parquet_db "
+                    "GROUP BY sample_accession, condition"
+                ).fetchall()
+            }
+
+            assert observed == expected
+            assert sum(observed.values()) == 14000.0
+
+    def test_lfq_intensity_labels_retain_their_sdrf_sample(self, tmp_path):
+        parquet_file = tmp_path / "lfq.feature.parquet"
+        sdrf_file = tmp_path / "lfq.sdrf.tsv"
+        _make_lfq_qpx_parquet(str(parquet_file))
+        _write_sdrf(
+            sdrf_file,
+            [
+                ("sample-a", "run_a.mzML", "Label free sample", "A"),
+                ("sample-b", "RUN_B.raw", "LFQ", "B"),
+            ],
+        )
+        from mokume.io.feature import Feature
+
+        feature = Feature(str(parquet_file))
+        feature.enrich_with_sdrf(str(sdrf_file))
+        observed = feature.parquet_db.execute(
+            "SELECT sample_accession, run, channel, sum(intensity) "
+            "FROM parquet_db GROUP BY ALL ORDER BY sample_accession"
+        ).fetchall()
+
+        assert observed == [
+            ("sample-a", "run_a", None, 40.0),
+            ("sample-b", "RUN_B.wiff", None, 60.0),
+        ]
+        assert set(feature.samples) == {"sample-a", "sample-b"}
+
+    def test_duplicate_normalized_mapping_is_rejected(self, tmp_path):
+        parquet_file = tmp_path / "new_qpx.feature.parquet"
+        _make_new_qpx_parquet(str(parquet_file))
+        rows = [
+            ("sample-a", "run1.raw", "TMT126", "A"),
+            ("sample-b", "RUN1.mzML", "tmt126", "B"),
+        ]
+        from mokume.io.feature import Feature
+
+        for index, ordered_rows in enumerate((rows, list(reversed(rows)))):
+            sdrf_file = tmp_path / f"duplicate-{index}.sdrf.tsv"
+            _write_sdrf(sdrf_file, ordered_rows)
+            feature = Feature(str(parquet_file))
+
+            with pytest.raises(ValueError, match="duplicate SDRF mapping") as error:
+                feature.enrich_with_sdrf(str(sdrf_file))
+
+            assert "run1" in str(error.value)
+            assert "tmt126" in str(error.value)
+            assert "record 1" in str(error.value)
+            assert "record 2" in str(error.value)
+
+    def test_unknown_channel_is_rejected_with_mapping_context(self, tmp_path):
+        parquet_file = tmp_path / "new_qpx.feature.parquet"
+        sdrf_file = tmp_path / "missing-channel.sdrf.tsv"
+        _make_new_qpx_parquet(str(parquet_file))
+        _write_sdrf(
+            sdrf_file,
+            [
+                ("sample-r1-126", "run1.raw", "TMT126", "A"),
+                ("sample-r2-126", "run2.raw", "TMT126", "C"),
+                ("sample-r2-127", "run2.raw", "TMT127", "D"),
+            ],
+        )
+        from mokume.io.feature import Feature
+
+        feature = Feature(str(parquet_file))
+        before = feature.parquet_db.execute(
+            "SELECT sample_accession, channel, intensity FROM parquet_db ORDER BY ALL"
+        ).fetchall()
+
+        with pytest.raises(ValueError, match="no exact SDRF match") as error:
+            feature.enrich_with_sdrf(str(sdrf_file))
+
+        assert "QPX run `run1` and label `TMT127`" in str(error.value)
+        assert "record 1 (`run1.raw`, label `TMT126`)" in str(error.value)
+        assert (
+            feature.parquet_db.execute(
+                "SELECT sample_accession, channel, intensity FROM parquet_db ORDER BY ALL"
+            ).fetchall()
+            == before
+        )
+
+    def test_missing_reporter_label_is_rejected(self, tmp_path):
+        parquet_file = tmp_path / "missing-label.feature.parquet"
+        sdrf_file = tmp_path / "mapping.sdrf.tsv"
+        _make_new_qpx_parquet(str(parquet_file), missing_reporter_label=True)
+        _write_sdrf(
+            sdrf_file,
+            [
+                ("sample-r1-126", "run1.raw", "TMT126", "A"),
+                ("sample-r1-127", "run1.raw", "TMT127", "B"),
+                ("sample-r2-126", "run2.raw", "TMT126", "C"),
+                ("sample-r2-127", "run2.raw", "TMT127", "D"),
+            ],
+        )
+        from mokume.io.feature import Feature
+
+        feature = Feature(str(parquet_file))
+
+        with pytest.raises(ValueError, match="no reporter label") as error:
+            feature.enrich_with_sdrf(str(sdrf_file))
+
+        assert "QPX run `run1`" in str(error.value)
 
 
 class TestNewQPXFormat:
