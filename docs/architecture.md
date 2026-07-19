@@ -92,9 +92,25 @@ Separately from the wheel, the pure-Python `pip install mokume` package carries 
 full OOP compute pipeline: a `QpxDataset` container, a `PluginRegistry` of
 quantification / normalization / imputation / harmonization methods, and
 `run_pipeline(config) -> QpxDataset`. By default it computes in pure Python; set
-`RuntimeConfig.backend = "rust"` to route the same configuration through the
-compiled `mokume._mokume` kernel instead (it raises a clear error when the kernel
-is not installed).
+`RuntimeConfig.backend = "rust"` to route the supported features-to-proteins
+configuration through the compiled `mokume._mokume` kernel instead (it raises a
+clear error when the kernel is not installed).
+
+The hybrid profile has an explicit stage boundary:
+
+| Configuration area | Effective owner |
+| --- | --- |
+| Parquet and FASTA input, filtering, run/sample normalization, protein quantification, and peptide/ion exports | Rust kernel |
+| QPX metadata, coverage filtering, IRS, imputation, batch correction, differential expression, plots, reports, and AnnData export | Python postprocessing |
+| SDRF context, quantification-method selection, and ratio reference-sample selection | Shared across the boundary |
+| Backend selection | Python hybrid adapter |
+
+`duckdb_memory` and `duckdb_threads` are rejected for this profile because the
+in-process kernel cannot enforce their documented per-run resource semantics.
+Ion alignment accepts only `None` or `"none"`. Other method-specific invalid
+combinations are forwarded so the Rust kernel retains its detailed validation
+error. These checks happen before the extension is invoked or temporary output
+is allocated.
 
 Because the pure-Python package has its **own** implementation of the compute —
 distinct from the Rust kernel — a pure-Python result and a Rust-backend result
