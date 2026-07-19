@@ -207,10 +207,8 @@ def build_features2proteins_argv(config: PipelineConfig, output_path: str) -> Li
         # Match Python ratio loading: an explicitly empty list falls through
         # to SDRF/regex detection rather than becoming an empty Rust override.
         if config.irs.reference_samples:
-            argv += [
-                "--irs-reference-samples",
-                ",".join(str(sample) for sample in config.irs.reference_samples),
-            ]
+            for sample in config.irs.reference_samples:
+                argv += ["--irs-reference-sample", str(sample)]
         default_reference_regex = "pool|powder|ref|reference|bridge"
         if config.irs.reference_regex != default_reference_regex:
             argv += ["--irs-reference-regex", config.irs.reference_regex]

@@ -244,9 +244,24 @@ def test_ratio_reference_context_is_forwarded_without_enabling_rust_irs() -> Non
     )
     argv = build_features2proteins_argv(config, "out.csv")
 
-    assert _flag_value(argv, "--irs-reference-samples") == "pool-a,pool-b"
+    assert [
+        argv[index + 1]
+        for index, token in enumerate(argv)
+        if token == "--irs-reference-sample"
+    ] == ["pool-a", "pool-b"]
     assert _flag_value(argv, "--irs-reference-regex") == "bridge|reference"
     assert "--irs" not in argv
+
+
+def test_ratio_reference_sample_with_comma_is_forwarded_losslessly() -> None:
+    config = _minimal_config(
+        quantification=QuantificationConfig(method="ratio"),
+        irs=IRSConfig(reference_samples=["pool, batch A"]),
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+
+    assert _flag_value(argv, "--irs-reference-sample") == "pool, batch A"
+    assert "--irs-reference-samples" not in argv
 
 
 def test_empty_ratio_reference_list_preserves_automatic_detection() -> None:
@@ -255,7 +270,7 @@ def test_empty_ratio_reference_list_preserves_automatic_detection() -> None:
         irs=IRSConfig(reference_samples=[]),
     )
     argv = build_features2proteins_argv(config, "out.csv")
-    assert "--irs-reference-samples" not in argv
+    assert "--irs-reference-sample" not in argv
 
 
 def test_quantification_exports_are_forwarded_to_compatible_methods() -> None:
