@@ -104,6 +104,14 @@ def _resolve_qpx_sdrf_mapping(
             )
 
         mapped = matches[0].copy()
+        if labels_are_runs and mapped["sdrf_label_key"] not in {
+            "",
+            "label free sample",
+        }:
+            raise ValueError(
+                f"QPX run `{qpx_run}` has no reporter label; "
+                f"{_sdrf_record_context([mapped])} declares a labeled channel"
+            )
         mapped["qpx_run"] = qpx_run
         mapped["qpx_label"] = "" if pd.isna(qpx_label_value) else qpx_label_value
         resolved.append(mapped)

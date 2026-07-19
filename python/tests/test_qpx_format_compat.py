@@ -293,6 +293,24 @@ class TestQpxSdrfIdentity:
         ]
         assert set(feature.samples) == {"sample-a", "sample-b"}
 
+    def test_lfq_run_rejects_reporter_labeled_sdrf(self, tmp_path):
+        parquet_file = tmp_path / "lfq.feature.parquet"
+        sdrf_file = tmp_path / "labeled.sdrf.tsv"
+        _make_lfq_qpx_parquet(str(parquet_file))
+        _write_sdrf(
+            sdrf_file,
+            [
+                ("sample-a", "run_a.mzML", "TMT126", "A"),
+                ("sample-b", "run_b.raw", "LFQ", "B"),
+            ],
+        )
+        from mokume.io.feature import Feature
+
+        with pytest.raises(ValueError, match="has no reporter label") as error:
+            Feature(str(parquet_file)).enrich_with_sdrf(str(sdrf_file))
+
+        assert "record 1 (`run_a.mzML`, label `TMT126`)" in str(error.value)
+
     def test_duplicate_normalized_mapping_is_rejected(self, tmp_path):
         parquet_file = tmp_path / "new_qpx.feature.parquet"
         _make_new_qpx_parquet(str(parquet_file))
