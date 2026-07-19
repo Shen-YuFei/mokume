@@ -14,12 +14,15 @@ package have no ``mokume._mokume`` and must still be able to
 surfaced only when :func:`run` is actually called.
 """
 
-import os
 import tempfile
+from pathlib import Path
 
 import pandas as pd
 
-from mokume.core.cli_args import build_features2proteins_argv
+from mokume.core.cli_args import (
+    build_features2proteins_argv,
+    validate_hybrid_config,
+)
 from mokume.core.dataset import QpxDataset
 from mokume.core.logger import get_logger
 from mokume.pipeline.config import PipelineConfig
@@ -52,10 +55,16 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
 
     Raises
     ------
+    ValueError
+        If the requested configuration cannot be honored by the hybrid path.
     RuntimeError
-        If the ``mokume-rs`` extension (``mokume._mokume``) is not installed.
+        If the ``mokume-rs`` extension (``mokume._mokume``) is not installed,
+        or if the kernel returns without producing its promised output.
     """
     _ = method  # metadata only; kernel selects the method from the argv
+    # Validate before checking the extension or allocating temporary output so
+    # unsupported requests fail without any kernel or filesystem side effects.
+    validate_hybrid_config(config)
     if _kernel_run is None:
         raise RuntimeError(
             "The Rust backend requires the mokume-rs wheel (mokume._mokume), "
@@ -66,18 +75,22 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
     dataset = QpxDataset()
 
     # The kernel writes its wide protein matrix to a CSV; hand it a temp path.
-    tmp_fd, tmp_out = tempfile.mkstemp(suffix=".csv")
-    os.close(tmp_fd)
-    try:
-        argv = build_features2proteins_argv(config, tmp_out)
+    # Keep the target non-existent so a failed invocation cannot look like a
+    # valid zero-byte result. The directory also removes partial output on every
+    # exit path.
+    with tempfile.TemporaryDirectory(prefix="mokume-rust-") as tmp_dir:
+        tmp_out = Path(tmp_dir) / "proteins.csv"
+        argv = build_features2proteins_argv(config, str(tmp_out))
         logger.info("Running Rust kernel: features2proteins")
         logger.debug("Kernel argv: %s", argv)
         _kernel_run(argv)
 
+        if not tmp_out.is_file() or tmp_out.stat().st_size == 0:
+            raise RuntimeError(
+                "The Rust kernel returned without creating a non-empty protein output: "
+                f"{tmp_out}"
+            )
         protein_df = pd.read_csv(tmp_out)
-    finally:
-        if os.path.exists(tmp_out):
-            os.remove(tmp_out)
 
     dataset.proteins = protein_df
     dataset.record_step(
