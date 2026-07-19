@@ -704,15 +704,19 @@ fn features2peptides_tmt_irs_by_mixture_uses_sdrf_source_name_mixture() -> Resul
     )?;
 
     // SDRF regroups runs into mixtures POOLX (g_1,g_2) and POOLY (g_3,g_4) via the
-    // `source name` first token. `comment[data file]` joins on run_file_name.
+    // `source name` first token. Each run/channel pair has its own exact SDRF row.
     std::fs::write(
         &sdrf,
         concat!(
             "source name\tassay name\tcomment[data file]\tcomment[label]\tfactor value[cell line]\n",
-            "POOLX_a\trun 1\tg_1\tTMT126\tA\n",
-            "POOLX_b\trun 2\tg_2\tTMT126\tA\n",
-            "POOLY_a\trun 3\tg_3\tTMT126\tB\n",
-            "POOLY_b\trun 4\tg_4\tTMT126\tB\n",
+            "POOLX_a_ref\trun 1 ref\tg_1\tTMT126\tA\n",
+            "POOLX_a\trun 1 sample\tg_1\tTMT127\tA\n",
+            "POOLX_b_ref\trun 2 ref\tg_2\tTMT126\tA\n",
+            "POOLX_b\trun 2 sample\tg_2\tTMT127\tA\n",
+            "POOLY_a_ref\trun 3 ref\tg_3\tTMT126\tB\n",
+            "POOLY_a\trun 3 sample\tg_3\tTMT127\tB\n",
+            "POOLY_b_ref\trun 4 ref\tg_4\tTMT126\tB\n",
+            "POOLY_b\trun 4 sample\tg_4\tTMT127\tB\n",
         ),
     )?;
 

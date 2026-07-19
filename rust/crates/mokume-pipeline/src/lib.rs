@@ -207,7 +207,7 @@ impl FeatureToProteinState {
             return Ok(());
         }
 
-        let sdrf_record = sdrf_record(feature, sdrf);
+        let sdrf_record = sdrf_record(feature, sdrf)?;
         let sample_name = sample_name(feature, sdrf_record);
         // Run-QC group filters drop whole samples (Python `run_qc.py`). The
         // decision is precomputed in a pre-pass; skip excluded samples here, the
@@ -5752,7 +5752,7 @@ fn collect_run_qc_exclusions(
         let Some(protein_group) = protein_group_name(&feature.protein_accessions) else {
             return Ok(());
         };
-        let sdrf_record = sdrf_record(&feature, sdrf);
+        let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
         let entry = stats.entry((sample, protein_group)).or_default();
         entry.0.insert(feature.sequence.clone());
@@ -5870,7 +5870,7 @@ fn collect_intensity_group_filters(
         if feature.intensity < min_floor {
             return Ok(());
         }
-        let sdrf_record = sdrf_record(&feature, sdrf);
+        let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
         if run_qc_excluded.contains(&sample) {
             return Ok(());
@@ -6024,20 +6024,18 @@ fn collect_irs_scale(
         let Some(techrep) = irs_tech_replicate_of(&feature.run_file_name) else {
             return Ok(());
         };
+        let sdrf_record = sdrf_record(&feature, sdrf)?;
+        let sample_accession = sdrf_record.map_or(feature.run_file_name.as_str(), |record| {
+            record.sample_accession.as_str()
+        });
         runs.entry(feature.run_file_name.clone())
             .or_insert_with(|| {
                 // Mixture is the first `_`-token of the *sample accession*, which is
                 // the joined SDRF `source name` when an SDRF is present and the
                 // `run_file_name` otherwise (Python `parquet_db` view). The SDRF
                 // join keys on the run name (with the raw feature label), mirroring
-                // `enrich_with_sdrf`; a miss falls back to the run name.
-                let sample_accession = sdrf
-                    .and_then(|table| {
-                        table.lookup(&feature.run_file_name, feature.label.as_deref())
-                    })
-                    .map_or(feature.run_file_name.as_str(), |record| {
-                        record.sample_accession.as_str()
-                    });
+                // `enrich_with_sdrf`; when an SDRF is present, an unmatched run or
+                // label is rejected instead of falling back to the run name.
                 RunBuffer {
                     techrep,
                     mixture: irs_mixture_first_token(sample_accession).to_owned(),
@@ -6421,7 +6419,7 @@ impl<'a> NormalizationFactorCollector<'a> {
             return Ok(());
         };
 
-        let sdrf_record = sdrf_record(&feature, self.sdrf);
+        let sdrf_record = sdrf_record(&feature, self.sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
         if self
             .normalization_proteins
@@ -6654,8 +6652,13 @@ fn parse_protein_accession(accession: &str) -> String {
 fn sdrf_record<'a>(
     feature: &QpxFeatureRecord,
     sdrf: Option<&'a SdrfTable>,
-) -> Option<&'a SdrfRecord> {
-    sdrf.and_then(|table| table.lookup(&feature.run_file_name, feature.label.as_deref()))
+) -> Result<Option<&'a SdrfRecord>> {
+    match sdrf {
+        Some(table) => table
+            .lookup(&feature.run_file_name, feature.label.as_deref())
+            .map(Some),
+        None => Ok(None),
+    }
 }
 
 fn sample_name(feature: &QpxFeatureRecord, sdrf_record: Option<&SdrfRecord>) -> String {
