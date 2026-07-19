@@ -6,19 +6,33 @@ mapping. They need no compiled extension: the function is pure.
 
 from __future__ import annotations
 
-from mokume.core.cli_args import build_features2proteins_argv
+from dataclasses import fields
+
+import pytest
+
+from mokume.core.cli_args import (
+    HYBRID_FIELD_OWNERS,
+    HybridFieldOwner,
+    build_features2proteins_argv,
+)
 from mokume.pipeline.config import (
     BatchCorrectionConfig,
+    DEConfig,
     FilterConfig,
+    ImputationConfig,
+    IRSConfig,
     InputConfig,
     NormalizationConfig,
+    OutputConfig,
     PipelineConfig,
     QuantificationConfig,
+    RuntimeConfig,
 )
 
 
 def _flag_value(argv: list[str], flag: str) -> str:
     """Return the token following ``flag`` in ``argv``."""
+    assert argv.count(flag) == 1
     idx = argv.index(flag)
     return argv[idx + 1]
 
@@ -27,6 +41,20 @@ def _minimal_config(**overrides) -> PipelineConfig:
     """Build a minimal PipelineConfig; only InputConfig.parquet is required."""
     overrides.setdefault("input", InputConfig(parquet="in.parquet"))
     return PipelineConfig(**overrides)
+
+
+def test_every_config_leaf_has_an_explicit_hybrid_owner() -> None:
+    config = _minimal_config()
+    expected = {
+        f"{section.name}.{item.name}"
+        for section in fields(config)
+        for item in fields(getattr(config, section.name))
+    }
+
+    assert set(HYBRID_FIELD_OWNERS) == expected
+    assert all(
+        isinstance(owner, HybridFieldOwner) for owner in HYBRID_FIELD_OWNERS.values()
+    )
 
 
 def test_argv0_is_subcommand() -> None:
@@ -134,6 +162,33 @@ def test_batch_correction_flags_never_emitted() -> None:
     assert "--batch-method" not in on
 
 
+def test_other_python_owned_postprocessing_is_not_emitted() -> None:
+    config = _minimal_config(
+        quantification=QuantificationConfig(coverage_threshold=0.75),
+        irs=IRSConfig(enabled=True, reference_samples=["pool-a"]),
+        imputation=ImputationConfig(enabled=True, method="minprob"),
+        de=DEConfig(enabled=True, method="limma"),
+        output=OutputConfig(
+            plot_volcano=True,
+            interactive_report=True,
+            export_anndata=True,
+        ),
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+
+    for flag in [
+        "--coverage-threshold",
+        "--irs",
+        "--irs-reference-samples",
+        "--impute",
+        "--de",
+        "--plot-volcano",
+        "--interactive-report",
+        "--export-anndata",
+    ]:
+        assert flag not in argv
+
+
 def test_top3_forwarded_as_top3() -> None:
     config = _minimal_config(quantification=QuantificationConfig(method="top3"))
     argv = build_features2proteins_argv(config, "out.csv")
@@ -155,6 +210,122 @@ def test_normalization_run_method_lowercased() -> None:
     argv = build_features2proteins_argv(config, "out.csv")
     assert _flag_value(argv, "--run-normalization") == "mean"
     assert _flag_value(argv, "--sample-normalization") == "tmm"
+
+
+def test_normalization_proteins_file_is_forwarded() -> None:
+    config = _minimal_config(
+        normalization=NormalizationConfig(proteins_file="stable-proteins.txt")
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+    assert _flag_value(argv, "--normalization-proteins") == "stable-proteins.txt"
+
+
+def test_nondefault_ratio_fraction_merge_is_forwarded() -> None:
+    config = _minimal_config(
+        quantification=QuantificationConfig(method="ratio", ratio_fraction_merge="max")
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+    assert _flag_value(argv, "--ratio-fraction-merge") == "max"
+
+
+def test_default_ratio_fraction_merge_keeps_argv_stable() -> None:
+    config = _minimal_config(quantification=QuantificationConfig(method="ratio"))
+    argv = build_features2proteins_argv(config, "out.csv")
+    assert "--ratio-fraction-merge" not in argv
+
+
+def test_ratio_reference_context_is_forwarded_without_enabling_rust_irs() -> None:
+    config = _minimal_config(
+        quantification=QuantificationConfig(method="ratio"),
+        irs=IRSConfig(
+            reference_samples=["pool-a", "pool-b"],
+            reference_regex="bridge|reference",
+        ),
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+
+    assert _flag_value(argv, "--irs-reference-samples") == "pool-a,pool-b"
+    assert _flag_value(argv, "--irs-reference-regex") == "bridge|reference"
+    assert "--irs" not in argv
+
+
+def test_empty_ratio_reference_list_preserves_automatic_detection() -> None:
+    config = _minimal_config(
+        quantification=QuantificationConfig(method="ratio"),
+        irs=IRSConfig(reference_samples=[]),
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+    assert "--irs-reference-samples" not in argv
+
+
+def test_quantification_exports_are_forwarded_to_compatible_methods() -> None:
+    peptide_config = _minimal_config(
+        quantification=QuantificationConfig(method="sum"),
+        output=OutputConfig(export_peptides="peptides.csv"),
+    )
+    peptide_argv = build_features2proteins_argv(peptide_config, "out.csv")
+    assert _flag_value(peptide_argv, "--export-peptides") == "peptides.csv"
+
+    ion_config = _minimal_config(
+        quantification=QuantificationConfig(method="directlfq"),
+        output=OutputConfig(export_ions="ions.csv"),
+    )
+    ion_argv = build_features2proteins_argv(ion_config, "out.csv")
+    assert _flag_value(ion_argv, "--export-ions") == "ions.csv"
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (
+            _minimal_config(runtime=RuntimeConfig(backend="rust", duckdb_memory="8GB")),
+            "duckdb_memory",
+        ),
+        (
+            _minimal_config(runtime=RuntimeConfig(backend="rust", duckdb_threads=2)),
+            "duckdb_threads",
+        ),
+        (
+            _minimal_config(
+                quantification=QuantificationConfig(ion_alignment="hierarchical")
+            ),
+            "ion_alignment",
+        ),
+    ],
+)
+def test_unsupported_hybrid_settings_are_rejected(config, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        build_features2proteins_argv(config, "out.csv")
+
+
+def test_disabled_ion_alignment_variants_are_accepted_and_omitted() -> None:
+    for ion_alignment in [None, "none", " NONE "]:
+        config = _minimal_config(
+            quantification=QuantificationConfig(ion_alignment=ion_alignment)
+        )
+        argv = build_features2proteins_argv(config, "out.csv")
+        assert "--ion-alignment" not in argv
+
+
+@pytest.mark.parametrize(
+    ("method", "output", "flag"),
+    [
+        (
+            "directlfq",
+            OutputConfig(export_peptides="peptides.csv"),
+            "--export-peptides",
+        ),
+        ("sum", OutputConfig(export_ions="ions.csv"), "--export-ions"),
+    ],
+)
+def test_incompatible_exports_are_forwarded_for_rust_validation(
+    method, output, flag
+) -> None:
+    config = _minimal_config(
+        quantification=QuantificationConfig(method=method), output=output
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+    assert _flag_value(argv, flag) in {"peptides.csv", "ions.csv"}
 
 
 def test_all_tokens_are_strings() -> None:
