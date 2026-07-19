@@ -14,6 +14,7 @@ from typing import Dict
 from mokume.core.dataset import QpxDataset
 from mokume.core.logger import get_logger
 from mokume.core.registry import PluginRegistry
+from mokume.model.normalization import parse_normalization_methods
 from mokume.pipeline.config import PipelineConfig
 from mokume.pipeline import flows
 
@@ -45,6 +46,10 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
     QpxDataset
         Dataset with proteins populated and optional DE results in uns.
     """
+    parse_normalization_methods(
+        config.normalization.run_method,
+        config.normalization.sample_method,
+    )
     quant_method_name = config.quantification.method.lower()
     logger.info(f"Starting pipeline with quant_method={quant_method_name}")
 

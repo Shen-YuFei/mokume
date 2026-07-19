@@ -18,8 +18,8 @@ import numpy as np
 
 from mokume.model.labeling import QuantificationCategory
 from mokume.model.normalization import (
-    FeatureNormalizationMethod,
     PeptideNormalizationMethod,
+    parse_normalization_methods,
 )
 from mokume.core.constants import (
     FRACTION,
@@ -144,14 +144,15 @@ def peptide_normalization(
         piBAQ step can allocate shared peptide intensity.
     """
 
+    feature_normalization, peptide_normalized = parse_normalization_methods(
+        nmethod, pnmethod
+    )
+
     if os.path.exists(output):
         raise FileExistsError("The output file already exists.")
 
     if parquet is None:
         raise FileNotFoundError("The file does not exist.")
-
-    feature_normalization = FeatureNormalizationMethod.from_str(nmethod)
-    peptide_normalized = PeptideNormalizationMethod.from_str(pnmethod)
 
     logger.info("Loading data from %s...", parquet)
 
