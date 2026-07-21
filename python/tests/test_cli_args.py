@@ -244,11 +244,10 @@ def test_ratio_reference_context_is_forwarded_without_enabling_rust_irs() -> Non
     )
     argv = build_features2proteins_argv(config, "out.csv")
 
-    assert [
-        argv[index + 1]
-        for index, token in enumerate(argv)
-        if token == "--irs-reference-sample"
-    ] == ["pool-a", "pool-b"]
+    # Comma-free names go out on the long-standing plural flag, so a current
+    # Python package keeps working against an older mokume-rs wheel.
+    assert _flag_value(argv, "--irs-reference-samples") == "pool-a,pool-b"
+    assert "--irs-reference-sample" not in argv
     assert _flag_value(argv, "--irs-reference-regex") == "bridge|reference"
     assert "--irs" not in argv
 

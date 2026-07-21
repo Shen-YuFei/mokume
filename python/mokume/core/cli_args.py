@@ -13,10 +13,18 @@ The flag names and their allowed values were verified against
 """
 
 import re
+from dataclasses import fields
 from enum import Enum
+
 from typing import List
 
-from mokume.pipeline.config import PipelineConfig
+from mokume.pipeline.config import IRSConfig, PipelineConfig
+
+# Read the default off the dataclass rather than repeating the literal, so the
+# "only forward a non-default regex" rule cannot drift from the actual default.
+_DEFAULT_REFERENCE_REGEX = next(
+    field.default for field in fields(IRSConfig) if field.name == "reference_regex"
+)
 
 
 class HybridFieldOwner(str, Enum):
@@ -114,6 +122,59 @@ HYBRID_FIELD_OWNERS = {
 }
 
 
+def _filtering_argv(config: PipelineConfig) -> List[str]:
+    """Peptide/protein filtering flags."""
+    argv = [
+        "--min-aa",
+        str(config.filtering.min_aa),
+        "--min-unique",
+        str(config.filtering.min_unique_peptides),
+    ]
+    argv.append(
+        "--remove-contaminants"
+        if config.filtering.remove_contaminants
+        else "--keep-contaminants"
+    )
+    return argv
+
+
+def _normalization_argv(config: PipelineConfig) -> List[str]:
+    """Run/sample normalization flags and the optional protein subset."""
+    argv = [
+        "--run-normalization",
+        config.normalization.run_method.lower(),
+        "--sample-normalization",
+        config.normalization.sample_method.lower(),
+    ]
+    if config.normalization.proteins_file is not None:
+        argv += ["--normalization-proteins", str(config.normalization.proteins_file)]
+    return argv
+
+
+def _ratio_reference_argv(config: PipelineConfig) -> List[str]:
+    """Reference-sample context for ``ratio`` quantification.
+
+    An explicitly empty list falls through to SDRF/regex detection rather than
+    becoming an empty Rust override, matching Python ratio loading.
+    """
+    argv: List[str] = []
+    samples = [str(sample) for sample in config.irs.reference_samples or []]
+    if samples:
+        # ``--irs-reference-sample`` (repeatable) is newer than the comma-joined
+        # ``--irs-reference-samples``, and mokume / mokume-rs are installed
+        # separately, so a current Python package can sit on an older wheel.
+        # Prefer the long-standing plural form and only reach for the new flag
+        # when a name actually contains a comma -- the case it exists for.
+        if any("," in sample for sample in samples):
+            for sample in samples:
+                argv += ["--irs-reference-sample", sample]
+        else:
+            argv += ["--irs-reference-samples", ",".join(samples)]
+    if config.irs.reference_regex != _DEFAULT_REFERENCE_REGEX:
+        argv += ["--irs-reference-regex", config.irs.reference_regex]
+    return argv
+
+
 def validate_hybrid_config(config: PipelineConfig) -> None:
     """Reject settings the in-process Rust profile cannot honor."""
     if config.runtime.duckdb_memory is not None:
@@ -157,7 +218,14 @@ def build_features2proteins_argv(config: PipelineConfig, output_path: str) -> Li
     list[str]
         Argument vector with ``"features2proteins"`` as ``argv[0]``. Only flags
         whose config value is meaningful (not ``None``) are emitted; unknown
-        flags are never produced. The function is pure and side-effect free.
+        flags are never produced.
+
+    Raises
+    ------
+    ValueError
+        If the configuration asks for something the hybrid path cannot honor
+        (see :func:`validate_hybrid_config`), or if a reference sample name
+        cannot be expressed with the installed kernel's flags.
     """
     validate_hybrid_config(config)
     argv: List[str] = ["features2proteins"]
@@ -183,19 +251,8 @@ def build_features2proteins_argv(config: PipelineConfig, output_path: str) -> Li
     else:
         argv += ["--quant-method", method]
 
-    # Filtering.
-    argv += ["--min-aa", str(config.filtering.min_aa)]
-    argv += ["--min-unique", str(config.filtering.min_unique_peptides)]
-    if config.filtering.remove_contaminants:
-        argv += ["--remove-contaminants"]
-    else:
-        argv += ["--keep-contaminants"]
-
-    # Normalization.
-    argv += ["--run-normalization", config.normalization.run_method.lower()]
-    argv += ["--sample-normalization", config.normalization.sample_method.lower()]
-    if config.normalization.proteins_file is not None:
-        argv += ["--normalization-proteins", str(config.normalization.proteins_file)]
+    argv += _filtering_argv(config)
+    argv += _normalization_argv(config)
 
     # piBAQ knobs.
     quant = config.quantification
@@ -204,14 +261,7 @@ def build_features2proteins_argv(config: PipelineConfig, output_path: str) -> Li
     if quant.ratio_fraction_merge.lower() != "mean":
         argv += ["--ratio-fraction-merge", quant.ratio_fraction_merge.lower()]
     if method == "ratio":
-        # Match Python ratio loading: an explicitly empty list falls through
-        # to SDRF/regex detection rather than becoming an empty Rust override.
-        if config.irs.reference_samples:
-            for sample in config.irs.reference_samples:
-                argv += ["--irs-reference-sample", str(sample)]
-        default_reference_regex = "pool|powder|ref|reference|bridge"
-        if config.irs.reference_regex != default_reference_regex:
-            argv += ["--irs-reference-regex", config.irs.reference_regex]
+        argv += _ratio_reference_argv(config)
     argv += ["--ibaq-enzyme", quant.ibaq_enzyme]
     argv += ["--ibaq-max-aa", str(quant.ibaq_max_aa)]
     argv += ["--ibaq-min-shared", str(quant.ibaq_min_shared)]
