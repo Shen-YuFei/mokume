@@ -140,21 +140,55 @@ impl SdrfTable {
     fn rebuild_index(&mut self) -> Result<()> {
         self.by_run.clear();
         self.by_run_label.clear();
+
+        // `comment[data file]` is the row's identity: two rows claiming the
+        // same file under the same label really are a duplicate mapping, and
+        // nothing downstream could pick between them. Index those first so an
+        // alias can never take the slot belonging to a real data file.
         for (index, record) in self.records.iter().enumerate() {
             for key in record.run_keys() {
-                self.by_run.entry(key.clone()).or_default().push(index);
-                if let Some(label) = record.label.as_deref() {
-                    let label_key = normalize_label_key(label);
-                    if let Some(previous) = self
-                        .by_run_label
-                        .insert((key.clone(), label_key.clone()), index)
-                    {
-                        let records = self.record_context(&[previous, index]);
-                        return Err(invalid_input(format!(
-                            "duplicate SDRF mapping for normalized run `{key}` and label `{label_key}` at {records}"
-                        )));
-                    }
+                self.by_run.entry(key).or_default().push(index);
+            }
+            let Some(label) = record.label.as_deref() else {
+                continue;
+            };
+            let key = normalize_file_key(&record.data_file);
+            if key.is_empty() {
+                continue;
+            }
+            let label_key = normalize_label_key(label);
+            if let Some(previous) = self
+                .by_run_label
+                .insert((key.clone(), label_key.clone()), index)
+            {
+                let records = self.record_context(&[previous, index]);
+                return Err(invalid_input(format!(
+                    "duplicate SDRF mapping for normalized run `{key}` and label `{label_key}` at {records}"
+                )));
+            }
+        }
+
+        // `comment[file uri]` and `assay name` are extra names the same row can
+        // be found under, not identities. Real SDRFs reuse an assay name across
+        // distinct runs -- this repository's own PXD063291 fixture repeats
+        // `run 2`, `run 4` and `run 6` over six different raw files -- so a
+        // collision here is ordinary data, not a mapping error, and rejecting
+        // it would refuse SDRFs whose data-file join is perfectly unambiguous.
+        // Keep the first row, which is what the index did before duplicates
+        // became an error.
+        for (index, record) in self.records.iter().enumerate() {
+            let Some(label) = record.label.as_deref() else {
+                continue;
+            };
+            let label_key = normalize_label_key(label);
+            let data_file_key = normalize_file_key(&record.data_file);
+            for key in record.run_keys() {
+                if key == data_file_key {
+                    continue;
                 }
+                self.by_run_label
+                    .entry((key, label_key.clone()))
+                    .or_insert(index);
             }
         }
         Ok(())
@@ -599,6 +633,51 @@ mod tests {
             assert!(message.contains("run.raw"));
             assert!(message.contains("RUN.mzML"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_reused_assay_names_across_distinct_data_files() -> Result<()> {
+        // Real PRIDE SDRFs reuse an `assay name` across runs; this repository's
+        // own PXD063291 fixture repeats `run 2`, `run 4` and `run 6` over six
+        // different raw files, all label free. The data-file join is completely
+        // unambiguous there, so the table has to load.
+        let input = concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\n",
+            "sample-a\trun 2\tSet12_A2.raw\tAC=MS:1002038;NT=label free sample\n",
+            "sample-b\trun 2\tSet12_B1.raw\tAC=MS:1002038;NT=label free sample\n",
+        );
+
+        let table = SdrfTable::from_reader(input.as_bytes())?;
+
+        // Each row is still reachable through its own data file.
+        assert_eq!(
+            table.lookup("Set12_A2.raw", None)?.sample_accession,
+            "sample-a"
+        );
+        assert_eq!(table.lookup("Set12_B1", None)?.sample_accession, "sample-b");
+        Ok(())
+    }
+
+    #[test]
+    fn reused_assay_name_is_ambiguous_only_when_looked_up_by_that_name() -> Result<()> {
+        // Keeping the alias out of the duplicate check must not turn a genuinely
+        // ambiguous lookup into a silent first-wins answer: asking for the
+        // shared assay name itself still has no single right answer.
+        let input = concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\n",
+            "sample-a\trun 2\tSet12_A2.raw\tAC=MS:1002038;NT=label free sample\n",
+            "sample-b\trun 2\tSet12_B1.raw\tAC=MS:1002038;NT=label free sample\n",
+        );
+
+        let table = SdrfTable::from_reader(input.as_bytes())?;
+        let message = table
+            .lookup("run 2", None)
+            .err()
+            .ok_or_else(|| invalid_input("ambiguous assay-name lookup unexpectedly succeeded"))?
+            .to_string();
+
+        assert!(message.contains("ambiguous"), "{message}");
         Ok(())
     }
 
