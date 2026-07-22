@@ -329,7 +329,19 @@ class Feature:
                     " FROM parquet_db_raw, UNNEST(intensities) AS unnest"
                 ).fetchall()
                 positive = [(run, label) for run, label, keep in observed if keep]
-                run_keys = {_normalize_run_key(run) for run, _label in positive}
+                # The run domain has to come from every row, not from the
+                # positive subset. A run whose rows all carry zero intensity
+                # would otherwise drop out of the domain, flipping an LFQ file
+                # onto the TMT branch, where ``_create_unnest_view`` keys on
+                # ``run_file_name`` and folds every MBR-transferred intensity
+                # onto its anchor run. The ``> 0`` filter belongs on the label
+                # side alone, where it exists to ignore unmapped zero labels.
+                run_keys = {
+                    _normalize_run_key(run)
+                    for (run,) in self.parquet_db.execute(
+                        "SELECT DISTINCT run_file_name FROM parquet_db_raw"
+                    ).fetchall()
+                }
                 self._label_is_run = len(positive) > 0 and all(
                     _normalize_run_key(label) in run_keys for _run, label in positive
                 )

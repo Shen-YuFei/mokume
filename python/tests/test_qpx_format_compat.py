@@ -165,6 +165,44 @@ def _make_lfq_qpx_parquet(path: str) -> None:
     pq.write_table(table, path)
 
 
+def _make_zero_anchor_lfq_parquet(path: str) -> None:
+    """LFQ where one run's only anchored row has nothing quantifiable.
+
+    ``A.raw`` anchors a single row whose intensities are all zero -- an
+    identification with no integrated peak. ``B.raw`` anchors a row carrying
+    match-between-runs quant for both runs. The file is still LFQ: every label
+    names a run.
+    """
+    protein = {
+        "accession": "sp|P12345|PROT_HUMAN",
+        "start": 10,
+        "end": 18,
+        "pre": "K",
+        "post": "A",
+    }
+    table = pa.table(
+        {
+            "sequence": ["PEPTIDEA", "PEPTIDEB"],
+            "peptidoform": ["PEPTIDEA", "PEPTIDEB"],
+            "pg_accessions": [[protein], [protein]],
+            "anchor_protein": [protein["accession"], protein["accession"]],
+            "charge": [2, 2],
+            "run_file_name": ["A.raw", "B.raw"],
+            "unique": [True, True],
+            "is_decoy": [False, False],
+            "intensities": [
+                [{"label": "A.raw", "intensity": 0.0}],
+                [
+                    {"label": "A.raw", "intensity": 10.0},
+                    {"label": "B.raw", "intensity": 20.0},
+                ],
+            ],
+        },
+        schema=_NEW_QPX_SCHEMA,
+    )
+    pq.write_table(table, path)
+
+
 def _make_legacy_qpx_parquet(path: str) -> None:
     """Create a mock parquet file in legacy QPX format."""
     intensities_type = pa.list_(
@@ -386,6 +424,29 @@ class TestQpxSdrfIdentity:
             feature.enrich_with_sdrf(str(sdrf_file))
 
         assert "QPX run `run1`" in str(error.value)
+
+    def test_run_with_only_zero_intensities_stays_in_the_run_domain(self, tmp_path):
+        """A run that quantifies nothing must not flip the file onto TMT.
+
+        The run domain decides whether every label names a run (LFQ) or a
+        reporter channel (TMT). Building it from positive intensities alone
+        drops a run whose rows are all zero, so its label stops looking like a
+        run, the file is read as TMT, and every MBR-transferred intensity is
+        folded onto its anchor run -- here A's 10.0 would land on B, giving B
+        30.0 and losing A entirely.
+        """
+        from mokume.io.feature import Feature
+
+        parquet_file = tmp_path / "zero-anchor-lfq.feature.parquet"
+        _make_zero_anchor_lfq_parquet(str(parquet_file))
+
+        feature = Feature(str(parquet_file))
+
+        assert feature._label_is_run is True
+        assert feature.parquet_db.execute(
+            "SELECT sample_accession, sum(intensity) FROM parquet_db "
+            "GROUP BY 1 ORDER BY 1"
+        ).fetchall() == [("A.raw", 10.0), ("B.raw", 20.0)]
 
     def test_failed_run_label_probe_is_refused_rather_than_mapped_to_null(
         self, tmp_path, monkeypatch
