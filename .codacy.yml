@@ -1,20 +1,15 @@
 ---
 # Codacy reads this from the repository root. The previous copy lived in
-# `python/`, where Codacy never looked, so none of these rules were in effect
-# and every engine scanned the test suites as if they were production code.
-# Paths below are therefore repository-relative and must name every test tree:
-# python/tests, rust/tests and the per-crate Rust tests (see issue #52).
+# `python/`, where Codacy never looked, so none of its rules were in effect.
+#
+# Test trees are excluded at the top level rather than per engine: a per-engine
+# `exclude_paths` only silences that one engine, so excluding tests from bandit
+# and opengrep still left pylint reporting missing docstrings on every test
+# function. Test code follows different conventions from production code --
+# bare asserts, fixtures that shadow their own names, no docstrings -- and the
+# repository's own pre-commit and pylint gates still cover it locally.
+# See issue #52.
 engines:
-  flake8:
-    options:
-      per-file-ignores: "python/tests/*:S101"
-  bandit:
-    exclude_paths:
-      - "python/tests/**"
-      - "rust/tests/**"
-      - "rust/crates/*/tests/**"
-      # A whole crate of golden tests: its only source file is test code.
-      - "rust/crates/mokume-golden-tests/**"
   pylint:
     options:
       disable: "arguments-differ,unexpected-keyword-arg,no-value-for-parameter"
@@ -22,14 +17,11 @@ engines:
     options:
       MD013: false
       MD046: false
-  opengrep:
-    # Assertions and fixtures in tests are not production security findings.
-    exclude_paths:
-      - "python/tests/**"
-      - "rust/tests/**"
-      - "rust/crates/*/tests/**"
-      # A whole crate of golden tests: its only source file is test code.
-      - "rust/crates/mokume-golden-tests/**"
 exclude_paths:
   - "docs/spec/**"
   - ".github/workflows/**"
+  - "python/tests/**"
+  - "rust/tests/**"
+  - "rust/crates/*/tests/**"
+  # A whole crate of golden tests: its only source file is test code.
+  - "rust/crates/mokume-golden-tests/**"
