@@ -245,11 +245,9 @@ def test_convert_to_directlfq_format_shape_and_index(lfq_dataset):
         "KEPTPEPBR",
     }, ions
 
-    # SDRF JOIN falls back to ``run_file_name`` for the sample identifier
-    # when the SDRF ``comment[label]`` does not match the parquet channel
-    # value (fixture intentionally mirrors the common quantms-io case where
-    # parquets carry channel='LFQ' but SDRFs spell out 'Label free sample').
-    assert set(wide.columns) == {"run_S1", "run_S2", "run_S3", "run_S4"}
+    # QPX ``LFQ`` and SDRF ``Label free sample`` are the same finite label-free
+    # alias, so each run retains the sample accession declared by the SDRF.
+    assert set(wide.columns) == {"Sample_1", "Sample_2", "Sample_3", "Sample_4"}
 
 
 def test_convert_to_directlfq_format_log2_values(lfq_dataset):

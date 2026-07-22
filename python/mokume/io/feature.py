@@ -22,6 +22,103 @@ from mokume.core.logger import get_logger
 logger = get_logger("mokume.io.feature")
 
 
+def _normalize_run_key(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    key = str(value).strip().replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+    for extension in (".raw", ".mzml", ".d", ".wiff"):
+        if key.endswith(extension):
+            return key[: -len(extension)]
+    return key
+
+
+def _normalize_label_key(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    label = str(value).strip()
+    for part in label.split(";"):
+        part = part.strip()
+        if part.startswith("NT="):
+            label = part[3:].strip()
+            break
+    key = label.lower()
+    if key in {"lfq", "label-free", "label free sample"}:
+        return "label free sample"
+    return key
+
+
+def _sdrf_record_context(records: list[dict]) -> str:
+    return ", ".join(
+        f"record {row['sdrf_record']} (`{row['sdrf_data_file']}`, label `{row['sdrf_label']}`)"
+        for row in records
+    )
+
+
+def _resolve_qpx_sdrf_mapping(
+    sdrf_records: list[dict],
+    qpx_pairs: list[tuple[object, object]],
+    labels_are_runs: bool,
+) -> list[dict]:
+    by_run: dict[str, list[dict]] = {}
+    by_run_label: dict[tuple[str, str], dict] = {}
+    for record in sdrf_records:
+        run_key = record["sdrf_run_key"]
+        label_key = record["sdrf_label_key"]
+        key = (run_key, label_key)
+        if previous := by_run_label.get(key):
+            raise ValueError(
+                "duplicate SDRF mapping for normalized run "
+                f"`{run_key}` and label `{label_key}` at "
+                f"{_sdrf_record_context([previous, record])}"
+            )
+        by_run_label[key] = record
+        by_run.setdefault(run_key, []).append(record)
+
+    resolved = []
+    for qpx_run, qpx_label_value in sorted(
+        qpx_pairs, key=lambda pair: (str(pair[0]), str(pair[1]))
+    ):
+        run_key = _normalize_run_key(qpx_run)
+        label_key = "" if labels_are_runs else _normalize_label_key(qpx_label_value)
+        run_matches = by_run.get(run_key, [])
+        if not labels_are_runs and not label_key:
+            qpx_label = "" if pd.isna(qpx_label_value) else str(qpx_label_value)
+            context = _sdrf_record_context(run_matches) or "no SDRF records"
+            raise ValueError(
+                f"QPX run `{qpx_run}` and label `{qpx_label}` have no reporter "
+                f"label; normalized run occurs in {context}"
+            )
+        exact = by_run_label.get((run_key, label_key))
+        matches = run_matches if labels_are_runs else ([exact] if exact else [])
+        if len(matches) != 1:
+            qpx_label = "" if pd.isna(qpx_label_value) else str(qpx_label_value)
+            if not matches:
+                context = _sdrf_record_context(run_matches) or "no SDRF records"
+                raise ValueError(
+                    f"QPX run `{qpx_run}` and label `{qpx_label}` have no "
+                    f"exact SDRF match; normalized run occurs in {context}"
+                )
+            raise ValueError(
+                f"QPX run `{qpx_run}` and label `{qpx_label}` are ambiguous "
+                f"across {_sdrf_record_context(matches)}"
+            )
+
+        mapped = matches[0].copy()
+        if labels_are_runs and mapped["sdrf_label_key"] not in {
+            "",
+            "label free sample",
+        }:
+            raise ValueError(
+                f"QPX run `{qpx_run}` has no reporter label; "
+                f"{_sdrf_record_context([mapped])} declares a labeled channel"
+            )
+        mapped["qpx_run"] = qpx_run
+        mapped["qpx_label"] = "" if pd.isna(qpx_label_value) else qpx_label_value
+        resolved.append(mapped)
+
+    return resolved
+
+
 @dataclass
 class SQLFilterBuilder:
     """Builds SQL WHERE clauses for filtering parquet data at query time.
@@ -222,18 +319,67 @@ class Feature:
         # checking whether every distinct label is a member of the run_file_name
         # domain (true for LFQ, never for TMT channels).
         self._label_is_run = False
+        self._qpx_sdrf_pairs: list[tuple[object, object]] = []
+        self._qpx_probe_error: Optional[str] = None
         if self._is_new_qpx:
             try:
-                n_off = self.parquet_db.execute(
-                    "SELECT count(*) FROM ("
-                    " SELECT DISTINCT unnest.label AS lbl"
+                observed = self.parquet_db.execute(
+                    "SELECT DISTINCT run_file_name, unnest.label,"
+                    " unnest.intensity IS NOT NULL AND unnest.intensity > 0"
                     " FROM parquet_db_raw, UNNEST(intensities) AS unnest"
-                    ") WHERE lbl NOT IN"
-                    " (SELECT DISTINCT run_file_name FROM parquet_db_raw)"
-                ).fetchone()[0]
-                self._label_is_run = n_off == 0
+                ).fetchall()
+                positive = [(run, label) for run, label, keep in observed if keep]
+                # The run domain has to come from every row, not from the
+                # positive subset. A run whose rows all carry zero intensity
+                # would otherwise drop out of the domain, flipping an LFQ file
+                # onto the TMT branch, where ``_create_unnest_view`` keys on
+                # ``run_file_name`` and folds every MBR-transferred intensity
+                # onto its anchor run. The ``> 0`` filter belongs on the label
+                # side alone, where it exists to ignore unmapped zero labels.
+                run_keys = {
+                    _normalize_run_key(run)
+                    for (run,) in self.parquet_db.execute(
+                        "SELECT DISTINCT run_file_name FROM parquet_db_raw"
+                    ).fetchall()
+                }
+                self._label_is_run = len(positive) > 0 and all(
+                    _normalize_run_key(label) in run_keys for _run, label in positive
+                )
+                if self._label_is_run:
+                    self._qpx_sdrf_pairs = list(
+                        {(label, "") for _run, label in positive}
+                    )
+                else:
+                    self._qpx_sdrf_pairs = positive
             except duckdb.Error as exc:
+                # Swallowing this used to be survivable: the SDRF join fell back
+                # to COALESCE(..., run_file_name), so a failed probe merely lost
+                # the LFQ label refinement. That fallback is gone, and an empty
+                # pair list now yields an empty mapping table, so the LEFT JOIN
+                # makes every sample_accession, condition and mixture NULL. The
+                # probe is still allowed to fail -- callers that never touch
+                # SDRF stay usable -- but enrich_with_sdrf refuses to run on it.
                 logger.debug("label-is-run detection failed: %s", exc)
+                self._qpx_probe_error = str(exc)
+
+    def _require_qpx_sdrf_pairs(self, sdrf_path: str) -> None:
+        """Refuse the new-QPX SDRF join when the run/label probe found nothing.
+
+        The pair list is the only key the new-QPX join matches on, so an empty
+        one registers an empty mapping table and the LEFT JOIN silently turns
+        sample_accession, condition and mixture into NULL for every row.
+        """
+        if self._qpx_sdrf_pairs:
+            return
+        reason = (
+            f"the run/label probe failed with {self._qpx_probe_error}"
+            if self._qpx_probe_error
+            else "the parquet holds no intensity greater than zero"
+        )
+        raise ValueError(
+            f"cannot map QPX intensities onto {sdrf_path}: {reason}. Every "
+            "sample_accession, condition and mixture would be NULL."
+        )
 
     def _create_unnest_view(self) -> None:
         """Create the long-format DuckDB view by unnesting intensities."""
@@ -328,51 +474,72 @@ class Feature:
                     condition_col = col
                     break
 
-        # Strip common raw-file extensions so names match QPX run_file_name
-        def _strip_raw_ext(name: str) -> str:
-            return re.sub(
-                r"\.(raw|mzML|mzml|d|wiff|RAW)$",
-                "",
-                str(name).replace("\\", "/").rsplit("/", maxsplit=1)[-1],
-            )
-
-        # Prepare SDRF mapping with both join keys
-        sdrf_mapping = pd.DataFrame(
-            {
-                "sdrf_run_file": sdrf_df["comment[data file]"].apply(_strip_raw_ext),
-                "sdrf_label": sdrf_df.get("comment[label]", ""),
-                "sdrf_sample_accession": sdrf_df["source name"],
-                "sdrf_condition": (
-                    sdrf_df[condition_col] if condition_col else sdrf_df["source name"]
-                ),
-                "sdrf_biological_replicate": sdrf_df.get(
-                    "characteristics[biological replicate]", 1
-                ),
-                "sdrf_fraction": sdrf_df.get("comment[fraction identifier]", "1"),
-            }
+        sdrf_labels = sdrf_df.get("comment[label]", pd.Series("", index=sdrf_df.index))
+        sdrf_conditions = (
+            sdrf_df[condition_col] if condition_col else sdrf_df["source name"]
         )
-
-        self.parquet_db.register("sdrf_mapping", sdrf_mapping)
+        sdrf_bioreplicates = sdrf_df.get(
+            "characteristics[biological replicate]", pd.Series(1, index=sdrf_df.index)
+        )
+        sdrf_fractions = sdrf_df.get(
+            "comment[fraction identifier]", pd.Series("1", index=sdrf_df.index)
+        )
+        sdrf_records = [
+            {
+                "sdrf_record": record,
+                "sdrf_data_file": data_file,
+                "sdrf_label": "" if pd.isna(label) else label,
+                "sdrf_run_key": _normalize_run_key(data_file),
+                "sdrf_label_key": _normalize_label_key(label),
+                "sdrf_sample_accession": sample,
+                "sdrf_condition": condition,
+                "sdrf_biological_replicate": bioreplicate,
+                "sdrf_fraction": fraction,
+            }
+            for record, data_file, label, sample, condition, bioreplicate, fraction in zip(
+                sdrf_df.index + 1,
+                sdrf_df["comment[data file]"],
+                sdrf_labels,
+                sdrf_df["source name"],
+                sdrf_conditions,
+                sdrf_bioreplicates,
+                sdrf_fractions,
+            )
+        ]
 
         # Build format-aware UNNEST SQL
         charge_col = self._charge_col
         run_col = self._run_col
 
         if self._is_new_qpx:
-            unnest_cols = "unnest.label as channel,\n                unnest.intensity"
+            if self._label_is_run:
+                unnest_cols = (
+                    "NULL::VARCHAR as channel,\n                unnest.intensity"
+                )
+                mapping_run = "unnest.label"
+                mapping_label = "''"
+                run_value = mapping_run
+            else:
+                unnest_cols = (
+                    "unnest.label as channel,\n                unnest.intensity"
+                )
+                mapping_run = run_col
+                mapping_label = "unnest.label"
+                run_value = run_col
             extra_cols = ""
             join_clause = (
-                "ON p.run_file_name = s.sdrf_run_file\n"
-                "                AND (p.channel = s.sdrf_label\n"
-                "                     OR s.sdrf_label IS NULL\n"
-                "                     OR s.sdrf_label = '')"
+                "ON p._mapping_run = s.qpx_run\n"
+                "                AND p._mapping_label = s.qpx_label"
             )
-            sa_fallback = "p.run_file_name"
+            sample_accession = "s.sdrf_sample_accession"
+            condition = "s.sdrf_condition"
         else:
             unnest_cols = "unnest.channel,\n                unnest.intensity"
             extra_cols = ",\n                unnest.sample_accession as _legacy_sa"
             join_clause = "ON p._legacy_sa = s.sdrf_sample_accession"
-            sa_fallback = "p._legacy_sa"
+            sample_accession = "COALESCE(s.sdrf_sample_accession, p._legacy_sa)"
+            condition = "COALESCE(s.sdrf_condition, p._legacy_sa)"
+            run_value = run_col
 
         # Normalize pg_accessions: extract accession strings from struct if needed
         pg_expr = (
@@ -381,12 +548,40 @@ class Feature:
             else "pg_accessions"
         )
 
+        if self._is_new_qpx:
+            self._require_qpx_sdrf_pairs(sdrf_path)
+            sdrf_records = _resolve_qpx_sdrf_mapping(
+                sdrf_records, self._qpx_sdrf_pairs, self._label_is_run
+            )
+            mapping_columns = [
+                "qpx_run",
+                "qpx_label",
+                "sdrf_sample_accession",
+                "sdrf_condition",
+                "sdrf_biological_replicate",
+                "sdrf_fraction",
+            ]
+        else:
+            mapping_columns = [
+                "sdrf_sample_accession",
+                "sdrf_condition",
+                "sdrf_biological_replicate",
+                "sdrf_fraction",
+            ]
+        sdrf_mapping = pd.DataFrame.from_records(sdrf_records, columns=mapping_columns)
+        self.parquet_db.register("sdrf_mapping", sdrf_mapping)
+
         # Optional new QPX columns
         opt_cols_raw = ""
         if self._has_is_decoy:
             opt_cols_raw += ",\n                    is_decoy"
         if self._has_anchor_protein:
             opt_cols_raw += ",\n                    anchor_protein"
+        if self._is_new_qpx:
+            opt_cols_raw += (
+                f",\n                    {mapping_run} as _mapping_run"
+                f",\n                    {mapping_label} as _mapping_label"
+            )
 
         # Create intermediate view for unnested data
         self.parquet_db.execute(
@@ -407,7 +602,7 @@ class Feature:
                     unnest_cols,
                     ",",
                     " ",
-                    run_col,
+                    run_value,
                     " as run",
                     extra_cols,
                     opt_cols_raw,
@@ -433,18 +628,18 @@ class Feature:
                     " p.sequence, p.peptidoform, p.pg_accessions,",
                     " p.charge, p.run_file_name,",
                     ' p."unique",',
-                    " COALESCE(s.sdrf_sample_accession, ",
-                    sa_fallback,
-                    ") as sample_accession,",
+                    " ",
+                    sample_accession,
+                    " as sample_accession,",
                     " p.channel, p.intensity, p.run,",
-                    " COALESCE(s.sdrf_condition, ",
-                    sa_fallback,
-                    ") as condition,",
+                    " ",
+                    condition,
+                    " as condition,",
                     " COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,",
                     " COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,",
-                    " split_part(COALESCE(s.sdrf_sample_accession, ",
-                    sa_fallback,
-                    "), '_', 1) as mixture",
+                    " split_part(",
+                    sample_accession,
+                    ", '_', 1) as mixture",
                     opt_cols_final,
                     " FROM parquet_db_unnested p LEFT JOIN sdrf_mapping s ",
                     join_clause,
@@ -452,6 +647,14 @@ class Feature:
             )
         )
 
+        if self._is_new_qpx:
+            self.samples = list(
+                dict.fromkeys(
+                    record["sdrf_sample_accession"] for record in sdrf_records
+                )
+            )
+        else:
+            self.samples = self.get_unique_samples()
         logger.info("Enriched parquet data with SDRF metadata from %s", sdrf_path)
 
     @staticmethod

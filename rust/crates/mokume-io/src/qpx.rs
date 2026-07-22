@@ -440,6 +440,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Fields, Schema};
 
     use super::flatten_qpx_batch;
+    use crate::sdrf::SdrfTable;
 
     #[test]
     fn flattens_legacy_qpx_sample_accession() -> Result<(), Box<dyn std::error::Error>> {
@@ -526,6 +527,29 @@ mod tests {
         assert_eq!(records[0].intensity, 1000.0);
         assert_eq!(records[1].label.as_deref(), Some("TMT127"));
         assert_eq!(records[1].intensity, 2000.0);
+
+        let sdrf = concat!(
+            "source name\tcomment[data file]\tcomment[label]\tfactor value[group]\n",
+            "sample-126\tRUN1.raw\tTMT126\tcontrol\n",
+            "sample-127\trun1.mzML\ttmt127\ttreated\n",
+        );
+        let table = SdrfTable::from_reader(sdrf.as_bytes())?;
+        let mapped: Vec<_> = records
+            .iter()
+            .map(|record| {
+                table
+                    .lookup(&record.run_file_name, record.label.as_deref())
+                    .map(|row| (row.sample_accession.as_str(), row.condition.as_deref()))
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        assert_eq!(
+            mapped,
+            [
+                ("sample-126", Some("control")),
+                ("sample-127", Some("treated"))
+            ]
+        );
         Ok(())
     }
 
@@ -570,6 +594,24 @@ mod tests {
         // LFQ has no reporter channel; run-file labels must not leak into `label`.
         assert!(records.iter().all(|record| record.label.is_none()));
         assert_eq!(records[1].intensity, 20.0);
+
+        let sdrf = concat!(
+            "source name\tcomment[data file]\tcomment[label]\n",
+            "sample-a\trun_a_01.raw\tLabel free sample\n",
+            "sample-b1\tRUN_B_01.wiff\tLFQ\n",
+            "sample-b2\trun_b_02.d\tlabel-free\n",
+        );
+        let table = SdrfTable::from_reader(sdrf.as_bytes())?;
+        let samples: Vec<_> = records
+            .iter()
+            .map(|record| {
+                table
+                    .lookup(&record.run_file_name, record.label.as_deref())
+                    .map(|row| row.sample_accession.as_str())
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        assert_eq!(samples, ["sample-a", "sample-b1", "sample-b2"]);
         Ok(())
     }
 

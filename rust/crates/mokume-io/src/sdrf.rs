@@ -26,7 +26,7 @@ pub struct SdrfRecord {
 #[derive(Debug, Clone, Default)]
 pub struct SdrfTable {
     records: Vec<SdrfRecord>,
-    by_run: HashMap<String, usize>,
+    by_run: HashMap<String, Vec<usize>>,
     by_run_label: HashMap<(String, String), usize>,
 }
 
@@ -63,17 +63,18 @@ impl SdrfTable {
             records.push(columns.to_record(&record)?);
         }
 
-        Ok(Self::from_records(records))
+        Self::from_records(records)
     }
 
-    pub fn from_records(records: Vec<SdrfRecord>) -> Self {
+    pub fn from_records(records: Vec<SdrfRecord>) -> Result<Self> {
+        let record_count = records.len();
         let mut table = Self {
             records,
-            by_run: HashMap::new(),
-            by_run_label: HashMap::new(),
+            by_run: HashMap::with_capacity(record_count),
+            by_run_label: HashMap::with_capacity(record_count),
         };
-        table.rebuild_index();
-        table
+        table.rebuild_index()?;
+        Ok(table)
     }
 
     pub fn len(&self) -> usize {
@@ -88,31 +89,133 @@ impl SdrfTable {
         &self.records
     }
 
-    pub fn lookup(&self, run_file_name: &str, label: Option<&str>) -> Option<&SdrfRecord> {
+    pub fn lookup(&self, run_file_name: &str, label: Option<&str>) -> Result<&SdrfRecord> {
         let run_key = normalize_file_key(run_file_name);
         if let Some(label) = label {
             let label_key = normalize_label_key(label);
             if let Some(index) = self.by_run_label.get(&(run_key.clone(), label_key)) {
-                return self.records.get(*index);
+                return self.records.get(*index).ok_or_else(|| {
+                    invalid_input(format!(
+                        "SDRF index for QPX run `{run_file_name}` and label `{label}` is invalid"
+                    ))
+                });
             }
+            return match self.by_run.get(&run_key) {
+                Some(indices) => Err(self.unmatched_label(run_file_name, label, indices)),
+                None => Err(invalid_input(format!(
+                    "QPX run `{run_file_name}` and label `{label}` have no exact SDRF match; normalized run has no SDRF records"
+                ))),
+            };
         }
 
-        self.by_run
-            .get(&run_key)
-            .and_then(|index| self.records.get(*index))
+        match self.by_run.get(&run_key).map(Vec::as_slice) {
+            None => Err(invalid_input(format!(
+                "QPX run `{run_file_name}` has no SDRF match"
+            ))),
+            Some([index]) => {
+                let record = self.records.get(*index).ok_or_else(|| {
+                    invalid_input(format!(
+                        "SDRF index for QPX run `{run_file_name}` is invalid"
+                    ))
+                })?;
+                let label_key = record.label.as_deref().map(normalize_label_key);
+                if label_key
+                    .as_deref()
+                    .is_some_and(|label| !label.is_empty() && label != "label free sample")
+                {
+                    return Err(invalid_input(format!(
+                        "QPX run `{run_file_name}` has no reporter label; {} declares a labeled channel",
+                        self.record_context(&[*index])
+                    )));
+                }
+                Ok(record)
+            }
+            Some(indices) => Err(invalid_input(format!(
+                "SDRF run `{run_file_name}` is ambiguous across {}",
+                self.record_context(indices)
+            ))),
+        }
     }
 
-    fn rebuild_index(&mut self) {
+    fn rebuild_index(&mut self) -> Result<()> {
+        self.by_run.clear();
+        self.by_run_label.clear();
+
+        // `comment[data file]` is the row's identity: two rows claiming the
+        // same file under the same label really are a duplicate mapping, and
+        // nothing downstream could pick between them. Index those first so an
+        // alias can never take the slot belonging to a real data file.
         for (index, record) in self.records.iter().enumerate() {
             for key in record.run_keys() {
-                self.by_run.entry(key.clone()).or_insert(index);
-                if let Some(label) = record.label.as_deref() {
-                    self.by_run_label
-                        .entry((key, normalize_label_key(label)))
-                        .or_insert(index);
-                }
+                self.by_run.entry(key).or_default().push(index);
+            }
+            let Some(label) = record.label.as_deref() else {
+                continue;
+            };
+            let key = normalize_file_key(&record.data_file);
+            if key.is_empty() {
+                continue;
+            }
+            let label_key = normalize_label_key(label);
+            if let Some(previous) = self
+                .by_run_label
+                .insert((key.clone(), label_key.clone()), index)
+            {
+                let records = self.record_context(&[previous, index]);
+                return Err(invalid_input(format!(
+                    "duplicate SDRF mapping for normalized run `{key}` and label `{label_key}` at {records}"
+                )));
             }
         }
+
+        // `comment[file uri]` and `assay name` are extra names the same row can
+        // be found under, not identities. Real SDRFs reuse an assay name across
+        // distinct runs -- this repository's own PXD063291 fixture repeats
+        // `run 2`, `run 4` and `run 6` over six different raw files -- so a
+        // collision here is ordinary data, not a mapping error, and rejecting
+        // it would refuse SDRFs whose data-file join is perfectly unambiguous.
+        // Keep the first row, which is what the index did before duplicates
+        // became an error.
+        for (index, record) in self.records.iter().enumerate() {
+            let Some(label) = record.label.as_deref() else {
+                continue;
+            };
+            let label_key = normalize_label_key(label);
+            let data_file_key = normalize_file_key(&record.data_file);
+            for key in record.run_keys() {
+                if key == data_file_key {
+                    continue;
+                }
+                self.by_run_label
+                    .entry((key, label_key.clone()))
+                    .or_insert(index);
+            }
+        }
+        Ok(())
+    }
+
+    fn unmatched_label(&self, run_file_name: &str, label: &str, indices: &[usize]) -> MokumeError {
+        invalid_input(format!(
+            "QPX run `{run_file_name}` and label `{label}` have no exact SDRF match; the run occurs in {}",
+            self.record_context(indices)
+        ))
+    }
+
+    fn record_context(&self, indices: &[usize]) -> String {
+        indices
+            .iter()
+            .filter_map(|index| {
+                self.records.get(*index).map(|record| {
+                    format!(
+                        "record {} (`{}`, label `{}`)",
+                        index + 1,
+                        record.data_file,
+                        record.label.as_deref().unwrap_or("")
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -322,7 +425,11 @@ pub fn normalize_file_key(value: &str) -> String {
 }
 
 pub fn normalize_label_key(value: &str) -> String {
-    extract_label_value(value).trim().to_ascii_lowercase()
+    let key = extract_label_value(value).trim().to_ascii_lowercase();
+    match key.as_str() {
+        "lfq" | "label-free" | "label free sample" => "label free sample".to_owned(),
+        _ => key,
+    }
 }
 
 fn extract_label_value(value: &str) -> String {
@@ -398,12 +505,8 @@ mod tests {
         );
 
         let table = SdrfTable::from_reader(input.as_bytes())?;
-        let label_free = table
-            .lookup("/tmp/run1.raw", Some("label free sample"))
-            .ok_or_else(|| invalid_input("missing label-free lookup"))?;
-        let tmt = table
-            .lookup("run2.raw", Some("TMT126"))
-            .ok_or_else(|| invalid_input("missing TMT lookup"))?;
+        let label_free = table.lookup("/tmp/run1.raw", Some("label free sample"))?;
+        let tmt = table.lookup("run2.raw", Some("TMT126"))?;
 
         assert_eq!(table.len(), 2);
         assert_eq!(label_free.sample_accession, "sample-1");
@@ -451,12 +554,8 @@ mod tests {
         );
 
         let table = SdrfTable::from_reader(input.as_bytes())?;
-        let pooled = table
-            .lookup("p1_ref.raw", None)
-            .ok_or_else(|| invalid_input("missing pooled lookup"))?;
-        let other = table
-            .lookup("p1_a.raw", None)
-            .ok_or_else(|| invalid_input("missing non-pooled lookup"))?;
+        let pooled = table.lookup("p1_ref.raw", None)?;
+        let other = table.lookup("p1_a.raw", None)?;
 
         assert_eq!(pooled.pooled_sample.as_deref(), Some("pooled"));
         assert_eq!(other.pooled_sample.as_deref(), Some("not pooled"));
@@ -482,6 +581,10 @@ mod tests {
                 "key for {name}"
             );
         }
+        for label in ["LFQ", "label-free", "AC=MS:1002038;NT=label free sample"] {
+            assert_eq!(normalize_label_key(label), "label free sample");
+        }
+        assert_eq!(normalize_label_key(" TMT127N "), "tmt127n");
     }
 
     #[test]
@@ -495,10 +598,140 @@ mod tests {
             "B1\tRun_Condition_B_01.raw\tB\n",
         );
         let table = SdrfTable::from_reader(input.as_bytes())?;
-        let a = table
-            .lookup("Run_Condition_A_01", None)
-            .ok_or_else(|| invalid_input("missing extension-less lookup"))?;
+        let a = table.lookup("Run_Condition_A_01", None)?;
         assert_eq!(a.condition.as_deref(), Some("A"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_duplicate_normalized_run_label_keys() -> Result<()> {
+        for rows in [
+            [
+                "sample-a\trun.raw\tTMT126\n",
+                "sample-b\tRUN.mzML\ttmt126\n",
+            ],
+            [
+                "sample-b\tRUN.mzML\ttmt126\n",
+                "sample-a\trun.raw\tTMT126\n",
+            ],
+        ] {
+            let input = format!(
+                "source name\tcomment[data file]\tcomment[label]\n{}{}",
+                rows[0], rows[1]
+            );
+
+            let error = SdrfTable::from_reader(input.as_bytes())
+                .err()
+                .ok_or_else(|| invalid_input("duplicate mapping unexpectedly succeeded"))?;
+            let message = error.to_string();
+
+            assert!(message.contains("duplicate SDRF mapping"));
+            assert!(message.contains("run"));
+            assert!(message.contains("tmt126"));
+            assert!(message.contains("record 1"));
+            assert!(message.contains("record 2"));
+            assert!(message.contains("run.raw"));
+            assert!(message.contains("RUN.mzML"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_reused_assay_names_across_distinct_data_files() -> Result<()> {
+        // Real PRIDE SDRFs reuse an `assay name` across runs; this repository's
+        // own PXD063291 fixture repeats `run 2`, `run 4` and `run 6` over six
+        // different raw files, all label free. The data-file join is completely
+        // unambiguous there, so the table has to load.
+        let input = concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\n",
+            "sample-a\trun 2\tSet12_A2.raw\tAC=MS:1002038;NT=label free sample\n",
+            "sample-b\trun 2\tSet12_B1.raw\tAC=MS:1002038;NT=label free sample\n",
+        );
+
+        let table = SdrfTable::from_reader(input.as_bytes())?;
+
+        // Each row is still reachable through its own data file.
+        assert_eq!(
+            table.lookup("Set12_A2.raw", None)?.sample_accession,
+            "sample-a"
+        );
+        assert_eq!(table.lookup("Set12_B1", None)?.sample_accession, "sample-b");
+        Ok(())
+    }
+
+    #[test]
+    fn reused_assay_name_is_ambiguous_only_when_looked_up_by_that_name() -> Result<()> {
+        // Keeping the alias out of the duplicate check must not turn a genuinely
+        // ambiguous lookup into a silent first-wins answer: asking for the
+        // shared assay name itself still has no single right answer.
+        let input = concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\n",
+            "sample-a\trun 2\tSet12_A2.raw\tAC=MS:1002038;NT=label free sample\n",
+            "sample-b\trun 2\tSet12_B1.raw\tAC=MS:1002038;NT=label free sample\n",
+        );
+
+        let table = SdrfTable::from_reader(input.as_bytes())?;
+        let message = table
+            .lookup("run 2", None)
+            .err()
+            .ok_or_else(|| invalid_input("ambiguous assay-name lookup unexpectedly succeeded"))?
+            .to_string();
+
+        assert!(message.contains("ambiguous"), "{message}");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unmatched_or_ambiguous_channel_lookup() -> Result<()> {
+        let input = concat!(
+            "source name\tcomment[data file]\tcomment[label]\n",
+            "sample-126\tplex.raw\tTMT126\n",
+            "sample-127n\tplex.raw\tTMT127N\n",
+        );
+        let table = SdrfTable::from_reader(input.as_bytes())?;
+
+        let unmatched = table
+            .lookup("PLEX.mzML", Some("TMT129"))
+            .err()
+            .ok_or_else(|| invalid_input("unknown channel unexpectedly matched"))?
+            .to_string();
+        let ambiguous = table
+            .lookup("plex", None)
+            .err()
+            .ok_or_else(|| invalid_input("run-only lookup unexpectedly matched"))?
+            .to_string();
+
+        assert!(unmatched.contains("QPX run `PLEX.mzML` and label `TMT129`"));
+        assert!(unmatched.contains("record 1 (`plex.raw`, label `TMT126`)"));
+        assert!(unmatched.contains("record 2 (`plex.raw`, label `TMT127N`)"));
+        assert!(ambiguous.contains("SDRF run `plex` is ambiguous"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_missing_reporter_label_but_accepts_label_free_run() -> Result<()> {
+        let tmt = SdrfTable::from_reader(
+            concat!(
+                "source name\tcomment[data file]\tcomment[label]\n",
+                "sample-126\tplex.raw\tTMT126\n",
+            )
+            .as_bytes(),
+        )?;
+        let lfq = SdrfTable::from_reader(
+            concat!(
+                "source name\tcomment[data file]\tcomment[label]\n",
+                "sample-lfq\trun.raw\tLabel free sample\n",
+            )
+            .as_bytes(),
+        )?;
+
+        let error = tmt
+            .lookup("plex", None)
+            .err()
+            .ok_or_else(|| invalid_input("missing reporter label unexpectedly matched"))?;
+
+        assert!(error.to_string().contains("has no reporter label"));
+        assert_eq!(lfq.lookup("run", None)?.sample_accession, "sample-lfq");
         Ok(())
     }
 }

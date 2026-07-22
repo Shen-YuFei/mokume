@@ -85,3 +85,46 @@ def test_zero_range_metric_is_guarded(name):
     normalizer = PluginRegistry.get("normalization.feature", name)
     metric = normalizer.transform_series(pd.Series([5.0, 5.0, 5.0]))
     assert metric == 1.0
+
+
+class TestLegacyEnumReplicateMetric:
+    """The FeatureNormalizationMethod enum owes the same scalar contract.
+
+    ``normalize_runs`` divides each run's intensities by that run's metric
+    relative to the sample average, so a Series here misaligns on index, turns
+    the running total into NaN, and blanks every intensity for the sample.
+    """
+
+    @pytest.mark.parametrize("name", ["Mean", "Median", "Max", "Global", "IQR"])
+    def test_supported_methods_return_a_scalar(self, name):
+        from mokume.model.normalization import FeatureNormalizationMethod
+
+        values = pd.Series([1.0, 2.0, 3.0, 4.0])
+        metric = getattr(FeatureNormalizationMethod, name)._replicate_metric(values)
+        assert isinstance(metric, numbers.Real)
+        assert not isinstance(metric, pd.Series)
+        assert np.isfinite(metric)
+
+    def test_rescaling_methods_say_so_instead_of_returning_a_series(self):
+        """Max_Min has no single scale factor; it must refuse, not emit NaN."""
+        from mokume.model.normalization import FeatureNormalizationMethod
+
+        values = pd.Series([1.0, 2.0, 3.0, 4.0])
+        with pytest.raises(NotImplementedError, match="scale factor"):
+            FeatureNormalizationMethod.Max_Min._replicate_metric(values)
+
+    def test_multi_run_sample_stays_finite(self):
+        """The end-to-end path that used to produce an all-NaN sample."""
+        from mokume.core.constants import NORM_INTENSITY, SAMPLE_ID, TECHREPLICATE
+        from mokume.model.normalization import FeatureNormalizationMethod
+
+        df = pd.DataFrame(
+            {
+                SAMPLE_ID: ["S1"] * 6,
+                TECHREPLICATE: [1, 1, 1, 2, 2, 2],
+                NORM_INTENSITY: [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            }
+        )
+        out = FeatureNormalizationMethod.Median.normalize_runs(df.copy(), 2)
+        assert out[NORM_INTENSITY].notna().all()
+        assert np.isfinite(out[NORM_INTENSITY]).all()
