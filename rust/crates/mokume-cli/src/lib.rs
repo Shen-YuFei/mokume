@@ -439,8 +439,17 @@ struct Features2ProteinsArgs {
     #[arg(long = "irs")]
     irs: bool,
 
-    #[arg(long = "irs-reference-samples")]
+    #[arg(
+        long = "irs-reference-samples",
+        conflicts_with = "irs_reference_sample"
+    )]
     irs_reference_samples: Option<String>,
+
+    #[arg(
+        long = "irs-reference-sample",
+        conflicts_with = "irs_reference_samples"
+    )]
+    irs_reference_sample: Vec<String>,
 
     #[arg(long = "irs-sdrf-column")]
     irs_sdrf_column: Option<String>,
@@ -613,7 +622,11 @@ impl Features2ProteinsArgs {
             },
             irs: IrsConfig {
                 enabled: self.irs,
-                reference_samples: split_csv_option(self.irs_reference_samples),
+                reference_samples: if self.irs_reference_sample.is_empty() {
+                    split_csv_option(self.irs_reference_samples)
+                } else {
+                    Some(self.irs_reference_sample)
+                },
                 sdrf_column: self.irs_sdrf_column,
                 sdrf_values: split_csv_option(self.irs_sdrf_values),
                 reference_regex: self.irs_reference_regex,
@@ -1277,6 +1290,52 @@ mod tests {
     }
 
     #[test]
+    fn repeatable_reference_sample_preserves_commas() {
+        let cli = Cli::parse_from([
+            "mokume",
+            "features2proteins",
+            "-p",
+            "input.parquet",
+            "-o",
+            "protein.csv",
+            "--irs-reference-sample",
+            "Pool, batch A",
+            "--irs-reference-sample",
+            "Pool B",
+        ]);
+
+        let Commands::Features2Proteins(args) = cli.command else {
+            panic!("expected features2proteins command");
+        };
+        let config = args.into_config();
+
+        assert_eq!(
+            config.irs.reference_samples.as_deref(),
+            Some(&["Pool, batch A".to_string(), "Pool B".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn rejects_mixed_reference_sample_encodings() {
+        let Err(error) = Cli::try_parse_from([
+            "mokume",
+            "features2proteins",
+            "-p",
+            "input.parquet",
+            "-o",
+            "protein.csv",
+            "--irs-reference-samples",
+            "Pool A,Pool B",
+            "--irs-reference-sample",
+            "Pool C",
+        ]) else {
+            panic!("mixed reference-sample encodings should conflict");
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn top_level_help_lists_compute_commands() {
         let help = render_help(Cli::command());
         for command in [
@@ -1339,6 +1398,7 @@ mod tests {
             "--batch-ref",
             "--irs",
             "--irs-reference-samples",
+            "--irs-reference-sample",
             "--irs-sdrf-column",
             "--irs-sdrf-values",
             "--irs-reference-regex",
