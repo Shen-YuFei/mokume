@@ -320,6 +320,7 @@ class Feature:
         # domain (true for LFQ, never for TMT channels).
         self._label_is_run = False
         self._qpx_sdrf_pairs: list[tuple[object, object]] = []
+        self._qpx_probe_error: Optional[str] = None
         if self._is_new_qpx:
             try:
                 observed = self.parquet_db.execute(
@@ -339,7 +340,34 @@ class Feature:
                 else:
                     self._qpx_sdrf_pairs = positive
             except duckdb.Error as exc:
+                # Swallowing this used to be survivable: the SDRF join fell back
+                # to COALESCE(..., run_file_name), so a failed probe merely lost
+                # the LFQ label refinement. That fallback is gone, and an empty
+                # pair list now yields an empty mapping table, so the LEFT JOIN
+                # makes every sample_accession, condition and mixture NULL. The
+                # probe is still allowed to fail -- callers that never touch
+                # SDRF stay usable -- but enrich_with_sdrf refuses to run on it.
                 logger.debug("label-is-run detection failed: %s", exc)
+                self._qpx_probe_error = str(exc)
+
+    def _require_qpx_sdrf_pairs(self, sdrf_path: str) -> None:
+        """Refuse the new-QPX SDRF join when the run/label probe found nothing.
+
+        The pair list is the only key the new-QPX join matches on, so an empty
+        one registers an empty mapping table and the LEFT JOIN silently turns
+        sample_accession, condition and mixture into NULL for every row.
+        """
+        if self._qpx_sdrf_pairs:
+            return
+        reason = (
+            f"the run/label probe failed with {self._qpx_probe_error}"
+            if self._qpx_probe_error
+            else "the parquet holds no intensity greater than zero"
+        )
+        raise ValueError(
+            f"cannot map QPX intensities onto {sdrf_path}: {reason}. Every "
+            "sample_accession, condition and mixture would be NULL."
+        )
 
     def _create_unnest_view(self) -> None:
         """Create the long-format DuckDB view by unnesting intensities."""
@@ -509,6 +537,7 @@ class Feature:
         )
 
         if self._is_new_qpx:
+            self._require_qpx_sdrf_pairs(sdrf_path)
             sdrf_records = _resolve_qpx_sdrf_mapping(
                 sdrf_records, self._qpx_sdrf_pairs, self._label_is_run
             )

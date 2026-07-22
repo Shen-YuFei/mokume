@@ -8,6 +8,7 @@ Legacy QPX format columns:
   - precursor_charge, reference_file_name, intensities[{sample_accession, channel, intensity}]
 """
 
+import duckdb
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -385,6 +386,67 @@ class TestQpxSdrfIdentity:
             feature.enrich_with_sdrf(str(sdrf_file))
 
         assert "QPX run `run1`" in str(error.value)
+
+    def test_failed_run_label_probe_is_refused_rather_than_mapped_to_null(
+        self, tmp_path, monkeypatch
+    ):
+        """A DuckDB error in the probe must not silently blank every sample.
+
+        The probe is allowed to fail -- ``Feature`` stays usable for callers
+        that never touch SDRF. But its pair list is the only thing the new-QPX
+        SDRF join has to match on, so an empty list leaves the LEFT JOIN with
+        nothing and turns sample_accession, condition and mixture into NULL for
+        every row. Before the fallback ``COALESCE(..., run_file_name)`` was
+        removed, a failed probe merely lost the LFQ label refinement.
+        """
+        from mokume.io.feature import Feature
+
+        probe_sql = "SELECT DISTINCT run_file_name, unnest.label,"
+
+        class FailingProbeConnection:
+            """Delegates every call, but makes the probe query raise."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def execute(self, query, *args, **kwargs):
+                """Raise on the probe query, delegate everything else."""
+                if isinstance(query, str) and query.startswith(probe_sql):
+                    raise duckdb.OutOfMemoryException("Out of Memory Error: probe")
+                return self._inner.execute(query, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        parquet_file = tmp_path / "probe-fails.feature.parquet"
+        sdrf_file = tmp_path / "mapping.sdrf.tsv"
+        _make_new_qpx_parquet(str(parquet_file))
+        _write_sdrf(
+            sdrf_file,
+            [
+                ("sample-r1-126", "run1.raw", "TMT126", "A"),
+                ("sample-r1-127", "run1.raw", "TMT127", "B"),
+                ("sample-r2-126", "run2.raw", "TMT126", "C"),
+                ("sample-r2-127", "run2.raw", "TMT127", "D"),
+            ],
+        )
+
+        real_connect = duckdb.connect
+        monkeypatch.setattr(
+            duckdb,
+            "connect",
+            lambda *a, **kw: FailingProbeConnection(real_connect(*a, **kw)),
+        )
+        feature = Feature(str(parquet_file))
+
+        # Constructing the reader still works; only the SDRF join is refused.
+        assert feature._qpx_sdrf_pairs == []
+        assert "Out of Memory Error" in feature._qpx_probe_error
+
+        with pytest.raises(ValueError, match="probe failed") as error:
+            feature.enrich_with_sdrf(str(sdrf_file))
+
+        assert "Out of Memory Error" in str(error.value)
 
 
 class TestNewQPXFormat:
