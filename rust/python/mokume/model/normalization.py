@@ -393,6 +393,24 @@ class PeptideNormalizationMethod(Enum):
         return self.normalize_sample(dataset_df, sample, med_map)
 
 
+def parse_normalization_methods(
+    run_method: str,
+    sample_method: str,
+) -> tuple[FeatureNormalizationMethod, PeptideNormalizationMethod]:
+    """Parse run and sample normalization names with user-facing errors."""
+    try:
+        run = FeatureNormalizationMethod.from_str(run_method)
+    except (AttributeError, KeyError):
+        raise ValueError(f"Unknown run normalization method: {run_method!r}") from None
+    try:
+        sample = PeptideNormalizationMethod.from_str(sample_method)
+    except (AttributeError, KeyError):
+        raise ValueError(
+            f"Unknown sample normalization method: {sample_method!r}"
+        ) from None
+    return run, sample
+
+
 @PeptideNormalizationMethod.GlobalMedian.register_replicate_fn
 def global_median(dataset_df, sample: str, med_map: dict):
     """Global median normalization of the data."""

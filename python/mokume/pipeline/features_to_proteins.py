@@ -26,6 +26,7 @@ from typing import Optional
 from mokume.core.constants import PROTEIN_NAME, load_sdrf
 from mokume.core.dataset import QpxDataset
 from mokume.core.logger import get_logger
+from mokume.model.normalization import parse_normalization_methods
 from mokume.pipeline.config import (
     PipelineConfig,
     InputConfig,
@@ -106,6 +107,10 @@ class QuantificationPipeline:
 
     def _validate_config(self):
         """Validate configuration and check for required parameters."""
+        parse_normalization_methods(
+            self.config.normalization.run_method,
+            self.config.normalization.sample_method,
+        )
         if not Path(self.config.input.parquet).exists():
             raise FileNotFoundError(
                 f"Parquet file not found: {self.config.input.parquet}"
