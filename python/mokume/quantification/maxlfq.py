@@ -74,9 +74,7 @@ def _resolve_directlfq_num_cores(threads: int) -> Optional[int]:
     return None
 
 
-def _select_reference_peptide(
-    log_matrix: np.ndarray, valid_counts: np.ndarray
-) -> int:
+def _select_reference_peptide(log_matrix: np.ndarray, valid_counts: np.ndarray) -> int:
     """Pick the reference peptide deterministically, independent of row order.
 
     The reference anchors the median-shift alignment, so choosing a different one
@@ -104,7 +102,9 @@ def _select_reference_peptide(
 
     # Final deterministic tiebreak: lexicographically smallest trace. NaNs are
     # mapped to +inf so they sort last and never compare equal to a real value.
-    keys = np.where(np.isnan(log_matrix[candidates, :]), np.inf, log_matrix[candidates, :])
+    keys = np.where(
+        np.isnan(log_matrix[candidates, :]), np.inf, log_matrix[candidates, :]
+    )
     order = sorted(range(len(candidates)), key=lambda i: tuple(keys[i]))
     return int(candidates[order[0]])
 

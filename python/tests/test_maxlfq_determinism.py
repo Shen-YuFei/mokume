@@ -23,8 +23,8 @@ def _matrix():
     return np.array(
         [
             [100.0, 200.0, 400.0, 800.0],
-            [ 50.0, 100.0, 200.0, 400.0],
-            [ 10.0,  20.0,  40.0, np.nan],
+            [50.0, 100.0, 200.0, 400.0],
+            [10.0, 20.0, 40.0, np.nan],
             [400.0, 800.0, 1600.0, 3200.0],
         ]
     )
@@ -59,9 +59,9 @@ def test_reference_selection_is_invariant_to_row_permutation():
 def test_reference_prefers_most_measured_then_most_intense():
     log_m = np.array(
         [
-            [1.0, 1.0, np.nan],   # fewer measurements - never chosen
-            [2.0, 2.0, 2.0],      # full, total 6
-            [3.0, 3.0, 3.0],      # full, total 9 -> the reference
+            [1.0, 1.0, np.nan],  # fewer measurements - never chosen
+            [2.0, 2.0, 2.0],  # full, total 6
+            [3.0, 3.0, 3.0],  # full, total 9 -> the reference
         ]
     )
     counts = np.sum(~np.isnan(log_m), axis=1)
@@ -88,13 +88,21 @@ def test_process_protein_is_invariant_to_dataframe_row_order(seed):
     rows = []
     for pep, scale in (("PEPTIDEA", 1.0), ("PEPTIDEB", 0.5), ("PEPTIDEC", 4.0)):
         for i, sample in enumerate(("S1", "S2", "S3")):
-            rows.append({"protein": "P1", "peptide": pep, "sample": sample,
-                         "intensity": 100.0 * scale * (i + 1)})
+            rows.append(
+                {
+                    "protein": "P1",
+                    "peptide": pep,
+                    "sample": sample,
+                    "intensity": 100.0 * scale * (i + 1),
+                }
+            )
     df = pd.DataFrame(rows)
     samples = ["S1", "S2", "S3"]
 
     def run(frame):
-        out = _process_protein("P1", frame, "peptide", "intensity", "sample", samples, 2)
+        out = _process_protein(
+            "P1", frame, "peptide", "intensity", "sample", samples, 2
+        )
         return {r["sample"]: r["intensity"] for r in out}
 
     base = run(df)
