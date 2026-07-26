@@ -74,6 +74,41 @@ def _resolve_directlfq_num_cores(threads: int) -> Optional[int]:
     return None
 
 
+def _select_reference_peptide(
+    log_matrix: np.ndarray, valid_counts: np.ndarray
+) -> int:
+    """Pick the reference peptide deterministically, independent of row order.
+
+    The reference anchors the median-shift alignment, so choosing a different one
+    changes every aligned trace and therefore the protein quantity. ``np.argmax``
+    breaks ties by row position, and ties are the common case (e.g. every peptide
+    observed in every sample), so the result depended on the order rows happened to
+    arrive in -- which is not guaranteed by a parallel/unordered upstream read. Two
+    identical runs could then differ by more than 2 log2 units on a protein.
+
+    Selection is therefore made on the VALUES, which makes it invariant to any row
+    permutation: most quantified samples, then highest total intensity (the most
+    reliable anchor), then a lexicographic comparison of the trace as a final,
+    purely deterministic tiebreak. Rows that remain tied after all three are
+    numerically identical, so either choice yields the same alignment.
+    """
+    candidates = np.flatnonzero(valid_counts == valid_counts.max())
+    if candidates.size == 1:
+        return int(candidates[0])
+
+    # Prefer the most intense trace among those with the most measurements.
+    totals = np.nansum(log_matrix[candidates, :], axis=1)
+    candidates = candidates[np.flatnonzero(totals == totals.max())]
+    if candidates.size == 1:
+        return int(candidates[0])
+
+    # Final deterministic tiebreak: lexicographically smallest trace. NaNs are
+    # mapped to +inf so they sort last and never compare equal to a real value.
+    keys = np.where(np.isnan(log_matrix[candidates, :]), np.inf, log_matrix[candidates, :])
+    order = sorted(range(len(candidates)), key=lambda i: tuple(keys[i]))
+    return int(candidates[order[0]])
+
+
 def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
     """
     Solve the MaxLFQ optimization problem for a single protein (built-in fallback).
@@ -125,7 +160,7 @@ def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
     if valid_counts.max() == 0:
         return np.full(n_samples, np.nan)
 
-    ref_peptide_idx = np.argmax(valid_counts)
+    ref_peptide_idx = _select_reference_peptide(log_matrix, valid_counts)
     ref_trace = log_matrix[ref_peptide_idx, :]
 
     # Align other peptides to reference using median shift
@@ -206,7 +241,11 @@ def _process_protein(
     """
     _ = run_column
     results = []
-    peptides = protein_data[peptide_column].unique()
+    # Sorted, not order-of-appearance: ``Series.unique()`` preserves the order rows
+    # happen to arrive in, which an unordered/parallel upstream read does not fix.
+    # That order feeds the pivot below and therefore the matrix handed to MaxLFQ, so
+    # leaving it unsorted makes the whole protein quantification input-order dependent.
+    peptides = np.sort(protein_data[peptide_column].unique())
 
     if len(peptides) < min_peptides:
         # Fall back to median for proteins with few peptides
