@@ -4816,9 +4816,6 @@ fn compile_exclude_sequence_patterns(patterns: &[String]) -> Result<Vec<Regex>> 
 }
 
 fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result<()> {
-    if !config.enabled {
-        return Ok(());
-    }
     let intensity = &config.intensity;
     // `cv_threshold` is applied via the `collect_intensity_group_filters` pre-pass
     // (per-`(sample, protein, canonical)` CV over the `min_unique`-gated raw
@@ -4903,6 +4900,13 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     Ok(())
 }
 
+fn active_filter_pipeline(config: &FeatureToPeptidesConfig) -> Option<&PreprocessingFilterConfig> {
+    config
+        .filter_pipeline
+        .as_ref()
+        .filter(|pipeline| pipeline.enabled)
+}
+
 fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Result<()> {
     if !config.input.parquet.exists() {
         return Err(MokumeError::MissingInput {
@@ -4914,7 +4918,7 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
         }
     }
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = active_filter_pipeline(config) {
         validate_filter_pipeline_subset(pipeline)?;
     }
 
@@ -4956,6 +4960,7 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
 
 pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> {
     validate_features_to_peptides_config(config)?;
+    let filter_pipeline = active_filter_pipeline(config);
 
     // Route the deterministic peptide export through the protein pipeline's
     // ingest machinery by building a Sum-quantification config whose only
@@ -4965,7 +4970,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // contaminant removal and the per-`(protein, sample)` unique-peptide gate
     // (Python wires both through the same config), replacing the default
     // load-time settings.
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         proteins_config.filtering.remove_contaminants =
             pipeline.protein.remove_contaminants || pipeline.protein.remove_decoys;
         proteins_config.filtering.min_unique_peptides = pipeline.protein.min_unique_peptides;
@@ -4980,10 +4985,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // contaminants on the **raw** `pg_accessions` before computing the median.
     // Route the filter pipeline's custom patterns through (default list -> the
     // existing `is_contaminant` fallback inside `matches_sql_contaminant`).
-    let median_contaminant_patterns: &[String] = config
-        .filter_pipeline
-        .as_ref()
-        .map_or(&[], |pipeline| &pipeline.protein.contaminant_patterns);
+    let median_contaminant_patterns: &[String] =
+        filter_pipeline.map_or(&[], |pipeline| &pipeline.protein.contaminant_patterns);
     let mut intensity_factors = if config.skip_normalization {
         IntensityFactors::default()
     } else {
@@ -5007,10 +5010,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // and `contaminant_patterns` come from the (pipeline-overridden) protein
     // block; `min_intensity` comes from the pipeline's intensity block, else 0.
     if let Some(irs) = &config.irs {
-        let irs_min_intensity = config
-            .filter_pipeline
-            .as_ref()
-            .map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
+        let irs_min_intensity =
+            filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
         intensity_factors.irs_scale_by_techrep = collect_irs_scale(
             &proteins_config.input.parquet,
             irs,
@@ -5037,8 +5038,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     if config.remove_low_frequency_peptides {
         state.low_frequency = Some(LowFrequencyTracker::default());
     }
-    state.peptide_filters = config.filter_pipeline.clone();
-    if let Some(pipeline) = &config.filter_pipeline {
+    state.peptide_filters = filter_pipeline.cloned();
+    if let Some(pipeline) = filter_pipeline {
         state.excluded_sequence_regexes =
             compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
         if let Some(peptides) = &mut state.export_rows.peptides {
@@ -5051,7 +5052,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `collect_intensity_factors`, so excluded samples still feed it -- matching
     // Python, where `get_median_map` runs via `SQLFilterBuilder` ahead of the
     // per-sample filter pipeline).
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         state.run_qc_excluded_samples = collect_run_qc_exclusions(
             &proteins_config.input.parquet,
             proteins_config.filtering,
@@ -5069,7 +5070,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `min_unique` gate, pre feature-normalization). They share the pass so the
     // quantile bounds see the post-CV survivors (Python orders CV before Quantile).
     // Excluded Run-QC samples are skipped so they do not feed either decision.
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         let group_filters = collect_intensity_group_filters(
             &proteins_config.input.parquet,
             proteins_config.filtering,
@@ -5115,10 +5116,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `min_unique_peptides` (the Run-QC / quantile pre-passes stay at 0 because they
     // run ahead of MinPeptideFilter).
     let min_unique = if config.keep_shared_peptides {
-        config
-            .filter_pipeline
-            .as_ref()
-            .map_or(0, |pipeline| pipeline.protein.min_unique_peptides)
+        filter_pipeline.map_or(0, |pipeline| pipeline.protein.min_unique_peptides)
     } else {
         proteins_config.filtering.min_unique_peptides
     };
