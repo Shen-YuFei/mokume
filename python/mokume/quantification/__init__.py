@@ -8,24 +8,9 @@ DirectLFQ is an optional dependency. Install with:
     pip install mokume[directlfq]
 """
 
-from mokume.quantification.base import ProteinQuantificationMethod
-from mokume.quantification.ibaq import (
-    peptides_to_protein,
-    normalize_ibaq,
-    extract_fasta,
-    ConcentrationWeightByProteomicRuler,
-)
-from mokume.quantification.top3 import Top3Quantification
-from mokume.quantification.topn import TopNQuantification
-from mokume.quantification.maxlfq import MaxLFQQuantification
-from mokume.quantification.all_peptides import AllPeptidesQuantification
-from mokume.quantification.ratio import RatioQuantification
-from mokume.quantification.tmt_abundance import TMTAbundanceQuantification
-from mokume.quantification.tmt_reporter import TMTReporterIntensityQuantification
-from mokume.quantification.spectral_count import SpectralCountQuantification
+import importlib
 
-# Lazy import for optional DirectLFQ
-from mokume.quantification.directlfq import is_directlfq_available
+from mokume.quantification.base import ProteinQuantificationMethod
 
 __all__ = [
     # Base class
@@ -53,13 +38,84 @@ __all__ = [
 ]
 
 
-def __getattr__(name):
-    """Lazy import for optional dependencies."""
-    if name == "DirectLFQQuantification":
-        from mokume.quantification.directlfq import DirectLFQQuantification
+_LAZY_EXPORTS = {
+    "peptides_to_protein": ("mokume.quantification.ibaq", "peptides_to_protein"),
+    "normalize_ibaq": ("mokume.quantification.ibaq", "normalize_ibaq"),
+    "extract_fasta": ("mokume.quantification.ibaq", "extract_fasta"),
+    "ConcentrationWeightByProteomicRuler": (
+        "mokume.quantification.ibaq",
+        "ConcentrationWeightByProteomicRuler",
+    ),
+    "Top3Quantification": (
+        "mokume.quantification.top3",
+        "Top3Quantification",
+    ),
+    "TopNQuantification": (
+        "mokume.quantification.topn",
+        "TopNQuantification",
+    ),
+    "MaxLFQQuantification": (
+        "mokume.quantification.maxlfq",
+        "MaxLFQQuantification",
+    ),
+    "AllPeptidesQuantification": (
+        "mokume.quantification.all_peptides",
+        "AllPeptidesQuantification",
+    ),
+    "RatioQuantification": (
+        "mokume.quantification.ratio",
+        "RatioQuantification",
+    ),
+    "TMTAbundanceQuantification": (
+        "mokume.quantification.tmt_abundance",
+        "TMTAbundanceQuantification",
+    ),
+    "TMTReporterIntensityQuantification": (
+        "mokume.quantification.tmt_reporter",
+        "TMTReporterIntensityQuantification",
+    ),
+    "SpectralCountQuantification": (
+        "mokume.quantification.spectral_count",
+        "SpectralCountQuantification",
+    ),
+    "DirectLFQQuantification": (
+        "mokume.quantification.directlfq",
+        "DirectLFQQuantification",
+    ),
+    "is_directlfq_available": (
+        "mokume.quantification.directlfq",
+        "is_directlfq_available",
+    ),
+}
 
-        return DirectLFQQuantification
+_SIMPLE_METHODS = {
+    "sum": "AllPeptidesQuantification",
+    "abd": "TMTAbundanceQuantification",
+    "abundance": "TMTAbundanceQuantification",
+    "tmtabundance": "TMTAbundanceQuantification",
+    "intensity": "TMTReporterIntensityQuantification",
+    "reporter": "TMTReporterIntensityQuantification",
+    "tmtreporterintensity": "TMTReporterIntensityQuantification",
+    "spectralcount": "SpectralCountQuantification",
+    "spectral_count": "SpectralCountQuantification",
+    "count": "SpectralCountQuantification",
+}
+
+
+def __getattr__(name):
+    """Import public quantification objects when first requested."""
+    target = _LAZY_EXPORTS.get(name)
+    if target is not None:
+        module_name, attribute = target
+        value = getattr(importlib.import_module(module_name), attribute)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    """List eager and lazy module attributes."""
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
 
 
 def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMethod:
@@ -126,6 +182,8 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
 
     # Handle topN methods (top3, top5, top10, etc.)
     if method_lower.startswith("top"):
+        from mokume.quantification.topn import TopNQuantification
+
         match = re.match(r"top(\d+)", method_lower)
         if match:
             n = int(match.group(1))
@@ -134,6 +192,8 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
         return TopNQuantification(n=n)
 
     elif method_lower == "maxlfq":
+        from mokume.quantification.maxlfq import MaxLFQQuantification
+
         return MaxLFQQuantification(
             min_peptides=kwargs.get("min_peptides", 2),
             threads=kwargs.get("n_jobs", -1),
@@ -149,19 +209,13 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
             deactivate_normalization=kwargs.get("deactivate_normalization", False),
         )
 
-    elif method_lower == "sum":
-        return AllPeptidesQuantification()
+    method_class = _SIMPLE_METHODS.get(method_lower)
+    if method_class is not None:
+        return __getattr__(method_class)()
 
-    elif method_lower in ("abd", "abundance", "tmtabundance"):
-        return TMTAbundanceQuantification()
+    if method_lower == "ratio":
+        from mokume.quantification.ratio import RatioQuantification
 
-    elif method_lower in ("intensity", "reporter", "tmtreporterintensity"):
-        return TMTReporterIntensityQuantification()
-
-    elif method_lower in ("spectralcount", "spectral_count", "count"):
-        return SpectralCountQuantification()
-
-    elif method_lower == "ratio":
         try:
             reference_samples = kwargs["reference_samples"]
             sample_to_plex = kwargs["sample_to_plex"]
@@ -176,14 +230,13 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
             fraction_merge_method=kwargs.get("fraction_merge_method", "mean"),
         )
 
-    else:
-        available = (
-            "topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum, "
-            "abd/abundance, intensity/reporter, ratio"
-        )
-        raise ValueError(
-            f"Unknown quantification method: {method}. Available methods: {available}"
-        )
+    available = (
+        "topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum, "
+        "abd/abundance, intensity/reporter, ratio"
+    )
+    raise ValueError(
+        f"Unknown quantification method: {method}. Available methods: {available}"
+    )
 
 
 def list_quantification_methods() -> dict:
@@ -207,7 +260,7 @@ def list_quantification_methods() -> dict:
         "top3": True,
         "topn": True,
         "maxlfq": True,
-        "directlfq": is_directlfq_available(),
+        "directlfq": __getattr__("is_directlfq_available")(),
         "sum": True,
         "abd": True,
         "intensity": True,

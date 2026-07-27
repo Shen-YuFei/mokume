@@ -7,12 +7,9 @@ quantification), Top3, TopN, and MaxLFQ.
 """
 
 import importlib.metadata
-import logging
 import warnings
 
 from mokume.core.logging_config import initialize_logging
-from mokume.postprocessing.batch_correction import is_batch_correction_available
-from mokume.quantification.directlfq import is_directlfq_available
 
 # Suppress numpy matrix deprecation warning
 warnings.filterwarnings(
@@ -42,18 +39,33 @@ __version__ = "0.1.0"
 # Users can override these settings by calling initialize_logging with their own settings
 initialize_logging()
 
-# Auto-load all built-in plugins so `import mokume` (or the first registry
-# access) populates every registration group. `_plugins` imports each plugin
-# module in isolation and swallows optional-dependency ImportErrors, so this is
-# guarded once more here against any unexpected import-time failure to keep
-# `import mokume` robust.
-try:
-    from mokume import _plugins as _plugins  # noqa: F401  (import for side effects)
-except Exception:  # pragma: no cover - defensive; plugins are optional at import
-    logging.getLogger(__name__).debug(
-        "Plugin auto-loading failed; plugins can still be registered on demand.",
-        exc_info=True,
-    )
+_LAZY_EXPORTS = {
+    "is_directlfq_available": (
+        "mokume.quantification.directlfq",
+        "is_directlfq_available",
+    ),
+    "is_batch_correction_available": (
+        "mokume.postprocessing.batch_correction",
+        "is_batch_correction_available",
+    ),
+}
+
+
+def __getattr__(name):
+    """Import public availability helpers when first requested."""
+    target = _LAZY_EXPORTS.get(name)
+    if target is not None:
+        module_name, attribute = target
+        value = getattr(importlib.import_module(module_name), attribute)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    """List eager and lazy module attributes."""
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
 
 __all__ = [
     "__version__",
