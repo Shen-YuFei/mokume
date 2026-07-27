@@ -9,6 +9,7 @@ quantification), Top3, TopN, and MaxLFQ.
 import importlib.metadata
 import warnings
 
+from mokume._lazy import module_api
 from mokume.core.logging_config import initialize_logging
 
 # Suppress numpy matrix deprecation warning
@@ -51,20 +52,7 @@ _LAZY_EXPORTS = {
 }
 
 
-def __getattr__(name):
-    """Import public availability helpers when first requested."""
-    target = _LAZY_EXPORTS.get(name)
-    if target is not None:
-        module_name, attribute = target
-        value = getattr(importlib.import_module(module_name), attribute)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__():
-    """List eager and lazy module attributes."""
-    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+__getattr__, __dir__ = module_api(_LAZY_EXPORTS, globals(), __name__)
 
 
 __all__ = [

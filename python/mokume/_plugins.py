@@ -70,39 +70,57 @@ _PLUGIN_MODULES = {
 }
 
 
-def _load_module(module_name: str) -> bool:
+def _load_module(module_name: str) -> str | None:
     """Import one plugin module, allowing its decorators to register classes."""
     try:
         importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        missing_name = exc.name or ""
+        if missing_name == module_name or module_name.startswith(f"{missing_name}."):
+            logger.error(
+                "Plugin module '%s' could not be found: %s",
+                module_name,
+                exc,
+            )
+        else:
+            logger.debug(
+                "Skipping plugin module '%s' (optional dependency missing): %s",
+                module_name,
+                exc,
+            )
+        return None
     except ImportError as exc:
         logger.debug(
             "Skipping plugin module '%s' (optional dependency missing): %s",
             module_name,
             exc,
         )
-        return False
-
-    from mokume.core.registry import PluginRegistry
-
-    for (group, name), owner in _PLUGIN_MODULES.items():
-        if owner != module_name:
-            continue
-        PluginRegistry._restore_builtin(group, name, module_name)
-    return True
+        return None
+    return module_name
 
 
-def load_plugin(group: str, name: str) -> bool:
+def load_plugin(group: str, name: str) -> str | None:
     """Load the built-in module that owns one plugin name."""
     module_name = _PLUGIN_MODULES.get((group, name.lower()))
-    return _load_module(module_name) if module_name is not None else False
+    return _load_module(module_name) if module_name is not None else None
 
 
-def load_all_plugins(group: str | None = None) -> None:
+def load_all_plugins(group: str | None = None) -> list[str]:
     """Load every built-in plugin in one group, or in every group."""
     modules = dict.fromkeys(
         module
         for (plugin_group, _), module in _PLUGIN_MODULES.items()
         if group is None or plugin_group == group
     )
-    for module_name in modules:
-        _load_module(module_name)
+    return [
+        loaded
+        for module_name in modules
+        if (loaded := _load_module(module_name)) is not None
+    ]
+
+
+def plugins_for_module(module_name: str) -> tuple[tuple[str, str], ...]:
+    """Return the plugin keys owned by one implementation module."""
+    return tuple(
+        plugin for plugin, owner in _PLUGIN_MODULES.items() if owner == module_name
+    )

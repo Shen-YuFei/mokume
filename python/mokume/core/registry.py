@@ -32,6 +32,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
+from mokume import _plugins
+
 logger = logging.getLogger(__name__)
 
 # Sentinel for TopN pattern matching
@@ -61,6 +63,7 @@ class PluginRegistry:
 
     _discovered: Set[Tuple[str, Optional[str]]] = set()
     _builtins: Dict[Tuple[str, str], Any] = {}
+    _entry_points_cache: Dict[str, List[Any]] = {}
 
     @classmethod
     def register(cls, group: str, name: str):
@@ -224,9 +227,8 @@ class PluginRegistry:
         list[str]
             Sorted list of available plugin names.
         """
-        from mokume import _plugins
-
-        _plugins.load_all_plugins(group)
+        for module_name in _plugins.load_all_plugins(group):
+            cls._restore_module(module_name)
         cls._ensure_discovered(group)
         return sorted(cls._stores.get(group, {}).keys())
 
@@ -251,31 +253,43 @@ class PluginRegistry:
     @classmethod
     def _ensure_registered(cls, group: str, name: str) -> None:
         """Load one matching built-in and third-party plugin."""
-        from mokume import _plugins
-
-        _plugins.load_plugin(group, name)
+        module_name = _plugins.load_plugin(group, name)
+        if module_name is not None:
+            cls._restore_module(module_name)
         cls._ensure_discovered(group, name)
 
     @classmethod
-    def _restore_builtin(cls, group: str, name: str, module_name: str) -> None:
-        """Remember or restore a built-in after its owning module is imported."""
-        entry = cls._stores[group].get(name)
-        if entry is not None and getattr(entry, "__module__", None) == module_name:
-            cls._builtins[(group, name)] = entry
-        elif entry is None and (group, name) in cls._builtins:
-            cls._stores[group][name] = cls._builtins[(group, name)]
+    def _restore_module(cls, module_name: str) -> None:
+        """Remember or restore built-ins from one imported module."""
+        for group, name in _plugins.plugins_for_module(module_name):
+            entry = cls._stores[group].get(name)
+            if entry is not None and getattr(entry, "__module__", None) == module_name:
+                cls._builtins[(group, name)] = entry
+            elif entry is None and (group, name) in cls._builtins:
+                cls._stores[group][name] = cls._builtins[(group, name)]
 
-    @staticmethod
-    def _entry_points(group: str):
+    @classmethod
+    def _entry_points(cls, group: str) -> List[Any]:
         """Return the installed entry points for one plugin group."""
+        if group in cls._entry_points_cache:
+            return cls._entry_points_cache[group]
+
         ep_group = f"mokume.{group}"
         try:
-            return importlib.metadata.entry_points(group=ep_group)
+            entry_points = importlib.metadata.entry_points(group=ep_group)
         except TypeError:
-            eps = importlib.metadata.entry_points()
-            if isinstance(eps, dict):
-                return eps.get(ep_group, [])
-            return [ep for ep in eps if ep.group == ep_group]
+            all_entry_points = importlib.metadata.entry_points()
+            if isinstance(all_entry_points, dict):
+                entry_points = all_entry_points.get(ep_group, [])
+            else:
+                entry_points = [
+                    entry_point
+                    for entry_point in all_entry_points
+                    if entry_point.group == ep_group
+                ]
+
+        cls._entry_points_cache[group] = list(entry_points)
+        return cls._entry_points_cache[group]
 
     @classmethod
     def _ensure_discovered(
@@ -324,3 +338,4 @@ class PluginRegistry:
         for group in cls._stores:
             cls._stores[group].clear()
         cls._discovered.clear()
+        cls._entry_points_cache.clear()

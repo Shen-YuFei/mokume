@@ -8,8 +8,9 @@ DirectLFQ is an optional dependency. Install with:
     pip install mokume[directlfq]
 """
 
-import importlib
+import re
 
+from mokume._lazy import import_attribute, module_api
 from mokume.quantification.base import ProteinQuantificationMethod
 
 __all__ = [
@@ -89,6 +90,7 @@ _LAZY_EXPORTS = {
 }
 
 _SIMPLE_METHODS = {
+    "all": "AllPeptidesQuantification",
     "sum": "AllPeptidesQuantification",
     "abd": "TMTAbundanceQuantification",
     "abundance": "TMTAbundanceQuantification",
@@ -102,20 +104,7 @@ _SIMPLE_METHODS = {
 }
 
 
-def __getattr__(name):
-    """Import public quantification objects when first requested."""
-    target = _LAZY_EXPORTS.get(name)
-    if target is not None:
-        module_name, attribute = target
-        value = getattr(importlib.import_module(module_name), attribute)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__():
-    """List eager and lazy module attributes."""
-    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+__getattr__, __dir__ = module_api(_LAZY_EXPORTS, globals(), __name__)
 
 
 def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMethod:
@@ -176,34 +165,26 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     >>> # DirectLFQ requires optional install
     >>> method = get_quantification_method("directlfq", min_nonan=2)
     """
-    import re
-
     method_lower = method.lower()
 
     # Handle topN methods (top3, top5, top10, etc.)
     if method_lower.startswith("top"):
-        from mokume.quantification.topn import TopNQuantification
-
         match = re.match(r"top(\d+)", method_lower)
         if match:
             n = int(match.group(1))
         else:
             n = kwargs.get("n", 3)
-        return TopNQuantification(n=n)
+        return import_attribute(_LAZY_EXPORTS, "TopNQuantification")(n=n)
 
     elif method_lower == "maxlfq":
-        from mokume.quantification.maxlfq import MaxLFQQuantification
-
-        return MaxLFQQuantification(
+        return import_attribute(_LAZY_EXPORTS, "MaxLFQQuantification")(
             min_peptides=kwargs.get("min_peptides", 2),
             threads=kwargs.get("n_jobs", -1),
             verbose=kwargs.get("verbose", 0),
         )
 
     elif method_lower == "directlfq":
-        from mokume.quantification.directlfq import DirectLFQQuantification
-
-        return DirectLFQQuantification(
+        return import_attribute(_LAZY_EXPORTS, "DirectLFQQuantification")(
             min_nonan=kwargs.get("min_nonan", 1),
             num_cores=kwargs.get("num_cores", None),
             deactivate_normalization=kwargs.get("deactivate_normalization", False),
@@ -214,8 +195,6 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
         return __getattr__(method_class)()
 
     if method_lower == "ratio":
-        from mokume.quantification.ratio import RatioQuantification
-
         try:
             reference_samples = kwargs["reference_samples"]
             sample_to_plex = kwargs["sample_to_plex"]
@@ -224,7 +203,7 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
                 "RatioQuantification requires 'reference_samples' and "
                 "'sample_to_plex' kwargs."
             ) from exc
-        return RatioQuantification(
+        return import_attribute(_LAZY_EXPORTS, "RatioQuantification")(
             reference_samples=reference_samples,
             sample_to_plex=sample_to_plex,
             fraction_merge_method=kwargs.get("fraction_merge_method", "mean"),
