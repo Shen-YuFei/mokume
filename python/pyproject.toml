@@ -47,8 +47,8 @@ dependencies = [
 plotting = ["matplotlib", "seaborn>=0.13.2", "scikit-learn"]
 reports = ["plotly>=5.0", "scikit-learn"]
 directlfq = ["directlfq>=0.3.0", "pyyaml>=6.0", "polars>=1.0"]
-batch-correction = ["combat>=0.3", "scikit-learn"]
-inmoose = ["combat>=0.3", "scikit-learn"]  # Deprecated alias, use batch-correction instead
+batch-correction = ["inmoose>=0.8.1", "scikit-learn"]
+inmoose = ["inmoose>=0.8.1", "scikit-learn"]  # Deprecated alias, use batch-correction instead
 tissuemap = ["scanpy>=1.9", "combat>=0.3", "umap-learn>=0.5", "matplotlib", "seaborn>=0.13.2", "scikit-learn", "anndata"]
 agentic = ["pyyaml>=6.0", "openai>=1.30", "python-dotenv>=0.20", "scikit-learn"]
 agentic-core = ["pyyaml>=6.0"]
@@ -56,7 +56,7 @@ ibaq = ["pyopenms"]
 imputation = ["scikit-learn"]
 analysis = ["statsmodels>=0.13"]
 h5ad = ["anndata"]
-all = ["directlfq>=0.3.0", "pyyaml>=6.0", "polars>=1.0", "combat>=0.3", "matplotlib", "seaborn>=0.13.2", "plotly>=5.0", "scanpy>=1.9", "umap-learn>=0.5", "scikit-learn", "pyopenms", "statsmodels>=0.13", "anndata", "openai>=1.30", "python-dotenv>=0.20"]
+all = ["directlfq>=0.3.0", "pyyaml>=6.0", "polars>=1.0", "inmoose>=0.8.1", "combat>=0.3", "matplotlib", "seaborn>=0.13.2", "plotly>=5.0", "scanpy>=1.9", "umap-learn>=0.5", "scikit-learn", "pyopenms", "statsmodels>=0.13", "anndata", "openai>=1.30", "python-dotenv>=0.20"]
 dev = ["pytest>=8.0", "pytest-cov>=4.0", "flake8>=7.0"]
 
 [project.scripts]
