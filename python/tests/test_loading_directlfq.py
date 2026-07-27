@@ -31,6 +31,7 @@ import pytest
 
 pytest.importorskip("polars")
 
+from mokume.io.feature import Feature  # noqa: E402
 from mokume.pipeline.config import (  # noqa: E402
     FilterConfig,
     InputConfig,
@@ -171,6 +172,45 @@ def _make_directlfq_config(parquet: str, sdrf: str) -> PipelineConfig:
         ),
         normalization=NormalizationConfig(run_method="none", sample_method="none"),
     )
+
+
+def test_feature_loads_samples_once_on_first_access(lfq_dataset, monkeypatch):
+    """Defer the sample query until a caller asks for the public attribute."""
+    parquet, sdrf = lfq_dataset
+    original = Feature.get_unique_samples
+    query_count = 0
+
+    def count_sample_query(feature):
+        nonlocal query_count
+        query_count += 1
+        return original(feature)
+
+    monkeypatch.setattr(Feature, "get_unique_samples", count_sample_query)
+    feature = Feature(parquet)
+    try:
+        assert query_count == 0
+        samples = feature.samples
+        assert query_count == 1
+        assert feature.samples is samples
+        assert query_count == 1
+
+        feature.enrich_with_sdrf(sdrf)
+        assert feature.samples == ["Sample_1", "Sample_2", "Sample_3", "Sample_4"]
+        assert query_count == 1
+    finally:
+        feature.parquet_db.close()
+
+
+def test_directlfq_loader_does_not_query_samples(lfq_dataset, monkeypatch):
+    """Do not load sample metadata for the SQL-first Arrow result."""
+    parquet, sdrf = lfq_dataset
+    cfg = _make_directlfq_config(parquet, sdrf)
+
+    def reject_sample_query(_feature):
+        raise AssertionError("DirectLFQ loading does not need the sample list")
+
+    monkeypatch.setattr(Feature, "get_unique_samples", reject_sample_query)
+    LoadingStage(cfg).load_for_directlfq()
 
 
 def test_load_for_directlfq_returns_arrow_table_with_expected_columns(lfq_dataset):

@@ -9,6 +9,7 @@ SQL-level filters for normalization pre-computations.
 import os
 import re
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Iterator, Optional
 
 import pandas as pd
@@ -274,11 +275,15 @@ class Feature:
         self._detect_qpx_format()
         self._create_unnest_view()
 
-        self.samples = self.get_unique_samples()
         self.filter_builder = filter_builder
         # Propagate is_decoy availability to filter builder for optimized DECOY filtering
         if self.filter_builder is not None and self._has_is_decoy:
             self.filter_builder.has_is_decoy = True
+
+    @cached_property
+    def samples(self) -> list[str]:
+        """Load and cache sample accessions when a caller first requests them."""
+        return self.get_unique_samples()
 
     def _detect_qpx_format(self) -> None:
         """Detect whether the parquet uses new or legacy QPX schema."""
