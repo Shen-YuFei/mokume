@@ -210,11 +210,23 @@ import json
 
 from mokume.core.registry import PluginRegistry
 
+@PluginRegistry.register("quantification", "sum")
+class CustomSum:
+    pass
+
+first = PluginRegistry.get("quantification", "sum")
+names = PluginRegistry.available("quantification")
+second = PluginRegistry.get("quantification", "sum")
+PluginRegistry.reset()
+
 method_class = PluginRegistry.get_class("quantification", "sum")
 registered = PluginRegistry.is_registered("quantification", "median")
 top5 = PluginRegistry.get("quantification", "top5")
 print(json.dumps({
     "class_module": method_class.__module__,
+    "custom_first_module": type(first).__module__,
+    "custom_listed": "sum" in names,
+    "custom_second_module": type(second).__module__,
     "registered": registered,
     "topn_module": type(top5).__module__,
     "topn_name": top5.name,
@@ -224,6 +236,9 @@ print(json.dumps({
 
     assert result == {
         "class_module": "mokume.quantification.all_peptides",
+        "custom_first_module": "__main__",
+        "custom_listed": True,
+        "custom_second_module": "__main__",
         "registered": True,
         "topn_module": "mokume.quantification.topn",
         "topn_name": "Top5",

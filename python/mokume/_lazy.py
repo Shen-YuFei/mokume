@@ -21,6 +21,8 @@ def module_api(
     def get_attribute(name: str) -> Any:
         if name not in exports:
             raise AttributeError(f"module {module_name!r} has no attribute {name!r}")
+        if name in namespace:
+            return namespace[name]
         value = import_attribute(exports, name)
         namespace[name] = value
         return value

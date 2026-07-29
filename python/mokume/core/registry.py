@@ -99,7 +99,15 @@ class PluginRegistry:
             )
 
         def decorator(klass: Type) -> Type:
-            cls._stores[group][name.lower()] = klass
+            key = (group, name.lower())
+            store = cls._stores[group]
+            existing = store.get(key[1])
+            if key in _plugins.plugins_for_module(klass.__module__):
+                previous_builtin = cls._builtins.get(key)
+                cls._builtins[key] = klass
+                if existing is not None and existing is not previous_builtin:
+                    return klass
+            store[key[1]] = klass
             return klass
 
         return decorator

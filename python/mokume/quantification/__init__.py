@@ -10,7 +10,7 @@ DirectLFQ is an optional dependency. Install with:
 
 import re
 
-from mokume._lazy import import_attribute, module_api
+from mokume._lazy import module_api
 from mokume.quantification.base import ProteinQuantificationMethod
 
 __all__ = [
@@ -174,17 +174,17 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
             n = int(match.group(1))
         else:
             n = kwargs.get("n", 3)
-        return import_attribute(_LAZY_EXPORTS, "TopNQuantification")(n=n)
+        return __getattr__("TopNQuantification")(n=n)
 
     elif method_lower == "maxlfq":
-        return import_attribute(_LAZY_EXPORTS, "MaxLFQQuantification")(
+        return __getattr__("MaxLFQQuantification")(
             min_peptides=kwargs.get("min_peptides", 2),
             threads=kwargs.get("n_jobs", -1),
             verbose=kwargs.get("verbose", 0),
         )
 
     elif method_lower == "directlfq":
-        return import_attribute(_LAZY_EXPORTS, "DirectLFQQuantification")(
+        return __getattr__("DirectLFQQuantification")(
             min_nonan=kwargs.get("min_nonan", 1),
             num_cores=kwargs.get("num_cores", None),
             deactivate_normalization=kwargs.get("deactivate_normalization", False),
@@ -203,7 +203,7 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
                 "RatioQuantification requires 'reference_samples' and "
                 "'sample_to_plex' kwargs."
             ) from exc
-        return import_attribute(_LAZY_EXPORTS, "RatioQuantification")(
+        return __getattr__("RatioQuantification")(
             reference_samples=reference_samples,
             sample_to_plex=sample_to_plex,
             fraction_merge_method=kwargs.get("fraction_merge_method", "mean"),
