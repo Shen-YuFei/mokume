@@ -274,11 +274,23 @@ class Feature:
         self._detect_qpx_format()
         self._create_unnest_view()
 
-        self.samples = self.get_unique_samples()
+        self._samples: Optional[list[str]] = None
         self.filter_builder = filter_builder
         # Propagate is_decoy availability to filter builder for optimized DECOY filtering
         if self.filter_builder is not None and self._has_is_decoy:
             self.filter_builder.has_is_decoy = True
+
+    @property
+    def samples(self) -> list[str]:
+        """Load and cache sample accessions when a caller first requests them."""
+        if self._samples is None:
+            self._samples = self.get_unique_samples()
+        return self._samples
+
+    @samples.setter
+    def samples(self, value: list[str]) -> None:
+        """Replace the cached sample accessions."""
+        self._samples = value
 
     def _detect_qpx_format(self) -> None:
         """Detect whether the parquet uses new or legacy QPX schema."""
