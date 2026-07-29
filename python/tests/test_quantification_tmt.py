@@ -120,6 +120,11 @@ class TestTMTReporterIntensity:
 class TestQuantificationFactory:
     """``get_quantification_method`` accepts the new method aliases."""
 
+    def test_all_alias(self):
+        method = get_quantification_method("all")
+        assert type(method).__module__ == "mokume.quantification.all_peptides"
+        assert type(method).__name__ == "AllPeptidesQuantification"
+
     @pytest.mark.parametrize("key", ["abd", "abundance", "TMTAbundance"])
     def test_abd_aliases(self, key):
         assert isinstance(get_quantification_method(key), TMTAbundanceQuantification)
