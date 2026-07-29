@@ -74,7 +74,11 @@ def _resolve_directlfq_num_cores(threads: int) -> Optional[int]:
     return None
 
 
-def _select_reference_peptide(log_matrix: np.ndarray, valid_counts: np.ndarray) -> int:
+def _select_reference_peptide(
+    log_matrix: np.ndarray,
+    valid_counts: np.ndarray,
+    peptide_ids: Optional[np.ndarray] = None,
+) -> int:
     """Pick the reference peptide deterministically, independent of row order.
 
     The reference anchors the median-shift alignment, so choosing a different one
@@ -84,21 +88,23 @@ def _select_reference_peptide(log_matrix: np.ndarray, valid_counts: np.ndarray) 
     arrive in -- which is not guaranteed by a parallel/unordered upstream read. Two
     identical runs could then differ by more than 2 log2 units on a protein.
 
-    Selection is therefore made on the VALUES, which makes it invariant to any row
-    permutation: most quantified samples, then highest summed log intensity,
-    then a lexicographic comparison of the trace as a final, purely deterministic
-    tiebreak. Rows that remain tied after all three are numerically identical, so
-    either choice yields the same alignment.
+    With peptide identifiers, sorting each trace before summing and using the
+    identifier for final ties makes selection independent of both matrix axes.
+    Without identifiers, the value-based fallback remains row-order independent.
     """
     candidates = np.flatnonzero(valid_counts == valid_counts.max())
     if candidates.size == 1:
         return int(candidates[0])
 
     # Prefer the most intense trace among those with the most measurements.
-    totals = np.nansum(log_matrix[candidates, :], axis=1)
+    ordered_values = np.sort(log_matrix[candidates, :], axis=1)
+    totals = np.nansum(ordered_values, axis=1)
     candidates = candidates[np.flatnonzero(totals == totals.max())]
     if candidates.size == 1:
         return int(candidates[0])
+
+    if peptide_ids is not None:
+        return int(min(candidates, key=lambda idx: str(peptide_ids[idx])))
 
     # Final deterministic tiebreak: lexicographically smallest trace. NaNs are
     # mapped to +inf so they sort last and never compare equal to a real value.
@@ -109,7 +115,10 @@ def _select_reference_peptide(log_matrix: np.ndarray, valid_counts: np.ndarray) 
     return int(candidates[order[0]])
 
 
-def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
+def _maxlfq_solve_protein(
+    peptide_matrix: np.ndarray,
+    peptide_ids: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """
     Solve the MaxLFQ optimization problem for a single protein (built-in fallback).
 
@@ -124,6 +133,8 @@ def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
     peptide_matrix : np.ndarray
         Matrix of shape (n_peptides, n_samples) with peptide intensities.
         NaN values indicate missing measurements.
+    peptide_ids : np.ndarray, optional
+        Stable peptide identifiers aligned with the matrix rows.
 
     Returns
     -------
@@ -160,7 +171,7 @@ def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
     if valid_counts.max() == 0:
         return np.full(n_samples, np.nan)
 
-    ref_peptide_idx = _select_reference_peptide(log_matrix, valid_counts)
+    ref_peptide_idx = _select_reference_peptide(log_matrix, valid_counts, peptide_ids)
     ref_trace = log_matrix[ref_peptide_idx, :]
 
     # Align other peptides to reference using median shift
@@ -278,7 +289,7 @@ def _process_protein(
     peptide_matrix = pivot.values
 
     # Run MaxLFQ algorithm
-    intensities = _maxlfq_solve_protein(peptide_matrix)
+    intensities = _maxlfq_solve_protein(peptide_matrix, peptides)
 
     # Store results
     for i, sample in enumerate(samples):
