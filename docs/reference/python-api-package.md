@@ -74,11 +74,14 @@ method = PluginRegistry.get("quantification", "maxlfq")
 ## Compute backend
 
 `RuntimeConfig.backend` selects the compute engine. The default `"python"` runs
-the pure-Python pipeline; `"rust"` routes the same configuration through the
-compiled `mokume._mokume` kernel (installed with the `mokume-rs` wheel) and
-returns the same protein matrix within floating-point tolerance. When the kernel
-is absent, the `"rust"` backend raises a clear error rather than silently
-falling back.
+the pure-Python pipeline; `"rust"` routes supported loading, filtering,
+normalization, and quantification settings through the compiled
+`mokume._mokume` kernel (installed with the `mokume-rs` wheel), then returns to
+Python for postprocessing. When the kernel is absent, the `"rust"` backend
+raises a clear error rather than silently falling back. The hybrid profile also
+rejects `duckdb_memory`, `duckdb_threads`, and ion alignment other than `None`
+or `"none"` before invoking the extension because it cannot honor those settings
+with their documented semantics.
 
 ```python
 from mokume.pipeline.config import RuntimeConfig

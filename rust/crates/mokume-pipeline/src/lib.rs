@@ -207,7 +207,7 @@ impl FeatureToProteinState {
             return Ok(());
         }
 
-        let sdrf_record = sdrf_record(feature, sdrf);
+        let sdrf_record = sdrf_record(feature, sdrf)?;
         let sample_name = sample_name(feature, sdrf_record);
         // Run-QC group filters drop whole samples (Python `run_qc.py`). The
         // decision is precomputed in a pre-pass; skip excluded samples here, the
@@ -4642,6 +4642,16 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
 
     validate_features_to_proteins(config)?;
     validate_implemented_subset(config)?;
+    if let Some(method) = ignored_directlfq_sample_normalization(config) {
+        warn!(
+            sample_normalization = method,
+            quant_method = %config.quantification,
+            "`--sample-normalization {method}` has no effect on the DirectLFQ route \
+             (used by `directlfq` and, unless `maxlfq.force_builtin` is set, `maxlfq`): \
+             DirectLFQ performs its own internal sample normalization, so mokume does \
+             not apply another. The protein matrix is unchanged by this option."
+        );
+    }
     configure_thread_pool(config.runtime.threads.or(config.directlfq.cores));
 
     let sdrf = config
@@ -4806,9 +4816,6 @@ fn compile_exclude_sequence_patterns(patterns: &[String]) -> Result<Vec<Regex>> 
 }
 
 fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result<()> {
-    if !config.enabled {
-        return Ok(());
-    }
     let intensity = &config.intensity;
     // `cv_threshold` is applied via the `collect_intensity_group_filters` pre-pass
     // (per-`(sample, protein, canonical)` CV over the `min_unique`-gated raw
@@ -4893,6 +4900,13 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     Ok(())
 }
 
+fn active_filter_pipeline(config: &FeatureToPeptidesConfig) -> Option<&PreprocessingFilterConfig> {
+    config
+        .filter_pipeline
+        .as_ref()
+        .filter(|pipeline| pipeline.enabled)
+}
+
 fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Result<()> {
     if !config.input.parquet.exists() {
         return Err(MokumeError::MissingInput {
@@ -4904,7 +4918,7 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
         }
     }
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = active_filter_pipeline(config) {
         validate_filter_pipeline_subset(pipeline)?;
     }
 
@@ -4946,6 +4960,7 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
 
 pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> {
     validate_features_to_peptides_config(config)?;
+    let filter_pipeline = active_filter_pipeline(config);
 
     // Route the deterministic peptide export through the protein pipeline's
     // ingest machinery by building a Sum-quantification config whose only
@@ -4955,7 +4970,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // contaminant removal and the per-`(protein, sample)` unique-peptide gate
     // (Python wires both through the same config), replacing the default
     // load-time settings.
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         proteins_config.filtering.remove_contaminants =
             pipeline.protein.remove_contaminants || pipeline.protein.remove_decoys;
         proteins_config.filtering.min_unique_peptides = pipeline.protein.min_unique_peptides;
@@ -4970,10 +4985,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // contaminants on the **raw** `pg_accessions` before computing the median.
     // Route the filter pipeline's custom patterns through (default list -> the
     // existing `is_contaminant` fallback inside `matches_sql_contaminant`).
-    let median_contaminant_patterns: &[String] = config
-        .filter_pipeline
-        .as_ref()
-        .map_or(&[], |pipeline| &pipeline.protein.contaminant_patterns);
+    let median_contaminant_patterns: &[String] =
+        filter_pipeline.map_or(&[], |pipeline| &pipeline.protein.contaminant_patterns);
     let mut intensity_factors = if config.skip_normalization {
         IntensityFactors::default()
     } else {
@@ -4997,10 +5010,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // and `contaminant_patterns` come from the (pipeline-overridden) protein
     // block; `min_intensity` comes from the pipeline's intensity block, else 0.
     if let Some(irs) = &config.irs {
-        let irs_min_intensity = config
-            .filter_pipeline
-            .as_ref()
-            .map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
+        let irs_min_intensity =
+            filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
         intensity_factors.irs_scale_by_techrep = collect_irs_scale(
             &proteins_config.input.parquet,
             irs,
@@ -5027,8 +5038,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     if config.remove_low_frequency_peptides {
         state.low_frequency = Some(LowFrequencyTracker::default());
     }
-    state.peptide_filters = config.filter_pipeline.clone();
-    if let Some(pipeline) = &config.filter_pipeline {
+    state.peptide_filters = filter_pipeline.cloned();
+    if let Some(pipeline) = filter_pipeline {
         state.excluded_sequence_regexes =
             compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
         if let Some(peptides) = &mut state.export_rows.peptides {
@@ -5041,7 +5052,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `collect_intensity_factors`, so excluded samples still feed it -- matching
     // Python, where `get_median_map` runs via `SQLFilterBuilder` ahead of the
     // per-sample filter pipeline).
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         state.run_qc_excluded_samples = collect_run_qc_exclusions(
             &proteins_config.input.parquet,
             proteins_config.filtering,
@@ -5059,7 +5070,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `min_unique` gate, pre feature-normalization). They share the pass so the
     // quantile bounds see the post-CV survivors (Python orders CV before Quantile).
     // Excluded Run-QC samples are skipped so they do not feed either decision.
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         let group_filters = collect_intensity_group_filters(
             &proteins_config.input.parquet,
             proteins_config.filtering,
@@ -5105,10 +5116,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `min_unique_peptides` (the Run-QC / quantile pre-passes stay at 0 because they
     // run ahead of MinPeptideFilter).
     let min_unique = if config.keep_shared_peptides {
-        config
-            .filter_pipeline
-            .as_ref()
-            .map_or(0, |pipeline| pipeline.protein.min_unique_peptides)
+        filter_pipeline.map_or(0, |pipeline| pipeline.protein.min_unique_peptides)
     } else {
         proteins_config.filtering.min_unique_peptides
     };
@@ -5283,6 +5291,34 @@ fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
 /// they center the summed-canonical-peptide matrix in log2 space, NOT the raw
 /// per-feature intensities, so they belong on the cell path rather than the
 /// ingest-time factor path.
+/// Returns the requested `--sample-normalization` method name when it is a
+/// dataset-level method that will be silently ignored because the effective
+/// quantification route is DirectLFQ (which performs its own internal sample
+/// normalization; see `Aggregation::applies_dataset_normalization`). Used to warn
+/// the user rather than dropping the option silently.
+fn ignored_directlfq_sample_normalization(config: &FeatureToProteinsConfig) -> Option<&str> {
+    let routes_to_directlfq = config.quantification == QuantMethod::DirectLfq
+        || (config.quantification == QuantMethod::MaxLfq && !config.maxlfq.force_builtin);
+    if !routes_to_directlfq {
+        return None;
+    }
+    match parse_sample_normalization_method(&config.normalization.sample_method)
+        .ok()
+        .flatten()
+    {
+        Some(
+            SampleNormalizationMethod::Quantile
+            | SampleNormalizationMethod::Rlr
+            | SampleNormalizationMethod::Loess
+            | SampleNormalizationMethod::Hierarchical
+            | SampleNormalizationMethod::MedianCenter
+            | SampleNormalizationMethod::MeanCenter
+            | SampleNormalizationMethod::Tmm,
+        ) => Some(config.normalization.sample_method.as_str()),
+        _ => None,
+    }
+}
+
 fn dataset_sample_normalization_method(
     config: &FeatureToProteinsConfig,
 ) -> Result<Option<SampleNormalizationMethod>> {
@@ -5714,7 +5750,7 @@ fn collect_run_qc_exclusions(
         let Some(protein_group) = protein_group_name(&feature.protein_accessions) else {
             return Ok(());
         };
-        let sdrf_record = sdrf_record(&feature, sdrf);
+        let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
         let entry = stats.entry((sample, protein_group)).or_default();
         entry.0.insert(feature.sequence.clone());
@@ -5832,7 +5868,7 @@ fn collect_intensity_group_filters(
         if feature.intensity < min_floor {
             return Ok(());
         }
-        let sdrf_record = sdrf_record(&feature, sdrf);
+        let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
         if run_qc_excluded.contains(&sample) {
             return Ok(());
@@ -5986,20 +6022,18 @@ fn collect_irs_scale(
         let Some(techrep) = irs_tech_replicate_of(&feature.run_file_name) else {
             return Ok(());
         };
+        let sdrf_record = sdrf_record(&feature, sdrf)?;
+        let sample_accession = sdrf_record.map_or(feature.run_file_name.as_str(), |record| {
+            record.sample_accession.as_str()
+        });
         runs.entry(feature.run_file_name.clone())
             .or_insert_with(|| {
                 // Mixture is the first `_`-token of the *sample accession*, which is
                 // the joined SDRF `source name` when an SDRF is present and the
                 // `run_file_name` otherwise (Python `parquet_db` view). The SDRF
                 // join keys on the run name (with the raw feature label), mirroring
-                // `enrich_with_sdrf`; a miss falls back to the run name.
-                let sample_accession = sdrf
-                    .and_then(|table| {
-                        table.lookup(&feature.run_file_name, feature.label.as_deref())
-                    })
-                    .map_or(feature.run_file_name.as_str(), |record| {
-                        record.sample_accession.as_str()
-                    });
+                // `enrich_with_sdrf`; when an SDRF is present, an unmatched run or
+                // label is rejected instead of falling back to the run name.
                 RunBuffer {
                     techrep,
                     mixture: irs_mixture_first_token(sample_accession).to_owned(),
@@ -6383,7 +6417,7 @@ impl<'a> NormalizationFactorCollector<'a> {
             return Ok(());
         };
 
-        let sdrf_record = sdrf_record(&feature, self.sdrf);
+        let sdrf_record = sdrf_record(&feature, self.sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
         if self
             .normalization_proteins
@@ -6616,8 +6650,13 @@ fn parse_protein_accession(accession: &str) -> String {
 fn sdrf_record<'a>(
     feature: &QpxFeatureRecord,
     sdrf: Option<&'a SdrfTable>,
-) -> Option<&'a SdrfRecord> {
-    sdrf.and_then(|table| table.lookup(&feature.run_file_name, feature.label.as_deref()))
+) -> Result<Option<&'a SdrfRecord>> {
+    match sdrf {
+        Some(table) => table
+            .lookup(&feature.run_file_name, feature.label.as_deref())
+            .map(Some),
+        None => Ok(None),
+    }
 }
 
 fn sample_name(feature: &QpxFeatureRecord, sdrf_record: Option<&SdrfRecord>) -> String {

@@ -259,6 +259,64 @@ fn default_peptides_config(parquet: PathBuf, output: PathBuf) -> FeatureToPeptid
     }
 }
 
+#[test]
+fn features2peptides_disabled_filter_pipeline_is_inert() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.disabled-filter.features.parquet");
+    write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
+
+    let baseline_output = root.join("peptides.disabled-filter.baseline.csv");
+    let baseline = default_peptides_config(parquet.clone(), baseline_output.clone());
+    run_features_to_peptides(&baseline)?;
+
+    let disabled_output = root.join("peptides.disabled-filter.disabled.csv");
+    let mut disabled = default_peptides_config(parquet, disabled_output.clone());
+    disabled.filter_pipeline = Some(PreprocessingFilterConfig {
+        enabled: false,
+        intensity: IntensityFilterConfig {
+            min_intensity: 10_000.0,
+            cv_threshold: Some(0.0),
+            min_replicate_agreement: 2,
+            quantile_lower: 0.49,
+            quantile_upper: 0.51,
+            remove_zero_intensity: true,
+        },
+        peptide: PeptideFilterConfig {
+            allowed_charge_states: Some(vec![9]),
+            max_missed_cleavages: Some(0),
+            min_peptide_length: 30,
+            max_peptide_length: 31,
+            exclude_sequence_patterns: vec!["PEPTIDE".to_owned()],
+            ..PeptideFilterConfig::default()
+        },
+        protein: ProteinFilterConfig {
+            min_unique_peptides: 99,
+            razor_peptide_handling: "remove".to_owned(),
+            contaminant_patterns: vec!["P1".to_owned()],
+            ..ProteinFilterConfig::default()
+        },
+        run_qc: RunQcFilterConfig {
+            min_total_intensity: 1_000_000.0,
+            min_identified_features: 99,
+            min_identified_proteins: 99,
+            min_sample_correlation: Some(1.0),
+            max_missing_rate: 0.0,
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&disabled)?;
+
+    let baseline_table = read_csv(&baseline_output)?;
+    let disabled_table = read_csv(&disabled_output)?;
+    assert_eq!(disabled_table.headers, baseline_table.headers);
+    assert_eq!(
+        disabled_table.rows, baseline_table.rows,
+        "enabled=false must make every nested preprocessing setting inert"
+    );
+    Ok(())
+}
+
 /// Look up the `NormIntensity` cell of the peptide long table for a given
 /// (ProteinName, PeptideCanonical, SampleID), returning the parsed value.
 fn peptide_norm_intensity(
@@ -704,15 +762,19 @@ fn features2peptides_tmt_irs_by_mixture_uses_sdrf_source_name_mixture() -> Resul
     )?;
 
     // SDRF regroups runs into mixtures POOLX (g_1,g_2) and POOLY (g_3,g_4) via the
-    // `source name` first token. `comment[data file]` joins on run_file_name.
+    // `source name` first token. Each run/channel pair has its own exact SDRF row.
     std::fs::write(
         &sdrf,
         concat!(
             "source name\tassay name\tcomment[data file]\tcomment[label]\tfactor value[cell line]\n",
-            "POOLX_a\trun 1\tg_1\tTMT126\tA\n",
-            "POOLX_b\trun 2\tg_2\tTMT126\tA\n",
-            "POOLY_a\trun 3\tg_3\tTMT126\tB\n",
-            "POOLY_b\trun 4\tg_4\tTMT126\tB\n",
+            "POOLX_a_ref\trun 1 ref\tg_1\tTMT126\tA\n",
+            "POOLX_a\trun 1 sample\tg_1\tTMT127\tA\n",
+            "POOLX_b_ref\trun 2 ref\tg_2\tTMT126\tA\n",
+            "POOLX_b\trun 2 sample\tg_2\tTMT127\tA\n",
+            "POOLY_a_ref\trun 3 ref\tg_3\tTMT126\tB\n",
+            "POOLY_a\trun 3 sample\tg_3\tTMT127\tB\n",
+            "POOLY_b_ref\trun 4 ref\tg_4\tTMT126\tB\n",
+            "POOLY_b\trun 4 sample\tg_4\tTMT127\tB\n",
         ),
     )?;
 

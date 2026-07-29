@@ -170,7 +170,11 @@ correction, DE) still run in Python on both backends.
     installed in this environment. Install mokume-rs or use backend='python'."*
     Install `mokume-rs` alongside the package to enable it, or keep
     `backend="python"` (the default). `RuntimeConfig` also carries the DuckDB
-    resource hints `duckdb_memory` (e.g. `"80GB"`) and `duckdb_threads`.
+    resource hints `duckdb_memory` (e.g. `"80GB"`) and `duckdb_threads`, but
+    those hints are Python-backend settings. The hybrid Rust backend rejects
+    them because an in-process kernel call cannot reliably apply their
+    documented per-run limits. It likewise rejects ion alignment other than
+    `None` or `"none"` before invoking the extension.
 
 ## What's next
 

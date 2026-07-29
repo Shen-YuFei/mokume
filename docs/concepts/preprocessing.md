@@ -2,6 +2,12 @@
 
 mokume provides a configurable filter system for quality control, driven by YAML/JSON files or CLI options on the `features2peptides` command.
 
+## QPX and SDRF sample identity
+
+When an SDRF is supplied for the current QPX list-of-label/intensity schema, every positive intensity must resolve to exactly one SDRF record before preprocessing starts. Run keys use the filename basename, ignore ASCII case, and remove one trailing `.raw`, `.mzml`, `.d`, or `.wiff` extension. Labels ignore surrounding whitespace and ASCII case, and SDRF controlled-vocabulary values use their `NT=` term. `LFQ`, `label-free`, and `label free sample` are the only equivalent label aliases.
+
+Label-free QPX entries whose intensity labels are run filenames use each intensity label as its owning run. Isobaric entries use the row run together with the reporter label. Duplicate normalized SDRF keys, unmatched runs, missing reporter channels, and ambiguous run-only matches are errors; mokume does not fall back to the first SDRF row or a run name when an SDRF mapping is invalid.
+
 ## Filter Categories
 
 ### Intensity Filters

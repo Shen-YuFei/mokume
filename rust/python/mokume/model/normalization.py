@@ -142,14 +142,38 @@ class FeatureNormalizationMethod(Enum):
         map_ = {}
         total = 0
         for run in runs:
-            run = str(run)
-            run_m = self.normalize_replicates(
-                df.loc[df[TECHREPLICATE] == run, NORM_INTENSITY]
-            )
+            values = df.loc[df[TECHREPLICATE] == run, NORM_INTENSITY]
+            run_m = self._replicate_metric(values)
             map_[run] = run_m
             total += run_m
         sample_average_metric = total / len(runs)
         return map_, sample_average_metric
+
+    def _replicate_metric(self, values: pd.Series) -> float:
+        """Return one run's scale factor for cross-replicate normalization.
+
+        ``normalize_runs`` divides each run's intensities by this value relative
+        to the sample average, so it has to be a single positive number. The
+        registered replicate functions return a rescaled *Series* instead, which
+        silently turned ``total`` into NaN via index misalignment and blanked the
+        whole sample.
+        """
+        if self == FeatureNormalizationMethod.Mean:
+            return values.mean()
+        if self == FeatureNormalizationMethod.Median:
+            return values.median()
+        if self == FeatureNormalizationMethod.Max:
+            return values.max()
+        if self == FeatureNormalizationMethod.Global:
+            return values.sum()
+        if self == FeatureNormalizationMethod.IQR:
+            return self.normalize_replicates(values)
+        raise NotImplementedError(
+            f"{self.name} rescales each run's values and has no single scale "
+            "factor, so it cannot normalize across technical replicates. Use "
+            "mean, median, max, global or iqr for --run-normalization when a "
+            "sample has more than one run."
+        )
 
     def normalize_runs(self, df: pd.DataFrame, technical_replicates: int):
         """
@@ -182,7 +206,6 @@ class FeatureNormalizationMethod(Enum):
                     # intensity by a replicate-level statistic, relative to the sample
                     # average over that replicate statistic.
                     for run in runs:
-                        run = str(run)
                         run_intensity = df.loc[
                             (df[SAMPLE_ID] == sample) & (df[TECHREPLICATE] == run),
                             NORM_INTENSITY,
@@ -368,6 +391,24 @@ class PeptideNormalizationMethod(Enum):
     def __call__(self, dataset_df: pd.DataFrame, sample: str, med_map: dict):
         """Invoke the normalize_sample method."""
         return self.normalize_sample(dataset_df, sample, med_map)
+
+
+def parse_normalization_methods(
+    run_method: str,
+    sample_method: str,
+) -> tuple[FeatureNormalizationMethod, PeptideNormalizationMethod]:
+    """Parse run and sample normalization names with user-facing errors."""
+    try:
+        run = FeatureNormalizationMethod.from_str(run_method)
+    except (AttributeError, KeyError):
+        raise ValueError(f"Unknown run normalization method: {run_method!r}") from None
+    try:
+        sample = PeptideNormalizationMethod.from_str(sample_method)
+    except (AttributeError, KeyError):
+        raise ValueError(
+            f"Unknown sample normalization method: {sample_method!r}"
+        ) from None
+    return run, sample
 
 
 @PeptideNormalizationMethod.GlobalMedian.register_replicate_fn

@@ -76,9 +76,9 @@ pub struct FeatureToPeptidesConfig {
     /// `Run` / `TechReplicate` columns.
     pub aggregation_level: AggregationLevel,
     /// Opt-in preprocessing filter pipeline (Python `--filter-config` /
-    /// `--filter-*`). `None` keeps the default load-time filtering; `Some`
-    /// applies the configured filters on top, mirroring Python's
-    /// `filter_pipeline.apply` per sample.
+    /// `--filter-*`). `None` or a configuration with `enabled: false` keeps the
+    /// default load-time filtering; an enabled configuration applies its filters
+    /// on top, mirroring Python's `filter_pipeline.apply` per sample.
     pub filter_pipeline: Option<PreprocessingFilterConfig>,
     /// Channel IRS (Internal Reference Scaling) for TMT/iTRAQ
     /// (Python `--irs_channel` / `--irs_stat` / `--irs_scope`). `None`
