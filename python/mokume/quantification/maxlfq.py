@@ -74,6 +74,12 @@ def _resolve_directlfq_num_cores(threads: int) -> Optional[int]:
     return None
 
 
+def _identifier_sort_key(value: object) -> tuple[str, str, object]:
+    """Order identifiers without comparing values of unrelated types."""
+    value_type = type(value)
+    return value_type.__module__, value_type.__qualname__, value
+
+
 def _select_reference_peptide(
     log_matrix: np.ndarray,
     valid_counts: np.ndarray,
@@ -104,7 +110,9 @@ def _select_reference_peptide(
         return int(candidates[0])
 
     if peptide_ids is not None:
-        return int(min(candidates, key=lambda idx: str(peptide_ids[idx])))
+        return int(
+            min(candidates, key=lambda idx: _identifier_sort_key(peptide_ids[idx]))
+        )
 
     # Final deterministic tiebreak: lexicographically smallest trace. NaNs are
     # mapped to +inf so they sort last and never compare equal to a real value.
@@ -256,7 +264,7 @@ def _process_protein(
     # happen to arrive in, which an unordered/parallel upstream read does not fix.
     # That order feeds the pivot below and therefore the matrix handed to MaxLFQ, so
     # leaving it unsorted makes the whole protein quantification input-order dependent.
-    peptides = np.sort(protein_data[peptide_column].unique())
+    peptides = sorted(protein_data[peptide_column].unique(), key=_identifier_sort_key)
 
     if len(peptides) < min_peptides:
         # Fall back to median for proteins with few peptides
@@ -457,7 +465,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
     ) -> pd.DataFrame:
         """Run quantification using built-in implementation."""
         # Get unique samples and proteins
-        samples = np.sort(peptide_df[sample_column].unique())
+        samples = sorted(peptide_df[sample_column].unique(), key=_identifier_sort_key)
         proteins = peptide_df[protein_column].unique()
 
         logger.info(
