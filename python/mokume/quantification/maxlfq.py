@@ -74,7 +74,59 @@ def _resolve_directlfq_num_cores(threads: int) -> Optional[int]:
     return None
 
 
-def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
+def _identifier_sort_key(value: object) -> tuple[str, str, object]:
+    """Order identifiers without comparing values of unrelated types."""
+    value_type = type(value)
+    return value_type.__module__, value_type.__qualname__, value
+
+
+def _select_reference_peptide(
+    log_matrix: np.ndarray,
+    valid_counts: np.ndarray,
+    peptide_ids: Optional[np.ndarray] = None,
+) -> int:
+    """Pick the reference peptide deterministically, independent of row order.
+
+    The reference anchors the median-shift alignment, so choosing a different one
+    changes every aligned trace and therefore the protein quantity. ``np.argmax``
+    breaks ties by row position, and ties are the common case (e.g. every peptide
+    observed in every sample), so the result depended on the order rows happened to
+    arrive in -- which is not guaranteed by a parallel/unordered upstream read. Two
+    identical runs could then differ by more than 2 log2 units on a protein.
+
+    With peptide identifiers, sorting each trace before summing and using the
+    identifier for final ties makes selection independent of both matrix axes.
+    Without identifiers, the value-based fallback remains row-order independent.
+    """
+    candidates = np.flatnonzero(valid_counts == valid_counts.max())
+    if candidates.size == 1:
+        return int(candidates[0])
+
+    # Prefer the most intense trace among those with the most measurements.
+    ordered_values = np.sort(log_matrix[candidates, :], axis=1)
+    totals = np.nansum(ordered_values, axis=1)
+    candidates = candidates[np.flatnonzero(totals == totals.max())]
+    if candidates.size == 1:
+        return int(candidates[0])
+
+    if peptide_ids is not None:
+        return int(
+            min(candidates, key=lambda idx: _identifier_sort_key(peptide_ids[idx]))
+        )
+
+    # Final deterministic tiebreak: lexicographically smallest trace. NaNs are
+    # mapped to +inf so they sort last and never compare equal to a real value.
+    keys = np.where(
+        np.isnan(log_matrix[candidates, :]), np.inf, log_matrix[candidates, :]
+    )
+    order = sorted(range(len(candidates)), key=lambda i: tuple(keys[i]))
+    return int(candidates[order[0]])
+
+
+def _maxlfq_solve_protein(
+    peptide_matrix: np.ndarray,
+    peptide_ids: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """
     Solve the MaxLFQ optimization problem for a single protein (built-in fallback).
 
@@ -89,6 +141,8 @@ def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
     peptide_matrix : np.ndarray
         Matrix of shape (n_peptides, n_samples) with peptide intensities.
         NaN values indicate missing measurements.
+    peptide_ids : np.ndarray, optional
+        Stable peptide identifiers aligned with the matrix rows.
 
     Returns
     -------
@@ -125,7 +179,7 @@ def _maxlfq_solve_protein(peptide_matrix: np.ndarray) -> np.ndarray:
     if valid_counts.max() == 0:
         return np.full(n_samples, np.nan)
 
-    ref_peptide_idx = np.argmax(valid_counts)
+    ref_peptide_idx = _select_reference_peptide(log_matrix, valid_counts, peptide_ids)
     ref_trace = log_matrix[ref_peptide_idx, :]
 
     # Align other peptides to reference using median shift
@@ -206,7 +260,11 @@ def _process_protein(
     """
     _ = run_column
     results = []
-    peptides = protein_data[peptide_column].unique()
+    # Sorted, not order-of-appearance: ``Series.unique()`` preserves the order rows
+    # happen to arrive in, which an unordered/parallel upstream read does not fix.
+    # That order feeds the pivot below and therefore the matrix handed to MaxLFQ, so
+    # leaving it unsorted makes the whole protein quantification input-order dependent.
+    peptides = sorted(protein_data[peptide_column].unique(), key=_identifier_sort_key)
 
     if len(peptides) < min_peptides:
         # Fall back to median for proteins with few peptides
@@ -239,7 +297,7 @@ def _process_protein(
     peptide_matrix = pivot.values
 
     # Run MaxLFQ algorithm
-    intensities = _maxlfq_solve_protein(peptide_matrix)
+    intensities = _maxlfq_solve_protein(peptide_matrix, peptides)
 
     # Store results
     for i, sample in enumerate(samples):
@@ -407,7 +465,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
     ) -> pd.DataFrame:
         """Run quantification using built-in implementation."""
         # Get unique samples and proteins
-        samples = peptide_df[sample_column].unique()
+        samples = sorted(peptide_df[sample_column].unique(), key=_identifier_sort_key)
         proteins = peptide_df[protein_column].unique()
 
         logger.info(
@@ -556,7 +614,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         )
 
         # Get unique sample-run combinations
-        sample_runs = peptide_df["_sample_run"].unique()
+        sample_runs = np.sort(peptide_df["_sample_run"].unique())
         proteins = peptide_df[protein_column].unique()
 
         logger.info(
