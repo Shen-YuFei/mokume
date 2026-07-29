@@ -11,8 +11,8 @@ import pandas as pd
 import pytest
 
 from mokume.quantification.maxlfq import (
+    MaxLFQQuantification,
     _maxlfq_solve_protein,
-    _process_protein,
     _select_reference_peptide,
 )
 
@@ -78,35 +78,33 @@ def test_identical_rows_are_interchangeable():
 
 
 @pytest.mark.parametrize("seed", range(5))
-def test_process_protein_is_invariant_to_dataframe_row_order(seed):
-    """End-to-end: shuffling the input frame must not change the output.
-
-    ``Series.unique()`` returns values in order of appearance, so without a canonical
-    sort the pivot - and therefore the matrix handed to MaxLFQ - inherits the incoming
-    row order.
-    """
-    rows = []
-    for pep, scale in (("PEPTIDEA", 1.0), ("PEPTIDEB", 0.5), ("PEPTIDEC", 4.0)):
-        for i, sample in enumerate(("S1", "S2", "S3")):
-            rows.append(
-                {
-                    "protein": "P1",
-                    "peptide": pep,
-                    "sample": sample,
-                    "intensity": 100.0 * scale * (i + 1),
-                }
-            )
+def test_quantify_is_invariant_to_dataframe_row_order(seed):
+    """Shuffling rows must not change sample- or run-level output."""
+    log2_matrix = np.array(
+        [[6, 2, 1, 3], [5, 6, 1, 0], [2, 0, 6, 4], [3, 4, 5, 0]],
+        dtype=float,
+    )
+    rows = [
+        {
+            "ProteinName": "P1",
+            "PeptideCanonical": peptide,
+            "SampleID": sample,
+            "Run": "R1",
+            "NormIntensity": 2.0 ** log2_matrix[pep_idx, sample_idx],
+        }
+        for pep_idx, peptide in enumerate(("A", "B", "C", "D"))
+        for sample_idx, sample in enumerate(("S1", "S2", "S3", "S4"))
+    ]
     df = pd.DataFrame(rows)
-    samples = ["S1", "S2", "S3"]
+    shuffled = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    quantifier = MaxLFQQuantification(min_peptides=2, threads=1, force_builtin=True)
 
-    def run(frame):
-        out = _process_protein(
-            "P1", frame, "peptide", "intensity", "sample", samples, 2
+    for run_column in (None, "Run"):
+        sort_by = ["SampleID", *(["Run"] if run_column else [])]
+        expected = quantifier.quantify(df, run_column=run_column).sort_values(sort_by)
+        actual = quantifier.quantify(shuffled, run_column=run_column).sort_values(
+            sort_by
         )
-        return {r["sample"]: r["intensity"] for r in out}
-
-    base = run(df)
-    shuffled = run(df.sample(frac=1.0, random_state=seed).reset_index(drop=True))
-    assert set(base) == set(shuffled)
-    for s in base:
-        assert shuffled[s] == pytest.approx(base[s], rel=0, abs=0)
+        pd.testing.assert_frame_equal(
+            actual.reset_index(drop=True), expected.reset_index(drop=True)
+        )

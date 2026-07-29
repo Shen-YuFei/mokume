@@ -85,10 +85,10 @@ def _select_reference_peptide(log_matrix: np.ndarray, valid_counts: np.ndarray) 
     identical runs could then differ by more than 2 log2 units on a protein.
 
     Selection is therefore made on the VALUES, which makes it invariant to any row
-    permutation: most quantified samples, then highest total intensity (the most
-    reliable anchor), then a lexicographic comparison of the trace as a final,
-    purely deterministic tiebreak. Rows that remain tied after all three are
-    numerically identical, so either choice yields the same alignment.
+    permutation: most quantified samples, then highest summed log intensity,
+    then a lexicographic comparison of the trace as a final, purely deterministic
+    tiebreak. Rows that remain tied after all three are numerically identical, so
+    either choice yields the same alignment.
     """
     candidates = np.flatnonzero(valid_counts == valid_counts.max())
     if candidates.size == 1:
@@ -446,7 +446,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
     ) -> pd.DataFrame:
         """Run quantification using built-in implementation."""
         # Get unique samples and proteins
-        samples = peptide_df[sample_column].unique()
+        samples = np.sort(peptide_df[sample_column].unique())
         proteins = peptide_df[protein_column].unique()
 
         logger.info(
@@ -595,7 +595,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
         )
 
         # Get unique sample-run combinations
-        sample_runs = peptide_df["_sample_run"].unique()
+        sample_runs = np.sort(peptide_df["_sample_run"].unique())
         proteins = peptide_df[protein_column].unique()
 
         logger.info(
