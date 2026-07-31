@@ -4,19 +4,28 @@ from pathlib import Path
 import pytest
 import pandas as pd
 
-from mokume.commands.batch_correct import run_batch_correction
-from mokume.core.constants import SAMPLE_ID, PROTEIN_NAME, IBAQ, IBAQ_BEC
-
-# Skip tests if the optional batch-correction dependencies are not installed.
-pytest.importorskip("inmoose", reason="inmoose is required for batch correction")
-anndata = pytest.importorskip(
-    "anndata", reason="anndata is required for batch correction"
+from mokume.commands.batch_correct import (
+    get_batch_id_from_sample_names,
+    run_batch_correction,
 )
+from mokume.core.constants import SAMPLE_ID, PROTEIN_NAME, IBAQ, IBAQ_BEC
 
 TESTS_DIR = Path(__file__).parent
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
+
+
+@pytest.mark.parametrize(
+    "samples",
+    [
+        ["PXD000001-A", "PXD000001-B", "PXD000002-A"],
+        pd.Index(["PXD000001-A", "PXD000001-B", "PXD000002-A"]),
+    ],
+)
+def test_get_batch_id_supports_python_and_pandas_sequences(samples):
+    """Batch labels remain stable for Python and pandas sequences."""
+    assert get_batch_id_from_sample_names(samples).tolist() == [0, 0, 1]
 
 
 def test_correct_batches():
@@ -31,6 +40,11 @@ def test_correct_batches():
     - Handling of missing required columns by raising a ValueError.
     - Handling of invalid file patterns by raising a ValueError.
     """
+    pytest.importorskip("inmoose", reason="inmoose is required for batch correction")
+    anndata = pytest.importorskip(
+        "anndata", reason="anndata is required for batch correction"
+    )
+
     args = {
         "folder": TESTS_DIR / "ibaq-raw-hela",
         "pattern": "*ibaq.tsv",
