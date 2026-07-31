@@ -12,13 +12,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import mokume.analysis.ensemble as ensemble_module
 from mokume.analysis.differential_expression import DifferentialExpression
 from mokume.analysis.deqms import run_deqms
 from mokume.analysis.limma import run_limma
 from mokume.analysis.limrots import run_limrots
 from mokume.analysis.proda import run_proda
 from mokume.analysis.rots import run_rots
-from mokume.analysis.ensemble import run_ensemble
+from mokume.analysis.ensemble import combine_de_results, run_ensemble
+from mokume.pipeline.config import DEConfig, InputConfig, PipelineConfig
+from mokume.pipeline.features_to_proteins import QuantificationPipeline
+from mokume.pipeline.runner import run_pipeline
+from mokume.pipeline.stages import PostprocessingStage
 from mokume.imputation.censored import (
     impute_minprob,
     impute_mindet,
@@ -500,6 +505,244 @@ class TestNonFiniteLog2FCGuard:
 
 
 class TestDEEnsemble:
+    @pytest.mark.parametrize(
+        ("methods", "min_k"),
+        [
+            ([], 1),
+            ([""], 1),
+            (["unknown"], 1),
+            (["auto"], 1),
+            (["ensemble"], 1),
+            ("limma", 1),
+            (["limma", " LIMMA "], 1),
+            (["limma"], 0),
+            (["limma"], 2),
+        ],
+    )
+    def test_invalid_configuration_fails_before_member_execution(
+        self,
+        monkeypatch,
+        methods,
+        min_k,
+    ):
+        calls = []
+
+        class RecordingDE:
+            def __init__(self, method, **options):
+                calls.append((method, options))
+
+            def run(self, protein_df, sample_to_condition, contrast):
+                return pd.DataFrame()
+
+        monkeypatch.setattr(ensemble_module, "DifferentialExpression", RecordingDE)
+
+        with pytest.raises(ValueError, match="ensemble"):
+            run_ensemble(
+                pd.DataFrame(),
+                {},
+                ("A", "B"),
+                methods=methods,
+                min_k=min_k,
+            )
+
+        assert calls == []
+
+    def test_member_names_are_canonicalized_once(self, monkeypatch):
+        calls = []
+
+        class RecordingDE:
+            def __init__(self, method, **options):
+                calls.append((method, options))
+
+            def run(self, protein_df, sample_to_condition, contrast):
+                return pd.DataFrame()
+
+        monkeypatch.setattr(ensemble_module, "DifferentialExpression", RecordingDE)
+
+        result = run_ensemble(
+            pd.DataFrame(),
+            {},
+            ("A", "B"),
+            methods=[" LimMA ", "DEQMS"],
+            min_k=np.int64(1),
+        )
+
+        assert result.empty
+        assert [method for method, _ in calls] == ["limma", "deqms"]
+
+    @pytest.mark.parametrize("error_type", [ValueError, KeyError])
+    def test_shared_member_input_error_is_not_silenced(self, monkeypatch, error_type):
+        class InvalidInputDE:
+            def __init__(self, method, **options):
+                pass
+
+            def run(self, protein_df, sample_to_condition, contrast):
+                raise error_type("shared member input")
+
+        monkeypatch.setattr(ensemble_module, "DifferentialExpression", InvalidInputDE)
+
+        with pytest.raises(error_type, match="shared member input"):
+            run_ensemble(
+                pd.DataFrame(),
+                {},
+                ("A", "B"),
+                methods=["limma"],
+                min_k=1,
+            )
+
+    def test_method_runtime_failure_keeps_other_members(self, monkeypatch):
+        calls = []
+
+        class PartiallyFailingDE:
+            def __init__(self, method, **options):
+                self.method = method
+
+            def run(self, protein_df, sample_to_condition, contrast):
+                calls.append(self.method)
+                if self.method == "limma":
+                    raise RuntimeError("method fit failed")
+                return pd.DataFrame()
+
+        monkeypatch.setattr(
+            ensemble_module, "DifferentialExpression", PartiallyFailingDE
+        )
+
+        result = run_ensemble(
+            pd.DataFrame(),
+            {},
+            ("A", "B"),
+            methods=["limma", "deqms"],
+            min_k=1,
+        )
+
+        assert result.empty
+        assert calls == ["limma", "deqms"]
+
+    @pytest.mark.parametrize(
+        "results,min_k",
+        [
+            ({}, 0),
+            (
+                {
+                    "limma": pd.DataFrame(columns=["ProteinName"]),
+                    " LIMMA ": pd.DataFrame(columns=["ProteinName"]),
+                },
+                1,
+            ),
+        ],
+    )
+    def test_combiner_rejects_invalid_consensus_configuration(self, results, min_k):
+        with pytest.raises(ValueError, match="ensemble"):
+            combine_de_results(results, min_k=min_k)
+
+    def test_combiner_canonicalizes_result_method_names(self):
+        result = pd.DataFrame(
+            {
+                "ProteinName": ["P1"],
+                "log2FC": [2.0],
+                "pvalue": [0.001],
+                "adj_pvalue": [0.001],
+                "significance": ["UP"],
+            }
+        )
+
+        combined = combine_de_results({" LimMA ": result}, min_k=np.int64(1))
+
+        assert combined.loc[0, "methods_significant"] == "limma"
+
+    @pytest.mark.parametrize("entrypoint", ["oop", "runner"])
+    def test_pipeline_entrypoints_validate_ensemble_before_input(
+        self,
+        tmp_path,
+        entrypoint,
+    ):
+        config = PipelineConfig(
+            input=InputConfig(parquet=str(tmp_path / "missing.parquet")),
+            de=DEConfig(
+                enabled=True,
+                method="ensemble",
+                contrasts=["A vs B"],
+                ensemble_methods=["unknown"],
+                ensemble_min_k=1,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="unknown ensemble"):
+            if entrypoint == "oop":
+                QuantificationPipeline(config)
+            else:
+                run_pipeline(config)
+
+    def test_pipeline_rejects_ensemble_options_for_single_method(self, tmp_path):
+        config = PipelineConfig(
+            input=InputConfig(parquet=str(tmp_path / "missing.parquet")),
+            de=DEConfig(
+                enabled=True,
+                method="limma",
+                contrasts=["A vs B"],
+                ensemble_methods=["deqms"],
+                ensemble_min_k=1,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="ensemble methods only apply"):
+            QuantificationPipeline(config)
+
+    def test_pipeline_ignores_ensemble_options_when_de_is_disabled(self, tmp_path):
+        config = PipelineConfig(
+            input=InputConfig(parquet=str(tmp_path / "missing.parquet")),
+            de=DEConfig(
+                enabled=False,
+                method="ensemble",
+                ensemble_methods=["unknown"],
+                ensemble_min_k=0,
+            ),
+        )
+
+        with pytest.raises(FileNotFoundError, match="Parquet file not found"):
+            QuantificationPipeline(config)
+
+    def test_pipeline_uses_canonical_explicit_deqms_member_counts(self, monkeypatch):
+        config = PipelineConfig(
+            input=InputConfig(parquet="explicit.parquet"),
+            de=DEConfig(
+                enabled=True,
+                method=" Ensemble ",
+                ensemble_methods=[" DEQMS "],
+                ensemble_min_k=1,
+            ),
+        )
+        stage = PostprocessingStage(config)
+        peptide_rows = pd.DataFrame(
+            {
+                "anchor_protein": ["P1", "P1", "P2"],
+                "sequence": ["AAA", "BBB", "CCC"],
+            }
+        )
+        monkeypatch.setattr(pd, "read_parquet", lambda *args, **kwargs: peptide_rows)
+
+        de_method = stage._resolve_de_method()
+        counts = stage._load_de_peptide_counts(de_method)
+
+        assert de_method == "ensemble"
+        assert counts.to_dict() == {"P1": 2, "P2": 1}
+
+    def test_default_ensemble_does_not_activate_peptide_count_loading(
+        self, monkeypatch
+    ):
+        config = PipelineConfig(
+            input=InputConfig(parquet="default.parquet"),
+            de=DEConfig(enabled=True, method="ensemble"),
+        )
+        stage = PostprocessingStage(config)
+
+        def unexpected_read(*args, **kwargs):
+            raise AssertionError("default ensemble must not load peptide counts")
+
+        monkeypatch.setattr(pd, "read_parquet", unexpected_read)
+
+        assert stage._load_de_peptide_counts("ensemble") is None
+
     def test_ensemble_combines_without_protein_keyerror(self):
         # Regression: run_ensemble previously crashed with KeyError 'Protein'
         # because combine_de_results read df["Protein"] while every member

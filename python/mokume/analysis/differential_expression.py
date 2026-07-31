@@ -8,6 +8,7 @@ differences between experimental conditions.
 import numpy as np
 import pandas as pd
 
+from mokume.analysis.ensemble_config import SUPPORTED_DE_METHODS
 from mokume.analysis.deqms import run_deqms
 from mokume.analysis.limma import run_limma
 from mokume.analysis.limrots import run_limrots
@@ -43,7 +44,7 @@ def _multipletests():
 class DifferentialExpression:
     """Differential expression analysis for protein intensity data."""
 
-    SUPPORTED_METHODS = ("limrots", "deqms", "proda", "limma", "rots")
+    SUPPORTED_METHODS = SUPPORTED_DE_METHODS
 
     def __init__(
         self,

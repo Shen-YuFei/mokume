@@ -39,6 +39,7 @@ from mokume.pipeline.config import (
     DEConfig,
     OutputConfig,
     RuntimeConfig,
+    validate_de_config,
 )
 from mokume.pipeline.directlfq_streaming import estimate_protein_intensities_streamed
 from mokume.pipeline.stages import (
@@ -107,6 +108,7 @@ class QuantificationPipeline:
 
     def _validate_config(self):
         """Validate configuration and check for required parameters."""
+        validate_de_config(self.config.de)
         parse_normalization_methods(
             self.config.normalization.run_method,
             self.config.normalization.sample_method,
