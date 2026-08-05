@@ -41,8 +41,17 @@ weighting) rather than collapsing every member onto one shared value.
 
 import logging
 from collections import defaultdict
+from collections.abc import Container, Hashable
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import (
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 import numpy as np
 import pandas as pd
@@ -288,6 +297,13 @@ def _detect_peptide_column(data: pd.DataFrame) -> str:
         "piBAQ requires a peptide-sequence column "
         f"({PEPTIDE_CANONICAL!r}, 'sequence', or {PEPTIDE_SEQUENCE!r})."
     )
+
+
+def _membership_mask(values: pd.Series, container: Container[str]) -> pd.Series:
+    """Test only observed values without materializing a large key domain."""
+    return values.map(
+        lambda value: isinstance(value, Hashable) and value in container
+    ).astype(bool, copy=False)
 
 
 def _count_unique_anchors(
@@ -584,29 +600,18 @@ def _annotate_family_metadata(
     return block
 
 
-def _attach_tpa(
-    block: DataFrame,
-    family: Family,
-    branch_is_fallback: bool,
+def _finalize_tpa(
+    out: DataFrame,
     mw_map: Mapping[str, float],
+    fallback_mw_by_family: Mapping[str, float],
 ) -> DataFrame:
-    """Compute TPA per the rule in plan section 2.4.
-
-    Per-protein branch: ``TPA = NormIntensity / MW(member)``.
-    Fallback branch: ``TPA = family_intensity / sum(MW for member in family)``,
-    so every replicated family row reports the same TPA -- mirroring the
-    fact that the iBAQ is shared across the family.
-    """
-    if branch_is_fallback:
-        family_mw = sum(mw_map.get(m, 0.0) for m in family.members)
-        if family_mw <= 0:
-            family_mw = 1.0
-        block[MOLECULARWEIGHT] = family_mw
-    else:
-        mw_series = block[PROTEIN_NAME].map(mw_map).fillna(0.0)
-        block[MOLECULARWEIGHT] = mw_series.replace(0.0, 1.0)
-    block[TPA] = block[NORM_INTENSITY] / block[MOLECULARWEIGHT]
-    return block
+    """Attach molecular weights and TPA once to the combined result."""
+    molecular_weights = out[PROTEIN_NAME].map(mw_map).fillna(0.0)
+    molecular_weights = molecular_weights.replace(0.0, 1.0)
+    fallback_weights = out[FAMILY_ID].map(fallback_mw_by_family)
+    out[MOLECULARWEIGHT] = fallback_weights.fillna(molecular_weights)
+    out[TPA] = out[NORM_INTENSITY] / out[MOLECULARWEIGHT]
+    return out
 
 
 def _empty_pibaq_frame(group_cols: Sequence[str], include_tpa: bool) -> DataFrame:
@@ -688,7 +693,7 @@ def compute_pibaq(
     # Keep only peptides present in the FASTA digest; matching is driven by
     # the peptide-sequence column against the digest index, not by the
     # per-row protein-name strings.
-    working = peptide_df[peptide_df[pep_col].isin(peptide_to_accessions)]
+    working = peptide_df[_membership_mask(peptide_df[pep_col], peptide_to_accessions)]
     if working.empty:
         include_tpa = mw_map is not None
         return _empty_pibaq_frame(group_cols, include_tpa)
@@ -703,14 +708,12 @@ def compute_pibaq(
     # vast majority of families are isolated singletons with no detection,
     # so iterating only the subset with data drops the per-call hot loop
     # from O(|families|) to O(|families with data|).
-    all_owned_peptides: Set[str] = set()
-    for peps in family_to_peptides.values():
-        all_owned_peptides |= peps
-    working = working[working[pep_col].isin(all_owned_peptides)]
+    working = working[_membership_mask(working[pep_col], peptide_owner)]
     observed_peptides = set(working[pep_col].dropna().unique())
 
     results: List[DataFrame] = []
     n_fallback = 0
+    fallback_mw_by_family: Dict[str, float] = {}
     for family in families:
         owned = family_to_peptides.get(family.family_id, set())
         if not owned & observed_peptides:
@@ -752,8 +755,11 @@ def compute_pibaq(
             continue
         evidence = _classify_evidence(min_anchor, min_anchors, high_anchor_threshold)
         block = _annotate_family_metadata(block, family, evidence)
-        if mw_map is not None:
-            block = _attach_tpa(block, family, is_fallback, mw_map)
+        if mw_map is not None and is_fallback:
+            family_mw = sum(mw_map.get(member, 0.0) for member in family.members)
+            if family_mw <= 0:
+                family_mw = 1.0
+            fallback_mw_by_family[family.family_id] = family_mw
         results.append(block)
 
     if not results:
@@ -761,6 +767,8 @@ def compute_pibaq(
         return _empty_pibaq_frame(group_cols, include_tpa)
 
     out = pd.concat(results, ignore_index=True)
+    if mw_map is not None:
+        out = _finalize_tpa(out, mw_map, fallback_mw_by_family)
     n_processed = len(results)
     logger.info(
         "piBAQ: %d families processed (%d fallback to family rollup, %d per-protein)",

@@ -49,7 +49,60 @@ from mokume.quantification.families import (
     load_families_yaml,
     merge_overrides,
 )
-from mokume.quantification.ibaq import compute_pibaq, peptides_to_protein
+from mokume.quantification.ibaq import (
+    _membership_mask,
+    compute_pibaq,
+    peptides_to_protein,
+)
+
+
+class _NonIterableContainer:
+    """Container proving membership does not enumerate its key domain."""
+
+    def __init__(self, values):
+        self._values = set(values)
+
+    def __contains__(self, value):
+        return value in self._values
+
+    def __iter__(self):
+        raise AssertionError("membership filtering must not materialize the container")
+
+
+def test_membership_mask_probes_observed_values_without_iterating_container():
+    values = pd.Series(
+        [
+            "present",
+            "absent",
+            None,
+            float("nan"),
+            pd.NA,
+            ["present"],
+            {"present"},
+            {"present": True},
+            "present",
+        ],
+        dtype=object,
+    )
+    container = _NonIterableContainer({"present", "unobserved"})
+
+    mask = _membership_mask(values, container)
+    empty_mask = _membership_mask(pd.Series(dtype=object), container)
+
+    assert mask.tolist() == [
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+    ]
+    assert mask.dtype == bool
+    assert empty_mask.empty
+    assert empty_mask.dtype == bool
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +542,37 @@ def test_compute_pibaq_tpa_uses_family_summed_mw_in_fallback():
     tpa_unique = list(result[TPA].round(6).unique())
     assert len(tpa_unique) == 1
     assert tpa_unique[0] == pytest.approx(300.0 / 60.0)
+
+
+def test_compute_pibaq_tpa_finalizes_mixed_branch_weights_together():
+    """Per-member and family-summed masses remain distinct in one result."""
+    acc_to_peps = {
+        "A": {"ua"},
+        "B": {"s1", "s2"},
+        "C": {"s1", "s2"},
+    }
+    pep_to_accs = invert_peptide_index(acc_to_peps)
+    families = discover_families(acc_to_peps, pep_to_accs)
+    peptide_df = _build_peptide_df(
+        [
+            ("A", "ua", "S1", "C1", 100.0),
+            ("B", "s1", "S1", "C1", 100.0),
+            ("C", "s2", "S1", "C1", 200.0),
+        ]
+    )
+
+    result = compute_pibaq(
+        peptide_df,
+        acc_to_peps,
+        pep_to_accs,
+        families,
+        mw_map={"A": 10.0, "B": 20.0, "C": 30.0},
+    ).set_index(PROTEIN_NAME)
+
+    assert result.loc["A", MOLECULARWEIGHT] == pytest.approx(10.0)
+    assert result.loc["A", TPA] == pytest.approx(10.0)
+    assert set(result.loc[["B", "C"], MOLECULARWEIGHT]) == {50.0}
+    assert list(result.loc[["B", "C"], TPA]) == pytest.approx([6.0, 6.0])
 
 
 def test_compute_pibaq_empty_inputs_return_typed_empty_frame():
