@@ -785,7 +785,7 @@ def features2proteins(
     )
     parsed_de_ensemble_methods = (
         [s.strip() for s in de_ensemble_methods.split(",")]
-        if de_ensemble_methods
+        if de_ensemble_methods is not None
         else None
     )
 

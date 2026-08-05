@@ -51,7 +51,7 @@ from mokume.postprocessing.batch_correction import (
     apply_batch_correction,
 )
 from mokume.model.batch_correction import BatchDetectionMethod
-from mokume.pipeline.config import PipelineConfig
+from mokume.pipeline.config import PipelineConfig, validate_de_config
 
 logger = get_logger("mokume.pipeline")
 
@@ -1710,7 +1710,7 @@ class PostprocessingStage:
 
     def _resolve_de_method(self) -> str:
         """Resolve the configured DE method, including auto selection."""
-        de_method = self.config.de.method
+        de_method = self.config.de.method.strip().lower()
         if de_method != "auto":
             return de_method
 
@@ -1721,10 +1721,13 @@ class PostprocessingStage:
 
     def _load_de_peptide_counts(self, de_method: str) -> Optional[pd.Series]:
         """Load protein-level unique peptide counts when DEqMS needs them."""
+        explicit_ensemble_methods = None
+        if de_method == "ensemble" and self.config.de.ensemble_methods is not None:
+            explicit_ensemble_methods = validate_de_config(self.config.de)
         needs_counts = de_method == "deqms" or (
             de_method == "ensemble"
-            and self.config.de.ensemble_methods
-            and "deqms" in self.config.de.ensemble_methods
+            and explicit_ensemble_methods is not None
+            and "deqms" in explicit_ensemble_methods
         )
         if not (needs_counts and self.config.input.parquet):
             return None
@@ -1773,11 +1776,7 @@ class PostprocessingStage:
         """Run ensemble DE for all configured contrasts."""
         from mokume.analysis.ensemble import run_ensemble
 
-        ensemble_methods = self.config.de.ensemble_methods or [
-            "limrots",
-            "deqms",
-            "proda",
-        ]
+        ensemble_methods = self.config.de.ensemble_methods
         all_results = {}
         for contrast in contrasts:
             key = f"{contrast[0]}-{contrast[1]}"
@@ -1840,6 +1839,8 @@ class PostprocessingStage:
         the pipeline runner (``pipeline.runner``) and is otherwise unused.
         """
         from mokume.normalization.irs import detect_condition_from_sdrf
+
+        validate_de_config(self.config.de)
 
         if not self.config.input.sdrf:
             raise ValueError("Differential expression requires an SDRF file (--sdrf)")

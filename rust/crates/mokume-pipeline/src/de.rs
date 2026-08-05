@@ -52,7 +52,7 @@
 //! than 10 valid points) it falls back to plain eBayes (== limma), exactly as
 //! mokume does.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -108,7 +108,12 @@ pub(crate) fn run_differential_expression(
         if let Some(output) = de_output_path(config, contrast, contrasts.len()) {
             match &results {
                 ContrastResults::Standard(rows) => {
-                    write_de_csv(&output, rows, contrast, de_method(config), matrix)?;
+                    let DeMethod::Member(method) = de_method(config)? else {
+                        return Err(invalid_input(
+                            "ensemble results cannot use the single-method writer",
+                        ));
+                    };
+                    write_de_csv(&output, rows, contrast, method, matrix)?;
                 }
                 ContrastResults::Ensemble(rows) => {
                     write_ensemble_csv(&output, rows, contrast)?;
@@ -169,9 +174,9 @@ fn run_one_contrast(
 
     // Method is validated upstream in `validate_de_subset`; only `limma`,
     // `deqms`, `rots`, `limrots`, `proda`, and `ensemble` reach here.
-    match de_method(config) {
-        DeMethod::Ensemble => Ok(ContrastResults::Ensemble(run_ensemble(&prepared, config))),
-        method => Ok(ContrastResults::Standard(run_member(
+    match de_method(config)? {
+        DeMethod::Ensemble => Ok(ContrastResults::Ensemble(run_ensemble(&prepared, config)?)),
+        DeMethod::Member(method) => Ok(ContrastResults::Standard(run_member(
             method, &prepared, config,
         ))),
     }
@@ -188,12 +193,10 @@ struct Prepared<'a> {
     n_b: usize,
 }
 
-/// Run one single-method DE test on the prepared contrast data, returning its
-/// BH-adjusted, sorted `Vec<DeResult>`. `DeMethod::Ensemble` never reaches here
-/// (it is handled in [`run_one_contrast`]); defensively it falls back to limma
-/// rather than recursing.
+/// Run one concrete single-method DE test on the prepared contrast data,
+/// returning its BH-adjusted, sorted `Vec<DeResult>`.
 fn run_member(
-    method: DeMethod,
+    method: MemberMethod,
     prepared: &Prepared<'_>,
     config: &DifferentialExpressionConfig,
 ) -> Vec<DeResult> {
@@ -212,7 +215,7 @@ fn run_member(
     // so IHW must not overwrite it -- mirroring Python's `_run_limrots` /
     // `_run_rots` routing through `_classify_and_sort` instead of
     // `_finalize_results` (differential_expression.py).
-    if is_ihw(config) && !matches!(method, DeMethod::Limrots | DeMethod::Rots) {
+    if is_ihw(config) && !matches!(method, MemberMethod::Limrots | MemberMethod::Rots) {
         apply_ihw(&mut results, config);
     }
     results
@@ -222,17 +225,17 @@ fn run_member(
 /// correction (the method's own `bh_adjust` + sort). IHW, when requested, is
 /// layered on top by [`run_member`].
 fn run_method_bh(
-    method: DeMethod,
+    method: MemberMethod,
     prepared: &Prepared<'_>,
     config: &DifferentialExpressionConfig,
 ) -> Vec<DeResult> {
     let (proteins, rows, n_a, n_b) = (prepared.proteins, prepared.rows, prepared.n_a, prepared.n_b);
     let (fdr, log2fc) = (config.fdr_threshold, config.log2fc_threshold);
     match method {
-        DeMethod::Rots => rots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
-        DeMethod::Limrots => limrots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
-        DeMethod::Proda => proda_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
-        DeMethod::Deqms => {
+        MemberMethod::Rots => rots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
+        MemberMethod::Limrots => limrots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
+        MemberMethod::Proda => proda_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
+        MemberMethod::Deqms => {
             // Per-protein unique-canonical-peptide counts captured at ingest,
             // aligned to the contrast's protein order and defaulting to 1 for any
             // protein absent from the map -- mirroring Python's
@@ -245,10 +248,7 @@ fn run_method_bh(
             let counts = build_count_vector(prepared.matrix, proteins);
             deqms_two_group(proteins, rows, n_a, n_b, &counts, fdr, log2fc)
         }
-        // Limma and (defensively) Ensemble route to plain limma.
-        DeMethod::Limma | DeMethod::Ensemble => {
-            limma_two_group(proteins, rows, n_a, n_b, fdr, log2fc)
-        }
+        MemberMethod::Limma => limma_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
     }
 }
 
@@ -335,15 +335,15 @@ fn classify_significance(
 /// the members that produced a non-empty result (Python's `if not result.empty`),
 /// then fuse with `combine_de_results`. The member list defaults to
 /// `[limrots, deqms, proda]` (the Python default) and is overridable via
-/// `--de-ensemble-methods`; unknown member names default to limma in
-/// [`run_member`] rather than aborting.
+/// `--de-ensemble-methods`. Invalid member configurations are rejected before
+/// any member runs.
 fn run_ensemble(
     prepared: &Prepared<'_>,
     config: &DifferentialExpressionConfig,
-) -> Vec<EnsembleResult> {
+) -> Result<Vec<EnsembleResult>> {
     let mut members: Vec<(String, Vec<DeResult>)> = Vec::new();
-    for name in ensemble_member_names(config) {
-        let method = parse_de_method(&name);
+    for name in validated_ensemble_member_names(config)? {
+        let method = parse_ensemble_method(&name)?;
         let result = run_member(method, prepared, config);
         // Python only adds members whose result is non-empty.
         if !result.is_empty() {
@@ -352,25 +352,54 @@ fn run_ensemble(
     }
     // `run_ensemble` returns an empty frame when no member produced results;
     // `combine_de_results` over an empty member set returns no rows.
-    combine_de_results(
+    Ok(combine_de_results(
         &members,
         config.ensemble_min_k,
         config.log2fc_threshold,
         config.fdr_threshold,
-    )
+    ))
 }
 
-/// The ensemble member method names, lower-cased: the configured
-/// `--de-ensemble-methods` list when present, else the Python default
-/// `("limrots", "deqms", "proda")` (ensemble.py:27).
-fn ensemble_member_names(config: &DifferentialExpressionConfig) -> Vec<String> {
-    match &config.ensemble_methods {
-        Some(methods) if !methods.is_empty() => methods
-            .iter()
-            .map(|m| m.trim().to_ascii_lowercase())
-            .collect(),
-        _ => vec!["limrots".to_owned(), "deqms".to_owned(), "proda".to_owned()],
+/// Return canonical ensemble members after validating the member and consensus
+/// configuration. An omitted list uses the documented default; an explicitly
+/// empty list is invalid.
+pub(crate) fn validated_ensemble_member_names(
+    config: &DifferentialExpressionConfig,
+) -> Result<Vec<String>> {
+    let default_methods = ["limrots", "deqms", "proda"];
+    let methods: Vec<&str> = match &config.ensemble_methods {
+        None => default_methods.to_vec(),
+        Some(methods) if methods.is_empty() => {
+            return Err(invalid_input("ensemble member list must not be empty"));
+        }
+        Some(methods) => methods.iter().map(String::as_str).collect(),
+    };
+
+    let mut seen = HashSet::new();
+    let mut canonical = Vec::with_capacity(methods.len());
+    for method in methods {
+        let name = method.trim().to_ascii_lowercase();
+        if name.is_empty() {
+            return Err(invalid_input("ensemble member name must not be empty"));
+        }
+        if name == "ensemble" {
+            return Err(invalid_input("nested ensemble members are not supported"));
+        }
+        parse_ensemble_method(&name)?;
+        if !seen.insert(name.clone()) {
+            return Err(invalid_input(format!("duplicate ensemble member `{name}`")));
+        }
+        canonical.push(name);
     }
+
+    if config.ensemble_min_k == 0 || config.ensemble_min_k > canonical.len() {
+        return Err(invalid_input(format!(
+            "ensemble min-k must be between 1 and the number of member methods ({}); got {}",
+            canonical.len(),
+            config.ensemble_min_k
+        )));
+    }
+    Ok(canonical)
 }
 
 /// Build the DEqMS per-protein count vector aligned to `proteins` (the contrast
@@ -423,31 +452,50 @@ fn build_count_vector(matrix: &ProteinMatrix, proteins: &[String]) -> Vec<f64> {
 /// configured `--de-method` is one of these by the time a contrast runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeMethod {
+    Member(MemberMethod),
+    Ensemble,
+}
+
+/// A concrete method that can safely execute as one ensemble member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemberMethod {
     Limma,
     Deqms,
     Rots,
     Limrots,
     Proda,
-    Ensemble,
 }
 
 /// Resolve the top-level `--de-method` string (already validated to one of the
 /// supported methods, including `ensemble`) to a [`DeMethod`].
-fn de_method(config: &DifferentialExpressionConfig) -> DeMethod {
+fn de_method(config: &DifferentialExpressionConfig) -> Result<DeMethod> {
     parse_de_method(&config.method)
 }
 
-/// Map a method name to [`DeMethod`] (case-insensitive). Unknown names default
-/// to limma rather than silently routing to a different test; this is also the
-/// fallback for an unrecognised ensemble member name.
-fn parse_de_method(name: &str) -> DeMethod {
-    match name.trim().to_ascii_lowercase().as_str() {
-        "deqms" => DeMethod::Deqms,
-        "rots" => DeMethod::Rots,
-        "limrots" => DeMethod::Limrots,
-        "proda" => DeMethod::Proda,
+/// Map a validated method name to [`DeMethod`] without a scientific fallback.
+fn parse_de_method(name: &str) -> Result<DeMethod> {
+    let method = match name.trim().to_ascii_lowercase().as_str() {
+        "limma" => DeMethod::Member(MemberMethod::Limma),
+        "deqms" => DeMethod::Member(MemberMethod::Deqms),
+        "rots" => DeMethod::Member(MemberMethod::Rots),
+        "limrots" => DeMethod::Member(MemberMethod::Limrots),
+        "proda" => DeMethod::Member(MemberMethod::Proda),
         "ensemble" => DeMethod::Ensemble,
-        _ => DeMethod::Limma,
+        _ => return Err(invalid_input(format!("unknown DE method `{name}`"))),
+    };
+    Ok(method)
+}
+
+/// Parse one concrete ensemble member, rejecting nested ensembles.
+fn parse_ensemble_method(name: &str) -> Result<MemberMethod> {
+    match parse_de_method(name) {
+        Err(_) => Err(invalid_input(format!(
+            "unknown ensemble member `{name}`; supported members: limma, deqms, rots, limrots, proda"
+        ))),
+        Ok(DeMethod::Ensemble) => {
+            Err(invalid_input("nested ensemble members are not supported"))
+        }
+        Ok(DeMethod::Member(method)) => Ok(method),
     }
 }
 
@@ -653,7 +701,7 @@ fn write_de_csv(
     path: &Path,
     results: &[DeResult],
     contrast: &Contrast,
-    method: DeMethod,
+    method: MemberMethod,
     matrix: &ProteinMatrix,
 ) -> Result<()> {
     create_parent_dir(path)?;
@@ -664,31 +712,29 @@ fn write_de_csv(
     let mut writer = BufWriter::new(file);
 
     let header = match method {
-        // Ensemble is written by `write_ensemble_csv`, never here; defensively it
-        // shares the limma header rather than emitting a wrong column set.
-        DeMethod::Limma | DeMethod::Ensemble => format!(
+        MemberMethod::Limma => format!(
             "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,AveExpr,B,mean_{},mean_{},n_a,n_b,significance",
             contrast.cond_a, contrast.cond_b
         ),
-        DeMethod::Deqms => format!(
+        MemberMethod::Deqms => format!(
             "ProteinName,log2FC,pvalue,adj_pvalue,sca_t,sca_pvalue,sca_adj_pvalue,mean_{},mean_{},n_a,n_b,peptide_count,significance",
             contrast.cond_a, contrast.cond_b
         ),
         // rots' finalize_de_result uses extra_cols=("d_stat",) (rots.py:331), so
         // a single d_stat column sits between adj_pvalue and the mean columns.
-        DeMethod::Rots => format!(
+        MemberMethod::Rots => format!(
             "ProteinName,log2FC,pvalue,adj_pvalue,d_stat,mean_{},mean_{},n_a,n_b,significance",
             contrast.cond_a, contrast.cond_b
         ),
         // limrots emits a single `t_stat` column (== the LimROTS d-statistic)
         // between adj_pvalue and the mean columns (limrots.py:319-329).
-        DeMethod::Limrots => format!(
+        MemberMethod::Limrots => format!(
             "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,mean_{},mean_{},n_a,n_b,significance",
             contrast.cond_a, contrast.cond_b
         ),
         // proda emits the Wald `t_stat` as its single extra column
         // (proda.py:700-714 lists `t_stat` right after adj_pvalue).
-        DeMethod::Proda => format!(
+        MemberMethod::Proda => format!(
             "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,mean_{},mean_{},n_a,n_b,significance",
             contrast.cond_a, contrast.cond_b
         ),
@@ -700,7 +746,7 @@ fn write_de_csv(
     // written value matches Python's `counts` column exactly. Other methods never
     // read this map.
     let counts_by_name = match method {
-        DeMethod::Deqms => matrix.peptide_counts_by_name(),
+        MemberMethod::Deqms => matrix.peptide_counts_by_name(),
         _ => HashMap::new(),
     };
 
@@ -713,34 +759,32 @@ fn write_de_csv(
             format_float(row.adj_p_value),
         );
         let extras = match method {
-            // Ensemble never reaches this writer (see header note); shares the
-            // limma extras defensively.
-            DeMethod::Limma | DeMethod::Ensemble => format!(
+            MemberMethod::Limma => format!(
                 "{},{},{},",
                 format_float(row.t_statistic),
                 format_float(row.ave_expr),
                 format_float(row.b),
             ),
             // sca_t, sca_pvalue (== pvalue), sca_adj_pvalue (== adj_pvalue).
-            DeMethod::Deqms => format!(
+            MemberMethod::Deqms => format!(
                 "{},{},{},",
                 format_float(row.t_statistic),
                 format_float(row.p_value),
                 format_float(row.adj_p_value),
             ),
             // rots' single d_stat extra column (carried in t_statistic).
-            DeMethod::Rots => format!("{},", format_float(row.t_statistic)),
+            MemberMethod::Rots => format!("{},", format_float(row.t_statistic)),
             // limrots' single t_stat extra column (== d_stat, carried in
             // t_statistic).
-            DeMethod::Limrots => format!("{},", format_float(row.t_statistic)),
+            MemberMethod::Limrots => format!("{},", format_float(row.t_statistic)),
             // proda's single Wald t_stat extra column (carried in t_statistic).
-            DeMethod::Proda => format!("{},", format_float(row.t_statistic)),
+            MemberMethod::Proda => format!("{},", format_float(row.t_statistic)),
         };
         // deqms appends a `peptide_count` column before `significance`; it carries
         // the per-protein unique-peptide count aligned by name (default 1 for any
         // protein with no recorded count), matching Python's `_build_count_vector`.
         let suffix = match method {
-            DeMethod::Deqms => {
+            MemberMethod::Deqms => {
                 format!(
                     ",{}",
                     counts_by_name.get(&row.protein).copied().unwrap_or(1)
@@ -864,7 +908,7 @@ mod tests {
 
     use super::{
         available_conditions, build_count_vector, condition_by_sample, run_differential_expression,
-        shorten_factor_label, split_contrast,
+        shorten_factor_label, split_contrast, validated_ensemble_member_names,
     };
     use crate::{CellKey, ProteinMatrix, ProteinValues};
 
@@ -1651,6 +1695,19 @@ mod tests {
             output: Some(output.to_path_buf()),
             ..DifferentialExpressionConfig::default()
         }
+    }
+
+    #[test]
+    fn ensemble_members_are_canonicalized_once() -> TestResult<()> {
+        let output = temp_dir("ensemble-member-canonicalization")?.join("de.csv");
+        let mut config = ensemble_config(&output, &[" LimMA ", "DeQMS"]);
+        config.ensemble_min_k = 1;
+
+        assert_eq!(
+            validated_ensemble_member_names(&config)?,
+            vec!["limma".to_string(), "deqms".to_string()]
+        );
+        Ok(())
     }
 
     // End-to-end property test of `--de-method ensemble` over a member subset that

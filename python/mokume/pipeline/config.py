@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from mokume.analysis.ensemble_config import validate_de_ensemble
+
 _MEMORY_LIMIT_RE = re.compile(r"^\s*\d+(?:\.\d+)?\s*[KMGT]?B?\s*$", re.IGNORECASE)
 _MEMORY_UNIT_BYTES: dict[str, int] = {
     "": 1,
@@ -305,6 +307,16 @@ class DEConfig:
     # Ensemble-specific (used when method == "ensemble")
     ensemble_methods: Optional[list] = None
     ensemble_min_k: int = 2
+
+
+def validate_de_config(config: DEConfig) -> tuple[str, ...] | None:
+    """Validate ensemble-specific DE options and return resolved members."""
+    return validate_de_ensemble(
+        enabled=config.enabled,
+        method=config.method,
+        ensemble_methods=config.ensemble_methods,
+        ensemble_min_k=config.ensemble_min_k,
+    )
 
 
 @dataclass

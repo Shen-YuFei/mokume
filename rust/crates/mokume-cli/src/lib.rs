@@ -650,7 +650,7 @@ impl Features2ProteinsArgs {
                 contrasts: split_csv_option(self.de_contrasts),
                 contrasts_file: self.de_contrasts_file,
                 method: self.de_method,
-                ensemble_methods: split_csv_option(self.de_ensemble_methods),
+                ensemble_methods: split_ensemble_methods(self.de_ensemble_methods),
                 ensemble_min_k: self.de_ensemble_min_k,
                 log2fc_threshold: self.de_log2fc_threshold,
                 fdr_threshold: self.de_fdr_threshold,
@@ -726,6 +726,18 @@ fn split_csv_option(value: Option<String>) -> Option<Vec<String>> {
                 .collect::<Vec<_>>()
         })
         .filter(|values| !values.is_empty())
+}
+
+/// Split ensemble members without discarding empty entries so validation can
+/// report malformed lists instead of silently changing the requested methods.
+fn split_ensemble_methods(value: Option<String>) -> Option<Vec<String>> {
+    value.map(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .map(ToOwned::to_owned)
+            .collect()
+    })
 }
 
 /// Dispatch a fully-built [`Cli`] to its subcommand. Shared by the binary entry
@@ -1287,6 +1299,33 @@ mod tests {
         assert_eq!(config.differential_expression.fdr_method, "ihw");
         assert_eq!(config.runtime.memory.as_deref(), Some("80GB"));
         assert_eq!(config.runtime.threads, Some(24));
+    }
+
+    #[test]
+    fn preserves_empty_de_ensemble_members_for_validation() {
+        for value in ["", "limma,,deqms"] {
+            let cli = Cli::parse_from([
+                "mokume",
+                "features2proteins",
+                "-p",
+                "input.parquet",
+                "-o",
+                "protein.csv",
+                "--de-ensemble-methods",
+                value,
+            ]);
+            let Commands::Features2Proteins(args) = cli.command else {
+                panic!("expected features2proteins command");
+            };
+            let methods = args.into_config().differential_expression.ensemble_methods;
+
+            assert!(
+                methods
+                    .as_ref()
+                    .is_some_and(|methods| methods.iter().any(String::is_empty)),
+                "empty member from {value:?} was discarded: {methods:?}"
+            );
+        }
     }
 
     #[test]

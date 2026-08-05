@@ -4640,6 +4640,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         config
     };
 
+    validate_de_ensemble_options(config)?;
     validate_features_to_proteins(config)?;
     validate_implemented_subset(config)?;
     if let Some(method) = ignored_directlfq_sample_normalization(config) {
@@ -5589,13 +5590,15 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         });
     }
     // `--de-ensemble-methods` only has meaning for the ensemble method; reject it
-    // for the single-method paths rather than silently ignoring it. The member
-    // names themselves are validated when the ensemble runs (unknown names fall
-    // back to limma in `run_member`).
+    // for the single-method paths rather than silently ignoring it. Validate an
+    // ensemble's members and min-k before execution.
     if de.ensemble_methods.is_some() && !is_ensemble {
         return Err(invalid_input(
             "--de-ensemble-methods only applies to --de-method ensemble",
         ));
+    }
+    if is_ensemble {
+        de::validated_ensemble_member_names(de)?;
     }
     // `--de-contrasts-file` is expanded into `contrasts` before validation runs
     // (see `expand_de_contrasts_file`), so by here `contrasts_file` is already
@@ -5619,6 +5622,16 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Validate only the ensemble-specific DE contract before any input access.
+/// Other validation keeps its established ordering in the full validators.
+fn validate_de_ensemble_options(config: &FeatureToProteinsConfig) -> Result<()> {
+    let de = &config.differential_expression;
+    if de.enabled && de.method.trim().eq_ignore_ascii_case("ensemble") {
+        de::validated_ensemble_member_names(de)?;
+    }
     Ok(())
 }
 
@@ -7872,9 +7885,10 @@ mod tests {
         extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
         irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
         irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
-        resolve_de_method, resolve_irs_autodetect_channel, tech_replicate_of, validate_batch_sizes,
-        validate_features_to_proteins, validate_implemented_subset, CellKey, IrsStat,
-        NormalizationFactorCollector, ProteinMatrix, ProteinValues,
+        resolve_de_method, resolve_irs_autodetect_channel, run_features_to_proteins,
+        tech_replicate_of, validate_batch_sizes, validate_features_to_proteins,
+        validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
+        ProteinValues,
     };
 
     #[test]
@@ -9087,6 +9101,90 @@ mod tests {
         config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
         validate_implemented_subset(&config)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_ensemble_members_before_execution() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let invalid_members = [
+            (Vec::<String>::new(), "empty"),
+            (vec!["".to_string()], "empty"),
+            (vec!["unknown".to_string()], "unknown"),
+            (vec!["auto".to_string()], "unknown"),
+            (vec!["ensemble".to_string()], "nested"),
+            (
+                vec!["limma".to_string(), " LIMMA ".to_string()],
+                "duplicate",
+            ),
+        ];
+
+        for (members, expected) in invalid_members {
+            let parquet = existing_dummy_path("invalid_ensemble_member")?;
+            let mut config = base_config(parquet);
+            config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
+            config.differential_expression.enabled = true;
+            config.differential_expression.method = "ensemble".to_string();
+            config.differential_expression.ensemble_methods = Some(members);
+            config.differential_expression.ensemble_min_k = 1;
+            config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+
+            let Some(error) = validate_implemented_subset(&config).err() else {
+                return Err("invalid ensemble member configuration was accepted".into());
+            };
+            let error = error.to_string();
+            assert!(
+                error.contains(expected),
+                "expected {expected:?} in error, got {error:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validates_ensemble_min_k_against_configured_members(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for min_k in [0, 3] {
+            let parquet = existing_dummy_path("invalid_ensemble_min_k")?;
+            let mut config = base_config(parquet);
+            config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
+            config.differential_expression.enabled = true;
+            config.differential_expression.method = "ensemble".to_string();
+            config.differential_expression.ensemble_methods =
+                Some(vec!["limma".to_string(), "deqms".to_string()]);
+            config.differential_expression.ensemble_min_k = min_k;
+            config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+
+            let Some(error) = validate_implemented_subset(&config).err() else {
+                return Err("invalid ensemble min-k was accepted".into());
+            };
+            let error = error.to_string();
+            assert!(error.contains("min-k"), "unexpected error: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_ensemble_precedes_missing_input_without_output(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
+        let output = tempdir.path().join("de.csv");
+        let mut config = base_config(tempdir.path().join("missing.parquet"));
+        config.input.sdrf = Some(tempdir.path().join("missing.sdrf.tsv"));
+        config.differential_expression.enabled = true;
+        config.differential_expression.method = "ensemble".to_string();
+        config.differential_expression.ensemble_methods = Some(vec!["unknown".to_string()]);
+        config.differential_expression.ensemble_min_k = 1;
+        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(output.clone());
+
+        let Some(error) = run_features_to_proteins(&config).err() else {
+            return Err("invalid ensemble configuration was accepted".into());
+        };
+        let error = error.to_string();
+
+        assert!(error.contains("unknown"), "unexpected error: {error}");
+        assert!(!output.exists(), "invalid ensemble created DE output");
         Ok(())
     }
 

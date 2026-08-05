@@ -15,7 +15,7 @@ from mokume.core.dataset import QpxDataset
 from mokume.core.logger import get_logger
 from mokume.core.registry import PluginRegistry
 from mokume.model.normalization import parse_normalization_methods
-from mokume.pipeline.config import PipelineConfig
+from mokume.pipeline.config import PipelineConfig, validate_de_config
 from mokume.pipeline import flows
 
 logger = get_logger("mokume.pipeline.runner")
@@ -46,6 +46,7 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
     QpxDataset
         Dataset with proteins populated and optional DE results in uns.
     """
+    validate_de_config(config.de)
     parse_normalization_methods(
         config.normalization.run_method,
         config.normalization.sample_method,
