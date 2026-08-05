@@ -1,17 +1,33 @@
 """CLI commands for agentic analysis."""
 
 from pathlib import Path
+from typing import Callable
 
 import click
 import pandas as pd
 
 from mokume.agentic.config import AgenticConfig
-from mokume.agentic.optimizer import optimize
 from mokume.normalization.irs import detect_condition_from_sdrf
 
 _ENV_KEY_MAP = {
     "llm_base_url": "OPENAI_BASE_URL",
 }
+
+
+def _load_optimizer() -> Callable:
+    """Load the agentic runtime after Click has selected this command."""
+    try:
+        from mokume.agentic.optimizer import (  # pylint: disable=import-outside-toplevel
+            optimize,
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name != "yaml":
+            raise
+        raise click.ClickException(
+            "Agentic analysis requires optional dependencies. "
+            "Install them with: pip install mokume[agentic]"
+        ) from exc
+    return optimize
 
 
 def _persist_to_dotenv(kwargs: dict) -> None:
@@ -191,6 +207,7 @@ def agentic_cmd():
 )
 def optimize_cmd(**kwargs):
     """Run agentic optimization for differential expression analysis."""
+    optimize = _load_optimizer()
     if kwargs["save_env"]:
         _persist_to_dotenv(kwargs)
     pm = kwargs["protein_matrix"]
