@@ -823,6 +823,21 @@ mod tests {
         }
     }
 
+    fn assert_rejected_without_output(
+        args: &CorrectBatchesArgs,
+        output: &Path,
+        expected: &str,
+    ) -> TestResult<()> {
+        let error = error_message(run_correct_batches(args), expected)?;
+        assert!(error.contains(expected), "unexpected error: {error}");
+        assert!(
+            !output.exists(),
+            "output must not be created: {}",
+            output.display()
+        );
+        Ok(())
+    }
+
     #[test]
     fn glob_match_handles_wildcards() {
         assert!(glob_match("*ibaq.tsv", "batchA_ibaq.tsv"));
@@ -990,26 +1005,7 @@ P2\tB2-s2\t7.5\told\n";
 
         run_correct_batches(&args_for(&dir, &output))?;
 
-        let mut reader = csv::ReaderBuilder::new()
-            .delimiter(b'\t')
-            .from_path(&output)?;
-        let headers = reader
-            .headers()?
-            .iter()
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        let sample_col = column_index(&headers, "SampleID")?;
-        let protein_col = column_index(&headers, "ProteinName")?;
-        let bec_col = column_index(&headers, "IbaqBec")?;
-
-        let mut actual: HashMap<(String, String), f64> = HashMap::new();
-        for record in reader.records() {
-            let record = record?;
-            let sample = field(&record, sample_col)?.to_string();
-            let protein = field(&record, protein_col)?.to_string();
-            let value = field(&record, bec_col)?.parse::<f64>()?;
-            actual.insert((sample, protein), value);
-        }
+        let actual = corrected_by_identity(&output)?;
 
         assert_eq!(
             actual.len(),
@@ -1101,7 +1097,7 @@ P2\tB2-s2\t7.5\told\n";
     }
 
     #[test]
-    fn invalid_schema_and_output_roles_fail_before_output_creation() -> TestResult<()> {
+    fn duplicate_headers_fail_before_output_creation() -> TestResult<()> {
         let duplicate_dir = temp_dir("duplicate-header")?;
         write_file(
             &duplicate_dir,
@@ -1110,13 +1106,12 @@ P2\tB2-s2\t7.5\told\n";
         )?;
         write_file(&duplicate_dir, "batchB_ibaq.tsv", BATCH_B)?;
         let duplicate_output = duplicate_dir.join("corrected.tsv");
-        let duplicate_error = error_message(
-            run_correct_batches(&args_for(&duplicate_dir, &duplicate_output)),
-            "duplicate headers must be rejected",
-        )?;
-        assert!(duplicate_error.contains("Duplicate columns"));
-        assert!(!duplicate_output.exists());
+        let args = args_for(&duplicate_dir, &duplicate_output);
+        assert_rejected_without_output(&args, &duplicate_output, "Duplicate columns")
+    }
 
+    #[test]
+    fn extra_schema_column_fails_before_output_creation() -> TestResult<()> {
         let mismatch_dir = temp_dir("schema-mismatch")?;
         write_file(&mismatch_dir, "batchA_ibaq.tsv", BATCH_A)?;
         write_file(
@@ -1125,13 +1120,12 @@ P2\tB2-s2\t7.5\told\n";
             "ProteinName\tSampleID\tIbaq\tExtra\nP1\tB2-s1\t20\textra\nP2\tB2-s1\t8\textra\nP1\tB2-s2\t21\textra\nP2\tB2-s2\t7.5\textra\n",
         )?;
         let mismatch_output = mismatch_dir.join("corrected.tsv");
-        let mismatch_error = error_message(
-            run_correct_batches(&args_for(&mismatch_dir, &mismatch_output)),
-            "extra schema columns must be rejected",
-        )?;
-        assert!(mismatch_error.contains("extra columns"));
-        assert!(!mismatch_output.exists());
+        let args = args_for(&mismatch_dir, &mismatch_output);
+        assert_rejected_without_output(&args, &mismatch_output, "extra columns")
+    }
 
+    #[test]
+    fn missing_schema_column_fails_before_output_creation() -> TestResult<()> {
         let missing_dir = temp_dir("schema-missing")?;
         write_file(&missing_dir, "batchA_ibaq.tsv", BATCH_A)?;
         write_file(
@@ -1140,37 +1134,29 @@ P2\tB2-s2\t7.5\told\n";
             "ProteinName\tSampleID\nP1\tB2-s1\nP2\tB2-s1\nP1\tB2-s2\nP2\tB2-s2\n",
         )?;
         let missing_output = missing_dir.join("corrected.tsv");
-        let missing_error = error_message(
-            run_correct_batches(&args_for(&missing_dir, &missing_output)),
-            "missing schema columns must be rejected",
-        )?;
-        assert!(missing_error.contains("missing columns"));
-        assert!(!missing_output.exists());
+        let args = args_for(&missing_dir, &missing_output);
+        assert_rejected_without_output(&args, &missing_output, "missing columns")
+    }
 
+    #[test]
+    fn duplicate_source_roles_fail_before_output_creation() -> TestResult<()> {
         let role_dir = temp_dir("source-role")?;
         write_file(&role_dir, "batchA_ibaq.tsv", BATCH_A)?;
         write_file(&role_dir, "batchB_ibaq.tsv", BATCH_B)?;
         let role_output = role_dir.join("corrected.tsv");
         let mut role_args = args_for(&role_dir, &role_output);
         role_args.sample_id_column = "ProteinName".to_string();
-        let role_error = error_message(
-            run_correct_batches(&role_args),
-            "source columns must not share one role",
-        )?;
-        assert!(role_error.contains("source columns must be distinct"));
-        assert!(!role_output.exists());
+        assert_rejected_without_output(&role_args, &role_output, "source columns must be distinct")
+    }
 
+    #[test]
+    fn corrected_column_collision_fails_before_output_creation() -> TestResult<()> {
         let collision_dir = temp_dir("corrected-column")?;
         write_file(&collision_dir, "batchA_ibaq.tsv", COLLISION_A)?;
         write_file(&collision_dir, "batchB_ibaq.tsv", COLLISION_B)?;
         let collision_output = collision_dir.join("corrected.tsv");
-        let collision_error = error_message(
-            run_correct_batches(&args_for(&collision_dir, &collision_output)),
-            "an existing corrected column must be rejected",
-        )?;
-        assert!(collision_error.contains("already exists"));
-        assert!(!collision_output.exists());
-        Ok(())
+        let args = args_for(&collision_dir, &collision_output);
+        assert_rejected_without_output(&args, &collision_output, "already exists")
     }
 
     #[test]
