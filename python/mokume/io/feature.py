@@ -338,7 +338,7 @@ class Feature:
                 observed = self.parquet_db.execute(
                     "SELECT DISTINCT run_file_name, unnest.label,"
                     " unnest.intensity IS NOT NULL AND unnest.intensity > 0"
-                    " FROM parquet_db_raw, UNNEST(intensities) AS unnest"
+                    " FROM parquet_db_raw, UNNEST(intensities) AS intensity_item(unnest)"
                 ).fetchall()
                 positive = [(run, label) for run, label, keep in observed if keep]
                 # The run domain has to come from every row, not from the
@@ -458,7 +458,7 @@ class Feature:
                     sa_default,
                     ", '_', 1) as mixture",
                     extra_cols,
-                    " FROM parquet_db_raw, UNNEST(intensities) as unnest",
+                    " FROM parquet_db_raw, UNNEST(intensities) AS intensity_item(unnest)",
                     " WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0",
                 ]
             )
@@ -580,7 +580,9 @@ class Feature:
                 "sdrf_biological_replicate",
                 "sdrf_fraction",
             ]
-        sdrf_mapping = pd.DataFrame.from_records(sdrf_records, columns=mapping_columns)
+        sdrf_mapping = pd.DataFrame.from_records(
+            sdrf_records, columns=mapping_columns
+        ).astype("object")
         self.parquet_db.register("sdrf_mapping", sdrf_mapping)
 
         # Optional new QPX columns
@@ -618,7 +620,7 @@ class Feature:
                     " as run",
                     extra_cols,
                     opt_cols_raw,
-                    " FROM parquet_db_raw, UNNEST(intensities) as unnest",
+                    " FROM parquet_db_raw, UNNEST(intensities) AS intensity_item(unnest)",
                     " WHERE unnest.intensity IS NOT NULL AND unnest.intensity > 0",
                 ]
             )
