@@ -35,7 +35,7 @@ def _run_key_sql(column: str) -> str:
         + ", '\\.(raw|mzml|wiff|d)(?:$|[._\\s])') "
         "THEN regexp_extract("
         + basename
-        + ", '^(.*?)(?:\\.(?:raw|mzml|wiff|d))(?:$|[._\\s])', 1) "
+        + ", '^(.*)(?:\\.(?:raw|mzml|wiff|d))(?:$|[._\\s])', 1) "
         "ELSE regexp_replace(" + basename + ", '\\.(raw|mzml|wiff|d|scan)$', '') END"
     )
 
@@ -235,7 +235,7 @@ def _run_key(value: object) -> str:
         return ""
     basename = str(value).strip().replace("\\", "/").rsplit("/", maxsplit=1)[-1]
     basename = basename.lower()
-    match = re.match(r"^(.*?)(?:\.(?:raw|mzml|wiff|d))(?:$|[._\s])", basename)
+    match = re.match(r"^(.*)(?:\.(?:raw|mzml|wiff|d))(?:$|[._\s])", basename)
     if match:
         return match.group(1)
     return re.sub(r"\.(?:raw|mzml|wiff|d|scan)$", "", basename)

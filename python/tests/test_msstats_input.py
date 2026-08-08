@@ -25,7 +25,7 @@ def test_lfq_msstats_runs_end_to_end(tmp_path):
         [
             {
                 "source name": "S1",
-                "comment[data file]": "run1.raw",
+                "comment[data file]": "run.raw.one.raw",
                 "comment[label]": "AC=MS:1002038;NT=label free sample",
                 "comment[technical replicate]": "1",
                 "comment[fraction identifier]": "1",
@@ -34,7 +34,7 @@ def test_lfq_msstats_runs_end_to_end(tmp_path):
             },
             {
                 "source name": "S2",
-                "comment[data file]": "run2.raw",
+                "comment[data file]": "run.raw.two.mzML",
                 "comment[label]": "AC=MS:1002038;NT=label free sample",
                 "comment[technical replicate]": "1",
                 "comment[fraction identifier]": "1",
@@ -51,7 +51,7 @@ def test_lfq_msstats_runs_end_to_end(tmp_path):
                 "PrecursorCharge": 2,
                 "Run": 1,
                 "Intensity": 100.0,
-                "Reference": r"C:\data\run1.mzML",
+                "Reference": r"C:\data\run.raw.one.raw",
             },
             {
                 "ProteinName": "P1",
@@ -59,7 +59,7 @@ def test_lfq_msstats_runs_end_to_end(tmp_path):
                 "PrecursorCharge": 2,
                 "Run": 2,
                 "Intensity": 200.0,
-                "Reference": "run2.mzML",
+                "Reference": "run.raw.two.mzML",
             },
         ]
     ).to_csv(msstats, index=False)

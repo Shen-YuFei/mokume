@@ -5,25 +5,13 @@ use std::path::Path;
 use csv::{Reader, ReaderBuilder, StringRecord, Trim};
 use mokume_core::{MokumeError, Result};
 
-use crate::{normalize_label_key, QpxFeatureRecord, SdrfTable};
+use crate::{QpxFeatureRecord, SdrfTable};
 
-const TMT6: &[&str] = &["TMT126", "TMT127", "TMT128", "TMT129", "TMT130", "TMT131"];
-const TMT10: &[&str] = &[
-    "TMT126", "TMT127N", "TMT127C", "TMT128N", "TMT128C", "TMT129N", "TMT129C", "TMT130N",
-    "TMT130C", "TMT131",
-];
-const TMT11: &[&str] = &[
-    "TMT126", "TMT127N", "TMT127C", "TMT128N", "TMT128C", "TMT129N", "TMT129C", "TMT130N",
-    "TMT130C", "TMT131N", "TMT131C",
-];
-const TMT16: &[&str] = &[
-    "TMT126", "TMT127N", "TMT127C", "TMT128N", "TMT128C", "TMT129N", "TMT129C", "TMT130N",
-    "TMT130C", "TMT131N", "TMT131C", "TMT132N", "TMT132C", "TMT133N", "TMT133C", "TMT134N",
-];
-const ITRAQ4: &[&str] = &["ITRAQ114", "ITRAQ115", "ITRAQ116", "ITRAQ117"];
-const ITRAQ8: &[&str] = &[
-    "ITRAQ113", "ITRAQ114", "ITRAQ115", "ITRAQ116", "ITRAQ117", "ITRAQ118", "ITRAQ119", "ITRAQ121",
-];
+mod labeling;
+
+use labeling::Labeling;
+#[cfg(test)]
+use labeling::{TMT10, TMT11};
 
 #[derive(Debug, Clone, Copy)]
 struct Columns {
@@ -61,143 +49,6 @@ impl Columns {
         }
         Ok(columns)
     }
-}
-
-#[derive(Debug)]
-enum Labeling {
-    LabelFree,
-    Isobaric {
-        channels: &'static [&'static str],
-        declared: HashMap<String, String>,
-    },
-}
-
-impl Labeling {
-    fn from_sdrf(sdrf: &SdrfTable, observed_channels: &HashSet<String>) -> Result<Self> {
-        let labels = sdrf
-            .records()
-            .iter()
-            .filter_map(|record| record.label.as_deref())
-            .map(normalize_label_key)
-            .filter(|label| !label.is_empty())
-            .collect::<HashSet<_>>();
-
-        if labels.len() == 1 && labels.contains("label free sample") {
-            return Ok(Self::LabelFree);
-        }
-
-        let channels = if !labels.is_empty() && labels.iter().all(|label| label.starts_with("tmt"))
-        {
-            infer_isobaric_channels(&labels, observed_channels, &[TMT6, TMT10, TMT11, TMT16])?
-        } else if !labels.is_empty() && labels.iter().all(|label| label.starts_with("itraq")) {
-            infer_isobaric_channels(&labels, observed_channels, &[ITRAQ4, ITRAQ8])?
-        } else {
-            return Err(invalid_input(format!(
-                "cannot infer LFQ, TMT, or iTRAQ labeling from SDRF labels: {labels:?}"
-            )));
-        };
-
-        let canonical = channels
-            .iter()
-            .map(|label| (normalize_label_key(label), (*label).to_owned()))
-            .collect::<HashMap<_, _>>();
-        let declared = labels
-            .into_iter()
-            .filter_map(|label| canonical.get(&label).cloned().map(|value| (label, value)))
-            .collect();
-        Ok(Self::Isobaric { channels, declared })
-    }
-
-    fn resolve_channel(&self, value: Option<&str>) -> Result<Option<String>> {
-        let Self::Isobaric { channels, declared } = self else {
-            return Ok(None);
-        };
-        let text = value
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                invalid_input("MSstats input is missing a channel value for an isobaric row")
-            })?;
-        let canonical = channel_position(text)
-            .and_then(|position| channels.get(position - 1))
-            .map(|label| (*label).to_owned())
-            .or_else(|| declared.get(&normalize_label_key(text)).cloned())
-            .ok_or_else(|| {
-                invalid_input(format!(
-                    "MSstats channel `{text}` is not declared by the SDRF plex"
-                ))
-            })?;
-        Ok(Some(canonical))
-    }
-}
-
-fn infer_isobaric_channels(
-    labels: &HashSet<String>,
-    observed_channels: &HashSet<String>,
-    schemes: &[&'static [&'static str]],
-) -> Result<&'static [&'static str]> {
-    let mut candidates = schemes
-        .iter()
-        .copied()
-        .filter(|scheme| {
-            labels
-                .iter()
-                .all(|label| scheme.iter().any(|known| known.eq_ignore_ascii_case(label)))
-        })
-        .collect::<Vec<_>>();
-
-    if let Some(exact) = candidates
-        .iter()
-        .copied()
-        .find(|scheme| scheme.len() == labels.len())
-    {
-        return Ok(exact);
-    }
-
-    let mut positions = observed_channels
-        .iter()
-        .filter_map(|value| channel_position(value))
-        .collect::<Vec<_>>();
-    positions.sort_unstable();
-    positions.dedup();
-    candidates.retain(|scheme| {
-        positions.iter().all(|position| {
-            scheme
-                .get(position - 1)
-                .is_some_and(|label| labels.contains(&normalize_label_key(label)))
-        })
-    });
-
-    let Some(first) = candidates.first().copied() else {
-        return Err(invalid_input(
-            "cannot infer the isobaric plex from SDRF labels and MSstats channels",
-        ));
-    };
-    let signature = |scheme: &'static [&'static str]| {
-        positions
-            .iter()
-            .map(|position| scheme[*position - 1])
-            .collect::<Vec<_>>()
-    };
-    let expected = signature(first);
-    if candidates
-        .iter()
-        .skip(1)
-        .any(|scheme| signature(scheme) != expected)
-    {
-        return Err(invalid_input(
-            "the isobaric plex is ambiguous for the supplied SDRF and MSstats channels",
-        ));
-    }
-    candidates
-        .into_iter()
-        .min_by_key(|scheme| scheme.len())
-        .ok_or_else(|| invalid_input("cannot infer the isobaric plex"))
-}
-
-fn channel_position(value: &str) -> Option<usize> {
-    let number = value.trim().parse::<f64>().ok()?;
-    (number.is_finite() && number.fract() == 0.0 && number >= 1.0).then_some(number as usize)
 }
 
 pub struct MsstatsReader<'a> {

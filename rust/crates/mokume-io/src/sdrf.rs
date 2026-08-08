@@ -431,17 +431,23 @@ pub fn normalize_file_key(value: &str) -> String {
     // the QPX `run_file_name`, which is stored extension-less. Without this the
     // per-feature SDRF lookup misses and the Condition column falls back to the
     // run filename. Mirrors `mokume-pipeline` de.rs::strip_run_extension.
-    for ext in [".raw", ".mzml", ".wiff", ".d"] {
-        if let Some(index) = key.find(ext) {
-            let suffix = &key[index + ext.len()..];
-            if suffix.is_empty()
+    let last_extension = [".raw", ".mzml", ".wiff", ".d"]
+        .into_iter()
+        .flat_map(|extension| {
+            key.match_indices(extension)
+                .map(move |(index, _)| (index, extension.len()))
+        })
+        .filter_map(|(index, length)| {
+            let suffix = &key[index + length..];
+            (suffix.is_empty()
                 || suffix.starts_with('.')
                 || suffix.starts_with('_')
-                || suffix.starts_with(char::is_whitespace)
-            {
-                return key[..index].to_owned();
-            }
-        }
+                || suffix.starts_with(char::is_whitespace))
+            .then_some(index)
+        })
+        .max();
+    if let Some(index) = last_extension {
+        return key[..index].to_owned();
     }
     key.strip_suffix(".scan").unwrap_or(&key).to_owned()
 }
@@ -607,6 +613,7 @@ mod tests {
         for label in ["LFQ", "label-free", "AC=MS:1002038;NT=label free sample"] {
             assert_eq!(normalize_label_key(label), "label free sample");
         }
+        assert_eq!(normalize_file_key("foo.raw.bar.raw"), "foo.raw.bar");
         assert_eq!(normalize_label_key(" TMT127N "), "tmt127n");
     }
 
