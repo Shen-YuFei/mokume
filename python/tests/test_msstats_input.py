@@ -142,6 +142,81 @@ def test_tmt10_channel_positions_use_sdrf_labels(tmp_path):
     ]
 
 
+def test_partial_tmt11_uses_declared_channel_positions(tmp_path):
+    """A TMT11 plex remains identifiable when its final channel is unused."""
+    sdrf = tmp_path / "input.sdrf.tsv"
+    msstats = tmp_path / "input_msstats_in.csv"
+    labels = [
+        "TMT126",
+        "TMT127N",
+        "TMT127C",
+        "TMT128N",
+        "TMT128C",
+        "TMT129N",
+        "TMT129C",
+        "TMT130N",
+        "TMT130C",
+        "TMT131N",
+    ]
+    _write_sdrf(
+        sdrf,
+        [
+            {
+                "source name": f"S{position}",
+                "comment[data file]": "plex.raw",
+                "comment[label]": label,
+            }
+            for position, label in enumerate(labels, start=1)
+        ],
+    )
+    pd.DataFrame(
+        [
+            {
+                "ProteinName": "P1",
+                "PeptideSequence": "PEPTIDEK",
+                "Charge": 2,
+                "Channel": 10,
+                "Run": "plex",
+                "Intensity": 100.0,
+            }
+        ]
+    ).to_csv(msstats, index=False)
+
+    feature = Feature.from_msstats(str(msstats), str(sdrf))
+    try:
+        row = feature.parquet_db.execute(
+            "SELECT intensities[1].label FROM parquet_db_raw"
+        ).fetchone()
+    finally:
+        feature.parquet_db.close()
+
+    assert row == ("TMT131N",)
+
+
+def test_msstats_rejects_nonfinite_intensity(tmp_path):
+    """Non-finite source values must not become quantified zeroes."""
+    sdrf = tmp_path / "input.sdrf.tsv"
+    msstats = tmp_path / "input_msstats_in.csv"
+    _write_sdrf(
+        sdrf,
+        [
+            {
+                "source name": "S1",
+                "comment[data file]": "run.raw",
+                "comment[label]": "label free sample",
+            }
+        ],
+    )
+    msstats.write_text(
+        "ProteinName,PeptideSequence,Charge,Reference,Intensity\n"
+        "P1,PEPTIDEK,2,run,NaN\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid required values"):
+        Feature.from_msstats(str(msstats), str(sdrf))
+
+
 def test_ratio_rejects_feature_level_msstats_input():
     """Ratio quantification rejects MSstats without PSM evidence."""
     config = PipelineConfig(

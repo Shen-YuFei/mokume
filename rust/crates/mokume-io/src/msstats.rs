@@ -36,6 +36,13 @@ struct Columns {
     channel: Option<usize>,
 }
 
+struct MsstatsSummary {
+    sequence_proteins: HashMap<String, String>,
+    non_unique_sequences: HashSet<String>,
+    observed_channels: HashSet<String>,
+    rows: usize,
+}
+
 impl Columns {
     fn from_headers(headers: &StringRecord) -> Result<Self> {
         let columns = Self {
@@ -66,7 +73,7 @@ enum Labeling {
 }
 
 impl Labeling {
-    fn from_sdrf(sdrf: &SdrfTable) -> Result<Self> {
+    fn from_sdrf(sdrf: &SdrfTable, observed_channels: &HashSet<String>) -> Result<Self> {
         let labels = sdrf
             .records()
             .iter()
@@ -79,26 +86,11 @@ impl Labeling {
             return Ok(Self::LabelFree);
         }
 
-        let channels = if labels.iter().any(|label| label.contains("tmt")) {
-            if labels.len() > 11
-                || ["tmt132n", "tmt132c", "tmt133n", "tmt133c", "tmt134n"]
-                    .iter()
-                    .any(|label| labels.contains(*label))
-            {
-                TMT16
-            } else if labels.len() == 11 || labels.contains("tmt131c") {
-                TMT11
-            } else if labels.len() > 6 {
-                TMT10
-            } else {
-                TMT6
-            }
-        } else if labels.iter().any(|label| label.contains("itraq")) {
-            if labels.len() > 4 {
-                ITRAQ8
-            } else {
-                ITRAQ4
-            }
+        let channels = if !labels.is_empty() && labels.iter().all(|label| label.starts_with("tmt"))
+        {
+            infer_isobaric_channels(&labels, observed_channels, &[TMT6, TMT10, TMT11, TMT16])?
+        } else if !labels.is_empty() && labels.iter().all(|label| label.starts_with("itraq")) {
+            infer_isobaric_channels(&labels, observed_channels, &[ITRAQ4, ITRAQ8])?
         } else {
             return Err(invalid_input(format!(
                 "cannot infer LFQ, TMT, or iTRAQ labeling from SDRF labels: {labels:?}"
@@ -126,11 +118,8 @@ impl Labeling {
             .ok_or_else(|| {
                 invalid_input("MSstats input is missing a channel value for an isobaric row")
             })?;
-        let canonical = text
-            .parse::<f64>()
-            .ok()
-            .filter(|number| number.is_finite() && number.fract() == 0.0 && *number >= 1.0)
-            .and_then(|number| channels.get(number as usize - 1))
+        let canonical = channel_position(text)
+            .and_then(|position| channels.get(position - 1))
             .map(|label| (*label).to_owned())
             .or_else(|| declared.get(&normalize_label_key(text)).cloned())
             .ok_or_else(|| {
@@ -140,6 +129,75 @@ impl Labeling {
             })?;
         Ok(Some(canonical))
     }
+}
+
+fn infer_isobaric_channels(
+    labels: &HashSet<String>,
+    observed_channels: &HashSet<String>,
+    schemes: &[&'static [&'static str]],
+) -> Result<&'static [&'static str]> {
+    let mut candidates = schemes
+        .iter()
+        .copied()
+        .filter(|scheme| {
+            labels
+                .iter()
+                .all(|label| scheme.iter().any(|known| known.eq_ignore_ascii_case(label)))
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(exact) = candidates
+        .iter()
+        .copied()
+        .find(|scheme| scheme.len() == labels.len())
+    {
+        return Ok(exact);
+    }
+
+    let mut positions = observed_channels
+        .iter()
+        .filter_map(|value| channel_position(value))
+        .collect::<Vec<_>>();
+    positions.sort_unstable();
+    positions.dedup();
+    candidates.retain(|scheme| {
+        positions.iter().all(|position| {
+            scheme
+                .get(position - 1)
+                .is_some_and(|label| labels.contains(&normalize_label_key(label)))
+        })
+    });
+
+    let Some(first) = candidates.first().copied() else {
+        return Err(invalid_input(
+            "cannot infer the isobaric plex from SDRF labels and MSstats channels",
+        ));
+    };
+    let signature = |scheme: &'static [&'static str]| {
+        positions
+            .iter()
+            .map(|position| scheme[*position - 1])
+            .collect::<Vec<_>>()
+    };
+    let expected = signature(first);
+    if candidates
+        .iter()
+        .skip(1)
+        .any(|scheme| signature(scheme) != expected)
+    {
+        return Err(invalid_input(
+            "the isobaric plex is ambiguous for the supplied SDRF and MSstats channels",
+        ));
+    }
+    candidates
+        .into_iter()
+        .min_by_key(|scheme| scheme.len())
+        .ok_or_else(|| invalid_input("cannot infer the isobaric plex"))
+}
+
+fn channel_position(value: &str) -> Option<usize> {
+    let number = value.trim().parse::<f64>().ok()?;
+    (number.is_finite() && number.fract() == 0.0 && number >= 1.0).then_some(number as usize)
 }
 
 pub struct MsstatsReader<'a> {
@@ -162,13 +220,12 @@ impl<'a> MsstatsReader<'a> {
         let mut first_pass = open_csv(&path)?;
         let headers = csv_headers(&mut first_pass, &path)?;
         let columns = Columns::from_headers(&headers)?;
-        let (sequence_proteins, non_unique_sequences, rows) =
-            collect_sequence_proteins(&mut first_pass, columns, &path)?;
-        if rows == 0 {
+        let summary = collect_sequence_proteins(&mut first_pass, columns, &path)?;
+        if summary.rows == 0 {
             return Err(invalid_input("MSstats input contains no rows"));
         }
 
-        let labeling = Labeling::from_sdrf(sdrf)?;
+        let labeling = Labeling::from_sdrf(sdrf, &summary.observed_channels)?;
         if matches!(labeling, Labeling::Isobaric { .. }) && columns.channel.is_none() {
             return Err(invalid_input(
                 "MSstats input is missing required column: Channel",
@@ -182,8 +239,8 @@ impl<'a> MsstatsReader<'a> {
             columns,
             sdrf,
             labeling,
-            sequence_proteins,
-            non_unique_sequences,
+            sequence_proteins: summary.sequence_proteins,
+            non_unique_sequences: summary.non_unique_sequences,
             row_number: 1,
         })
     }
@@ -294,13 +351,17 @@ fn collect_sequence_proteins(
     reader: &mut Reader<File>,
     columns: Columns,
     path: &Path,
-) -> Result<(HashMap<String, String>, HashSet<String>, usize)> {
+) -> Result<MsstatsSummary> {
     let mut proteins = HashMap::new();
     let mut non_unique = HashSet::new();
+    let mut observed_channels = HashSet::new();
     let mut rows = 0;
     for record in reader.records() {
         rows += 1;
         let record = record.map_err(|source| csv_error(path, source))?;
+        if let Some(channel) = optional_value(&record, columns.channel) {
+            observed_channels.insert(channel.to_owned());
+        }
         let sequence = canonical_sequence(record.get(columns.peptide).unwrap_or(""));
         let protein = record.get(columns.protein).unwrap_or("").trim();
         if sequence.is_empty() || protein.is_empty() {
@@ -316,7 +377,12 @@ fn collect_sequence_proteins(
             Some(_) => {}
         }
     }
-    Ok((proteins, non_unique, rows))
+    Ok(MsstatsSummary {
+        sequence_proteins: proteins,
+        non_unique_sequences: non_unique,
+        observed_channels,
+        rows,
+    })
 }
 
 fn canonical_sequence(value: &str) -> String {
@@ -467,6 +533,29 @@ mod tests {
 
         assert_eq!(row.run_file_name, "plex.raw");
         assert_eq!(row.label.as_deref(), Some("TMT131"));
+        Ok(())
+    }
+
+    #[test]
+    fn maps_partial_tmt11_channel_position_to_declared_label() -> Result<()> {
+        let labels = TMT11[..10]
+            .iter()
+            .enumerate()
+            .map(|(index, label)| format!("sample-{}\tplex.raw\t{label}\n", index + 1))
+            .collect::<String>();
+        let sdrf = SdrfTable::from_reader(
+            format!("source name\tcomment[data file]\tcomment[label]\n{labels}").as_bytes(),
+        )?;
+        let input = msstats_file(concat!(
+            "ProteinName,PeptideSequence,Charge,Run,Channel,Intensity\n",
+            "P12345,PEPTIDE,2,plex,10,42\n",
+        ))?;
+
+        let row = MsstatsReader::open(input.path(), &sdrf)?
+            .next()
+            .ok_or_else(|| invalid_input("missing MSstats row"))??;
+
+        assert_eq!(row.label.as_deref(), Some("TMT131N"));
         Ok(())
     }
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from math import isfinite
 from pathlib import Path
 from typing import Iterable
 
@@ -59,7 +60,8 @@ _VALIDATION_SQL = """
                         trim(_peptide), '\\([^)]*\\)', '', 'g'),
                         '\\[[^]]*\\]', '', 'g'), '[^A-Za-z]', '', 'g')) = ''
                     OR TRY_CAST(_charge AS SMALLINT) IS NULL
-                    OR TRY_CAST(_intensity AS REAL) IS NULL)
+                    OR TRY_CAST(_intensity AS REAL) IS NULL
+                    OR NOT isfinite(TRY_CAST(_intensity AS REAL)))
     FROM _msstats_resolved
 """
 _RAW_FEATURE_SQL = """
@@ -127,6 +129,105 @@ def _label_key(value: object) -> str:
         if key in {"lfq", "label-free", "label free sample"}
         else key
     )
+
+
+def _channel_position(value: object) -> int | None:
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return None
+    if not isfinite(number) or number < 1 or number != int(number):
+        return None
+    return int(number)
+
+
+def _isobaric_schemes(
+    labels: set[str],
+) -> tuple[QuantificationCategory, tuple[IsobaricLabel, ...]]:
+    if labels and all(label.startswith("tmt") for label in labels):
+        return QuantificationCategory.TMT, (
+            IsobaricLabel.TMT6plex,
+            IsobaricLabel.TMT10plex,
+            IsobaricLabel.TMT11plex,
+            IsobaricLabel.TMT16plex,
+        )
+    if labels and all(label.startswith("itraq") for label in labels):
+        return QuantificationCategory.ITRAQ, (
+            IsobaricLabel.ITRAQ4plex,
+            IsobaricLabel.ITRAQ8plex,
+        )
+    raise ValueError(f"Cannot infer LFQ, TMT, or iTRAQ labeling from {labels}")
+
+
+def _position_labels(scheme: IsobaricLabel) -> dict[int, str]:
+    return {position: name for name, position in scheme.channels().items()}
+
+
+def _matches_positions(
+    scheme: IsobaricLabel, labels: set[str], positions: list[int]
+) -> bool:
+    position_labels = _position_labels(scheme)
+    return all(
+        (label := position_labels.get(position)) is not None
+        and _label_key(label) in labels
+        for position in positions
+    )
+
+
+def _select_isobaric_scheme(
+    labels: set[str], schemes: tuple[IsobaricLabel, ...], positions: list[int]
+) -> IsobaricLabel:
+    candidates = [
+        scheme
+        for scheme in schemes
+        if labels <= {_label_key(label) for label in scheme.channels()}
+    ]
+    exact = [scheme for scheme in candidates if len(scheme.channels()) == len(labels)]
+    if exact:
+        return exact[0]
+
+    candidates = [
+        scheme for scheme in candidates if _matches_positions(scheme, labels, positions)
+    ]
+    if not candidates:
+        raise ValueError(
+            "Cannot infer the isobaric plex from SDRF labels and MSstats channels"
+        )
+
+    signatures = {
+        tuple(_position_labels(scheme)[position] for position in positions)
+        for scheme in candidates
+    }
+    if len(signatures) != 1:
+        raise ValueError(
+            "The isobaric plex is ambiguous for the supplied SDRF and MSstats channels"
+        )
+    return min(candidates, key=lambda scheme: len(scheme.channels()))
+
+
+def _infer_labeling(
+    connection: duckdb.DuckDBPyConnection, sdrf: pd.DataFrame
+) -> tuple[QuantificationCategory, IsobaricLabel | None]:
+    labels = {_label_key(value) for value in sdrf["comment[label]"].dropna()}
+    labels.discard("")
+    if labels == {"label free sample"}:
+        return QuantificationCategory.LFQ, None
+
+    category, schemes = _isobaric_schemes(labels)
+    raw_channels = [
+        value
+        for (value,) in connection.execute(
+            "SELECT DISTINCT _channel FROM _msstats_input"
+        ).fetchall()
+    ]
+    positions = sorted(
+        {
+            position
+            for value in raw_channels
+            if (position := _channel_position(value)) is not None
+        }
+    )
+    return category, _select_isobaric_scheme(labels, schemes, positions)
 
 
 def _run_key(value: object) -> str:
@@ -224,11 +325,9 @@ def _channel_labels(
     resolved: dict[str, str] = {}
     for (value,) in values:
         text = "" if value is None else str(value).strip()
-        try:
-            number = float(text)
-            position = int(number)
-            label = positions.get(position) if number == position else None
-        except ValueError:
+        position = _channel_position(text)
+        label = positions.get(position) if position is not None else None
+        if label is None:
             label = declared.get(_label_key(text))
         if label is None:
             raise ValueError(
@@ -310,9 +409,7 @@ def create_msstats_feature_table(
     sdrf = load_sdrf(sdrf_path)
     if "comment[label]" not in sdrf.columns:
         raise ValueError("SDRF input is missing required column: comment[label]")
-    category, label_scheme = QuantificationCategory.classify(
-        set(sdrf["comment[label]"].dropna().astype(str))
-    )
+    category, label_scheme = _infer_labeling(connection, sdrf)
     _register_run_aliases(connection, sdrf)
     connection.execute(_RESOLVED_SQL)
     _validate_resolved_rows(connection)
