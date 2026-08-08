@@ -26,9 +26,9 @@
 //! columns (samples) and rows (proteins) are sorted before ComBat, matching the
 //! pandas `pivot_table` ordering that drives the Python batch labels.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use mokume_core::{MokumeError, Result};
@@ -55,16 +55,17 @@ struct LongTable {
 pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
     let separator = single_byte(&args.sep, "sep")?;
     let comment = optional_single_byte(&args.comment, "comment")?;
+    let paths = matched_input_files(&args.folder, &args.pattern, &args.output)?;
 
     let table = load_long_table(
-        &args.folder,
-        &args.pattern,
+        &paths,
         separator,
         comment,
         &args.sample_id_column,
         &args.protein_id_column,
         &args.ibaq_raw_column,
     )?;
+    validate_corrected_column(&table.headers, &args.ibaq_corrected_column)?;
 
     // Sorted, unique proteins (rows) and samples (columns), matching the pandas
     // `pivot_table` ordering the Python code relies on.
@@ -83,24 +84,37 @@ pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
 
     let matrix = build_matrix(&table, &proteins, &samples)?;
     let corrected = combat_parametric(&matrix, &batch, ComBatParams::default());
+    let protein_pos = index_map(&proteins);
+    let sample_pos = index_map(&samples);
 
-    // Key corrected values by (sample, protein) so the merge is independent of
-    // row order.
-    let mut corrected_by_key: HashMap<(&str, &str), f64> = HashMap::new();
-    for (protein_idx, protein) in proteins.iter().enumerate() {
-        for (sample_idx, sample) in samples.iter().enumerate() {
-            corrected_by_key.insert(
-                (sample.as_str(), protein.as_str()),
-                corrected[protein_idx][sample_idx],
-            );
-        }
-    }
-
-    write_output(&args.output, &table, &args.ibaq_corrected_column, |row| {
-        let sample = cell(row, table.sample_index)?;
-        let protein = cell(row, table.protein_index)?;
-        Ok(corrected_by_key.get(&(sample, protein)).copied())
-    })?;
+    write_output(
+        &args.output,
+        &table,
+        separator,
+        &args.ibaq_corrected_column,
+        |row| {
+            let sample = cell(row, table.sample_index)?;
+            let protein = cell(row, table.protein_index)?;
+            let (Some(&protein_idx), Some(&sample_idx)) =
+                (protein_pos.get(protein), sample_pos.get(sample))
+            else {
+                return Ok(None);
+            };
+            let Some(corrected_row) = corrected.get(protein_idx) else {
+                return Err(MokumeError::InvalidInput {
+                    message: format!("Corrected matrix is missing protein row {protein_idx}."),
+                });
+            };
+            let Some(&value) = corrected_row.get(sample_idx) else {
+                return Err(MokumeError::InvalidInput {
+                    message: format!(
+                        "Corrected matrix row {protein_idx} is missing sample column {sample_idx}."
+                    ),
+                });
+            };
+            Ok(Some(value))
+        },
+    )?;
 
     if args.export_anndata {
         export_anndata(args, &table, &proteins, &samples, &matrix, &corrected)?;
@@ -173,53 +187,49 @@ fn anndata_path(output: &Path) -> PathBuf {
     output.with_extension("h5ad")
 }
 
-/// Glob `folder/pattern`, read every matched TSV, and concatenate the rows.
-/// Files are visited in sorted path order for determinism. Schemas must match
-/// the first file (matching `combine_ibaq_tsv_files`).
+/// Read every matched file and concatenate rows in the first file's schema.
+/// Files are visited in sorted path order for determinism. Later files may
+/// reorder the same unique columns, but their values are canonicalized before
+/// they enter the combined table.
 fn load_long_table(
-    folder: &Path,
-    pattern: &str,
+    paths: &[PathBuf],
     separator: u8,
     comment: Option<u8>,
     sample_column: &str,
     protein_column: &str,
     ibaq_column: &str,
 ) -> Result<LongTable> {
-    let paths = matched_files(folder, pattern)?;
-    if paths.is_empty() {
-        return Err(MokumeError::InvalidInput {
-            message: format!(
-                "No files found in the directory '{}' matching the pattern '{pattern}'.",
-                folder.display()
-            ),
-        });
-    }
-
     let mut headers: Option<Vec<String>> = None;
     let mut rows = Vec::new();
 
-    for path in &paths {
+    for path in paths {
         let (file_headers, file_rows) = read_long_file(path, separator, comment)?;
         match &headers {
-            None => headers = Some(file_headers),
+            None => {
+                validate_unique_headers(path, &file_headers)?;
+                headers = Some(file_headers.clone());
+                rows.extend(file_rows.into_iter().map(|values| LongRow { values }));
+            }
             Some(expected) => {
-                if !same_columns(expected, &file_headers) {
-                    return Err(MokumeError::InvalidInput {
-                        message: format!(
-                            "Schema mismatch in file '{}'. Expected columns: {expected:?}, got: {file_headers:?}",
-                            path.display()
-                        ),
-                    });
+                let positions = canonical_positions(path, expected, &file_headers)?;
+                if positions_are_identity(&positions) {
+                    rows.extend(file_rows.into_iter().map(|values| LongRow { values }));
+                } else {
+                    for values in file_rows {
+                        rows.push(LongRow {
+                            values: reorder_values(path, values, &positions)?,
+                        });
+                    }
                 }
             }
         }
-        rows.extend(file_rows.into_iter().map(|values| LongRow { values }));
     }
 
     let headers = headers.unwrap_or_default();
     let sample_index = column_index(&headers, sample_column)?;
     let protein_index = column_index(&headers, protein_column)?;
     let ibaq_index = column_index(&headers, ibaq_column)?;
+    validate_source_columns(sample_column, protein_column, ibaq_column)?;
 
     Ok(LongTable {
         headers,
@@ -271,12 +281,12 @@ fn build_matrix(
     let protein_pos = index_map(proteins);
     let sample_pos = index_map(samples);
     let mut matrix = vec![vec![0.0_f64; samples.len()]; proteins.len()];
-    let mut seen = BTreeSet::new();
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
 
     for row in &table.rows {
         let protein = cell(row, table.protein_index)?;
         let sample = cell(row, table.sample_index)?;
-        if !seen.insert((protein.to_owned(), sample.to_owned())) {
+        if !seen.insert((protein, sample)) {
             return Err(MokumeError::InvalidInput {
                 message: format!(
                     "Found duplicate combination of protein '{protein}' and sample '{sample}'."
@@ -300,6 +310,7 @@ fn build_matrix(
 fn write_output(
     output: &Path,
     table: &LongTable,
+    separator: u8,
     corrected_column: &str,
     lookup: impl Fn(&LongRow) -> Result<Option<f64>>,
 ) -> Result<()> {
@@ -307,27 +318,27 @@ fn write_output(
         path: output.to_path_buf(),
         source,
     })?;
-    let mut writer = BufWriter::new(file);
+    let mut writer = csv::WriterBuilder::new()
+        .delimiter(separator)
+        .from_writer(BufWriter::new(file));
 
-    let mut header_line = table.headers.join("\t");
-    header_line.push('\t');
-    header_line.push_str(corrected_column);
-    writeln!(writer, "{header_line}").map_err(|source| MokumeError::Io {
-        path: output.to_path_buf(),
-        source,
-    })?;
+    let mut header = table.headers.iter().map(String::as_str).collect::<Vec<_>>();
+    header.push(corrected_column);
+    writer
+        .write_record(header)
+        .map_err(|source| csv_write_error(output, source))?;
 
     for row in &table.rows {
         let corrected = lookup(row)?;
-        let mut line = row.values.join("\t");
-        line.push('\t');
-        if let Some(value) = corrected {
-            line.push_str(&format_value(value));
-        }
-        writeln!(writer, "{line}").map_err(|source| MokumeError::Io {
-            path: output.to_path_buf(),
-            source,
-        })?;
+        let corrected = corrected.map(format_value);
+        writer
+            .write_record(
+                row.values
+                    .iter()
+                    .map(String::as_str)
+                    .chain(std::iter::once(corrected.as_deref().unwrap_or(""))),
+            )
+            .map_err(|source| csv_write_error(output, source))?;
     }
     writer.flush().map_err(|source| MokumeError::Io {
         path: output.to_path_buf(),
@@ -481,12 +492,200 @@ fn index_map(values: &[String]) -> HashMap<&str, usize> {
         .collect()
 }
 
-/// Two header sets are equal when they contain the same column names (order is
-/// irrelevant, matching the Python set comparison in `combine_ibaq_tsv_files`).
-fn same_columns(left: &[String], right: &[String]) -> bool {
-    let left: BTreeSet<&String> = left.iter().collect();
-    let right: BTreeSet<&String> = right.iter().collect();
-    left == right
+/// Return the positions that reorder a file into the first file's schema.
+fn canonical_positions(path: &Path, expected: &[String], actual: &[String]) -> Result<Vec<usize>> {
+    validate_unique_headers(path, actual)?;
+    let actual_positions = actual
+        .iter()
+        .enumerate()
+        .map(|(index, header)| (header.as_str(), index))
+        .collect::<HashMap<_, _>>();
+
+    let missing = expected
+        .iter()
+        .filter(|header| !actual_positions.contains_key(header.as_str()))
+        .collect::<Vec<_>>();
+    let extra = actual
+        .iter()
+        .filter(|header| !expected.iter().any(|expected| expected == *header))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() || !extra.is_empty() {
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "Schema mismatch in file '{}'. missing columns: {missing:?}; extra columns: {extra:?}; expected columns: {expected:?}; got: {actual:?}",
+                path.display()
+            ),
+        });
+    }
+
+    let mut positions = Vec::with_capacity(expected.len());
+    for header in expected {
+        let Some(&position) = actual_positions.get(header.as_str()) else {
+            return Err(MokumeError::InvalidInput {
+                message: format!(
+                    "Schema mismatch in file '{}': column '{header}' has no source position.",
+                    path.display()
+                ),
+            });
+        };
+        positions.push(position);
+    }
+    Ok(positions)
+}
+
+fn positions_are_identity(positions: &[usize]) -> bool {
+    positions
+        .iter()
+        .enumerate()
+        .all(|(index, &position)| index == position)
+}
+
+fn reorder_values(path: &Path, values: Vec<String>, positions: &[usize]) -> Result<Vec<String>> {
+    let mut slots = values.into_iter().map(Some).collect::<Vec<_>>();
+    let mut reordered = Vec::with_capacity(positions.len());
+    for &position in positions {
+        let Some(slot) = slots.get_mut(position) else {
+            return Err(MokumeError::InvalidInput {
+                message: format!(
+                    "Schema row in file '{}' is missing column position {position}.",
+                    path.display()
+                ),
+            });
+        };
+        let Some(value) = slot.take() else {
+            return Err(MokumeError::InvalidInput {
+                message: format!(
+                    "Schema row in file '{}' maps column position {position} more than once.",
+                    path.display()
+                ),
+            });
+        };
+        reordered.push(value);
+    }
+    Ok(reordered)
+}
+
+fn validate_unique_headers(path: &Path, headers: &[String]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    let duplicates = headers
+        .iter()
+        .filter(|header| !seen.insert(header.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if duplicates.is_empty() {
+        Ok(())
+    } else {
+        Err(MokumeError::InvalidInput {
+            message: format!(
+                "Duplicate columns in file '{}': {duplicates:?}.",
+                path.display()
+            ),
+        })
+    }
+}
+
+fn validate_source_columns(
+    sample_column: &str,
+    protein_column: &str,
+    ibaq_column: &str,
+) -> Result<()> {
+    let roles = [
+        ("sample", sample_column),
+        ("protein", protein_column),
+        ("raw iBAQ", ibaq_column),
+    ];
+    for (left_index, (left_name, left_column)) in roles.iter().enumerate() {
+        for (right_name, right_column) in roles.iter().skip(left_index + 1) {
+            if left_column == right_column {
+                return Err(MokumeError::InvalidInput {
+                    message: format!(
+                        "The {left_name} column and {right_name} column both use '{left_column}'; source columns must be distinct."
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_corrected_column(headers: &[String], corrected_column: &str) -> Result<()> {
+    if corrected_column.is_empty() {
+        return Err(MokumeError::InvalidInput {
+            message: "The corrected column name must not be empty.".to_string(),
+        });
+    }
+    if headers.iter().any(|header| header == corrected_column) {
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "Corrected column '{corrected_column}' already exists in the input schema."
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn matched_input_files(folder: &Path, pattern: &str, output: &Path) -> Result<Vec<PathBuf>> {
+    let paths = matched_files(folder, pattern)?;
+    if paths.is_empty() {
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "No files found in the directory '{}' matching the pattern '{pattern}'.",
+                folder.display()
+            ),
+        });
+    }
+    if let Some(input) = paths.iter().find(|input| paths_alias(input, output)) {
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "Output path '{}' is also an input file '{}'; choose a separate output path.",
+                output.display(),
+                input.display()
+            ),
+        });
+    }
+    if output_matches_input_domain(folder, pattern, output) {
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "Output path '{}' matches the input pattern '{pattern}' in '{}'; choose a separate output path.",
+                output.display(),
+                folder.display()
+            ),
+        });
+    }
+    Ok(paths)
+}
+
+fn output_matches_input_domain(folder: &Path, pattern: &str, output: &Path) -> bool {
+    let Some(name) = output.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let output_parent = output.parent().unwrap_or_else(|| Path::new("."));
+    match (
+        std::fs::canonicalize(folder),
+        std::fs::canonicalize(output_parent),
+    ) {
+        (Ok(folder), Ok(output_parent)) => folder == output_parent && glob_match(pattern, name),
+        _ => false,
+    }
+}
+
+fn paths_alias(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn csv_write_error(path: &Path, source: csv::Error) -> MokumeError {
+    match source.into_kind() {
+        csv::ErrorKind::Io(source) => MokumeError::Io {
+            path: path.to_path_buf(),
+            source,
+        },
+        source => MokumeError::InvalidInput {
+            message: format!("Error writing file '{}': {source:?}", path.display()),
+        },
+    }
 }
 
 fn column_index(headers: &[String], column: &str) -> Result<usize> {
@@ -555,6 +754,7 @@ fn csv_error(path: &Path, source: csv::Error) -> MokumeError {
 mod tests {
     use super::*;
     use std::error::Error;
+    use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // `super::*` brings the crate's single-parameter `Result` alias into scope,
@@ -574,6 +774,68 @@ mod tests {
         let mut file = File::create(&path)?;
         file.write_all(contents.as_bytes())?;
         Ok(path)
+    }
+
+    fn reorder_first_two_columns(contents: &str) -> String {
+        let mut lines = contents
+            .lines()
+            .map(|line| {
+                if line.starts_with('#') {
+                    return line.to_string();
+                }
+                let mut fields = line.split('\t').collect::<Vec<_>>();
+                fields.swap(0, 1);
+                fields.join("\t")
+            })
+            .collect::<Vec<_>>();
+        lines.push(String::new());
+        lines.join("\n")
+    }
+
+    fn corrected_by_identity(path: &Path) -> TestResult<HashMap<(String, String), f64>> {
+        let mut reader = csv::ReaderBuilder::new().delimiter(b'\t').from_path(path)?;
+        let headers = reader
+            .headers()?
+            .iter()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        let sample_col = column_index(&headers, "SampleID")?;
+        let protein_col = column_index(&headers, "ProteinName")?;
+        let corrected_col = column_index(&headers, "IbaqBec")?;
+        let mut values = HashMap::new();
+        for record in reader.records() {
+            let record = record?;
+            values.insert(
+                (
+                    field(&record, sample_col)?.to_string(),
+                    field(&record, protein_col)?.to_string(),
+                ),
+                field(&record, corrected_col)?.parse::<f64>()?,
+            );
+        }
+        Ok(values)
+    }
+
+    fn error_message(result: Result<()>, context: &str) -> TestResult<String> {
+        match result {
+            Ok(()) => Err(context.to_string().into()),
+            Err(error) => Ok(error.to_string()),
+        }
+    }
+
+    fn assert_rejected_without_output(
+        args: &CorrectBatchesArgs,
+        output: &Path,
+        expected: &str,
+    ) -> TestResult<()> {
+        let error = error_message(run_correct_batches(args), expected)?;
+        assert!(error.contains(expected), "unexpected error: {error}");
+        assert!(
+            !output.exists(),
+            "output must not be created: {}",
+            output.display()
+        );
+        Ok(())
     }
 
     #[test]
@@ -664,6 +926,35 @@ P3\tB2-s3\tcase\t4.0\n\
 P4\tB2-s3\tcase\t29.0\n\
 P5\tB2-s3\tcase\t6.5\n";
 
+    const DELIMITED_A: &str = r#"# comma-delimited correct-batches fixture
+ProteinName,SampleID,Metadata,Ibaq
+P1,B1-s1,"alpha,beta",10.0
+P2,B1-s1,"line one
+line two",5.0
+P1,B1-s2,plain,11.0
+P2,B1-s2,plain,6.0
+"#;
+
+    const DELIMITED_B: &str = r#"# comma-delimited correct-batches fixture
+ProteinName,SampleID,Metadata,Ibaq
+P1,B2-s1,"quoted ""value""",20.0
+P2,B2-s1,plain,8.0
+P1,B2-s2,plain,21.0
+P2,B2-s2,plain,7.5
+"#;
+
+    const COLLISION_A: &str = "ProteinName\tSampleID\tIbaq\tIbaqBec\n\
+P1\tB1-s1\t10.0\told\n\
+P2\tB1-s1\t5.0\told\n\
+P1\tB1-s2\t11.0\told\n\
+P2\tB1-s2\t6.0\told\n";
+
+    const COLLISION_B: &str = "ProteinName\tSampleID\tIbaq\tIbaqBec\n\
+P1\tB2-s1\t20.0\told\n\
+P2\tB2-s1\t8.0\told\n\
+P1\tB2-s2\t21.0\told\n\
+P2\tB2-s2\t7.5\told\n";
+
     // Expected IbaqBec values keyed by (SampleID, ProteinName), captured from the
     // Python oracle:
     //   conda run -n Bigbio python -m mokume.mokume_cli correct-batches \
@@ -714,26 +1005,7 @@ P5\tB2-s3\tcase\t6.5\n";
 
         run_correct_batches(&args_for(&dir, &output))?;
 
-        let mut reader = csv::ReaderBuilder::new()
-            .delimiter(b'\t')
-            .from_path(&output)?;
-        let headers = reader
-            .headers()?
-            .iter()
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        let sample_col = column_index(&headers, "SampleID")?;
-        let protein_col = column_index(&headers, "ProteinName")?;
-        let bec_col = column_index(&headers, "IbaqBec")?;
-
-        let mut actual: HashMap<(String, String), f64> = HashMap::new();
-        for record in reader.records() {
-            let record = record?;
-            let sample = field(&record, sample_col)?.to_string();
-            let protein = field(&record, protein_col)?.to_string();
-            let value = field(&record, bec_col)?.parse::<f64>()?;
-            actual.insert((sample, protein), value);
-        }
+        let actual = corrected_by_identity(&output)?;
 
         assert_eq!(
             actual.len(),
@@ -750,6 +1022,165 @@ P5\tB2-s3\tcase\t6.5\n";
                 "({sample}, {protein}): got {got}, expected {expected}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn reordered_input_columns_preserve_identity() -> TestResult<()> {
+        let canonical_dir = temp_dir("canonical-order")?;
+        write_file(&canonical_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(&canonical_dir, "batchB_ibaq.tsv", BATCH_B)?;
+        let canonical_output = canonical_dir.join("corrected.tsv");
+        run_correct_batches(&args_for(&canonical_dir, &canonical_output))?;
+
+        let reordered_dir = temp_dir("reordered-order")?;
+        write_file(&reordered_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(
+            &reordered_dir,
+            "batchB_ibaq.tsv",
+            &reorder_first_two_columns(BATCH_B),
+        )?;
+        let reordered_output = reordered_dir.join("corrected.tsv");
+        run_correct_batches(&args_for(&reordered_dir, &reordered_output))?;
+
+        assert_eq!(
+            corrected_by_identity(&canonical_output)?,
+            corrected_by_identity(&reordered_output)?,
+            "column order must not change corrected values by identity"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn selected_delimiter_and_quoted_fields_round_trip() -> TestResult<()> {
+        let dir = temp_dir("delimited-output")?;
+        write_file(&dir, "batchA_ibaq.csv", DELIMITED_A)?;
+        write_file(&dir, "batchB_ibaq.csv", DELIMITED_B)?;
+        let output = dir.join("corrected.csv");
+        let mut args = args_for(&dir, &output);
+        args.pattern = "*ibaq.csv".to_string();
+        args.sep = ",".to_string();
+        run_correct_batches(&args)?;
+
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(b',')
+            .from_path(&output)?;
+        assert_eq!(
+            reader.headers()?.iter().collect::<Vec<_>>(),
+            vec!["ProteinName", "SampleID", "Metadata", "Ibaq", "IbaqBec"]
+        );
+        let mut metadata = HashMap::new();
+        for record in reader.records() {
+            let record = record?;
+            assert_eq!(record.len(), 5, "every output row must match the header");
+            metadata.insert(
+                (
+                    field(&record, 1)?.to_string(),
+                    field(&record, 0)?.to_string(),
+                ),
+                field(&record, 2)?.to_string(),
+            );
+        }
+        assert_eq!(
+            metadata[&(String::from("B1-s1"), String::from("P1"))],
+            "alpha,beta"
+        );
+        assert_eq!(
+            metadata[&(String::from("B1-s1"), String::from("P2"))],
+            "line one\nline two"
+        );
+        assert_eq!(
+            metadata[&(String::from("B2-s1"), String::from("P1"))],
+            "quoted \"value\""
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_headers_fail_before_output_creation() -> TestResult<()> {
+        let duplicate_dir = temp_dir("duplicate-header")?;
+        write_file(
+            &duplicate_dir,
+            "batchA_ibaq.tsv",
+            "ProteinName\tSampleID\tIbaq\tIbaq\nP1\tB1-s1\t10\t10\nP1\tB1-s2\t11\t11\n",
+        )?;
+        write_file(&duplicate_dir, "batchB_ibaq.tsv", BATCH_B)?;
+        let duplicate_output = duplicate_dir.join("corrected.tsv");
+        let args = args_for(&duplicate_dir, &duplicate_output);
+        assert_rejected_without_output(&args, &duplicate_output, "Duplicate columns")
+    }
+
+    #[test]
+    fn extra_schema_column_fails_before_output_creation() -> TestResult<()> {
+        let mismatch_dir = temp_dir("schema-mismatch")?;
+        write_file(&mismatch_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(
+            &mismatch_dir,
+            "batchB_ibaq.tsv",
+            "ProteinName\tSampleID\tIbaq\tExtra\nP1\tB2-s1\t20\textra\nP2\tB2-s1\t8\textra\nP1\tB2-s2\t21\textra\nP2\tB2-s2\t7.5\textra\n",
+        )?;
+        let mismatch_output = mismatch_dir.join("corrected.tsv");
+        let args = args_for(&mismatch_dir, &mismatch_output);
+        assert_rejected_without_output(&args, &mismatch_output, "extra columns")
+    }
+
+    #[test]
+    fn missing_schema_column_fails_before_output_creation() -> TestResult<()> {
+        let missing_dir = temp_dir("schema-missing")?;
+        write_file(&missing_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(
+            &missing_dir,
+            "batchB_ibaq.tsv",
+            "ProteinName\tSampleID\nP1\tB2-s1\nP2\tB2-s1\nP1\tB2-s2\nP2\tB2-s2\n",
+        )?;
+        let missing_output = missing_dir.join("corrected.tsv");
+        let args = args_for(&missing_dir, &missing_output);
+        assert_rejected_without_output(&args, &missing_output, "missing columns")
+    }
+
+    #[test]
+    fn duplicate_source_roles_fail_before_output_creation() -> TestResult<()> {
+        let role_dir = temp_dir("source-role")?;
+        write_file(&role_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(&role_dir, "batchB_ibaq.tsv", BATCH_B)?;
+        let role_output = role_dir.join("corrected.tsv");
+        let mut role_args = args_for(&role_dir, &role_output);
+        role_args.sample_id_column = "ProteinName".to_string();
+        assert_rejected_without_output(&role_args, &role_output, "source columns must be distinct")
+    }
+
+    #[test]
+    fn corrected_column_collision_fails_before_output_creation() -> TestResult<()> {
+        let collision_dir = temp_dir("corrected-column")?;
+        write_file(&collision_dir, "batchA_ibaq.tsv", COLLISION_A)?;
+        write_file(&collision_dir, "batchB_ibaq.tsv", COLLISION_B)?;
+        let collision_output = collision_dir.join("corrected.tsv");
+        let args = args_for(&collision_dir, &collision_output);
+        assert_rejected_without_output(&args, &collision_output, "already exists")
+    }
+
+    #[test]
+    fn input_output_collision_does_not_truncate_input() -> TestResult<()> {
+        let dir = temp_dir("input-output-collision")?;
+        let input = write_file(&dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(&dir, "batchB_ibaq.tsv", BATCH_B)?;
+        let before = std::fs::read(&input)?;
+        let error = error_message(
+            run_correct_batches(&args_for(&dir, &input)),
+            "an input path must not also be the output path",
+        )?;
+        assert!(error.contains("also an input file"));
+        assert_eq!(std::fs::read(&input)?, before);
+
+        let future_output = dir.join("future_ibaq.tsv");
+        let mut args = args_for(&dir, &future_output);
+        args.pattern = "*ibaq.tsv".to_string();
+        let future_error = error_message(
+            run_correct_batches(&args),
+            "an output matching the input pattern must be rejected",
+        )?;
+        assert!(future_error.contains("matches the input pattern"));
+        assert!(!future_output.exists());
         Ok(())
     }
 
