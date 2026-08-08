@@ -235,7 +235,8 @@ fn synthetic_peptide_rows() -> Vec<QpxRow<'static>> {
 fn default_peptides_config(parquet: PathBuf, output: PathBuf) -> FeatureToPeptidesConfig {
     FeatureToPeptidesConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: None,
             fasta: None,
         },
@@ -3125,7 +3126,8 @@ fn run_synthetic_quantification(
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta,
         },
@@ -3219,7 +3221,8 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -3322,7 +3325,8 @@ fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: Some(fasta),
         },
@@ -3997,7 +4001,8 @@ fn run_normalization_proteins_quantification() -> Result<CsvTable, Box<dyn Error
 fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -4057,7 +4062,8 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: None,
         },

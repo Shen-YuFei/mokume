@@ -89,6 +89,21 @@ impl SdrfTable {
         &self.records
     }
 
+    /// Resolve an MSstats run/reference alias to its authoritative SDRF data file.
+    /// Ambiguous aliases are intentionally treated as unresolved.
+    pub fn resolve_run_file(&self, alias: &str) -> Option<String> {
+        let indices = self.by_run.get(&normalize_file_key(alias))?;
+        let mut data_file: Option<&str> = None;
+        for index in indices {
+            let candidate = self.records.get(*index)?.data_file.as_str();
+            if data_file.is_some_and(|known| known != candidate) {
+                return None;
+            }
+            data_file = Some(candidate);
+        }
+        data_file.map(ToOwned::to_owned)
+    }
+
     pub fn lookup(&self, run_file_name: &str, label: Option<&str>) -> Result<&SdrfRecord> {
         let run_key = normalize_file_key(run_file_name);
         if let Some(label) = label {
@@ -416,12 +431,19 @@ pub fn normalize_file_key(value: &str) -> String {
     // the QPX `run_file_name`, which is stored extension-less. Without this the
     // per-feature SDRF lookup misses and the Condition column falls back to the
     // run filename. Mirrors `mokume-pipeline` de.rs::strip_run_extension.
-    for ext in [".raw", ".mzml", ".d", ".wiff"] {
-        if let Some(stem) = key.strip_suffix(ext) {
-            return stem.to_owned();
+    for ext in [".raw", ".mzml", ".wiff", ".d"] {
+        if let Some(index) = key.find(ext) {
+            let suffix = &key[index + ext.len()..];
+            if suffix.is_empty()
+                || suffix.starts_with('.')
+                || suffix.starts_with('_')
+                || suffix.starts_with(char::is_whitespace)
+            {
+                return key[..index].to_owned();
+            }
         }
     }
-    key
+    key.strip_suffix(".scan").unwrap_or(&key).to_owned()
 }
 
 pub fn normalize_label_key(value: &str) -> String {
@@ -573,6 +595,7 @@ mod tests {
             "Run_Condition_A_01.d",
             "Run_Condition_A_01.wiff",
             "/data/Run_Condition_A_01.raw",
+            "Run_Condition_A_01.mzML_controllerType=0 controllerNumber=1 scan=42",
             "Run_Condition_A_01",
         ] {
             assert_eq!(
