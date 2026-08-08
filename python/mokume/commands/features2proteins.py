@@ -24,7 +24,12 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     "-p",
     "--parquet",
     help="Parquet file (quantms.io/qpx format)",
-    required=True,
+    required=False,
+    type=click.Path(exists=True),
+)
+@click.option(
+    "--msstats",
+    help="Legacy quantms *_msstats_in.csv file (requires --sdrf)",
     type=click.Path(exists=True),
 )
 @click.option(
@@ -556,6 +561,7 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 def features2proteins(
     ctx,
     parquet: str,
+    msstats: str,
     output: str,
     sdrf: str,
     quant_method: str,
@@ -630,7 +636,7 @@ def features2proteins(
     duckdb_threads: int,
 ) -> None:
     """
-    Quantify proteins directly from feature parquet file.
+    Quantify proteins from QPX feature parquet or legacy SDRF+MSstats input.
 
     This is the recommended unified command that handles the full pipeline
     from features to proteins in one step.
@@ -687,6 +693,11 @@ def features2proteins(
         --de --de-method deqms --de-contrasts NASH-HL
     """
     from mokume.pipeline import features_to_proteins as run_pipeline
+
+    if (parquet is None) == (msstats is None):
+        raise click.UsageError("Provide exactly one of --parquet or --msstats")
+    if msstats and not sdrf:
+        raise click.UsageError("--msstats requires --sdrf")
 
     # Validate iBAQ requires fasta
     if quant_method.lower() == "ibaq" and not fasta_file:
@@ -792,6 +803,7 @@ def features2proteins(
     # Run the pipeline
     run_pipeline(
         parquet=parquet,
+        msstats=msstats,
         output=output,
         sdrf=sdrf,
         quant_method=effective_quant_method,

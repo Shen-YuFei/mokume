@@ -46,6 +46,7 @@ HYBRID_FIELD_OWNERS = {
     "input.sdrf": HybridFieldOwner.SHARED_CONTEXT,
     "input.fasta_file": HybridFieldOwner.RUST_KERNEL,
     "input.qpx_dir": HybridFieldOwner.PYTHON_POSTPROCESS,
+    "input.msstats": HybridFieldOwner.RUST_KERNEL,
     # Filtering and normalization performed by the Rust kernel.
     "filtering.min_aa": HybridFieldOwner.RUST_KERNEL,
     "filtering.min_unique_peptides": HybridFieldOwner.RUST_KERNEL,
@@ -151,6 +152,15 @@ def _normalization_argv(config: PipelineConfig) -> List[str]:
     return argv
 
 
+def _input_argv(config: PipelineConfig) -> List[str]:
+    """Select the validated parquet or MSstats feature input."""
+    if config.input.msstats is not None:
+        return ["--msstats", config.input.msstats]
+    if config.input.parquet is not None:
+        return ["--parquet", config.input.parquet]
+    raise ValueError("Provide exactly one input: parquet or msstats")
+
+
 def _ratio_reference_argv(config: PipelineConfig) -> List[str]:
     """Reference-sample context for ``ratio`` quantification.
 
@@ -231,7 +241,7 @@ def build_features2proteins_argv(config: PipelineConfig, output_path: str) -> Li
     argv: List[str] = ["features2proteins"]
 
     # Inputs and outputs.
-    argv += ["--parquet", config.input.parquet]
+    argv += _input_argv(config)
     if config.input.sdrf is not None:
         argv += ["--sdrf", config.input.sdrf]
     if config.input.fasta_file is not None:

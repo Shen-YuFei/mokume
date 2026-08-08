@@ -18,6 +18,7 @@ import duckdb
 from mokume.model.labeling import QuantificationCategory, IsobaricLabel
 from mokume.core.constants import load_sdrf
 from mokume.core.logger import get_logger
+from mokume.io.msstats import create_msstats_feature_table
 
 logger = get_logger("mokume.io.feature")
 
@@ -250,28 +251,68 @@ class Feature:
         if not os.path.exists(database_path):
             raise FileNotFoundError(f"the file {database_path} does not exist.")
 
-        self.parquet_db = duckdb.connect()
-
-        # Apply DuckDB resource pragmas before any expensive operation: scanning
-        # large parquets can otherwise allocate up to ~80% of total RAM by
-        # default, which interacts badly with the pandas pipeline downstream.
-        if duckdb_memory is not None:
-            if not self._MEMORY_LIMIT_RE.match(str(duckdb_memory)):
-                raise ValueError(
-                    "duckdb_memory must be a DuckDB memory string like "
-                    f"'80GB' or '16384MB'; got {duckdb_memory!r}"
-                )
-            self.parquet_db.execute("SET memory_limit=?", [str(duckdb_memory)])
-        if duckdb_threads is not None:
-            threads = int(duckdb_threads)
-            if threads < 1:
-                raise ValueError(f"duckdb_threads must be >= 1; got {duckdb_threads!r}")
-            self.parquet_db.execute("SET threads=?", [threads])
+        self.parquet_db = self._connect(duckdb_memory, duckdb_threads)
 
         # Use DuckDB Python API to avoid SQL string interpolation for file paths
         self.parquet_db.read_parquet(database_path).create_view("parquet_db_raw")
-
         self._detect_qpx_format()
+        self._initialize_raw_view(filter_builder)
+
+    @classmethod
+    def from_msstats(
+        cls,
+        msstats_path: str,
+        sdrf_path: str,
+        filter_builder: Optional[SQLFilterBuilder] = None,
+        duckdb_limits: tuple[Optional[str], Optional[int]] = (None, None),
+    ) -> "Feature":
+        """Open a quantms MSstats table as a QPX-compatible feature view."""
+        feature = cls.__new__(cls)
+        feature.parquet_db = cls._connect(*duckdb_limits)
+        try:
+            create_msstats_feature_table(
+                feature.parquet_db,
+                msstats_path=msstats_path,
+                sdrf_path=sdrf_path,
+            )
+            feature._detect_qpx_format()
+            feature._initialize_raw_view(filter_builder)
+        except Exception:
+            feature.parquet_db.close()
+            raise
+        return feature
+
+    @classmethod
+    def _connect(
+        cls,
+        duckdb_memory: Optional[str],
+        duckdb_threads: Optional[int],
+    ) -> duckdb.DuckDBPyConnection:
+        """Create a DuckDB connection with the configured resource limits."""
+        connection = duckdb.connect()
+        try:
+            # Apply DuckDB resource pragmas before any expensive operation.
+            if duckdb_memory is not None:
+                if not cls._MEMORY_LIMIT_RE.match(str(duckdb_memory)):
+                    raise ValueError(
+                        "duckdb_memory must be a DuckDB memory string like "
+                        f"'80GB' or '16384MB'; got {duckdb_memory!r}"
+                    )
+                connection.execute("SET memory_limit=?", [str(duckdb_memory)])
+            if duckdb_threads is not None:
+                threads = int(duckdb_threads)
+                if threads < 1:
+                    raise ValueError(
+                        f"duckdb_threads must be >= 1; got {duckdb_threads!r}"
+                    )
+                connection.execute("SET threads=?", [threads])
+        except Exception:
+            connection.close()
+            raise
+        return connection
+
+    def _initialize_raw_view(self, filter_builder: Optional[SQLFilterBuilder]) -> None:
+        """Initialize format detection and the canonical long feature view."""
         self._create_unnest_view()
 
         self._samples: Optional[list[str]] = None
