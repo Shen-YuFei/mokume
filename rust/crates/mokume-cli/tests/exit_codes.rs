@@ -155,6 +155,43 @@ P1\tB2-s1\t20.0\nP2\tB2-s1\t8.0\nP1\tB2-s2\t21.0\nP2\tB2-s2\t7.5\n",
 }
 
 #[test]
+fn correct_batches_rejects_input_output_collision() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root()?;
+    let input = root.join("input");
+    create_dir_all(&input)?;
+    let input_file = input.join("batchA_ibaq.tsv");
+    write(
+        &input_file,
+        "ProteinName\tSampleID\tIbaq\n\
+P1\tB1-s1\t10.0\nP1\tB1-s2\t11.0\n",
+    )?;
+    write(
+        input.join("batchB_ibaq.tsv"),
+        "ProteinName\tSampleID\tIbaq\n\
+P1\tB2-s1\t20.0\nP1\tB2-s2\t21.0\n",
+    )?;
+    let before = std::fs::read(&input_file)?;
+
+    let result = Command::new(env!("CARGO_BIN_EXE_mokume"))
+        .args([
+            "correct-batches",
+            "--folder",
+            path_str(&input)?,
+            "--output",
+            path_str(&input_file)?,
+        ])
+        .output()?;
+
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8(result.stderr)?.contains("also an input file"),
+        "unexpected stderr"
+    );
+    assert_eq!(std::fs::read(&input_file)?, before);
+    Ok(())
+}
+
+#[test]
 fn correct_batches_export_anndata_writes_h5ad() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root()?;
     let input = root.join("input");

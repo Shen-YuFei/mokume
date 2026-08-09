@@ -13,8 +13,8 @@ use mokume_core::{
 };
 use mokume_imputation::imputed_values;
 use mokume_io::{
-    write_peptide_parquet, PeptideParquetRow, QpxFeatureRecord, QpxParquetReader, SdrfRawTable,
-    SdrfRecord, SdrfTable, DEFAULT_QPX_BATCH_SIZE,
+    write_peptide_parquet, MsstatsReader, PeptideParquetRow, QpxFeatureRecord, QpxParquetReader,
+    SdrfRawTable, SdrfRecord, SdrfTable, DEFAULT_QPX_BATCH_SIZE,
 };
 use mokume_normalization::{
     condition_median_sample_factors, coverage_filtered_proteins, global_median_sample_factors,
@@ -4587,7 +4587,8 @@ pub fn run_ibaq_from_peptides(
 fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
-            parquet: PathBuf::new(),
+            parquet: None,
+            msstats: None,
             sdrf: None,
             fasta: Some(params.fasta.clone()),
         },
@@ -4640,6 +4641,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         config
     };
 
+    validate_de_ensemble_options(config)?;
     validate_features_to_proteins(config)?;
     validate_implemented_subset(config)?;
     if let Some(method) = ignored_directlfq_sample_normalization(config) {
@@ -4673,8 +4675,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let dataset_normalization = dataset_sample_normalization_method(config)?;
     let mut state = FeatureToProteinState::new(config, sdrf.as_ref())?;
-    let reader = QpxParquetReader::open(&config.input.parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_input_features(&config.input, sdrf.as_ref(), |feature| {
         state.ingest(&feature, sdrf.as_ref(), config.filtering, intensity_factors)
     })?;
 
@@ -4816,9 +4817,6 @@ fn compile_exclude_sequence_patterns(patterns: &[String]) -> Result<Vec<Regex>> 
 }
 
 fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result<()> {
-    if !config.enabled {
-        return Ok(());
-    }
     let intensity = &config.intensity;
     // `cv_threshold` is applied via the `collect_intensity_group_filters` pre-pass
     // (per-`(sample, protein, canonical)` CV over the `min_unique`-gated raw
@@ -4903,18 +4901,31 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     Ok(())
 }
 
+fn active_filter_pipeline(config: &FeatureToPeptidesConfig) -> Option<&PreprocessingFilterConfig> {
+    config
+        .filter_pipeline
+        .as_ref()
+        .filter(|pipeline| pipeline.enabled)
+}
+
 fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Result<()> {
-    if !config.input.parquet.exists() {
+    let parquet = required_parquet(&config.input)?;
+    if !parquet.exists() {
         return Err(MokumeError::MissingInput {
-            path: config.input.parquet.clone(),
+            path: parquet.to_path_buf(),
         });
+    }
+    if config.input.msstats.is_some() {
+        return Err(invalid_input(
+            "features2peptides does not support --msstats input",
+        ));
     }
     if let Some(sdrf) = &config.input.sdrf {
         if !sdrf.exists() {
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
         }
     }
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = active_filter_pipeline(config) {
         validate_filter_pipeline_subset(pipeline)?;
     }
 
@@ -4956,16 +4967,18 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
 
 pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> {
     validate_features_to_peptides_config(config)?;
+    let filter_pipeline = active_filter_pipeline(config);
 
     // Route the deterministic peptide export through the protein pipeline's
     // ingest machinery by building a Sum-quantification config whose only
     // requested output is the peptide intermediate.
     let mut proteins_config = peptide_export_config(config);
+    let parquet = required_parquet(&proteins_config.input)?;
     // When the opt-in filter pipeline is enabled, its protein block governs
     // contaminant removal and the per-`(protein, sample)` unique-peptide gate
     // (Python wires both through the same config), replacing the default
     // load-time settings.
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         proteins_config.filtering.remove_contaminants =
             pipeline.protein.remove_contaminants || pipeline.protein.remove_decoys;
         proteins_config.filtering.min_unique_peptides = pipeline.protein.min_unique_peptides;
@@ -4980,10 +4993,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // contaminants on the **raw** `pg_accessions` before computing the median.
     // Route the filter pipeline's custom patterns through (default list -> the
     // existing `is_contaminant` fallback inside `matches_sql_contaminant`).
-    let median_contaminant_patterns: &[String] = config
-        .filter_pipeline
-        .as_ref()
-        .map_or(&[], |pipeline| &pipeline.protein.contaminant_patterns);
+    let median_contaminant_patterns: &[String] =
+        filter_pipeline.map_or(&[], |pipeline| &pipeline.protein.contaminant_patterns);
     let mut intensity_factors = if config.skip_normalization {
         IntensityFactors::default()
     } else {
@@ -5007,12 +5018,10 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // and `contaminant_patterns` come from the (pipeline-overridden) protein
     // block; `min_intensity` comes from the pipeline's intensity block, else 0.
     if let Some(irs) = &config.irs {
-        let irs_min_intensity = config
-            .filter_pipeline
-            .as_ref()
-            .map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
+        let irs_min_intensity =
+            filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
         intensity_factors.irs_scale_by_techrep = collect_irs_scale(
-            &proteins_config.input.parquet,
+            parquet,
             irs,
             sdrf.as_ref(),
             proteins_config.filtering.remove_contaminants,
@@ -5037,8 +5046,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     if config.remove_low_frequency_peptides {
         state.low_frequency = Some(LowFrequencyTracker::default());
     }
-    state.peptide_filters = config.filter_pipeline.clone();
-    if let Some(pipeline) = &config.filter_pipeline {
+    state.peptide_filters = filter_pipeline.cloned();
+    if let Some(pipeline) = filter_pipeline {
         state.excluded_sequence_regexes =
             compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
         if let Some(peptides) = &mut state.export_rows.peptides {
@@ -5051,9 +5060,9 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `collect_intensity_factors`, so excluded samples still feed it -- matching
     // Python, where `get_median_map` runs via `SQLFilterBuilder` ahead of the
     // per-sample filter pipeline).
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         state.run_qc_excluded_samples = collect_run_qc_exclusions(
-            &proteins_config.input.parquet,
+            parquet,
             proteins_config.filtering,
             sdrf.as_ref(),
             config.keep_shared_peptides,
@@ -5069,9 +5078,9 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `min_unique` gate, pre feature-normalization). They share the pass so the
     // quantile bounds see the post-CV survivors (Python orders CV before Quantile).
     // Excluded Run-QC samples are skipped so they do not feed either decision.
-    if let Some(pipeline) = &config.filter_pipeline {
+    if let Some(pipeline) = filter_pipeline {
         let group_filters = collect_intensity_group_filters(
-            &proteins_config.input.parquet,
+            parquet,
             proteins_config.filtering,
             sdrf.as_ref(),
             config.keep_shared_peptides,
@@ -5087,7 +5096,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         // features (the warning is emitted in `validate_filter_pipeline_subset`).
         state.replicate_agreement_wipes_all = pipeline.intensity.min_replicate_agreement > 1;
     }
-    let reader = QpxParquetReader::open(&proteins_config.input.parquet, DEFAULT_QPX_BATCH_SIZE)?;
+    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
     stream_qpx_features(reader, |feature| {
         state.ingest(
             &feature,
@@ -5115,10 +5124,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // `min_unique_peptides` (the Run-QC / quantile pre-passes stay at 0 because they
     // run ahead of MinPeptideFilter).
     let min_unique = if config.keep_shared_peptides {
-        config
-            .filter_pipeline
-            .as_ref()
-            .map_or(0, |pipeline| pipeline.protein.min_unique_peptides)
+        filter_pipeline.map_or(0, |pipeline| pipeline.protein.min_unique_peptides)
     } else {
         proteins_config.filtering.min_unique_peptides
     };
@@ -5267,6 +5273,39 @@ where
     })
 }
 
+fn stream_input_features<F>(
+    input: &InputConfig,
+    sdrf: Option<&SdrfTable>,
+    mut consume: F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    match (&input.parquet, &input.msstats) {
+        (Some(parquet), None) => {
+            let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
+            stream_qpx_features(reader, consume)
+        }
+        (None, Some(msstats)) => {
+            let sdrf = sdrf.ok_or_else(|| invalid_input("MSstats input requires --sdrf option"))?;
+            for feature in MsstatsReader::open(msstats, sdrf)? {
+                consume(feature?)?;
+            }
+            Ok(())
+        }
+        _ => Err(invalid_input(
+            "provide exactly one feature input: --parquet or --msstats",
+        )),
+    }
+}
+
+fn required_parquet(input: &InputConfig) -> Result<&Path> {
+    input
+        .parquet
+        .as_deref()
+        .ok_or_else(|| invalid_input("this command requires --parquet input"))
+}
+
 /// Quant methods whose aggregation collapses to `(protein, sample)` peptide
 /// cells normalized by [`apply_dataset_norm_to_peptide_cells`]. These share the
 /// dataset-level normalization with the `--export-peptides` path, so the
@@ -5347,11 +5386,7 @@ fn dataset_sample_normalization_method(
 }
 
 fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> {
-    if !config.input.parquet.exists() {
-        return Err(MokumeError::MissingInput {
-            path: config.input.parquet.clone(),
-        });
-    }
+    validate_feature_input(config)?;
     if let Some(sdrf) = &config.input.sdrf {
         if !sdrf.exists() {
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
@@ -5390,6 +5425,39 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
         return Err(invalid_input(
             "Batch correction with --batch-column or --batch-covariates requires --sdrf option",
         ));
+    }
+    Ok(())
+}
+
+fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
+    match (&config.input.parquet, &config.input.msstats) {
+        (Some(parquet), None) => {
+            if !parquet.exists() {
+                return Err(MokumeError::MissingInput {
+                    path: parquet.clone(),
+                });
+            }
+        }
+        (None, Some(msstats)) => {
+            if !msstats.exists() {
+                return Err(MokumeError::MissingInput {
+                    path: msstats.clone(),
+                });
+            }
+            if config.input.sdrf.is_none() {
+                return Err(invalid_input("MSstats input requires --sdrf option"));
+            }
+            if config.quantification == QuantMethod::Ratio {
+                return Err(invalid_input(
+                    "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
+                ));
+            }
+        }
+        _ => {
+            return Err(invalid_input(
+                "provide exactly one feature input: --parquet or --msstats",
+            ));
+        }
     }
     Ok(())
 }
@@ -5591,13 +5659,15 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         });
     }
     // `--de-ensemble-methods` only has meaning for the ensemble method; reject it
-    // for the single-method paths rather than silently ignoring it. The member
-    // names themselves are validated when the ensemble runs (unknown names fall
-    // back to limma in `run_member`).
+    // for the single-method paths rather than silently ignoring it. Validate an
+    // ensemble's members and min-k before execution.
     if de.ensemble_methods.is_some() && !is_ensemble {
         return Err(invalid_input(
             "--de-ensemble-methods only applies to --de-method ensemble",
         ));
+    }
+    if is_ensemble {
+        de::validated_ensemble_member_names(de)?;
     }
     // `--de-contrasts-file` is expanded into `contrasts` before validation runs
     // (see `expand_de_contrasts_file`), so by here `contrasts_file` is already
@@ -5621,6 +5691,16 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Validate only the ensemble-specific DE contract before any input access.
+/// Other validation keeps its established ordering in the full validators.
+fn validate_de_ensemble_options(config: &FeatureToProteinsConfig) -> Result<()> {
+    let de = &config.differential_expression;
+    if de.enabled && de.method.trim().eq_ignore_ascii_case("ensemble") {
+        de::validated_ensemble_member_names(de)?;
+    }
     Ok(())
 }
 
@@ -6333,8 +6413,7 @@ fn collect_intensity_factors(
     // forwards the `--keep-shared-peptides` flag from `FeatureToPeptidesConfig`,
     // which `peptide_export_config` cannot represent (it pins quantification to
     // `Sum`, so the old in-function `== Ibaq` derivation always read `false`).
-    let reader = QpxParquetReader::open(&config.input.parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_input_features(&config.input, sdrf, |feature| {
         collector.push(feature, config.filtering, keep_shared_peptides)
     })?;
     if collector.normalization_proteins.is_some()
@@ -7874,9 +7953,10 @@ mod tests {
         extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
         irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
         irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
-        resolve_de_method, resolve_irs_autodetect_channel, tech_replicate_of, validate_batch_sizes,
-        validate_features_to_proteins, validate_implemented_subset, CellKey, IrsStat,
-        NormalizationFactorCollector, ProteinMatrix, ProteinValues,
+        resolve_de_method, resolve_irs_autodetect_channel, run_features_to_proteins,
+        tech_replicate_of, validate_batch_sizes, validate_features_to_proteins,
+        validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
+        ProteinValues,
     };
 
     #[test]
@@ -9093,6 +9173,90 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_ensemble_members_before_execution() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let invalid_members = [
+            (Vec::<String>::new(), "empty"),
+            (vec!["".to_string()], "empty"),
+            (vec!["unknown".to_string()], "unknown"),
+            (vec!["auto".to_string()], "unknown"),
+            (vec!["ensemble".to_string()], "nested"),
+            (
+                vec!["limma".to_string(), " LIMMA ".to_string()],
+                "duplicate",
+            ),
+        ];
+
+        for (members, expected) in invalid_members {
+            let parquet = existing_dummy_path("invalid_ensemble_member")?;
+            let mut config = base_config(parquet);
+            config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
+            config.differential_expression.enabled = true;
+            config.differential_expression.method = "ensemble".to_string();
+            config.differential_expression.ensemble_methods = Some(members);
+            config.differential_expression.ensemble_min_k = 1;
+            config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+
+            let Some(error) = validate_implemented_subset(&config).err() else {
+                return Err("invalid ensemble member configuration was accepted".into());
+            };
+            let error = error.to_string();
+            assert!(
+                error.contains(expected),
+                "expected {expected:?} in error, got {error:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validates_ensemble_min_k_against_configured_members(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for min_k in [0, 3] {
+            let parquet = existing_dummy_path("invalid_ensemble_min_k")?;
+            let mut config = base_config(parquet);
+            config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
+            config.differential_expression.enabled = true;
+            config.differential_expression.method = "ensemble".to_string();
+            config.differential_expression.ensemble_methods =
+                Some(vec!["limma".to_string(), "deqms".to_string()]);
+            config.differential_expression.ensemble_min_k = min_k;
+            config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+
+            let Some(error) = validate_implemented_subset(&config).err() else {
+                return Err("invalid ensemble min-k was accepted".into());
+            };
+            let error = error.to_string();
+            assert!(error.contains("min-k"), "unexpected error: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_ensemble_precedes_missing_input_without_output(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
+        let output = tempdir.path().join("de.csv");
+        let mut config = base_config(tempdir.path().join("missing.parquet"));
+        config.input.sdrf = Some(tempdir.path().join("missing.sdrf.tsv"));
+        config.differential_expression.enabled = true;
+        config.differential_expression.method = "ensemble".to_string();
+        config.differential_expression.ensemble_methods = Some(vec!["unknown".to_string()]);
+        config.differential_expression.ensemble_min_k = 1;
+        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(output.clone());
+
+        let Some(error) = run_features_to_proteins(&config).err() else {
+            return Err("invalid ensemble configuration was accepted".into());
+        };
+        let error = error.to_string();
+
+        assert!(error.contains("unknown"), "unexpected error: {error}");
+        assert!(!output.exists(), "invalid ensemble created DE output");
+        Ok(())
+    }
+
+    #[test]
     fn rejects_ensemble_methods_for_single_method() -> Result<(), Box<dyn std::error::Error>> {
         // --de-ensemble-methods is meaningless for a single-method run and must be
         // rejected rather than silently ignored.
@@ -9185,7 +9349,8 @@ mod tests {
     fn base_config(parquet: PathBuf) -> FeatureToProteinsConfig {
         FeatureToProteinsConfig {
             input: InputConfig {
-                parquet,
+                parquet: Some(parquet),
+                msstats: None,
                 sdrf: None,
                 fasta: None,
             },

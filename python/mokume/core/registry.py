@@ -30,7 +30,9 @@ Example — third-party registration via pyproject.toml::
 import importlib.metadata
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Type
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
+
+from mokume import _plugins
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,9 @@ class PluginRegistry:
         "filter": {},
     }
 
-    _discovered: bool = False
+    _discovered: Set[Tuple[str, Optional[str]]] = set()
+    _builtins: Dict[Tuple[str, str], Any] = {}
+    _entry_points_cache: Dict[str, List[Any]] = {}
 
     @classmethod
     def register(cls, group: str, name: str):
@@ -95,7 +99,15 @@ class PluginRegistry:
             )
 
         def decorator(klass: Type) -> Type:
-            cls._stores[group][name.lower()] = klass
+            key = (group, name.lower())
+            store = cls._stores[group]
+            existing = store.get(key[1])
+            if key in _plugins.plugins_for_module(klass.__module__):
+                previous_builtin = cls._builtins.get(key)
+                cls._builtins[key] = klass
+                if existing is not None and existing is not previous_builtin:
+                    return klass
+            store[key[1]] = klass
             return klass
 
         return decorator
@@ -149,8 +161,8 @@ class PluginRegistry:
         ValueError
             If the plugin is not found.
         """
-        cls._ensure_discovered()
         name_lower = name.lower()
+        cls._ensure_registered(group, name_lower)
 
         # Check direct match first
         entry = cls._stores.get(group, {}).get(name_lower)
@@ -166,6 +178,7 @@ class PluginRegistry:
             if group == "quantification":
                 match = _TOPN_PATTERN.match(name_lower)
                 if match:
+                    cls._ensure_registered(group, "topn")
                     topn_cls = cls._stores.get(group, {}).get("topn")
                     if topn_cls is not None:
                         n = int(match.group(1))
@@ -205,7 +218,7 @@ class PluginRegistry:
         Type or None
             The registered class, or None if not found.
         """
-        cls._ensure_discovered()
+        cls._ensure_registered(group, name.lower())
         return cls._stores.get(group, {}).get(name.lower())
 
     @classmethod
@@ -222,7 +235,9 @@ class PluginRegistry:
         list[str]
             Sorted list of available plugin names.
         """
-        cls._ensure_discovered()
+        for module_name in _plugins.load_all_plugins(group):
+            cls._restore_module(module_name)
+        cls._ensure_discovered(group)
         return sorted(cls._stores.get(group, {}).keys())
 
     @classmethod
@@ -240,60 +255,95 @@ class PluginRegistry:
         -------
         bool
         """
-        cls._ensure_discovered()
+        cls._ensure_registered(group, name.lower())
         return name.lower() in cls._stores.get(group, {})
 
     @classmethod
-    def _ensure_discovered(cls):
-        """Discover entry-point plugins once on first access."""
-        if cls._discovered:
+    def _ensure_registered(cls, group: str, name: str) -> None:
+        """Load one matching built-in and third-party plugin."""
+        module_name = _plugins.load_plugin(group, name)
+        if module_name is not None:
+            cls._restore_module(module_name)
+        cls._ensure_discovered(group, name)
+
+    @classmethod
+    def _restore_module(cls, module_name: str) -> None:
+        """Remember or restore built-ins from one imported module."""
+        for group, name in _plugins.plugins_for_module(module_name):
+            entry = cls._stores[group].get(name)
+            if entry is not None and getattr(entry, "__module__", None) == module_name:
+                cls._builtins[(group, name)] = entry
+            elif entry is None and (group, name) in cls._builtins:
+                cls._stores[group][name] = cls._builtins[(group, name)]
+
+    @classmethod
+    def _entry_points(cls, group: str) -> List[Any]:
+        """Return the installed entry points for one plugin group."""
+        if group in cls._entry_points_cache:
+            return cls._entry_points_cache[group]
+
+        ep_group = f"mokume.{group}"
+        try:
+            entry_points = importlib.metadata.entry_points(group=ep_group)
+        except TypeError:
+            all_entry_points = importlib.metadata.entry_points()
+            if isinstance(all_entry_points, dict):
+                entry_points = all_entry_points.get(ep_group, [])
+            else:
+                entry_points = [
+                    entry_point
+                    for entry_point in all_entry_points
+                    if entry_point.group == ep_group
+                ]
+
+        cls._entry_points_cache[group] = list(entry_points)
+        return cls._entry_points_cache[group]
+
+    @classmethod
+    def _ensure_discovered(
+        cls,
+        group: str,
+        name: Optional[str] = None,
+    ) -> None:
+        """Discover matching entry-point plugins once on first access."""
+        key = (group, name)
+        if (group, None) in cls._discovered or key in cls._discovered:
             return
-        cls._discovered = True
+        cls._discovered.add(key)
 
-        for group in cls._stores:
-            ep_group = f"mokume.{group}"
-            try:
-                # Python 3.12+: entry_points(group=...) returns a SelectableGroups
-                # Python 3.9-3.11: entry_points() returns a dict
-                # Python 3.12+: entry_points(group=...) returns matching entries
-                # Python 3.9-3.11: entry_points() returns SelectableGroups
+        ep_group = f"mokume.{group}"
+        try:
+            group_eps = cls._entry_points(group)
+            if name is not None:
+                group_eps = [ep for ep in group_eps if ep.name.lower() == name]
+            for ep in group_eps:
                 try:
-                    group_eps = importlib.metadata.entry_points(group=ep_group)
-                except TypeError:
-                    # Fallback for older Python versions
-                    eps = importlib.metadata.entry_points()
-                    if isinstance(eps, dict):
-                        group_eps = eps.get(ep_group, [])
-                    else:
-                        group_eps = [ep for ep in eps if ep.group == ep_group]
-
-                for ep in group_eps:
-                    try:
-                        klass = ep.load()
-                        cls._stores[group][ep.name.lower()] = klass
-                        logger.debug(
-                            "Discovered plugin: %s.%s -> %s",
-                            group,
-                            ep.name,
-                            klass,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to load plugin '%s' from group '%s': %s",
-                            ep.name,
-                            ep_group,
-                            exc,
-                        )
-            except Exception as exc:
-                logger.debug(
-                    "Entry point discovery failed for group '%s': %s",
-                    ep_group,
-                    exc,
-                )
+                    klass = ep.load()
+                    cls._stores[group][ep.name.lower()] = klass
+                    logger.debug(
+                        "Discovered plugin: %s.%s -> %s",
+                        group,
+                        ep.name,
+                        klass,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to load plugin '%s' from group '%s': %s",
+                        ep.name,
+                        ep_group,
+                        exc,
+                    )
+        except Exception as exc:
+            logger.debug(
+                "Entry point discovery failed for group '%s': %s",
+                ep_group,
+                exc,
+            )
 
     @classmethod
     def reset(cls):
         """Reset the registry. Mainly useful for testing."""
         for group in cls._stores:
             cls._stores[group].clear()
-        cls._discovered = False
+        cls._discovered.clear()
+        cls._entry_points_cache.clear()

@@ -137,7 +137,7 @@ def canonicalize_isoforms_map(
         canonical = canonicalize_isoform(accession)
         original_to_canonical[accession] = canonical
         if canonical in canonical_to_peptides:
-            canonical_to_peptides[canonical] = canonical_to_peptides[canonical] | peps
+            canonical_to_peptides[canonical].update(peps)
         else:
             canonical_to_peptides[canonical] = set(peps)
     return canonical_to_peptides, original_to_canonical
@@ -383,7 +383,7 @@ def digest_fasta_full(
             logger.warning("Skipping %s: %s", accession, exc)
             continue
         if accession in accession_to_peptides:
-            accession_to_peptides[accession] = accession_to_peptides[accession] | peps
+            accession_to_peptides[accession].update(peps)
         else:
             accession_to_peptides[accession] = peps
         if compute_mw and accession not in accession_to_mw:

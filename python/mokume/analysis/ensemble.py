@@ -15,6 +15,11 @@ import pandas as pd
 from scipy.stats import combine_pvalues
 
 from mokume.analysis.differential_expression import DifferentialExpression
+from mokume.analysis.ensemble_config import (
+    DEFAULT_ENSEMBLE_METHODS,
+    resolve_ensemble_methods,
+    resolve_combined_results,
+)
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.analysis.ensemble")
@@ -24,7 +29,7 @@ def run_ensemble(
     protein_df: pd.DataFrame,
     sample_to_condition: dict[str, str],
     contrast: tuple[str, str],
-    methods: Sequence[str] = ("limrots", "deqms", "proda"),
+    methods: Sequence[str] | None = DEFAULT_ENSEMBLE_METHODS,
     min_k: int = 2,
     fdr_method: str = "bh",
     fdr_threshold: float = 0.05,
@@ -41,8 +46,8 @@ def run_ensemble(
         Sample-to-condition mapping.
     contrast : tuple[str, str]
         Condition pair (A, B) for comparison.
-    methods : sequence of str
-        DE methods to run (default: limrots, deqms, proda).
+    methods : sequence of str or None
+        DE methods to run. ``None`` uses limrots, deqms, and proda.
     min_k : int
         Minimum number of methods that must agree on significance
         for a protein to be called DE (default 2).
@@ -61,9 +66,17 @@ def run_ensemble(
         Ensemble DE results with columns: ProteinName, log2FC (median),
         pvalue (Fisher combined), adj_pvalue, significance,
         n_methods_up, n_methods_down, methods_significant.
+
+    Raises
+    ------
+    ValueError
+        If the ensemble configuration or a shared member input is invalid.
+    KeyError
+        If a required shared input field is missing.
     """
+    resolved_methods = resolve_ensemble_methods(methods, min_k)
     individual_results: dict[str, pd.DataFrame] = {}
-    for method in methods:
+    for method in resolved_methods:
         try:
             de = DifferentialExpression(
                 method=method,
@@ -76,7 +89,7 @@ def run_ensemble(
             if not result.empty:
                 individual_results[method] = result
                 logger.info("Ensemble member %s: %d proteins", method, len(result))
-        except (ValueError, RuntimeError, KeyError, ArithmeticError) as exc:
+        except (RuntimeError, ArithmeticError) as exc:
             logger.warning("Ensemble member %s failed: %s", method, exc)
 
     if not individual_results:
@@ -116,7 +129,13 @@ def combine_de_results(
     -------
     pd.DataFrame
         Combined results.
+
+    Raises
+    ------
+    ValueError
+        If ``min_k`` or a result label is invalid or ambiguous.
     """
+    results = resolve_combined_results(results, min_k)
     all_proteins: set[str] = set()
     for df in results.values():
         all_proteins.update(df["ProteinName"].tolist())

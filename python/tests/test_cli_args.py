@@ -103,6 +103,18 @@ def test_optional_input_fields_emitted_when_set() -> None:
     assert _flag_value(argv, "--fasta") == "db.fasta"
 
 
+def test_msstats_input_is_forwarded_without_parquet() -> None:
+    """The hybrid backend must forward native MSstats input to Rust."""
+    config = _minimal_config(
+        input=InputConfig(msstats="input.csv", sdrf="input.sdrf.tsv")
+    )
+    argv = build_features2proteins_argv(config, "out.csv")
+
+    assert _flag_value(argv, "--msstats") == "input.csv"
+    assert _flag_value(argv, "--sdrf") == "input.sdrf.tsv"
+    assert "--parquet" not in argv
+
+
 def test_remove_contaminants_toggle() -> None:
     remove = build_features2proteins_argv(
         _minimal_config(filtering=FilterConfig(remove_contaminants=True)), "out.csv"

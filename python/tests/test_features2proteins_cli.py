@@ -89,3 +89,58 @@ def test_features2proteins_requires_batch_column_for_column_method(tmp_path):
 
     assert result.exit_code != 0
     assert "requires --batch-column option" in result.output
+
+
+def test_features2proteins_preserves_empty_ensemble_members(monkeypatch, tmp_path):
+    parquet, _ = _make_input_files(tmp_path)
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(pipeline, "features_to_proteins", fake_run_pipeline)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "--de-ensemble-methods",
+            "",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["de_ensemble_methods"] == [""]
+
+
+def test_features2proteins_accepts_msstats_with_sdrf(monkeypatch, tmp_path):
+    """The CLI accepts MSstats only as the selected feature input."""
+    _, sdrf = _make_input_files(tmp_path)
+    msstats = tmp_path / "input_msstats_in.csv"
+    msstats.write_text("ProteinName,PeptideSequence,Intensity\n", encoding="utf-8")
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(pipeline, "features_to_proteins", fake_run_pipeline)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "--msstats",
+            str(msstats),
+            "--sdrf",
+            sdrf,
+            "--output",
+            "out.csv",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["parquet"] is None
+    assert captured["msstats"] == str(msstats)

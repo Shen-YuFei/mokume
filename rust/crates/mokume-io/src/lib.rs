@@ -1,8 +1,10 @@
+pub mod msstats;
 pub mod peptide_parquet;
 pub mod qpx;
 pub mod sdrf;
 
 pub use arrow::record_batch::RecordBatch;
+pub use msstats::MsstatsReader;
 pub use peptide_parquet::{
     read_peptide_parquet, write_peptide_parquet, PeptideParquetRow, RawPeptideRow, RawPeptideTable,
 };

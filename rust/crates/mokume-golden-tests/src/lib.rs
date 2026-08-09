@@ -235,7 +235,8 @@ fn synthetic_peptide_rows() -> Vec<QpxRow<'static>> {
 fn default_peptides_config(parquet: PathBuf, output: PathBuf) -> FeatureToPeptidesConfig {
     FeatureToPeptidesConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: None,
             fasta: None,
         },
@@ -257,6 +258,64 @@ fn default_peptides_config(parquet: PathBuf, output: PathBuf) -> FeatureToPeptid
         filter_pipeline: None,
         irs: None,
     }
+}
+
+#[test]
+fn features2peptides_disabled_filter_pipeline_is_inert() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.disabled-filter.features.parquet");
+    write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
+
+    let baseline_output = root.join("peptides.disabled-filter.baseline.csv");
+    let baseline = default_peptides_config(parquet.clone(), baseline_output.clone());
+    run_features_to_peptides(&baseline)?;
+
+    let disabled_output = root.join("peptides.disabled-filter.disabled.csv");
+    let mut disabled = default_peptides_config(parquet, disabled_output.clone());
+    disabled.filter_pipeline = Some(PreprocessingFilterConfig {
+        enabled: false,
+        intensity: IntensityFilterConfig {
+            min_intensity: 10_000.0,
+            cv_threshold: Some(0.0),
+            min_replicate_agreement: 2,
+            quantile_lower: 0.49,
+            quantile_upper: 0.51,
+            remove_zero_intensity: true,
+        },
+        peptide: PeptideFilterConfig {
+            allowed_charge_states: Some(vec![9]),
+            max_missed_cleavages: Some(0),
+            min_peptide_length: 30,
+            max_peptide_length: 31,
+            exclude_sequence_patterns: vec!["PEPTIDE".to_owned()],
+            ..PeptideFilterConfig::default()
+        },
+        protein: ProteinFilterConfig {
+            min_unique_peptides: 99,
+            razor_peptide_handling: "remove".to_owned(),
+            contaminant_patterns: vec!["P1".to_owned()],
+            ..ProteinFilterConfig::default()
+        },
+        run_qc: RunQcFilterConfig {
+            min_total_intensity: 1_000_000.0,
+            min_identified_features: 99,
+            min_identified_proteins: 99,
+            min_sample_correlation: Some(1.0),
+            max_missing_rate: 0.0,
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&disabled)?;
+
+    let baseline_table = read_csv(&baseline_output)?;
+    let disabled_table = read_csv(&disabled_output)?;
+    assert_eq!(disabled_table.headers, baseline_table.headers);
+    assert_eq!(
+        disabled_table.rows, baseline_table.rows,
+        "enabled=false must make every nested preprocessing setting inert"
+    );
+    Ok(())
 }
 
 /// Look up the `NormIntensity` cell of the peptide long table for a given
@@ -3067,7 +3126,8 @@ fn run_synthetic_quantification(
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta,
         },
@@ -3161,7 +3221,8 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -3264,7 +3325,8 @@ fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: Some(fasta),
         },
@@ -3939,7 +4001,8 @@ fn run_normalization_proteins_quantification() -> Result<CsvTable, Box<dyn Error
 fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -3999,7 +4062,8 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
 
     run_features_to_proteins(&FeatureToProteinsConfig {
         input: InputConfig {
-            parquet,
+            parquet: Some(parquet),
+            msstats: None,
             sdrf: Some(sdrf),
             fasta: None,
         },

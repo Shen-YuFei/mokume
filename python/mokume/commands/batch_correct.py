@@ -5,9 +5,10 @@ CLI command for batch effect correction.
 import logging
 import re
 from pathlib import Path
-from typing import Union
+from typing import Iterable, Union
 
 import click
+import numpy as np
 import pandas as pd
 
 from mokume.io.parquet import create_anndata, combine_ibaq_tsv_files
@@ -49,7 +50,7 @@ def is_valid_sample_id(
     return True
 
 
-def get_batch_id_from_sample_names(samples: list) -> list:
+def get_batch_id_from_sample_names(samples: Iterable[str]) -> np.ndarray:
     """Extract batch IDs from a list of sample names."""
     batch_ids = []
     for sample in samples:
@@ -60,7 +61,8 @@ def get_batch_id_from_sample_names(samples: list) -> list:
         if not re.match(r"^[A-Za-z0-9]+$", batch_id):
             raise ValueError(f"Invalid batch ID format: {batch_id}")
         batch_ids.append(batch_id)
-    return pd.factorize(batch_ids)[0]
+    # pandas 3 rejects plain lists; an object array preserves first-seen ordering.
+    return pd.factorize(np.asarray(batch_ids, dtype=object))[0]
 
 
 def run_batch_correction(

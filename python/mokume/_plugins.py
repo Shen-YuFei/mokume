@@ -1,29 +1,14 @@
-"""Plugin auto-loading for the mokume package.
+"""Lazy loading for Mokume's built-in plugins.
 
-Importing this module registers every built-in plugin with
-:class:`~mokume.core.registry.PluginRegistry`. Registration happens as an
-import side effect: each submodule listed below carries
-``@PluginRegistry.register`` decorators (or defines adapter classes that do),
-so importing the module runs those decorators exactly once.
+Built-in classes keep their existing ``@PluginRegistry.register`` decorators.
+The registry calls :func:`load_plugin` before resolving one name, so importing
+or running a lightweight method does not load unrelated implementations.
+Listing a group calls :func:`load_all_plugins` for that group and preserves the
+existing availability contract.
 
-The top-level :mod:`mokume` package imports this module on first import
-(inside a ``try``/``except`` so an optional-dependency ``ImportError`` in any
-one plugin family never aborts ``import mokume``). Callers who only need a
-subset can also import the relevant submodule directly.
-
-Three kinds of registration sources are pulled in:
-
-* Per-file ``@register`` class decorators that live on editable class modules
-  (e.g. :mod:`mokume.imputation.simple`,
-  :mod:`mokume.normalization.feature_normalizers`,
-  :mod:`mokume.quantification.median`). These are *not* imported by their
-  package ``__init__`` and would otherwise stay unregistered.
-* The three ``_dev_registrations`` adapter modules that expose dev-authored
-  algorithms (iBAQ, the advanced imputers, RLR/LOESS/quantile normalizers)
-  through thin registry adapters.
-* Modules that are already imported by their package ``__init__`` (e.g. the
-  quantification methods, ComBat harmonization) are intentionally *not*
-  re-listed here; importing them again is a no-op but adds noise.
+Each owning module is imported in isolation. A missing optional dependency
+skips that module as before, while any other import-time exception still
+signals a plugin bug.
 """
 
 import importlib
@@ -31,53 +16,111 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Modules whose import side effect registers one or more plugins. Each entry is
-# imported in isolation so that a missing optional dependency in one family
-# (e.g. sklearn for the simple imputers) does not prevent the others from
-# registering.
-_PLUGIN_MODULES = (
-    # Quantification -----------------------------------------------------
-    # median.py is not imported by quantification/__init__.py.
-    "mokume.quantification.median",
-    # iBAQ adapter delegating to the locked ibaq.py core.
-    "mokume.quantification._dev_registrations",
-    # Imputation ---------------------------------------------------------
-    # P2 base imputers (sklearn-backed) and the KNN imputer.
-    "mokume.imputation.simple",
-    "mokume.imputation.knn",
-    # Dev-authored advanced imputers (bpca/qrilc/seqknn/...).
-    "mokume.imputation._dev_registrations",
-    # Normalization ------------------------------------------------------
-    # P2 feature and sample normalizers.
-    "mokume.normalization.feature_normalizers",
-    "mokume.normalization.sample_normalizers",
-    # Dev-authored RLR / LOESS / quantile normalizers.
-    "mokume.normalization._dev_registrations",
-    # Harmonization ------------------------------------------------------
-    "mokume.harmonization.combat",
-)
+# Importing an owning module runs its existing @PluginRegistry.register
+# decorators. Several related names can share one module.
+_PLUGIN_MODULES = {
+    ("quantification", "sum"): "mokume.quantification.all_peptides",
+    ("quantification", "directlfq"): "mokume.quantification.directlfq",
+    ("quantification", "maxlfq"): "mokume.quantification.maxlfq",
+    ("quantification", "median"): "mokume.quantification.median",
+    ("quantification", "ratio"): "mokume.quantification.ratio",
+    ("quantification", "spectral_count"): "mokume.quantification.spectral_count",
+    ("quantification", "tmt_abundance"): "mokume.quantification.tmt_abundance",
+    ("quantification", "tmt_reporter"): "mokume.quantification.tmt_reporter",
+    ("quantification", "topn"): "mokume.quantification.topn",
+    ("quantification", "ibaq"): "mokume.quantification._dev_registrations",
+    ("imputation", "mean"): "mokume.imputation.simple",
+    ("imputation", "median"): "mokume.imputation.simple",
+    ("imputation", "most_frequent"): "mokume.imputation.simple",
+    ("imputation", "constant"): "mokume.imputation.simple",
+    ("imputation", "knn"): "mokume.imputation.knn",
+    ("imputation", "bpca"): "mokume.imputation._dev_registrations",
+    ("imputation", "qrilc"): "mokume.imputation._dev_registrations",
+    ("imputation", "seqknn"): "mokume.imputation._dev_registrations",
+    ("imputation", "impseq"): "mokume.imputation._dev_registrations",
+    ("imputation", "impseqrob"): "mokume.imputation._dev_registrations",
+    ("imputation", "gms"): "mokume.imputation._dev_registrations",
+    ("imputation", "missforest"): "mokume.imputation._dev_registrations",
+    ("normalization.feature", "none"): "mokume.normalization.feature_normalizers",
+    ("normalization.feature", "mean"): "mokume.normalization.feature_normalizers",
+    ("normalization.feature", "median"): "mokume.normalization.feature_normalizers",
+    ("normalization.feature", "max"): "mokume.normalization.feature_normalizers",
+    ("normalization.feature", "global"): "mokume.normalization.feature_normalizers",
+    ("normalization.feature", "max_min"): "mokume.normalization.feature_normalizers",
+    ("normalization.feature", "iqr"): "mokume.normalization.feature_normalizers",
+    ("normalization.feature", "loess"): "mokume.normalization._dev_registrations",
+    ("normalization.feature", "quantile"): "mokume.normalization._dev_registrations",
+    ("normalization.sample", "none"): "mokume.normalization.sample_normalizers",
+    (
+        "normalization.sample",
+        "globalmedian",
+    ): "mokume.normalization.sample_normalizers",
+    (
+        "normalization.sample",
+        "conditionmedian",
+    ): "mokume.normalization.sample_normalizers",
+    (
+        "normalization.sample",
+        "hierarchical",
+    ): "mokume.normalization.sample_normalizers",
+    ("normalization.sample", "tmm"): "mokume.normalization.sample_normalizers",
+    ("normalization.sample", "irs"): "mokume.normalization.sample_normalizers",
+    ("normalization.sample", "rlr"): "mokume.normalization._dev_registrations",
+    ("harmonization", "combat"): "mokume.harmonization.combat",
+}
 
 
-def load_all_plugins() -> None:
-    """Import every plugin module, registering its plugins as a side effect.
-
-    Each module is imported independently; if one raises ``ImportError``
-    (typically a missing optional dependency) the failure is logged at debug
-    level and the remaining modules are still imported. Any other exception is
-    re-raised, since it signals a real bug rather than an absent extra.
-    """
-    for module_name in _PLUGIN_MODULES:
-        try:
-            importlib.import_module(module_name)
-        except ImportError as exc:
+def _load_module(module_name: str) -> str | None:
+    """Import one plugin module, allowing its decorators to register classes."""
+    try:
+        importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        missing_name = exc.name or ""
+        if missing_name == module_name or module_name.startswith(f"{missing_name}."):
+            logger.error(
+                "Plugin module '%s' could not be found: %s",
+                module_name,
+                exc,
+            )
+        else:
             logger.debug(
                 "Skipping plugin module '%s' (optional dependency missing): %s",
                 module_name,
                 exc,
             )
+        return None
+    except ImportError as exc:
+        logger.debug(
+            "Skipping plugin module '%s' (optional dependency missing): %s",
+            module_name,
+            exc,
+        )
+        return None
+    return module_name
 
 
-# Load on import so that ``import mokume._plugins`` is enough to populate the
-# registry, mirroring the "import for side effects" idiom used by the
-# individual registration modules.
-load_all_plugins()
+def load_plugin(group: str, name: str) -> str | None:
+    """Load the built-in module that owns one plugin name."""
+    module_name = _PLUGIN_MODULES.get((group, name.lower()))
+    return _load_module(module_name) if module_name is not None else None
+
+
+def load_all_plugins(group: str | None = None) -> list[str]:
+    """Load every built-in plugin in one group, or in every group."""
+    modules = dict.fromkeys(
+        module
+        for (plugin_group, _), module in _PLUGIN_MODULES.items()
+        if group is None or plugin_group == group
+    )
+    return [
+        loaded
+        for module_name in modules
+        if (loaded := _load_module(module_name)) is not None
+    ]
+
+
+def plugins_for_module(module_name: str) -> tuple[tuple[str, str], ...]:
+    """Return the plugin keys owned by one implementation module."""
+    return tuple(
+        plugin for plugin, owner in _PLUGIN_MODULES.items() if owner == module_name
+    )

@@ -39,6 +39,7 @@ from mokume.pipeline.config import (
     DEConfig,
     OutputConfig,
     RuntimeConfig,
+    validate_de_config,
 )
 from mokume.pipeline.directlfq_streaming import estimate_protein_intensities_streamed
 from mokume.pipeline.stages import (
@@ -107,13 +108,23 @@ class QuantificationPipeline:
 
     def _validate_config(self):
         """Validate configuration and check for required parameters."""
+        validate_de_config(self.config.de)
         parse_normalization_methods(
             self.config.normalization.run_method,
             self.config.normalization.sample_method,
         )
-        if not Path(self.config.input.parquet).exists():
-            raise FileNotFoundError(
-                f"Parquet file not found: {self.config.input.parquet}"
+        source_path = self.config.input.msstats or self.config.input.parquet
+        if not Path(source_path).exists():
+            source_name = "MSstats" if self.config.input.msstats else "Parquet"
+            raise FileNotFoundError(f"{source_name} file not found: {source_path}")
+
+        if (
+            self.config.input.msstats
+            and self.config.quantification.method.lower() == "ratio"
+        ):
+            raise ValueError(
+                "Ratio quantification requires PSM-level QPX input; "
+                "MSstats feature tables do not contain the required PSM evidence"
             )
 
         if (
@@ -260,7 +271,12 @@ class QuantificationPipeline:
 
         dataset.record_step(
             "loading",
-            parquet=str(self.config.input.parquet),
+            parquet=(
+                str(self.config.input.parquet) if self.config.input.parquet else None
+            ),
+            msstats=(
+                str(self.config.input.msstats) if self.config.input.msstats else None
+            ),
             sdrf=str(self.config.input.sdrf) if self.config.input.sdrf else None,
             rows_out=rows_in,
         )
@@ -469,7 +485,7 @@ class QuantificationPipeline:
 
 
 def features_to_proteins(
-    parquet: str,
+    parquet: Optional[str],
     output: str,
     sdrf: Optional[str] = None,
     quant_method: str = "maxlfq",
@@ -541,21 +557,26 @@ def features_to_proteins(
     # DuckDB resource limits (cap DuckDB engine only, NOT total process RSS)
     duckdb_memory: Optional[str] = None,
     duckdb_threads: Optional[int] = None,
+    *,
+    msstats: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Quantify proteins directly from feature parquet file.
+    Quantify proteins from QPX feature parquet or legacy SDRF+MSstats data.
 
     This is the main entry point for the unified pipeline that handles
     the full workflow from features to proteins in one step.
 
     Parameters
     ----------
-    parquet : str
-        Path to the input parquet file (quantms.io/qpx format).
+    parquet : str, optional
+        Path to the input parquet file (quantms.io/qpx format). Mutually exclusive
+        with ``msstats``.
     output : str
         Path for the output protein intensities file.
     sdrf : str, optional
         Path to SDRF file for sample metadata.
+    msstats : str, optional
+        Path to a quantms ``*_msstats_in.csv`` file. Requires ``sdrf``.
     quant_method : str
         Quantification method. Options:
         - 'directlfq': Uses DirectLFQ package (normalization + quantification)
@@ -640,6 +661,7 @@ def features_to_proteins(
             parquet=parquet,
             sdrf=sdrf,
             fasta_file=fasta_file,
+            msstats=msstats,
         ),
         filtering=FilterConfig(
             min_aa=min_aa,

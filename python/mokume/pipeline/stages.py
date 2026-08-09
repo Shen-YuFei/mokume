@@ -51,7 +51,7 @@ from mokume.postprocessing.batch_correction import (
     apply_batch_correction,
 )
 from mokume.model.batch_correction import BatchDetectionMethod
-from mokume.pipeline.config import PipelineConfig
+from mokume.pipeline.config import PipelineConfig, validate_de_config
 
 logger = get_logger("mokume.pipeline")
 
@@ -306,10 +306,29 @@ def _build_run_scale_query(where_clause: str, metric_expr: str) -> str:
 
 
 class LoadingStage:
-    """Loads and filters data from parquet + SDRF."""
+    """Load and filter QPX parquet or native SDRF+MSstats data."""
 
     def __init__(self, config: PipelineConfig):
         self.config = config
+
+    def _open_feature(self, filter_builder: SQLFilterBuilder) -> Feature:
+        """Open the configured QPX parquet or native SDRF+MSstats input."""
+        if self.config.input.msstats:
+            return Feature.from_msstats(
+                self.config.input.msstats,
+                self.config.input.sdrf,
+                filter_builder=filter_builder,
+                duckdb_limits=(
+                    self.config.runtime.duckdb_memory,
+                    self.config.runtime.duckdb_threads,
+                ),
+            )
+        return Feature(
+            self.config.input.parquet,
+            filter_builder=filter_builder,
+            duckdb_memory=self.config.runtime.duckdb_memory,
+            duckdb_threads=self.config.runtime.duckdb_threads,
+        )
 
     def load_for_mokume(self) -> pd.DataFrame:
         """Load data and apply normalization for mokume quantification methods.
@@ -329,12 +348,7 @@ class LoadingStage:
             require_unique=not keep_shared_peptides,
         )
 
-        feature = Feature(
-            self.config.input.parquet,
-            filter_builder=filter_builder,
-            duckdb_memory=self.config.runtime.duckdb_memory,
-            duckdb_threads=self.config.runtime.duckdb_threads,
-        )
+        feature = self._open_feature(filter_builder)
 
         if self.config.input.sdrf:
             feature.enrich_with_sdrf(self.config.input.sdrf)
@@ -640,12 +654,7 @@ class LoadingStage:
             min_peptide_length=self.config.filtering.min_aa,
             require_unique=True,
         )
-        feature = Feature(
-            self.config.input.parquet,
-            filter_builder=filter_builder,
-            duckdb_memory=self.config.runtime.duckdb_memory,
-            duckdb_threads=self.config.runtime.duckdb_threads,
-        )
+        feature = self._open_feature(filter_builder)
 
         try:
             if self.config.input.sdrf:
@@ -782,12 +791,7 @@ class LoadingStage:
             require_unique=True,
         )
 
-        feature = Feature(
-            self.config.input.parquet,
-            filter_builder=filter_builder,
-            duckdb_memory=self.config.runtime.duckdb_memory,
-            duckdb_threads=self.config.runtime.duckdb_threads,
-        )
+        feature = self._open_feature(filter_builder)
 
         if self.config.input.sdrf:
             feature.enrich_with_sdrf(self.config.input.sdrf)
@@ -1710,7 +1714,7 @@ class PostprocessingStage:
 
     def _resolve_de_method(self) -> str:
         """Resolve the configured DE method, including auto selection."""
-        de_method = self.config.de.method
+        de_method = self.config.de.method.strip().lower()
         if de_method != "auto":
             return de_method
 
@@ -1721,10 +1725,13 @@ class PostprocessingStage:
 
     def _load_de_peptide_counts(self, de_method: str) -> Optional[pd.Series]:
         """Load protein-level unique peptide counts when DEqMS needs them."""
+        explicit_ensemble_methods = None
+        if de_method == "ensemble" and self.config.de.ensemble_methods is not None:
+            explicit_ensemble_methods = validate_de_config(self.config.de)
         needs_counts = de_method == "deqms" or (
             de_method == "ensemble"
-            and self.config.de.ensemble_methods
-            and "deqms" in self.config.de.ensemble_methods
+            and explicit_ensemble_methods is not None
+            and "deqms" in explicit_ensemble_methods
         )
         if not (needs_counts and self.config.input.parquet):
             return None
@@ -1773,11 +1780,7 @@ class PostprocessingStage:
         """Run ensemble DE for all configured contrasts."""
         from mokume.analysis.ensemble import run_ensemble
 
-        ensemble_methods = self.config.de.ensemble_methods or [
-            "limrots",
-            "deqms",
-            "proda",
-        ]
+        ensemble_methods = self.config.de.ensemble_methods
         all_results = {}
         for contrast in contrasts:
             key = f"{contrast[0]}-{contrast[1]}"
@@ -1840,6 +1843,8 @@ class PostprocessingStage:
         the pipeline runner (``pipeline.runner``) and is otherwise unused.
         """
         from mokume.normalization.irs import detect_condition_from_sdrf
+
+        validate_de_config(self.config.de)
 
         if not self.config.input.sdrf:
             raise ValueError("Differential expression requires an SDRF file (--sdrf)")

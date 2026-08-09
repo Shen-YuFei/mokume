@@ -8,6 +8,7 @@ import pandas as pd
 from mokume.agentic.state import CandidateConfig
 from mokume.analysis.differential_expression import DifferentialExpression
 from mokume.analysis.ensemble import run_ensemble
+from mokume.analysis.ensemble_config import validate_de_ensemble
 from mokume.core.logger import get_logger
 from mokume.imputation.censored import impute_censored
 
@@ -145,6 +146,18 @@ def run_experiment(
     """
     logger.info("Running experiment: %s", config.name)
 
+    configured_ensemble = (
+        None
+        if config.ensemble.strip().lower() == "none"
+        else config.ensemble.split(",")
+    )
+    ensemble_methods = validate_de_ensemble(
+        enabled=True,
+        method=config.de_method,
+        ensemble_methods=configured_ensemble,
+        ensemble_min_k=config.ensemble_k,
+    )
+
     # 1+2. Normalization + imputation (cached when possible)
     if cache is not None:
         imputed_df = cache.get_or_compute(
@@ -155,13 +168,12 @@ def run_experiment(
         imputed_df = _apply_imputation(normed_df, config.imputation)
 
     # 3. Run DE (single method or ensemble)
-    if config.ensemble and config.ensemble != "none":
-        methods = [m.strip() for m in config.ensemble.split(",")]
+    if ensemble_methods is not None:
         result = run_ensemble(
             imputed_df,
             sample_to_condition,
             contrast,
-            methods=methods,
+            methods=ensemble_methods,
             min_k=config.ensemble_k,
             fdr_method=config.fdr_method,
             fdr_threshold=0.05,

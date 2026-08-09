@@ -14,7 +14,7 @@ dependencies:
   - pandas
   - matplotlib
   - pyarrow>=16.1.0
-  - duckdb>=0.10.1
+  - duckdb>=0.10.2
   - qnorm
   - scipy>=1.10
   - joblib
