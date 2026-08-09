@@ -316,8 +316,21 @@ struct CorrectBatchesArgs {
 
 #[derive(Debug, Args)]
 struct Features2ProteinsArgs {
-    #[arg(short = 'p', long = "parquet")]
-    parquet: PathBuf,
+    #[arg(
+        short = 'p',
+        long = "parquet",
+        required_unless_present = "msstats",
+        conflicts_with = "msstats"
+    )]
+    parquet: Option<PathBuf>,
+
+    #[arg(
+        long = "msstats",
+        required_unless_present = "parquet",
+        conflicts_with = "parquet",
+        requires = "sdrf"
+    )]
+    msstats: Option<PathBuf>,
 
     #[arg(short = 'o', long = "output")]
     output: PathBuf,
@@ -569,6 +582,7 @@ impl Features2ProteinsArgs {
         FeatureToProteinsConfig {
             input: InputConfig {
                 parquet: self.parquet,
+                msstats: self.msstats,
                 sdrf: self.sdrf,
                 fasta: self.fasta,
             },
@@ -889,7 +903,8 @@ fn dispatch_features_to_peptides(args: &Features2PeptidesArgs) -> mokume_core::R
 
     let config = FeatureToPeptidesConfig {
         input: InputConfig {
-            parquet: args.parquet.clone(),
+            parquet: Some(args.parquet.clone()),
+            msstats: None,
             sdrf: args.sdrf.clone(),
             fasta: None,
         },
@@ -1188,6 +1203,8 @@ const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use clap::{CommandFactory, Parser};
 
     use super::{Cli, Commands};
@@ -1299,6 +1316,49 @@ mod tests {
         assert_eq!(config.differential_expression.fdr_method, "ihw");
         assert_eq!(config.runtime.memory.as_deref(), Some("80GB"));
         assert_eq!(config.runtime.threads, Some(24));
+    }
+
+    #[test]
+    fn parses_native_msstats_input() {
+        let cli = Cli::parse_from([
+            "mokume",
+            "features2proteins",
+            "--msstats",
+            "input.csv",
+            "--sdrf",
+            "input.sdrf.tsv",
+            "--output",
+            "protein.csv",
+        ]);
+        let Commands::Features2Proteins(args) = cli.command else {
+            panic!("expected features2proteins command");
+        };
+        let config = args.into_config();
+
+        assert_eq!(
+            config.input.msstats.as_deref(),
+            Some(Path::new("input.csv"))
+        );
+        assert!(config.input.parquet.is_none());
+    }
+
+    #[test]
+    fn native_msstats_input_requires_sdrf() {
+        let Err(error) = Cli::try_parse_from([
+            "mokume",
+            "features2proteins",
+            "--msstats",
+            "input.csv",
+            "--output",
+            "protein.csv",
+        ]) else {
+            panic!("MSstats without SDRF should fail");
+        };
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
     }
 
     #[test]

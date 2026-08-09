@@ -148,7 +148,8 @@ impl AggregationLevel {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputConfig {
-    pub parquet: PathBuf,
+    pub parquet: Option<PathBuf>,
+    pub msstats: Option<PathBuf>,
     pub sdrf: Option<PathBuf>,
     pub fasta: Option<PathBuf>,
 }

@@ -40,10 +40,17 @@ def _parse_memory_string_to_gib(value: str) -> float:
 class InputConfig:
     """Input file paths."""
 
-    parquet: str
+    parquet: Optional[str] = None
     sdrf: Optional[str] = None
     fasta_file: Optional[str] = None
     qpx_dir: Optional[str] = None
+    msstats: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if (self.parquet is None) == (self.msstats is None):
+            raise ValueError("Provide exactly one input: parquet or msstats")
+        if self.msstats is not None and self.sdrf is None:
+            raise ValueError("MSstats input requires an SDRF file")
 
 
 @dataclass

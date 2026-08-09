@@ -13,8 +13,8 @@ use mokume_core::{
 };
 use mokume_imputation::imputed_values;
 use mokume_io::{
-    write_peptide_parquet, PeptideParquetRow, QpxFeatureRecord, QpxParquetReader, SdrfRawTable,
-    SdrfRecord, SdrfTable, DEFAULT_QPX_BATCH_SIZE,
+    write_peptide_parquet, MsstatsReader, PeptideParquetRow, QpxFeatureRecord, QpxParquetReader,
+    SdrfRawTable, SdrfRecord, SdrfTable, DEFAULT_QPX_BATCH_SIZE,
 };
 use mokume_normalization::{
     condition_median_sample_factors, coverage_filtered_proteins, global_median_sample_factors,
@@ -4587,7 +4587,8 @@ pub fn run_ibaq_from_peptides(
 fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
-            parquet: PathBuf::new(),
+            parquet: None,
+            msstats: None,
             sdrf: None,
             fasta: Some(params.fasta.clone()),
         },
@@ -4674,8 +4675,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let dataset_normalization = dataset_sample_normalization_method(config)?;
     let mut state = FeatureToProteinState::new(config, sdrf.as_ref())?;
-    let reader = QpxParquetReader::open(&config.input.parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_input_features(&config.input, sdrf.as_ref(), |feature| {
         state.ingest(&feature, sdrf.as_ref(), config.filtering, intensity_factors)
     })?;
 
@@ -4909,10 +4909,16 @@ fn active_filter_pipeline(config: &FeatureToPeptidesConfig) -> Option<&Preproces
 }
 
 fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Result<()> {
-    if !config.input.parquet.exists() {
+    let parquet = required_parquet(&config.input)?;
+    if !parquet.exists() {
         return Err(MokumeError::MissingInput {
-            path: config.input.parquet.clone(),
+            path: parquet.to_path_buf(),
         });
+    }
+    if config.input.msstats.is_some() {
+        return Err(invalid_input(
+            "features2peptides does not support --msstats input",
+        ));
     }
     if let Some(sdrf) = &config.input.sdrf {
         if !sdrf.exists() {
@@ -4967,6 +4973,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // ingest machinery by building a Sum-quantification config whose only
     // requested output is the peptide intermediate.
     let mut proteins_config = peptide_export_config(config);
+    let parquet = required_parquet(&proteins_config.input)?;
     // When the opt-in filter pipeline is enabled, its protein block governs
     // contaminant removal and the per-`(protein, sample)` unique-peptide gate
     // (Python wires both through the same config), replacing the default
@@ -5014,7 +5021,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         let irs_min_intensity =
             filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
         intensity_factors.irs_scale_by_techrep = collect_irs_scale(
-            &proteins_config.input.parquet,
+            parquet,
             irs,
             sdrf.as_ref(),
             proteins_config.filtering.remove_contaminants,
@@ -5055,7 +5062,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // per-sample filter pipeline).
     if let Some(pipeline) = filter_pipeline {
         state.run_qc_excluded_samples = collect_run_qc_exclusions(
-            &proteins_config.input.parquet,
+            parquet,
             proteins_config.filtering,
             sdrf.as_ref(),
             config.keep_shared_peptides,
@@ -5073,7 +5080,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // Excluded Run-QC samples are skipped so they do not feed either decision.
     if let Some(pipeline) = filter_pipeline {
         let group_filters = collect_intensity_group_filters(
-            &proteins_config.input.parquet,
+            parquet,
             proteins_config.filtering,
             sdrf.as_ref(),
             config.keep_shared_peptides,
@@ -5089,7 +5096,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         // features (the warning is emitted in `validate_filter_pipeline_subset`).
         state.replicate_agreement_wipes_all = pipeline.intensity.min_replicate_agreement > 1;
     }
-    let reader = QpxParquetReader::open(&proteins_config.input.parquet, DEFAULT_QPX_BATCH_SIZE)?;
+    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
     stream_qpx_features(reader, |feature| {
         state.ingest(
             &feature,
@@ -5266,6 +5273,39 @@ where
     })
 }
 
+fn stream_input_features<F>(
+    input: &InputConfig,
+    sdrf: Option<&SdrfTable>,
+    mut consume: F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    match (&input.parquet, &input.msstats) {
+        (Some(parquet), None) => {
+            let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
+            stream_qpx_features(reader, consume)
+        }
+        (None, Some(msstats)) => {
+            let sdrf = sdrf.ok_or_else(|| invalid_input("MSstats input requires --sdrf option"))?;
+            for feature in MsstatsReader::open(msstats, sdrf)? {
+                consume(feature?)?;
+            }
+            Ok(())
+        }
+        _ => Err(invalid_input(
+            "provide exactly one feature input: --parquet or --msstats",
+        )),
+    }
+}
+
+fn required_parquet(input: &InputConfig) -> Result<&Path> {
+    input
+        .parquet
+        .as_deref()
+        .ok_or_else(|| invalid_input("this command requires --parquet input"))
+}
+
 /// Quant methods whose aggregation collapses to `(protein, sample)` peptide
 /// cells normalized by [`apply_dataset_norm_to_peptide_cells`]. These share the
 /// dataset-level normalization with the `--export-peptides` path, so the
@@ -5346,11 +5386,7 @@ fn dataset_sample_normalization_method(
 }
 
 fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> {
-    if !config.input.parquet.exists() {
-        return Err(MokumeError::MissingInput {
-            path: config.input.parquet.clone(),
-        });
-    }
+    validate_feature_input(config)?;
     if let Some(sdrf) = &config.input.sdrf {
         if !sdrf.exists() {
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
@@ -5389,6 +5425,39 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
         return Err(invalid_input(
             "Batch correction with --batch-column or --batch-covariates requires --sdrf option",
         ));
+    }
+    Ok(())
+}
+
+fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
+    match (&config.input.parquet, &config.input.msstats) {
+        (Some(parquet), None) => {
+            if !parquet.exists() {
+                return Err(MokumeError::MissingInput {
+                    path: parquet.clone(),
+                });
+            }
+        }
+        (None, Some(msstats)) => {
+            if !msstats.exists() {
+                return Err(MokumeError::MissingInput {
+                    path: msstats.clone(),
+                });
+            }
+            if config.input.sdrf.is_none() {
+                return Err(invalid_input("MSstats input requires --sdrf option"));
+            }
+            if config.quantification == QuantMethod::Ratio {
+                return Err(invalid_input(
+                    "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
+                ));
+            }
+        }
+        _ => {
+            return Err(invalid_input(
+                "provide exactly one feature input: --parquet or --msstats",
+            ));
+        }
     }
     Ok(())
 }
@@ -6344,8 +6413,7 @@ fn collect_intensity_factors(
     // forwards the `--keep-shared-peptides` flag from `FeatureToPeptidesConfig`,
     // which `peptide_export_config` cannot represent (it pins quantification to
     // `Sum`, so the old in-function `== Ibaq` derivation always read `false`).
-    let reader = QpxParquetReader::open(&config.input.parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_input_features(&config.input, sdrf, |feature| {
         collector.push(feature, config.filtering, keep_shared_peptides)
     })?;
     if collector.normalization_proteins.is_some()
@@ -9281,7 +9349,8 @@ mod tests {
     fn base_config(parquet: PathBuf) -> FeatureToProteinsConfig {
         FeatureToProteinsConfig {
             input: InputConfig {
-                parquet,
+                parquet: Some(parquet),
+                msstats: None,
                 sdrf: None,
                 fasta: None,
             },
