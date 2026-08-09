@@ -1,5 +1,6 @@
 """Regression coverage for native SDRF and MSstats input."""
 
+from inspect import signature
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +10,18 @@ from mokume.io.feature import Feature
 from mokume.pipeline.config import InputConfig, PipelineConfig, QuantificationConfig
 from mokume.pipeline.features_to_proteins import features_to_proteins
 from mokume.pipeline.runner import run_pipeline
+
+
+def test_msstats_parameter_preserves_positional_api():
+    """Adding MSstats input must not shift existing positional arguments."""
+    arguments = (
+        signature(features_to_proteins)
+        .bind("input.parquet", "output.csv", "input.sdrf.tsv", "sum")
+        .arguments
+    )
+
+    if arguments["quant_method"] != "sum" or "msstats" in arguments:
+        pytest.fail("MSstats input shifted the existing positional API")
 
 
 def _write_sdrf(path: Path, rows: list[dict]) -> None:

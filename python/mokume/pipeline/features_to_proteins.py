@@ -488,7 +488,6 @@ def features_to_proteins(
     parquet: Optional[str],
     output: str,
     sdrf: Optional[str] = None,
-    msstats: Optional[str] = None,
     quant_method: str = "maxlfq",
     min_aa: int = 7,
     min_unique_peptides: int = 2,
@@ -558,6 +557,8 @@ def features_to_proteins(
     # DuckDB resource limits (cap DuckDB engine only, NOT total process RSS)
     duckdb_memory: Optional[str] = None,
     duckdb_threads: Optional[int] = None,
+    *,
+    msstats: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Quantify proteins from QPX feature parquet or legacy SDRF+MSstats data.
