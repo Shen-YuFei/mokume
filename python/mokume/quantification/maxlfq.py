@@ -123,6 +123,38 @@ def _select_reference_peptide(
     return int(candidates[order[0]])
 
 
+def _solve_at_most_one_sample(peptide_matrix: np.ndarray) -> np.ndarray:
+    """Return the existing MaxLFQ result for an empty or single-sample matrix."""
+    if peptide_matrix.shape[1] == 0:
+        return np.array([])
+    valid_values = peptide_matrix[~np.isnan(peptide_matrix)]
+    if len(valid_values) == 0:
+        return np.array([np.nan])
+    return np.array([np.median(valid_values)])
+
+
+def _align_peptide_traces(
+    log_matrix: np.ndarray,
+    peptide_ids: Optional[np.ndarray],
+) -> Optional[np.ndarray]:
+    """Align peptide traces to the deterministic reference peptide."""
+    valid_counts = np.sum(~np.isnan(log_matrix), axis=1)
+    if valid_counts.max() == 0:
+        return None
+
+    ref_peptide_idx = _select_reference_peptide(log_matrix, valid_counts, peptide_ids)
+    ref_trace = log_matrix[ref_peptide_idx, :]
+    aligned_matrix = log_matrix.copy()
+    for pep_idx, pep_trace in enumerate(log_matrix):
+        if pep_idx == ref_peptide_idx:
+            continue
+        valid = ~np.isnan(ref_trace) & ~np.isnan(pep_trace)
+        if np.sum(valid) > 0:
+            shift = np.nanmedian(ref_trace[valid] - pep_trace[valid])
+            aligned_matrix[pep_idx, :] = pep_trace + shift
+    return aligned_matrix
+
+
 def _maxlfq_solve_protein(
     peptide_matrix: np.ndarray,
     peptide_ids: Optional[np.ndarray] = None,
@@ -151,14 +183,8 @@ def _maxlfq_solve_protein(
     """
     n_peptides, n_samples = peptide_matrix.shape
 
-    if n_samples == 0:
-        return np.array([])
-
-    if n_samples == 1:
-        valid_values = peptide_matrix[~np.isnan(peptide_matrix)]
-        if len(valid_values) == 0:
-            return np.array([np.nan])
-        return np.array([np.median(valid_values)])
+    if n_samples <= 1:
+        return _solve_at_most_one_sample(peptide_matrix)
 
     if n_peptides == 1:
         # Single peptide: return its intensities directly
@@ -174,28 +200,9 @@ def _maxlfq_solve_protein(
         log_matrix = np.log2(peptide_matrix)
 
     # Step 1: Align peptide traces
-    # Use peptide with most valid values as reference
-    valid_counts = np.sum(~np.isnan(log_matrix), axis=1)
-    if valid_counts.max() == 0:
+    aligned_matrix = _align_peptide_traces(log_matrix, peptide_ids)
+    if aligned_matrix is None:
         return np.full(n_samples, np.nan)
-
-    ref_peptide_idx = _select_reference_peptide(log_matrix, valid_counts, peptide_ids)
-    ref_trace = log_matrix[ref_peptide_idx, :]
-
-    # Align other peptides to reference using median shift
-    aligned_matrix = log_matrix.copy()
-    for pep_idx in range(n_peptides):
-        if pep_idx == ref_peptide_idx:
-            continue
-
-        pep_trace = log_matrix[pep_idx, :]
-
-        # Find samples measured in both reference and current peptide
-        valid = ~np.isnan(ref_trace) & ~np.isnan(pep_trace)
-        if np.sum(valid) > 0:
-            # Compute median shift to align this peptide to reference
-            shift = np.nanmedian(ref_trace[valid] - pep_trace[valid])
-            aligned_matrix[pep_idx, :] = pep_trace + shift
 
     # Step 2: Take median of aligned traces per sample
     # Suppress warning for samples with no peptides (all-NaN columns)
