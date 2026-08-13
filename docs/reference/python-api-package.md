@@ -13,11 +13,11 @@ For the Rust-accelerated wheel's thin in-process API, see
 
 ::: mokume.quantification.get_quantification_method
 
-::: mokume.quantification.TopNQuantification
+::: mokume.quantification.topn.TopNQuantification
 
-::: mokume.quantification.MaxLFQQuantification
+::: mokume.quantification.maxlfq.MaxLFQQuantification
 
-::: mokume.quantification.AllPeptidesQuantification
+::: mokume.quantification.all_peptides.AllPeptidesQuantification
 
 ## Differential expression
 
