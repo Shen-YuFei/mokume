@@ -1,8 +1,10 @@
 # features2proteins Python/Rust Parity Notes
 
-This document tracks the first parity target for the Rust `features2proteins`
-implementation. Python remains the behavioral reference, but Rust behavior must
-also be checked against the algorithm intent for each parameter.
+This document tracks compatibility coverage for overlapping Python and Rust
+`features2proteins` paths. Rust is the leading implementation; frozen outputs
+captured from Python remain compatibility baselines only for the paths covered
+here, and behavior must also be checked against the public contract and algorithm
+intent for each parameter.
 
 ## Parameter Alignment
 
