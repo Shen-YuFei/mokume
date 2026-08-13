@@ -126,7 +126,7 @@ Imputation runs in log2 space (the matrix is transformed before imputation and b
 
 Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrasts-file`. Both can be combined.
 
-`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods run in the native Rust kernel — no R or rpy2 required. Deterministic methods (limma / deqms) are cell-exact against the Python reference; RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change cell-exactly and p-values at rank level.
+`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods run in the native Rust kernel — no R or rpy2 required. Deterministic methods (limma / deqms) are cell-exact against frozen Python-generated compatibility output; RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change cell-exactly and p-values at rank level.
 
 `--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold.
 

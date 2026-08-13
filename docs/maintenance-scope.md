@@ -9,8 +9,8 @@ maintained for, and where new work goes, so overlapping behavior does not drift.
 
 !!! abstract "The policy in one line"
     **Rust is the leading implementation. The pure-Python computation package is
-    added value — a readable reference and parity check — not the place new
-    computation lands first.**
+    added value — a readable implementation and compatibility baseline where
+    covered — not the place new computation lands first.**
 
 ## What this covers
 
@@ -40,10 +40,10 @@ Python-only by design and are out of scope here; see
    matching pure-Python change to ship.
 3. **The pure-Python computation package is added value.** It is kept public and
    usable so that people can plug individual functions into Python-based
-   pipelines, and so it can serve as a readable reference and a parity check for
-   the Rust kernel. A Python equivalent of new computation is built **only** when
-   someone needs it for their pipeline or when a test requires it as a parity
-   reference — and that can be done later, or agentically.
+   pipelines and inspect readable implementations. A Python equivalent of new
+   computation is built **only** when someone needs it for their pipeline or
+   maintainers choose to expand compatibility coverage — and that can be done
+   later, or agentically.
 4. **Parity is checked, not assumed.** Where both implementations and
    compatibility coverage exist, tests compare results within the documented
    floating-point tolerance. `rust/tests/test_rust_python_equivalence.py` covers
@@ -67,11 +67,11 @@ Legend:
 - **Leading — authoritative:** new computation lands here first; defines correct
   behavior, options, and validation.
 - **Added value · parity-checked where covered:** maintained as a usable
-  reference; documented overlapping paths are covered by automated compatibility
-  tests against the Rust kernel.
+  implementation; documented overlapping paths are covered by automated
+  compatibility tests against the Rust kernel.
 - **Added value · best-effort:** kept public and usable; updated when a user
-  needs the function in a Python pipeline or a test needs a parity reference,
-  not as a release gate.
+  needs the function in a Python pipeline or maintainers choose to expand
+  compatibility coverage, not as a release gate.
 
 ### Backend selection
 

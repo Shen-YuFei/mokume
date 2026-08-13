@@ -1,5 +1,5 @@
 site_name: mokume
-site_description: "A proteomics quantification toolkit: a Rust compute kernel with a Python periphery"
+site_description: "A Rust-first proteomics quantification toolkit with Rust and pure-Python implementations"
 site_author: BigBio Team
 site_url: https://mokume.quantms.org/
 

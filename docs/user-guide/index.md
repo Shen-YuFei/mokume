@@ -1,6 +1,6 @@
 # User Guide
 
-This section covers the practical usage of each mokume command. mokume is a toolkit: a Rust compute kernel with a Python periphery. The kernel ships both as a standalone CLI binary (`mokume`, built with cargo, no Python) and as a PyO3/maturin wheel (`pip install mokume-rs`) that imports the compiled `mokume._mokume` extension and runs the same commands in-process — no subprocess delegation. The numbers are single-sourced in Rust; the Python periphery reads the kernel's TSV/parquet output and never recomputes.
+This section covers the Rust computation commands. The kernel ships both as a standalone CLI binary (`mokume`, built with cargo and no Python) and as a PyO3/maturin wheel (`pip install mokume-rs`) that imports the compiled `mokume._mokume` extension and runs the same commands in-process — no subprocess delegation. These two Rust entry points share one implementation; the separately maintained pure-Python computation package is documented under [Python API (package)](../reference/python-api-package.md).
 
 ## Compute commands
 

@@ -10,7 +10,7 @@ peptide-level mass-spectrometry intensities into protein expression matrices,
 with built-in normalization, imputation, batch correction, and differential
 expression. It supports iBAQ, TopN, MaxLFQ, and DirectLFQ quantification, is
 designed for the [quantms](https://github.com/bigbio/quantms) ecosystem, and
-works equally well as a Python library and a standalone command-line tool.
+can be used as either a Python library or a standalone command-line tool.
 
 mokume is an evolution of [ibaqpy](https://github.com/bigbio/ibaqpy), extended
 well beyond iBAQ to a broader range of quantification, normalization, and
@@ -39,11 +39,12 @@ mokume/
 ```
 
 - **`rust/`** — the Rust compute kernel: the **leading implementation** of the
-  native computation commands, shipped as a standalone CLI binary and an in-process
-  `mokume._mokume` wheel.
+  native computation commands, shipped as a standalone CLI binary and an
+  in-process `mokume._mokume` wheel.
 - **`python/`** — the pure-Python `mokume` package (`pip install mokume`).
   Added value: readable implementations of overlapping methods that are easy to
-  extend and script against, and parity references for covered kernel behavior.
+  extend and script against, plus compatibility baselines for covered kernel
+  behavior.
 
 Both expose the same four computation command names, with different support
 levels. **mokume is Rust-first**: new computation lands in the Rust kernel, and
@@ -108,9 +109,10 @@ mokume features2proteins \
   --output proteins.csv
 ```
 
-The pipeline above is driven through this CLI, shared by both builds. For
-scripting, the pure-Python package exposes component APIs — for example,
-quantifying a peptide table:
+Both computation implementations expose the `features2proteins` command, but
+their CLIs and supported options are maintained separately. For scripting, the
+pure-Python package exposes component APIs — for example, quantifying a peptide
+table:
 
 ```python
 import pandas as pd
@@ -125,9 +127,9 @@ proteins = TopNQuantification(n=3).quantify(peptides)
 
 Normalization, imputation, and differential expression have the same
 component-style API (see [below](#differential-expression) and the
-[Python API reference](docs/reference/python-api.md)). The Rust wheel
-additionally exposes an in-process `mokume.features2proteins(...)` binding that
-runs the whole pipeline with no subprocess.
+[Python package API reference](docs/reference/python-api-package.md)). The Rust
+wheel additionally exposes an in-process `mokume.features2proteins(...)` binding
+that runs the whole pipeline with no subprocess.
 
 ## Running different analyses
 
@@ -257,7 +259,7 @@ API key is set. Install with `pip install "mokume[agentic]"`; see
 
 ## How it works
 
-mokume's computation is available through two builds with overlapping
+mokume's computation is available through two implementations with overlapping
 functionality:
 
 - a Rust compute kernel — the leading implementation that runs the heavy lifting,
@@ -284,12 +286,12 @@ mokume is **Rust-first**:
   public contract.
 - **New computation is written in Rust first.** A feature that touches the
   computation commands ships once the Rust crates and their tests have it; a
-  pure-Python counterpart is optional and can follow later, on request or as a
-  parity reference.
+  pure-Python counterpart is optional and can follow later when users or
+  maintainers need it.
 - **The pure-Python computation package is added value.** It is kept public and
   usable so individual functions can be plugged into Python pipelines and so it
-  can serve as a readable reference and a parity check for covered behavior —
-  not as the place new computation lands first.
+  can provide readable implementations and compatibility baselines for covered
+  behavior — not as the place new computation lands first.
 
 | Computation command | Rust kernel (`rust/`) | Pure-Python package (`python/`) |
 | --- | --- | --- |

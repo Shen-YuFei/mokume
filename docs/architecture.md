@@ -1,7 +1,8 @@
 # Architecture
 
-mokume is a **toolkit: a Rust compute kernel with a Python periphery**. The
-compute lives once, in Rust, and is shipped two ways:
+mokume has two computation implementations: the leading **Rust compute kernel**
+and a separately maintained **pure-Python package**. The Rust kernel is shipped
+through two entry points:
 
 1. a **standalone CLI binary** `mokume` (built with `cargo`, no Python runtime
    needed), and
@@ -9,10 +10,11 @@ compute lives once, in Rust, and is shipped two ways:
    `mokume._mokume` runs the same kernel **in-process** — there is **no
    subprocess** and no shelling out to Python.
 
-The numbers are **single-sourced in Rust**. The Python periphery (plotting,
-tissue maps, interactive reports, iBAQ QC, and the few pure-Python method
-fallbacks) reads the TSV / parquet / CSV tables the kernel writes and renders
-figures or reports from them; it **never recomputes** the quantities.
+For Rust-native commands, computed values are single-sourced in the kernel. The
+Python periphery (plotting, tissue maps, interactive reports, and iBAQ QC) reads
+the TSV / parquet / CSV tables the kernel writes and renders figures or reports
+from them. Explicit Python-only method fallbacks compute capabilities that the
+kernel does not provide; they are documented separately below.
 
 ## The kernel + wheel split
 
@@ -58,10 +60,10 @@ PyO3/maturin layout used by projects such as polars and pydantic-core: Python
 imports a compiled Rust extension rather than driving an external program.
 
 !!! note "Why this matters"
-    There is exactly one implementation of every quantity. The CLI binary, the
-    wheel's `mokume.features2proteins(...)`, and `mokume.run([...])` all reach
-    the same Rust code, so a result computed through the wheel is bit-for-bit
-    the result the binary produces.
+    The CLI binary, the wheel's `mokume.features2proteins(...)`, and
+    `mokume.run([...])` all reach the same Rust implementation. A result computed
+    through either Rust entry point therefore comes from the same kernel. The
+    separate pure-Python computation package is not part of this guarantee.
 
 ## The periphery reads, the kernel computes
 
@@ -113,11 +115,12 @@ error. These checks happen before the extension is invoked or temporary output
 is allocated.
 
 Because the pure-Python package has its **own** implementation of the compute —
-distinct from the Rust kernel — a pure-Python result and a Rust-backend result
-agree **within floating-point tolerance** (the kernel computes in `f32`), not
-bit-for-bit as the wheel's wrappers do against the binary. This equivalence is
-asserted for `features2proteins` in `rust/tests/test_rust_python_equivalence.py`.
-The API is documented under [Python API (package)](reference/python-api-package.md).
+distinct from the Rust kernel — covered overlapping paths agree within their
+documented floating-point tolerance, not bit-for-bit as the wheel's wrappers do
+against the binary. Selected `features2proteins` paths are checked against
+frozen compatibility goldens in `rust/tests/test_rust_python_equivalence.py`.
+The API is documented under
+[Python API (package)](reference/python-api-package.md).
 
 The Rust kernel is the **leading** implementation of this shared computation and
 the pure-Python package is maintained as added value; which side owns new work,
