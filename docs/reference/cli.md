@@ -6,7 +6,14 @@ Use `mokume --help` or `mokume <command> --help` for details.
 The same `mokume` command is available two ways: as a standalone Rust binary (built with `cargo`, no Python) and from the `pip install mokume-rs` wheel, which runs the identical kernel in-process through the `mokume._mokume` extension. The flag surface below is single-sourced in Rust and is identical for both.
 
 !!! note "Plotting, tissue maps, and reports live in the Python wheel"
-    The visualization periphery — t-SNE, tissue-proteome maps, DE plots, interactive HTML reports, iBAQ QC — is **not** part of this CLI. It ships in the `pip install mokume-rs` wheel as `mokume.tsne_visualization(...)`, `mokume.tissuemap(...)`, `mokume.de_plots([...])`, `mokume.interactive_report([...])`, and `mokume.peptides2protein_qc(...)`. See the [Python API](python-api.md). These commands read the tables the kernel wrote and never recompute the numbers.
+    The visualization periphery — t-SNE, tissue-proteome maps, DE plots,
+    interactive HTML reports, iBAQ QC — is **not** part of this CLI. It ships in
+    the `pip install mokume-rs` wheel as `mokume.tsne_visualization(...)`,
+    `mokume.tissuemap(...)`, `mokume.de_plots([...])`,
+    `mokume.interactive_report([...])`, and
+    `mokume.peptides2protein_qc(...)`. Plotting and reporting consume kernel
+    tables; TissueMap performs its documented downstream analysis from QPX data.
+    See the [Python API](python-api.md).
 
 ## features2proteins
 
@@ -313,7 +320,9 @@ ComBat here is the native Rust implementation, oracle-verified against inmoose. 
 
 ## Periphery (tissue maps, t-SNE)
 
-Tissue-proteome maps and t-SNE visualization are **not** CLI subcommands — they ship in the `pip install mokume-rs` wheel and read the kernel's output tables:
+Tissue-proteome maps and t-SNE visualization are **not** CLI subcommands; they
+ship in the `pip install mokume-rs` wheel. t-SNE visualization reads a protein
+matrix, while TissueMap derives a downstream atlas from QPX data:
 
 ```python
 import mokume

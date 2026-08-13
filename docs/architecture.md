@@ -10,11 +10,11 @@ through two entry points:
    `mokume._mokume` runs the same kernel **in-process** — there is **no
    subprocess** and no shelling out to Python.
 
-For Rust-native commands, computed values are single-sourced in the kernel. The
-Python periphery (plotting, tissue maps, interactive reports, and iBAQ QC) reads
-the TSV / parquet / CSV tables the kernel writes and renders figures or reports
-from them. Explicit Python-only method fallbacks compute capabilities that the
-kernel does not provide; they are documented separately below.
+For Rust-native commands, computed values are single-sourced in the kernel.
+Plotting, interactive reports, and iBAQ QC read the tables the kernel writes;
+TissueMap derives a downstream atlas from QPX outputs. Explicit Python-only
+method fallbacks compute capabilities that the kernel does not provide. These
+periphery and fallback paths are documented separately below.
 
 ## The kernel + wheel split
 
@@ -41,9 +41,11 @@ flowchart TB
     end
 
     out["kernel output<br/>protein matrix CSV · peptide parquet · iBAQ TSV · DE CSV"]
+    qpx["QPX data"]
     bin --> out
     api --> out
-    out -. reads, never recomputes .-> periphery
+    out -. plots and reports .-> periphery
+    qpx -. TissueMap .-> periphery
     periphery --> figs["plots · tissue maps · HTML reports"]
 ```
 
@@ -65,28 +67,29 @@ imports a compiled Rust extension rather than driving an external program.
     through either Rust entry point therefore comes from the same kernel. The
     separate pure-Python computation package is not part of this guarantee.
 
-## The periphery reads, the kernel computes
+## Rust-native compute and the Python periphery
 
 The periphery lives in `rust/python/mokume/commands/` and is reached **only**
-through the wheel. It opens the tables the kernel already wrote and draws from them:
+through the wheel:
 
 - `mokume.tsne_visualization`, `mokume.de_plots`, `mokume.interactive_report` —
   plots and the HTML report built from the `features2proteins` matrix / DE CSVs.
-- `mokume.tissuemap` — per-dataset tissue proteome analysis.
+- `mokume.tissuemap` — downstream per-dataset normalization, batch correction,
+  tissue-specificity scoring, embeddings, and atlas plots from QPX outputs.
 - `mokume.peptides2protein_qc` — the iBAQ `--verbose` QC report PDF.
 
-Because these read kernel output, the cells in a plot match the cells in the
-kernel matrix. The single documented exception is `mokume.peptides2protein_ibaq`,
-which computes the whole iBAQ table in pure Python for enzymes outside the
-Rust-ported set (see [CLI vs Wheel](cli-vs-wheel.md) and
-[Python Periphery](periphery/index.md)).
+Plotting and reporting render kernel tables without re-running the
+kernel-supported computation. TissueMap performs its documented downstream
+analysis, while `mokume.peptides2protein_ibaq` and the `missforest` imputer are
+explicit fallbacks for operations the kernel does not provide (see
+[CLI vs Wheel](cli-vs-wheel.md) and [Python Periphery](periphery/index.md)).
 
-## What stays in the separate `mokume_py` package
+## What stays in the pure-Python package
 
 `agentic` — the LLM-driven workflow optimizer — is intentionally **not** migrated
-to the Rust track and does **not** appear in the Rust top-level CLI. It lives in
-the separate `mokume_py` Python package and is out of scope for this kernel +
-wheel.
+to the Rust track and does **not** appear in the Rust CLI or `mokume-rs` wheel.
+It remains in the separately installed pure-Python `mokume` package under
+`python/mokume/agentic/`.
 
 ## The pure-Python package and its compute backends
 

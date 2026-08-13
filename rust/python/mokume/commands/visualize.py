@@ -7,7 +7,7 @@ plotting helpers. Exposed in-process as ``mokume.tsne_visualization`` and
 runnable as ``python -m mokume.commands.visualize``.
 
 Run requirements: the ``plotting`` extra (matplotlib + seaborn + scikit-learn):
-``pip install mokume[plotting]``.
+``pip install mokume-rs[plotting]``.
 
 argv contract:
     --folder/-f   PATH   folder that contains the protein files (required)
@@ -84,7 +84,7 @@ def main(argv: list[str]) -> int:
     except ImportError as exc:  # pragma: no cover - environment dependent
         print(
             "error: failed to import mokume plotting dependencies: "
-            f"{exc}\nInstall them with: pip install mokume[plotting]",
+            f"{exc}\nInstall them with: pip install mokume-rs[plotting]",
             file=sys.stderr,
         )
         return 1
@@ -92,7 +92,7 @@ def main(argv: list[str]) -> int:
     if not is_plotting_available():
         print(
             "error: plotting dependencies (matplotlib, seaborn) are not "
-            "installed. Install them with: pip install mokume[plotting]",
+            "installed. Install them with: pip install mokume-rs[plotting]",
             file=sys.stderr,
         )
         return 1

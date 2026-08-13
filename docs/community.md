@@ -26,12 +26,16 @@ We welcome contributions! To get started:
 1. Fork the [repository](https://github.com/bigbio/mokume)
 2. Create a feature branch
 3. Make your changes
-4. Run the Rust test suite (`cargo test`) and, if you touched the periphery, `pytest`
+4. Run the test suite for each implementation or periphery area you changed
 5. Submit a pull request
 
 ### Development Setup
 
-mokume is a Rust compute kernel (the `rust/crates/` workspace) with a Python periphery (`rust/python/mokume/`). The compute numbers live in Rust; the periphery is plain Python that reads the kernel's output. Most contributions touch one side or the other.
+mokume contains a leading Rust compute kernel (`rust/crates/`), its wheel
+periphery (`rust/python/mokume/`), and a separately maintained pure-Python
+implementation (`python/mokume/`). New native computation lands in Rust first;
+see [Maintenance scope](maintenance-scope.md) for when a matching pure-Python
+change is expected.
 
 The Rust toolchain is pinned to **1.96.0** via `rust-toolchain.toml` (with the `rustfmt` and `clippy` components), so `rustup` selects it automatically inside the checkout.
 
@@ -53,6 +57,14 @@ pytest
 ```
 
 `maturin develop` compiles the PyO3 binding crate (`crates/mokume-py`) into the in-process `mokume._mokume` extension and installs the wheel editable; the periphery under `rust/python/mokume/commands/` is plain Python and needs no build step. After changing kernel code, re-run `maturin develop` so the Python wrappers pick up the new extension.
+
+For changes to the separately maintained pure-Python implementation:
+
+```bash
+cd ../python
+pip install -e ".[all]"
+pytest
+```
 
 ## License
 

@@ -1,7 +1,7 @@
 """Entry point for ``python -m mokume`` and the ``mokume`` console script.
 
 Runs the compute CLI in-process through the Rust extension (no subprocess), so
-``pip install mokume`` provides the same ``mokume`` command the standalone Rust
+``pip install mokume-rs`` provides the same ``mokume`` command the standalone Rust
 binary does. clap handles help/version/usage errors with the usual exit codes.
 """
 

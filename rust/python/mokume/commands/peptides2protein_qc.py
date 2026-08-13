@@ -102,7 +102,7 @@ def main(argv=None):
     except ImportError as exc:  # pragma: no cover - environment guard
         raise SystemExit(
             "QC report aborted: pandas is not installed ({0}). "
-            "Install with: pip install mokume[plotting]".format(exc)
+            "Install with: pip install mokume-rs[plotting]".format(exc)
         )
 
     try:
@@ -110,7 +110,7 @@ def main(argv=None):
     except ImportError as exc:
         raise SystemExit(
             "QC report aborted: mokume plotting dependencies are not "
-            "installed ({0}). Install with: pip install mokume[plotting]".format(exc)
+            "installed ({0}). Install with: pip install mokume-rs[plotting]".format(exc)
         )
 
     res = pd.read_csv(args.protein_table, sep="\t")

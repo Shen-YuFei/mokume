@@ -24,4 +24,12 @@ Standalone batch correction for already-quantified protein data. Combines multip
 
 ## Periphery (wheel-only)
 
-Plotting, tissue maps, and interactive reports are not CLI subcommands; they live in the Python wheel under `mokume.commands` and are reached through periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`, `mokume.de_plots`, and `mokume.interactive_report`. They read the tables the kernel produced. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `ibaq`, `analysis`, or `all`) to pull in the periphery libraries. The agentic workflow search lives in the separate `mokume_py` package and is not part of this toolkit.
+Plotting, tissue maps, and interactive reports are not CLI subcommands; they
+live in the Python wheel under `mokume.commands` and are reached through
+periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`,
+`mokume.de_plots`, and `mokume.interactive_report`. Plotting and reporting
+consume kernel tables, while TissueMap derives its downstream atlas from QPX
+data. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `ibaq`,
+`analysis`, or `all`) to pull in the periphery libraries. The agentic workflow
+search remains in the separately installed pure-Python `mokume` package and is
+not part of the Rust CLI or wheel.

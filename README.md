@@ -168,8 +168,8 @@ mokume features2proteins \
   --output proteins.csv --de-output de_results
 ```
 
-**Python pipeline** — the same run as a configurable object, returning a
-`QpxDataset` you can inspect level by level:
+**Pure-Python pipeline** — express the workflow as a configurable object that
+returns a `QpxDataset` you can inspect level by level:
 
 ```python
 from mokume.pipeline.config import PipelineConfig, InputConfig, QuantificationConfig

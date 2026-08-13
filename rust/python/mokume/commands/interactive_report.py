@@ -13,7 +13,7 @@ Design (matches ``peptides2protein_qc.py`` / ``de_plots.py``: Rust writes
 the tables, Python only draws): we never recompute DE or the protein matrix here.
 We read the CSVs Rust produced and call the shared mokume report builder, so the
 cells in the report are the cells in the Rust CSVs. No mokume algorithm is
-duplicated -- a system ``pip install mokume[reports]`` provides the builder
+duplicated -- a system ``pip install mokume-rs[reports]`` provides the builder
 (plotly is loaded from a CDN by the generated HTML; the Python builder itself
 needs only pandas + numpy, but the availability gate matches Python and checks
 for plotly).
@@ -121,7 +121,7 @@ def main(argv=None):
     except ImportError as exc:  # pragma: no cover - environment guard
         raise SystemExit(
             "Interactive report aborted: pandas is not installed ({0}). "
-            "Install with: pip install mokume[reports]".format(exc)
+            "Install with: pip install mokume-rs[reports]".format(exc)
         )
 
     try:
@@ -129,13 +129,13 @@ def main(argv=None):
     except ImportError as exc:
         raise SystemExit(
             "Interactive report aborted: mokume reports dependencies are not "
-            "installed ({0}). Install with: pip install mokume[reports]".format(exc)
+            "installed ({0}). Install with: pip install mokume-rs[reports]".format(exc)
         )
 
     if not is_interactive_available():
         raise SystemExit(
             "Interactive report aborted: report dependencies (plotly) are not "
-            "installed. Install with: pip install mokume[reports]"
+            "installed. Install with: pip install mokume-rs[reports]"
         )
 
     if not args.contrast:

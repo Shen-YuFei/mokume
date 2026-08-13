@@ -32,7 +32,8 @@ or write HTML reports, and it does not shell out to Python to do so.
     `correct-batches`. There is **no** `tissuemap`, **no** `tsne-visualization`,
     and **no** `agentic` subcommand. `features2proteins` has **no** `--plot-*`,
     `--interactive-report`, or `--report-output` flags — those moved to the
-    wheel. `agentic` lives in the separate `mokume_py` package.
+    wheel. `agentic` remains in the separately installed pure-Python `mokume`
+    package.
 
 ## Same compute, two front doors
 
@@ -114,7 +115,7 @@ periphery wrappers with a literal argument list.
 | QC report / workflow comparison | Python periphery | `mokume.qc_report` · `mokume.workflow_comparison` |
 | `missforest` imputation | Python periphery | `mokume.impute(method=...)` |
 | iBAQ for unported enzymes (e.g. `CNBr`) | Python periphery | `mokume.peptides2protein_ibaq` |
-| `agentic` workflow optimizer | separate `mokume_py` package | not in this toolkit |
+| `agentic` workflow optimizer | pure-Python `mokume` package | not in the Rust CLI or wheel |
 
 !!! note "DirectLFQ and ComBat are native Rust"
     DirectLFQ and ComBat are part of the kernel and need no extra and no Python.

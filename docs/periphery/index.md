@@ -9,21 +9,19 @@ analysis fallbacks) and is reached **only** through the
 `pip install mokume-rs` wheel. The standalone Rust CLI binary is pure compute
 and carries none of this.
 
-## The guarantee: the periphery reads kernel output, never recomputes
+## Reporting reads kernel output; fallbacks are explicit
 
-Every periphery command opens the tables the **kernel** wrote — the protein
-matrix CSV, the peptide parquet, the iBAQ TSV, the DE result CSVs — and renders
-figures or reports from them. It does **not** re-run the quantification, so the
-cells in a plot match the cells in the kernel's output. The numbers stay
-single-sourced in Rust.
+Plotting, QC, and reporting commands consume tables the **kernel** wrote without
+re-running kernel-supported computation. TissueMap instead derives its
+documented downstream normalization, batch correction, tissue-specificity, and
+atlas outputs from QPX data.
 
-There is exactly **one** documented exception:
-`mokume.peptides2protein_ibaq` computes a whole iBAQ table in pure Python (via
-`mokume.quantification.ibaq`) for enzymes outside the Rust-ported set — see
-[CLI vs Wheel](../cli-vs-wheel.md). The pure-Python method fallback
-(`mokume.impute(method='missforest')`) is covered
-in [Analysis Fallbacks](analysis-fallbacks.md); this is a method the Rust kernel
-does not reproduce, not a recomputation of something the kernel already produced.
+Two explicit fallbacks compute operations the Rust kernel does not provide:
+`mokume.peptides2protein_ibaq` handles enzymes outside the Rust-ported set, and
+`mokume.impute(method='missforest')` runs the scikit-learn estimator. They are
+documented under [CLI vs Wheel](../cli-vs-wheel.md) and
+[Analysis Fallbacks](analysis-fallbacks.md), rather than being presented as
+kernel-produced results.
 
 ## Extras matrix
 

@@ -354,7 +354,7 @@ fn unimplemented_features2proteins_options_exit_with_stable_error(
         },
         FeatureToProteinsCase {
             args: &["--impute", "--impute-method", "missforest"],
-            stage: "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume Python wheel: pip install mokume[analysis]; mokume.impute(matrix, method='missforest')",
+            stage: "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume Python wheel: pip install mokume-rs[analysis]; mokume.impute(matrix, method='missforest')",
         },
         // The `--plot-*` / `--interactive-report` / `--report-output` flags were
         // removed from the Rust CLI (plotting / reports moved to the Python wheel);

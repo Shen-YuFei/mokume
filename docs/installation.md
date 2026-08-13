@@ -10,10 +10,10 @@ pip install mokume-rs
 
     The Rust wheel has not been published to PyPI yet, so `pip install mokume-rs`
     does not work today. Until it ships, either install the pure-Python package
-    (`pip install mokume` — same `import mokume` API) or build the wheel from
-    source: `pip install ./rust` (needs the Rust toolchain and cmake). The
-    `mokume-rs` instructions on this page describe the wheel for when it is
-    released.
+    (`pip install mokume` — the same import name, but a separately maintained API)
+    or build the wheel from source: `pip install ./rust` (needs the Rust toolchain
+    and cmake). The `mokume-rs` instructions on this page describe the wheel for
+    when it is released.
 
 !!! warning "Install `mokume-rs` **or** `mokume` — never both"
 

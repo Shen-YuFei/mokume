@@ -3,9 +3,10 @@
 The compute-heavy pipeline (expression matrix, normalization, imputation,
 differential expression, batch correction) lives in a Rust kernel, exposed here
 through the compiled ``mokume._mokume`` extension that maturin builds from
-``crates/mokume-py``. The Python periphery (plotting / tissue maps / interactive
-reports) lives in :mod:`mokume.commands` as first-class modules and reads the
-tables the kernel produces to render its figures.
+``crates/mokume-py``. The Python periphery lives in :mod:`mokume.commands` as
+first-class modules. Plotting and reporting consume kernel tables, TissueMap
+derives downstream atlas outputs from QPX data, and explicit fallbacks compute
+operations the kernel does not provide.
 
 This is the PyO3/maturin layout used by projects such as polars and
 pydantic-core (Python imports a compiled Rust extension). The compute commands

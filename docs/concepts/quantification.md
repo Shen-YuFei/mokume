@@ -217,7 +217,7 @@ mokume features2proteins -p features.parquet -o proteins.csv \
     **distinct peptides (modification-stripped sequences) per (protein,
     sample)**, not a raw PSM count. Two peptidoforms of the same sequence
     (e.g. with and without a modification) collapse to one, and both the
-    Rust and Python builds produce the same count. Use it as an
+    Rust and Python implementations use this count definition. Use it as an
     identification-depth indicator rather than as a strict spectral-count
     quantification.
 

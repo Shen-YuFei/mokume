@@ -1,12 +1,12 @@
 //! PyO3 bindings exposing the mokume Rust compute kernel to Python.
 //!
 //! maturin builds this crate into the `mokume._mokume` extension module that the
-//! `python/mokume/` package imports. It is the FFI boundary between the Rust
+//! `rust/python/mokume/` package imports. It is the FFI boundary between the Rust
 //! compute crates and the Python periphery (plotting / tissue maps / reports).
 //!
 //! The compute commands are reached through [`mokume_cli::run_from_args`], the
 //! same clap parsing + dispatch the standalone CLI binary uses, so the flag ->
-//! config mapping stays single-sourced. The Python layer in `python/mokume/`
+//! config mapping stays single-sourced. The Python layer in `rust/python/mokume/`
 //! builds the argument vector from ergonomic keyword arguments.
 
 use pyo3::exceptions::PyRuntimeError;

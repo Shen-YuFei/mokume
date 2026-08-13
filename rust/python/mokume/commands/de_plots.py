@@ -15,7 +15,7 @@ Design (matches ``peptides2protein_qc.py``: Rust writes the tables, Python
 only draws): we never recompute DE or the protein matrix here. We read the CSVs
 Rust produced and call the shared mokume plotting helpers, so the cells in the
 plots are the cells in the Rust CSVs. No mokume algorithm is duplicated -- a
-system ``pip install mokume[plotting]`` provides the helpers.
+system ``pip install mokume-rs[plotting]`` provides the helpers.
 
 argv contract (runnable via ``python -m mokume.commands.de_plots``):
 
@@ -224,7 +224,7 @@ def main(argv=None):
     except ImportError as exc:  # pragma: no cover - environment guard
         raise SystemExit(
             "DE plots aborted: pandas is not installed ({0}). "
-            "Install with: pip install mokume[plotting]".format(exc)
+            "Install with: pip install mokume-rs[plotting]".format(exc)
         )
 
     try:
@@ -232,13 +232,13 @@ def main(argv=None):
     except ImportError as exc:
         raise SystemExit(
             "DE plots aborted: mokume plotting dependencies are not installed "
-            "({0}). Install with: pip install mokume[plotting]".format(exc)
+            "({0}). Install with: pip install mokume-rs[plotting]".format(exc)
         )
 
     if not is_plotting_available():
         raise SystemExit(
             "DE plots aborted: mokume plotting dependencies (matplotlib, seaborn) "
-            "are not installed. Install with: pip install mokume[plotting]"
+            "are not installed. Install with: pip install mokume-rs[plotting]"
         )
 
     plot_dir = Path(args.plot_dir)

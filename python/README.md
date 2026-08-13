@@ -13,6 +13,11 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (æœ
 
 **mokume** is a comprehensive proteomics quantification library that supports multiple protein quantification methods including iBAQ, TopN, MaxLFQ, and DirectLFQ. It provides feature/peptide normalization, batch correction, and various summarization strategies for the quantms ecosystem. This library is an evolution of [ibaqpy](https://github.com/bigbio/ibaqpy), extended to support a broader range of protein quantification methods beyond iBAQ.
 
+This directory contains the separately maintained pure-Python implementation.
+The Rust kernel under `../rust/` leads new native computation work, so supported
+options can differ between the two implementations. See the repository's
+[maintenance policy](../docs/maintenance-scope.md).
+
 ## Installation
 
 ```bash
@@ -1135,7 +1140,8 @@ The agent now proposes configurations across the full method catalogue:
 - **Imputation** (10 methods): `minprob`, `mindet`, `knn`, `missforest`, `seqknn`, `qrilc`, `impseq`, `impseqrob`, `bpca`, `gms`
 - **Ensemble presets**: `limma,deqms,proda` (2/3 consensus), `limma,rots,deqms,proda` (3/4 consensus), configurable via `ensemble_strategies` in `skills/proteomics-heuristics/data.yaml`
 
-See the [agentic optimization user guide](docs/user-guide/agentic-optimization.md) for the full workflow, scoring modes, and ensemble configuration.
+See the [agentic optimization example](../docs/examples/differential-expression.md#agentic-optimization)
+for the workflow and configuration examples.
 
 ### Setup
 
@@ -1204,7 +1210,7 @@ config = AgenticConfig(
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](../LICENSE) for details.
 
 ## Credits
 
