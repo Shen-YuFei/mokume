@@ -118,3 +118,8 @@ agree **within floating-point tolerance** (the kernel computes in `f32`), not
 bit-for-bit as the wheel's wrappers do against the binary. This equivalence is
 asserted for `features2proteins` in `rust/tests/test_rust_python_equivalence.py`.
 The API is documented under [Python API (package)](reference/python-api-package.md).
+
+The Rust kernel is the **leading** implementation of this shared computation and
+the pure-Python package is maintained as added value; which side owns new work,
+and the per-command support table, are set out in
+[Maintenance scope](maintenance-scope.md).

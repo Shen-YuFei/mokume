@@ -122,6 +122,7 @@ nav:
       - Quick Start: quickstart.md
       - Architecture: architecture.md
       - CLI vs Wheel: cli-vs-wheel.md
+      - Maintenance Scope: maintenance-scope.md
   - Concepts:
       - concepts/index.md
       - Quantification Methods: concepts/quantification.md

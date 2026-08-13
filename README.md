@@ -38,13 +38,17 @@ mokume/
 └── rust/      # a Rust compute kernel: a standalone CLI binary + a maturin wheel
 ```
 
-- **`python/`** — the pure-Python `mokume` package (`pip install mokume`). The
-  reference implementation: easiest to read, extend, and script against.
-- **`rust/`** — a Rust compute kernel that runs the same methods much faster,
-  shipped as a standalone CLI binary and an in-process `mokume._mokume` wheel.
+- **`rust/`** — the Rust compute kernel: the **leading implementation** of every
+  computation, shipped as a standalone CLI binary and an in-process
+  `mokume._mokume` wheel.
+- **`python/`** — the pure-Python `mokume` package (`pip install mokume`).
+  Added value: a readable implementation of the same methods that is easy to
+  extend and script against, and a parity reference for the kernel.
 
-Both implement the same toolkit; the Rust kernel is checked against captured
-outputs of the Python reference by a golden-test suite.
+Both implement the same toolkit. **mokume is Rust-first**: new computation lands
+in the Rust kernel, and the pure-Python computation package is maintained as
+added value and kept in parity by a golden-test suite. See
+[Maintenance scope](#maintenance-scope) below.
 
 ## Installation
 
@@ -255,15 +259,45 @@ API key is set. Install with `pip install "mokume[agentic]"`; see
 
 mokume's methods exist in two builds that produce the same results:
 
-- the pure-Python `mokume` package — the reference implementation, ideal for
-  reading, extending, and interactive analysis; and
-- a Rust compute kernel that runs the heavy lifting much faster, shipped as a
-  standalone CLI binary (`mokume`, no Python runtime needed) and an in-process
-  `mokume._mokume` wheel.
+- a Rust compute kernel — the leading implementation that runs the heavy lifting,
+  shipped as a standalone CLI binary (`mokume`, no Python runtime needed) and an
+  in-process `mokume._mokume` wheel; and
+- the pure-Python `mokume` package — added value, ideal for reading, extending,
+  and interactive analysis, kept in parity with the kernel.
 
 The CLI binary and the wheel share one compiled kernel, so a result computed
 either way is identical. For the full design, see
 [docs/architecture.md](docs/architecture.md).
+
+## Maintenance scope
+
+mokume keeps its computation in two codebases — the Rust kernel (`rust/`) and the
+pure-Python package (`python/`) — both of which implement the four computation
+commands. To keep the two from drifting, mokume is **Rust-first**:
+
+- **The Rust kernel is the leading, authoritative implementation.** It defines
+  the correct behavior, supported options, and validation for every computed
+  quantity.
+- **New computation is written in Rust first.** A feature that touches the
+  computation commands ships once the Rust crates and their tests have it; a
+  pure-Python counterpart is optional and can follow later, on request or as a
+  parity reference.
+- **The pure-Python computation package is added value.** It is kept public and
+  usable so individual functions can be plugged into Python pipelines and so it
+  can serve as a readable reference and a parity check — not as the place new
+  computation lands first.
+
+| Computation command | Rust kernel (`rust/`) | Pure-Python package (`python/`) |
+| --- | --- | --- |
+| `features2proteins` | ✅ Leading — authoritative | ✅ Added value · parity-checked |
+| `features2peptides`  | ✅ Leading — authoritative | ✅ Added value · best-effort |
+| `peptides2protein`   | ✅ Leading — authoritative | ✅ Added value · best-effort |
+| `correct-batches`    | ✅ Leading — authoritative (native ComBat) | ✅ Added value · best-effort |
+
+This scope covers the **computation implementations only**. The Python API,
+shared post-processing, plotting, reporting, TissueMap, and the `agentic`
+optimizer are Python-only by design and out of scope here. Full policy:
+[docs/maintenance-scope.md](docs/maintenance-scope.md).
 
 ## Example: a tissue proteome atlas
 
@@ -301,7 +335,7 @@ count per tissue. See [docs/periphery/tissuemap.md](docs/periphery/tissuemap.md)
 - [Quick start](docs/quickstart.md)
 - [Installation](docs/installation.md)
 - [User guide](docs/user-guide/) · [Method concepts](docs/concepts/)
-- [CLI vs. wheel](docs/cli-vs-wheel.md) · [Architecture](docs/architecture.md)
+- [CLI vs. wheel](docs/cli-vs-wheel.md) · [Architecture](docs/architecture.md) · [Maintenance scope](docs/maintenance-scope.md)
 - [Benchmarks](benchmarks/)
 
 ## Citation
