@@ -38,16 +38,16 @@ mokume/
 └── rust/      # a Rust compute kernel: a standalone CLI binary + a maturin wheel
 ```
 
-- **`rust/`** — the Rust compute kernel: the **leading implementation** of every
-  computation, shipped as a standalone CLI binary and an in-process
+- **`rust/`** — the Rust compute kernel: the **leading implementation** of the
+  native computation commands, shipped as a standalone CLI binary and an in-process
   `mokume._mokume` wheel.
 - **`python/`** — the pure-Python `mokume` package (`pip install mokume`).
-  Added value: a readable implementation of the same methods that is easy to
-  extend and script against, and a parity reference for the kernel.
+  Added value: readable implementations of overlapping methods that are easy to
+  extend and script against, and parity references for covered kernel behavior.
 
-Both implement the same toolkit. **mokume is Rust-first**: new computation lands
-in the Rust kernel, and the pure-Python computation package is maintained as
-added value and kept in parity by a golden-test suite. See
+Both expose the same four computation command names, with different support
+levels. **mokume is Rust-first**: new computation lands in the Rust kernel, and
+overlapping supported paths are parity-tested where coverage exists. See
 [Maintenance scope](#maintenance-scope) below.
 
 ## Installation
@@ -257,46 +257,50 @@ API key is set. Install with `pip install "mokume[agentic]"`; see
 
 ## How it works
 
-mokume's methods exist in two builds that produce the same results:
+mokume's computation is available through two builds with overlapping
+functionality:
 
 - a Rust compute kernel — the leading implementation that runs the heavy lifting,
   shipped as a standalone CLI binary (`mokume`, no Python runtime needed) and an
   in-process `mokume._mokume` wheel; and
 - the pure-Python `mokume` package — added value, ideal for reading, extending,
-  and interactive analysis, kept in parity with the kernel.
+  and interactive analysis. Overlapping supported paths are parity-tested where
+  coverage exists.
 
-The CLI binary and the wheel share one compiled kernel, so a result computed
-either way is identical. For the full design, see
-[docs/architecture.md](docs/architecture.md).
+The Rust CLI binary and the `mokume-rs` wheel share one compiled kernel, so a
+result computed through either Rust entry point is identical. For the full
+design, see [docs/architecture.md](docs/architecture.md).
 
 ## Maintenance scope
 
 mokume keeps its computation in two codebases — the Rust kernel (`rust/`) and the
-pure-Python package (`python/`) — both of which implement the four computation
-commands. To keep the two from drifting, mokume is **Rust-first**:
+pure-Python package (`python/`) — which expose the same four computation commands
+with different support levels. To keep overlapping behavior from drifting,
+mokume is **Rust-first**:
 
-- **The Rust kernel is the leading, authoritative implementation.** It defines
-  the correct behavior, supported options, and validation for every computed
-  quantity.
+- **The Rust kernel is the leading implementation.** New behavior, supported
+  options, and validation for the native computation commands are defined there
+  first. Where Python implements the same capability, it follows the shared
+  public contract.
 - **New computation is written in Rust first.** A feature that touches the
   computation commands ships once the Rust crates and their tests have it; a
   pure-Python counterpart is optional and can follow later, on request or as a
   parity reference.
 - **The pure-Python computation package is added value.** It is kept public and
   usable so individual functions can be plugged into Python pipelines and so it
-  can serve as a readable reference and a parity check — not as the place new
-  computation lands first.
+  can serve as a readable reference and a parity check for covered behavior —
+  not as the place new computation lands first.
 
 | Computation command | Rust kernel (`rust/`) | Pure-Python package (`python/`) |
 | --- | --- | --- |
-| `features2proteins` | ✅ Leading — authoritative | ✅ Added value · parity-checked |
+| `features2proteins` | ✅ Leading — authoritative | ✅ Added value · parity-checked where covered |
 | `features2peptides`  | ✅ Leading — authoritative | ✅ Added value · best-effort |
 | `peptides2protein`   | ✅ Leading — authoritative | ✅ Added value · best-effort |
 | `correct-batches`    | ✅ Leading — authoritative (native ComBat) | ✅ Added value · best-effort |
 
-This scope covers the **computation implementations only**. The Python API,
-shared post-processing, plotting, reporting, TissueMap, and the `agentic`
-optimizer are Python-only by design and out of scope here. Full policy:
+This scope covers the **computation implementations only**. The Python pipeline
+API and its shared post-processing, plotting, reporting, TissueMap, and the
+`agentic` optimizer are Python-only by design and out of scope here. Full policy:
 [docs/maintenance-scope.md](docs/maintenance-scope.md).
 
 ## Example: a tissue proteome atlas
