@@ -1,7 +1,8 @@
 # Architecture
 
-mokume is a **toolkit: a Rust compute kernel with a Python periphery**. The
-compute lives once, in Rust, and is shipped two ways:
+mokume has two computation implementations: the leading **Rust compute kernel**
+and a separately maintained **pure-Python package**. The Rust kernel is shipped
+through two entry points:
 
 1. a **standalone CLI binary** `mokume` (built with `cargo`, no Python runtime
    needed), and
@@ -9,10 +10,11 @@ compute lives once, in Rust, and is shipped two ways:
    `mokume._mokume` runs the same kernel **in-process** — there is **no
    subprocess** and no shelling out to Python.
 
-The numbers are **single-sourced in Rust**. The Python periphery (plotting,
-tissue maps, interactive reports, iBAQ QC, and the few pure-Python method
-fallbacks) reads the TSV / parquet / CSV tables the kernel writes and renders
-figures or reports from them; it **never recomputes** the quantities.
+For Rust-native commands, computed values are single-sourced in the kernel.
+Plotting, interactive reports, and iBAQ QC read the tables the kernel writes;
+TissueMap derives a downstream atlas from QPX outputs. Explicit Python-only
+method fallbacks compute capabilities that the kernel does not provide. These
+periphery and fallback paths are documented separately below.
 
 ## The kernel + wheel split
 
@@ -39,9 +41,11 @@ flowchart TB
     end
 
     out["kernel output<br/>protein matrix CSV · peptide parquet · iBAQ TSV · DE CSV"]
+    qpx["QPX data"]
     bin --> out
     api --> out
-    out -. reads, never recomputes .-> periphery
+    out -. plots and reports .-> periphery
+    qpx -. TissueMap .-> periphery
     periphery --> figs["plots · tissue maps · HTML reports"]
 ```
 
@@ -58,33 +62,34 @@ PyO3/maturin layout used by projects such as polars and pydantic-core: Python
 imports a compiled Rust extension rather than driving an external program.
 
 !!! note "Why this matters"
-    There is exactly one implementation of every quantity. The CLI binary, the
-    wheel's `mokume.features2proteins(...)`, and `mokume.run([...])` all reach
-    the same Rust code, so a result computed through the wheel is bit-for-bit
-    the result the binary produces.
+    The CLI binary, the wheel's `mokume.features2proteins(...)`, and
+    `mokume.run([...])` all reach the same Rust implementation. A result computed
+    through either Rust entry point therefore comes from the same kernel. The
+    separate pure-Python computation package is not part of this guarantee.
 
-## The periphery reads, the kernel computes
+## Rust-native compute and the Python periphery
 
 The periphery lives in `rust/python/mokume/commands/` and is reached **only**
-through the wheel. It opens the tables the kernel already wrote and draws from them:
+through the wheel:
 
 - `mokume.tsne_visualization`, `mokume.de_plots`, `mokume.interactive_report` —
   plots and the HTML report built from the `features2proteins` matrix / DE CSVs.
-- `mokume.tissuemap` — per-dataset tissue proteome analysis.
+- `mokume.tissuemap` — downstream per-dataset normalization, batch correction,
+  tissue-specificity scoring, embeddings, and atlas plots from QPX outputs.
 - `mokume.peptides2protein_qc` — the iBAQ `--verbose` QC report PDF.
 
-Because these read kernel output, the cells in a plot match the cells in the
-kernel matrix. The single documented exception is `mokume.peptides2protein_ibaq`,
-which computes the whole iBAQ table in pure Python for enzymes outside the
-Rust-ported set (see [CLI vs Wheel](cli-vs-wheel.md) and
-[Python Periphery](periphery/index.md)).
+Plotting and reporting render kernel tables without re-running the
+kernel-supported computation. TissueMap performs its documented downstream
+analysis, while `mokume.peptides2protein_ibaq` and the `missforest` imputer are
+explicit fallbacks for operations the kernel does not provide (see
+[CLI vs Wheel](cli-vs-wheel.md) and [Python Periphery](periphery/index.md)).
 
-## What stays in the separate `mokume_py` package
+## What stays in the pure-Python package
 
 `agentic` — the LLM-driven workflow optimizer — is intentionally **not** migrated
-to the Rust track and does **not** appear in the Rust top-level CLI. It lives in
-the separate `mokume_py` Python package and is out of scope for this kernel +
-wheel.
+to the Rust track and does **not** appear in the Rust CLI or `mokume-rs` wheel.
+It remains in the separately installed pure-Python `mokume` package under
+`python/mokume/agentic/`.
 
 ## The pure-Python package and its compute backends
 
@@ -113,8 +118,14 @@ error. These checks happen before the extension is invoked or temporary output
 is allocated.
 
 Because the pure-Python package has its **own** implementation of the compute —
-distinct from the Rust kernel — a pure-Python result and a Rust-backend result
-agree **within floating-point tolerance** (the kernel computes in `f32`), not
-bit-for-bit as the wheel's wrappers do against the binary. This equivalence is
-asserted for `features2proteins` in `rust/tests/test_rust_python_equivalence.py`.
-The API is documented under [Python API (package)](reference/python-api-package.md).
+distinct from the Rust kernel — covered overlapping paths agree within their
+documented floating-point tolerance, not bit-for-bit as the wheel's wrappers do
+against the binary. Selected `features2proteins` paths are checked against
+frozen compatibility goldens in `rust/tests/test_rust_python_equivalence.py`.
+The API is documented under
+[Python API (package)](reference/python-api-package.md).
+
+The Rust kernel is the **leading** implementation of this shared computation and
+the pure-Python package is maintained as added value; which side owns new work,
+and the per-command support table, are set out in
+[Maintenance scope](maintenance-scope.md).

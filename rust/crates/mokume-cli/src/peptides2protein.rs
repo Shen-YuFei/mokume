@@ -257,7 +257,7 @@ fn run_ibaq(args: &Peptides2ProteinArgs, output: &Path) -> Result<()> {
         return Err(MokumeError::InvalidInput {
             message: format!(
                 "iBAQ digestion enzyme '{}' is not ported to the Rust kernel. \
-Install the Python package and run it there: pip install mokume[ibaq]; \
+Install the Rust wheel and run it there: pip install mokume-rs[ibaq]; \
 python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
                 args.enzyme, args.enzyme
             ),
@@ -342,7 +342,7 @@ python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
     if args.verbose {
         eprintln!(
             "note: QC report generation moved to the Python wheel: \
-pip install mokume[plotting]; \
+pip install mokume-rs[plotting]; \
 mokume.peptides2protein_qc(protein_table=\"{}\", qc_report=\"{}\")",
             output.display(),
             args.qc_report.display()
@@ -1717,7 +1717,7 @@ P3,THIDPECK,S1,A,900.0\n";
         // `CNBr` is a real protease pyOpenMS knows but the Rust port has not wired
         // a cleavage rule for. The iBAQ path does not digest it natively and no
         // longer delegates to Python; it fails with a clear `InvalidInput` that
-        // names the enzyme and points to the Python wheel (`mokume[ibaq]`).
+        // names the enzyme and points to the Python wheel (`mokume-rs[ibaq]`).
         // Supported non-Trypsin enzymes (Lys-C, Chymotrypsin, ...) still compute
         // natively in Rust; their digests are oracle-locked in the pipeline crate.
         let dir = temp_dir("enzyme")?;
@@ -1734,7 +1734,7 @@ P3,THIDPECK,S1,A,900.0\n";
         match run_peptides_to_protein(&args) {
             Err(MokumeError::InvalidInput { message }) => {
                 assert!(
-                    message.contains("CNBr") && message.contains("mokume[ibaq]"),
+                    message.contains("CNBr") && message.contains("mokume-rs[ibaq]"),
                     "error must name the enzyme and the wheel: {message}"
                 );
             }

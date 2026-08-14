@@ -1,11 +1,22 @@
 # Python API
 
-`pip install mokume-rs` gives you a thin Python wheel over the Rust compute kernel, in the PyO3/maturin layout used by projects such as polars and pydantic-core (Python imports a compiled Rust extension). There is **no** rich class-based API any more: the compute numbers are single-sourced in Rust and exposed in-process through the `mokume._mokume` extension, and the Python periphery only reads the tables the kernel writes.
+`pip install mokume-rs` gives you a thin Python wheel over the Rust compute
+kernel, in the PyO3/maturin layout used by projects such as polars and
+pydantic-core (Python imports a compiled Rust extension). This wheel does not
+expose the separately installed pure-Python package's rich class-based API. Its
+kernel-supported compute runs in-process through the `mokume._mokume` extension;
+plotting and reporting read the kernel's tables, TissueMap derives downstream
+atlas outputs from QPX data, and explicitly documented Python-only fallbacks
+compute operations the kernel does not provide.
 
 The package has two layers:
 
 - **Compute wrappers** — `mokume.features2proteins(...)`, `mokume.features2peptides(...)`, `mokume.peptides2protein(...)`, `mokume.correct_batches(...)`, plus `mokume.run([...])` and `mokume.version()`. These run the same clap parsing + dispatch the standalone `mokume` binary uses, **in-process, no subprocess**.
-- **Periphery** — plotting, tissue maps, DE plots, interactive reports, iBAQ QC, and the pure-Python method fallback (`missforest`). These live in `mokume.commands.*` / `mokume.reports.*` and are reached through the ergonomic wrappers below. Each needs an [install extra](#install-extras).
+- **Periphery and fallbacks** — plotting, tissue maps, DE plots, interactive
+  reports, iBAQ QC, and explicit pure-Python fallbacks such as `missforest`.
+  These live in `mokume.commands.*` / `mokume.reports.*` and are reached through
+  the ergonomic wrappers below. Each needs an
+  [install extra](#install-extras).
 
 ```python
 import mokume
@@ -76,7 +87,13 @@ mokume.run(["correct-batches", "--folder", "ibaq_dir", "--output", "corrected.ts
 
 ## Periphery
 
-The periphery reads the tables the kernel wrote — it never recomputes the numbers, so the cells in the plots match the cells in the kernel output. Each command lives in `mokume.commands.<name>` with a `main(argv)` entry point (runnable as `python -m mokume.commands.<name>`) and most have an ergonomic wrapper on the top-level package.
+The plotting and reporting periphery reads the tables the kernel wrote without
+recomputing them, so the cells in its plots match the kernel output. TissueMap
+derives downstream atlas outputs from QPX data, while explicit fallbacks compute
+operations unsupported by the Rust kernel. Each command lives in
+`mokume.commands.<name>` with a `main(argv)` entry point (runnable as
+`python -m mokume.commands.<name>`) and most have an ergonomic wrapper on the
+top-level package.
 
 ### Visualization
 
@@ -178,5 +195,6 @@ pip install "mokume-rs[all]"          # everything
 
 The exact dependency lists are declared in `pyproject.toml`'s `[project.optional-dependencies]`. The retired `directlfq` and `batch-correction` extras are gone: DirectLFQ and ComBat are now native Rust and need no extra.
 
-!!! note "Agentic workflows are a separate package"
-    The agentic / LLM-driven workflow layer is **not** part of this wheel; it lives in the separate `mokume_py` package.
+!!! note "Agentic workflows remain in the pure-Python package"
+    The agentic / LLM-driven workflow layer is **not** part of this wheel; it
+    remains in the separately installed pure-Python `mokume` package.

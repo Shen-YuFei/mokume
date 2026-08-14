@@ -129,8 +129,6 @@ Results are saved to:
 - `figures/` - PNG plots
 - `results/BENCHMARK_REPORT.md` - Comprehensive summary
 
-See [ROADMAP-SCIENTIFIC-BENCHMARKING.md](ROADMAP-SCIENTIFIC-BENCHMARKING.md) for the full scientific framework.
-
 ---
 
 <details>

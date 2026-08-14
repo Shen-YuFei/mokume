@@ -5,11 +5,16 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**A proteomics quantification toolkit for the quantms ecosystem: a Rust compute kernel with a Python periphery.**
+**A Rust-first proteomics quantification toolkit for the quantms ecosystem.**
 
 The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (木目金), a Japanese metalworking technique that fuses multiple metal layers into distinctive patterns — similar to how this toolkit melds peptide intensities into unified protein expression profiles.
 
-mokume ships as two front-ends over one Rust compute kernel: a standalone CLI binary `mokume` (built with cargo, no Python) and a PyO3/maturin wheel (`pip install mokume-rs`) that runs the same kernel in-process through the compiled `mokume._mokume` extension. The numbers are single-sourced in Rust; the Python periphery (plotting, tissue maps, interactive reports) only reads the kernel's TSV/parquet output and never recomputes them.
+mokume has two computation implementations. The leading Rust kernel ships as a
+standalone CLI binary (`mokume`, built with cargo and no Python) and through the
+PyO3/maturin `mokume-rs` wheel, whose two entry points run the same kernel. The
+separate pure-Python `mokume` package provides an independently maintained
+implementation and the class-based pipeline API. Plotting, tissue maps, and
+interactive reports remain in the Python periphery.
 
 ![The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage](assets/pipeline.svg){ width="100%" }
 

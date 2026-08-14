@@ -999,7 +999,7 @@ def peptides_to_protein(
         if not is_plotting_available():
             logger.warning(
                 "QC report skipped: plotting dependencies not installed. "
-                "Install with: pip install mokume[plotting]"
+                "Install: pip install mokume[plotting] or pip install mokume-rs[plotting]"
             )
         else:
             from mokume.plotting import PdfPages, plot_box_plot, plot_distributions

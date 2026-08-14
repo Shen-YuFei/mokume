@@ -1,6 +1,6 @@
 # User Guide
 
-This section covers the practical usage of each mokume command. mokume is a toolkit: a Rust compute kernel with a Python periphery. The kernel ships both as a standalone CLI binary (`mokume`, built with cargo, no Python) and as a PyO3/maturin wheel (`pip install mokume-rs`) that imports the compiled `mokume._mokume` extension and runs the same commands in-process — no subprocess delegation. The numbers are single-sourced in Rust; the Python periphery reads the kernel's TSV/parquet output and never recomputes.
+This section covers the Rust computation commands. The kernel ships both as a standalone CLI binary (`mokume`, built with cargo and no Python) and as a PyO3/maturin wheel (`pip install mokume-rs`) that imports the compiled `mokume._mokume` extension and runs the same commands in-process — no subprocess delegation. These two Rust entry points share one implementation; the separately maintained pure-Python computation package is documented under [Python API (package)](../reference/python-api-package.md).
 
 ## Compute commands
 
@@ -24,4 +24,12 @@ Standalone batch correction for already-quantified protein data. Combines multip
 
 ## Periphery (wheel-only)
 
-Plotting, tissue maps, and interactive reports are not CLI subcommands; they live in the Python wheel under `mokume.commands` and are reached through periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`, `mokume.de_plots`, and `mokume.interactive_report`. They read the tables the kernel produced. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `ibaq`, `analysis`, or `all`) to pull in the periphery libraries. The agentic workflow search lives in the separate `mokume_py` package and is not part of this toolkit.
+Plotting, tissue maps, and interactive reports are not CLI subcommands; they
+live in the Python wheel under `mokume.commands` and are reached through
+periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`,
+`mokume.de_plots`, and `mokume.interactive_report`. Plotting and reporting
+consume kernel tables, while TissueMap derives its downstream atlas from QPX
+data. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `ibaq`,
+`analysis`, or `all`) to pull in the periphery libraries. The agentic workflow
+search remains in the separately installed pure-Python `mokume` package and is
+not part of the Rust CLI or wheel.

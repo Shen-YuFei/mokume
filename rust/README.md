@@ -1,15 +1,13 @@
 # mokume
 
-[![Python application](https://github.com/bigbio/mokume/actions/workflows/python-app.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-app.yml)
-[![Upload Python Package](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml)
-[![PyPI version](https://badge.fury.io/py/mokume.svg)](https://badge.fury.io/py/mokume)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
+[![Rust CI](https://github.com/bigbio/mokume/actions/workflows/rust.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/rust.yml)
+[![Build wheels](https://github.com/bigbio/mokume/actions/workflows/wheels.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/wheels.yml)
 
 **mokume** is a proteomics quantification toolkit: it turns peptide-level mass
 spectrometry intensities into protein expression matrices, with built-in
 normalization, imputation, batch correction, and differential expression. It is
-designed for the [quantms](https://github.com/bigbio/quantms) ecosystem and works
-equally well as a standalone command-line tool.
+designed for the [quantms](https://github.com/bigbio/quantms) ecosystem and is
+available as both a standalone command-line tool and a Python wheel.
 
 It supports iBAQ, TopN, MaxLFQ, and DirectLFQ quantification, and ships both as a
 fast standalone CLI binary and as a `pip install mokume-rs` wheel.
@@ -44,7 +42,8 @@ available as extras:
 pip install "mokume-rs[plotting]"   # matplotlib / seaborn figures
 pip install "mokume-rs[reports]"    # interactive plotly QC reports
 pip install "mokume-rs[tissuemap]"  # tissue-map + AnnData export
-pip install "mokume-rs[ibaq]"       # iBAQ / ProteomicRuler (needs a FASTA)
+pip install "mokume-rs[ibaq]"       # Python iBAQ fallback for unported enzymes
+pip install "mokume-rs[analysis]"   # QC/comparison reports + missforest
 pip install "mokume-rs[all]"        # everything above
 ```
 
@@ -55,7 +54,7 @@ cargo install --path crates/mokume-cli
 ```
 
 A conda/mamba environment is also provided in `environment.yaml`. See
-[docs/installation.md](docs/installation.md) for details.
+[docs/installation.md](../docs/installation.md) for details.
 
 ## Quick start
 
@@ -110,12 +109,12 @@ produced either way is the same.
 
 mokume covers the common protein quantification strategies and the analysis
 steps around them. The full catalog of methods is documented in the
-[user guide](docs/user-guide/).
+[user guide](../docs/user-guide/).
 
 `features2proteins` runs these stages in order:
 
 <p align="center">
-  <img src="docs/assets/pipeline.svg" alt="The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
+  <img src="../docs/assets/pipeline.svg" alt="The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
 </p>
 
 - **Quantification:** `maxlfq`, `directlfq`, `ibaq`, `top3`/`topn`, `sum`
@@ -136,15 +135,20 @@ steps around them. The full catalog of methods is documented in the
 
 ## How it works
 
-mokume's compute lives once in a Rust kernel and ships two ways:
+This Rust implementation has one compute kernel exposed through two entry
+points:
 
 - a standalone CLI binary (`mokume`) that needs no Python runtime, and
 - a `pip install mokume-rs` wheel whose compiled extension runs the same kernel
   in-process (no subprocess, no recomputation).
 
 A thin Python periphery adds plots and reports on top. You never need to know it
-is Rust to use it. For the full design, see
-[docs/architecture.md](docs/architecture.md).
+is Rust to use it. The repository also contains a separately maintained
+pure-Python computation implementation under `../python/`; it is not part of the
+Rust CLI/wheel identity guarantee. The Rust kernel leads new native computation
+work. For the full design and maintenance policy, see
+[Architecture](../docs/architecture.md) and
+[Maintenance scope](../docs/maintenance-scope.md).
 
 ## Example
 
@@ -155,36 +159,38 @@ samples, and finds tissue markers. Every figure below is rendered by mokume's
 **own** visualization on the Rust build — no external plotting code:
 
 <p align="center">
-  <img src="docs/assets/pxd030304_tissue_atlas.png" alt="Tissue atlas: the cell-line proteomes embedded and grouped by tissue of origin" width="100%">
+  <img src="../docs/assets/pxd030304_tissue_atlas.png" alt="Tissue atlas: the cell-line proteomes embedded and grouped by tissue of origin" width="100%">
 </p>
 
 *Tissue atlas — the 949 cell-line proteomes embedded and grouped by their tissue
 of origin (`mokume.tissuemap`).*
 
 <p align="center">
-  <img src="docs/assets/pxd030304_marker_tsne.png" alt="t-SNE panels of the cell-line proteomes coloured by top tissue-marker expression" width="100%">
+  <img src="../docs/assets/pxd030304_marker_tsne.png" alt="t-SNE panels of the cell-line proteomes coloured by top tissue-marker expression" width="100%">
 </p>
 
 *t-SNE of the same proteomes, each panel coloured by a top tissue-marker's
 expression.*
 
 <p align="center">
-  <img src="docs/assets/pxd030304_ts_distribution.png" alt="AdaTiSS tissue-specificity score distribution and tissue-specific protein counts" width="100%">
+  <img src="../docs/assets/pxd030304_ts_distribution.png" alt="AdaTiSS tissue-specificity score distribution and tissue-specific protein counts" width="100%">
 </p>
 
 *AdaTiSS tissue-specificity score distribution (with the GMM-fitted
 specific / enriched / housekeeping thresholds) and the tissue-specific protein
 count per tissue. `mokume.tissuemap` also emits marker heatmaps, dotplots, and
-dendrograms — see [`docs/periphery/tissuemap.md`](docs/periphery/tissuemap.md).*
+dendrograms — see
+[`docs/periphery/tissuemap.md`](../docs/periphery/tissuemap.md).*
 
 ## Documentation
 
-- [Documentation home](docs/index.md)
-- [Quick start](docs/quickstart.md)
-- [Installation](docs/installation.md)
-- [CLI vs. wheel](docs/cli-vs-wheel.md)
-- [Architecture](docs/architecture.md)
-- [Benchmarks](benchmarks/)
+- [Documentation home](../docs/index.md)
+- [Quick start](../docs/quickstart.md)
+- [Installation](../docs/installation.md)
+- [CLI vs. wheel](../docs/cli-vs-wheel.md)
+- [Architecture](../docs/architecture.md)
+- [Maintenance scope](../docs/maintenance-scope.md)
+- [Benchmarks](../benchmarks/)
 
 ## Citation
 
@@ -197,6 +203,6 @@ their current citation details and DOIs.
 
 mokume is developed by the [bigbio](https://github.com/bigbio) community as part
 of the quantms ecosystem. Contributions are welcome; see
-[the community guide](docs/community.md) for development setup and guidelines.
+[the community guide](../docs/community.md) for development setup and guidelines.
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](../LICENSE).

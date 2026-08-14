@@ -6,7 +6,14 @@ Use `mokume --help` or `mokume <command> --help` for details.
 The same `mokume` command is available two ways: as a standalone Rust binary (built with `cargo`, no Python) and from the `pip install mokume-rs` wheel, which runs the identical kernel in-process through the `mokume._mokume` extension. The flag surface below is single-sourced in Rust and is identical for both.
 
 !!! note "Plotting, tissue maps, and reports live in the Python wheel"
-    The visualization periphery — t-SNE, tissue-proteome maps, DE plots, interactive HTML reports, iBAQ QC — is **not** part of this CLI. It ships in the `pip install mokume-rs` wheel as `mokume.tsne_visualization(...)`, `mokume.tissuemap(...)`, `mokume.de_plots([...])`, `mokume.interactive_report([...])`, and `mokume.peptides2protein_qc(...)`. See the [Python API](python-api.md). These commands read the tables the kernel wrote and never recompute the numbers.
+    The visualization periphery — t-SNE, tissue-proteome maps, DE plots,
+    interactive HTML reports, iBAQ QC — is **not** part of this CLI. It ships in
+    the `pip install mokume-rs` wheel as `mokume.tsne_visualization(...)`,
+    `mokume.tissuemap(...)`, `mokume.de_plots([...])`,
+    `mokume.interactive_report([...])`, and
+    `mokume.peptides2protein_qc(...)`. Plotting and reporting consume kernel
+    tables; TissueMap performs its documented downstream analysis from QPX data.
+    See the [Python API](python-api.md).
 
 ## features2proteins
 
@@ -126,7 +133,7 @@ Imputation runs in log2 space (the matrix is transformed before imputation and b
 
 Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrasts-file`. Both can be combined.
 
-`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods run in the native Rust kernel — no R or rpy2 required. Deterministic methods (limma / deqms) are cell-exact against the Python reference; RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change cell-exactly and p-values at rank level.
+`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods run in the native Rust kernel — no R or rpy2 required. Deterministic methods (limma / deqms) are cell-exact against frozen Python-generated compatibility output; RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change cell-exactly and p-values at rank level.
 
 `--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold.
 
@@ -313,7 +320,9 @@ ComBat here is the native Rust implementation, oracle-verified against inmoose. 
 
 ## Periphery (tissue maps, t-SNE)
 
-Tissue-proteome maps and t-SNE visualization are **not** CLI subcommands — they ship in the `pip install mokume-rs` wheel and read the kernel's output tables:
+Tissue-proteome maps and t-SNE visualization are **not** CLI subcommands; they
+ship in the `pip install mokume-rs` wheel. t-SNE visualization reads a protein
+matrix, while TissueMap derives a downstream atlas from QPX data:
 
 ```python
 import mokume

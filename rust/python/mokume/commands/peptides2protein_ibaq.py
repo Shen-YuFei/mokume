@@ -111,7 +111,7 @@ def main(argv=None):
         raise SystemExit(
             "iBAQ command aborted: the mokume package could not be imported "
             "({0}). Install its third-party dependencies with: "
-            "pip install mokume[ibaq]".format(exc)
+            "pip install mokume-rs[ibaq]".format(exc)
         )
 
     # Mirror the Python CLI ``peptides2protein`` iBAQ branch exactly: it forwards

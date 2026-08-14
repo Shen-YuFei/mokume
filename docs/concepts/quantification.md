@@ -135,7 +135,7 @@ mokume features2proteins -p features.parquet -o proteins.csv \
 
 The **MaxLFQ algorithm** (Cox et al., 2014) uses delayed normalization with pairwise peptide ratios to estimate protein intensities. It's particularly robust to missing values.
 
-In the native Rust kernel, MaxLFQ rolls the peptide matrix up with the DirectLFQ estimator (delegating with `min_nonan = 2`). It is real-data parity-checked against the Python reference — cell-exact on PXD003539 within the f32 tolerance tier.
+In the native Rust kernel, MaxLFQ rolls the peptide matrix up with the DirectLFQ estimator (delegating with `min_nonan = 2`). It is real-data compatibility-checked against frozen Python-generated output — cell-exact on PXD003539 within the f32 tolerance tier.
 
 ```bash
 mokume features2proteins -p features.parquet -o proteins.csv \
@@ -217,7 +217,7 @@ mokume features2proteins -p features.parquet -o proteins.csv \
     **distinct peptides (modification-stripped sequences) per (protein,
     sample)**, not a raw PSM count. Two peptidoforms of the same sequence
     (e.g. with and without a modification) collapse to one, and both the
-    Rust and Python builds produce the same count. Use it as an
+    Rust and Python implementations use this count definition. Use it as an
     identification-depth indicator rather than as a strict spectral-count
     quantification.
 

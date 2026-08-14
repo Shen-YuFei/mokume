@@ -5597,7 +5597,7 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
             // shipped in the wheel.
             "missforest" => {
                 return unsupported(
-                    "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume Python wheel: pip install mokume[analysis]; mokume.impute(matrix, method='missforest')",
+                    "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume Python wheel: pip install mokume-rs[analysis]; mokume.impute(matrix, method='missforest')",
                 )
             }
             _ => return unsupported("imputation"),

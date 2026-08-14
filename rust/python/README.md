@@ -1,17 +1,16 @@
-# mokume — Python package
+# mokume-rs — Python wheel
 
-`pip install mokume` gives you a Rust compute kernel with a Python periphery, in
-the PyO3/maturin layout used by projects such as polars and pydantic-core
+`pip install mokume-rs` gives you a Rust compute kernel with a Python periphery,
+in the PyO3/maturin layout used by projects such as polars and pydantic-core
 (Python imports a compiled Rust extension).
 
 - The compute-heavy pipeline (expression matrix, normalization, imputation,
   differential expression, batch correction) lives in the Rust crates under
   `crates/` and is exposed in-process through the compiled `mokume._mokume`
   extension that maturin builds from `crates/mokume-py`.
-- The periphery (plotting / tissue maps / interactive reports / iBAQ QC, and the
-  pure-Python iBAQ path for enzymes the Rust kernel does not digest) lives here
-  in `mokume/commands/` and reads the tables the kernel produces to render its
-  figures, so the compute stays single-sourced in Rust.
+- The periphery lives here in `mokume/commands/`. Plotting and reporting consume
+  kernel tables, TissueMap derives downstream atlas outputs from QPX data, and
+  explicit Python-only fallbacks handle operations the kernel does not provide.
 
 The standalone Rust CLI binary (`crates/mokume-cli`, built with `cargo`) is the
 no-Python compute path for pipelines; it does **not** shell out to Python. The
@@ -20,12 +19,13 @@ periphery is reached only through this wheel.
 ## Install
 
 ```bash
-pip install mokume                 # compute kernel + Python API
-pip install "mokume[plotting]"     # + t-SNE / DE plots / iBAQ QC report
-pip install "mokume[tissuemap]"    # + per-dataset tissue proteome analysis
-pip install "mokume[reports]"      # + interactive HTML DE report
-pip install "mokume[ibaq]"         # + pure-Python iBAQ for unported enzymes
-pip install "mokume[all]"          # everything
+pip install mokume-rs                 # compute kernel + Python API
+pip install "mokume-rs[plotting]"     # + t-SNE / DE plots / iBAQ QC report
+pip install "mokume-rs[tissuemap]"    # + per-dataset tissue proteome analysis
+pip install "mokume-rs[reports]"      # + interactive HTML DE report
+pip install "mokume-rs[ibaq]"         # + pure-Python iBAQ for unported enzymes
+pip install "mokume-rs[analysis]"     # + QC/comparison reports + missforest
+pip install "mokume-rs[all]"          # everything
 ```
 
 From a source checkout, build the extension with `maturin develop` (or
@@ -72,10 +72,10 @@ mokume.qc_report(protein_matrix="proteins.csv", sdrf="x.sdrf.tsv", output="qc.ht
 mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
 ```
 
-These read the tables the kernel wrote — they never recompute the numbers — so
-the cells in the plots match the cells in the kernel output. The one exception is
-`peptides2protein_ibaq`, which computes the whole iBAQ table in pure Python via
-`mokume.quantification.ibaq` for enzymes outside the Rust-ported set.
+The plotting and reporting functions read the tables the kernel wrote without
+recomputing them, so their cells match the kernel output. The explicit
+`peptides2protein_ibaq` and `impute(method="missforest")` fallbacks instead
+compute operations the Rust kernel does not provide.
 
 | Command                       | Extra        | Third-party libraries                                  |
 | ----------------------------- | ------------ | ------------------------------------------------------ |

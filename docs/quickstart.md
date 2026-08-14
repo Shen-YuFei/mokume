@@ -14,12 +14,13 @@ You need:
 For most workflows, `pip install mokume-rs` is enough. The wheel runs the Rust
 compute kernel in-process; you can also use the standalone `mokume` CLI binary
 (built from `rust/crates/mokume-cli` with cargo, no Python). If you want the
-TissueMap periphery command, install `mokume[tissuemap]` first.
+TissueMap periphery command from the wheel, install `mokume-rs[tissuemap]`.
 
 !!! warning "`mokume-rs` is not on PyPI yet"
     `pip install mokume-rs` does not work yet — the Rust wheel is unreleased. Use
-    `pip install mokume` (pure-Python, same `import mokume` API) or build the
-    wheel from `rust/`; see [Installation](installation.md).
+    `pip install mokume` (pure Python, with the same import name but a separately
+    maintained API) or build the wheel from `rust/`; see
+    [Installation](installation.md).
 
 ## One-Step Pipeline (Recommended)
 

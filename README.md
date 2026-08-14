@@ -10,7 +10,7 @@ peptide-level mass-spectrometry intensities into protein expression matrices,
 with built-in normalization, imputation, batch correction, and differential
 expression. It supports iBAQ, TopN, MaxLFQ, and DirectLFQ quantification, is
 designed for the [quantms](https://github.com/bigbio/quantms) ecosystem, and
-works equally well as a Python library and a standalone command-line tool.
+can be used as either a Python library or a standalone command-line tool.
 
 mokume is an evolution of [ibaqpy](https://github.com/bigbio/ibaqpy), extended
 well beyond iBAQ to a broader range of quantification, normalization, and
@@ -38,13 +38,18 @@ mokume/
 └── rust/      # a Rust compute kernel: a standalone CLI binary + a maturin wheel
 ```
 
-- **`python/`** — the pure-Python `mokume` package (`pip install mokume`). The
-  reference implementation: easiest to read, extend, and script against.
-- **`rust/`** — a Rust compute kernel that runs the same methods much faster,
-  shipped as a standalone CLI binary and an in-process `mokume._mokume` wheel.
+- **`rust/`** — the Rust compute kernel: the **leading implementation** of the
+  native computation commands, shipped as a standalone CLI binary and an
+  in-process `mokume._mokume` wheel.
+- **`python/`** — the pure-Python `mokume` package (`pip install mokume`).
+  Added value: readable implementations of overlapping methods that are easy to
+  extend and script against, plus compatibility baselines for covered kernel
+  behavior.
 
-Both implement the same toolkit; the Rust kernel is checked against captured
-outputs of the Python reference by a golden-test suite.
+Both expose the same four computation command names, with different support
+levels. **mokume is Rust-first**: new computation lands in the Rust kernel, and
+overlapping supported paths are parity-tested where coverage exists. See
+[Maintenance scope](#maintenance-scope) below.
 
 ## Installation
 
@@ -104,9 +109,10 @@ mokume features2proteins \
   --output proteins.csv
 ```
 
-The pipeline above is driven through this CLI, shared by both builds. For
-scripting, the pure-Python package exposes component APIs — for example,
-quantifying a peptide table:
+Both computation implementations expose the `features2proteins` command, but
+their CLIs and supported options are maintained separately. For scripting, the
+pure-Python package exposes component APIs — for example, quantifying a peptide
+table:
 
 ```python
 import pandas as pd
@@ -121,9 +127,9 @@ proteins = TopNQuantification(n=3).quantify(peptides)
 
 Normalization, imputation, and differential expression have the same
 component-style API (see [below](#differential-expression) and the
-[Python API reference](docs/reference/python-api.md)). The Rust wheel
-additionally exposes an in-process `mokume.features2proteins(...)` binding that
-runs the whole pipeline with no subprocess.
+[Python package API reference](docs/reference/python-api-package.md)). The Rust
+wheel additionally exposes an in-process `mokume.features2proteins(...)` binding
+that runs the whole pipeline with no subprocess.
 
 ## Running different analyses
 
@@ -162,8 +168,8 @@ mokume features2proteins \
   --output proteins.csv --de-output de_results
 ```
 
-**Python pipeline** — the same run as a configurable object, returning a
-`QpxDataset` you can inspect level by level:
+**Pure-Python pipeline** — express the workflow as a configurable object that
+returns a `QpxDataset` you can inspect level by level:
 
 ```python
 from mokume.pipeline.config import PipelineConfig, InputConfig, QuantificationConfig
@@ -253,17 +259,51 @@ API key is set. Install with `pip install "mokume[agentic]"`; see
 
 ## How it works
 
-mokume's methods exist in two builds that produce the same results:
+mokume's computation is available through two implementations with overlapping
+functionality:
 
-- the pure-Python `mokume` package — the reference implementation, ideal for
-  reading, extending, and interactive analysis; and
-- a Rust compute kernel that runs the heavy lifting much faster, shipped as a
-  standalone CLI binary (`mokume`, no Python runtime needed) and an in-process
-  `mokume._mokume` wheel.
+- a Rust compute kernel — the leading implementation that runs the heavy lifting,
+  shipped as a standalone CLI binary (`mokume`, no Python runtime needed) and an
+  in-process `mokume._mokume` wheel; and
+- the pure-Python `mokume` package — added value, ideal for reading, extending,
+  and interactive analysis. Overlapping supported paths are parity-tested where
+  coverage exists.
 
-The CLI binary and the wheel share one compiled kernel, so a result computed
-either way is identical. For the full design, see
-[docs/architecture.md](docs/architecture.md).
+The Rust CLI binary and the `mokume-rs` wheel share one compiled kernel, so a
+result computed through either Rust entry point is identical. For the full
+design, see [docs/architecture.md](docs/architecture.md).
+
+## Maintenance scope
+
+mokume keeps its computation in two codebases — the Rust kernel (`rust/`) and the
+pure-Python package (`python/`) — which expose the same four computation commands
+with different support levels. To keep overlapping behavior from drifting,
+mokume is **Rust-first**:
+
+- **The Rust kernel is the leading implementation.** New behavior, supported
+  options, and validation for the native computation commands are defined there
+  first. Where Python implements the same capability, it follows the shared
+  public contract.
+- **New computation is written in Rust first.** A feature that touches the
+  computation commands ships once the Rust crates and their tests have it; a
+  pure-Python counterpart is optional and can follow later when users or
+  maintainers need it.
+- **The pure-Python computation package is added value.** It is kept public and
+  usable so individual functions can be plugged into Python pipelines and so it
+  can provide readable implementations and compatibility baselines for covered
+  behavior — not as the place new computation lands first.
+
+| Computation command | Rust kernel (`rust/`) | Pure-Python package (`python/`) |
+| --- | --- | --- |
+| `features2proteins` | ✅ Leading — authoritative | ✅ Added value · parity-checked where covered |
+| `features2peptides`  | ✅ Leading — authoritative | ✅ Added value · best-effort |
+| `peptides2protein`   | ✅ Leading — authoritative | ✅ Added value · best-effort |
+| `correct-batches`    | ✅ Leading — authoritative (native ComBat) | ✅ Added value · best-effort |
+
+This scope covers the **computation implementations only**. The Python pipeline
+API and its shared post-processing, plotting, reporting, TissueMap, and the
+`agentic` optimizer are Python-only by design and out of scope here. Full policy:
+[docs/maintenance-scope.md](docs/maintenance-scope.md).
 
 ## Example: a tissue proteome atlas
 
@@ -301,7 +341,7 @@ count per tissue. See [docs/periphery/tissuemap.md](docs/periphery/tissuemap.md)
 - [Quick start](docs/quickstart.md)
 - [Installation](docs/installation.md)
 - [User guide](docs/user-guide/) · [Method concepts](docs/concepts/)
-- [CLI vs. wheel](docs/cli-vs-wheel.md) · [Architecture](docs/architecture.md)
+- [CLI vs. wheel](docs/cli-vs-wheel.md) · [Architecture](docs/architecture.md) · [Maintenance scope](docs/maintenance-scope.md)
 - [Benchmarks](benchmarks/)
 
 ## Citation
