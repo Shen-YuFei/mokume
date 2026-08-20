@@ -69,7 +69,7 @@ jobs:
       shell: bash -l {0}
       run: |
         pip install pytest pytest-cov flake8
-        # Install all extras so the full test suite (iBAQ, DE, imputation,
+        # Install all extras so the full test suite (piBAQ, DE, imputation,
         # plotting, tissuemap, ...) has its now-optional dependencies.
         pip install -e ".[all]"
 

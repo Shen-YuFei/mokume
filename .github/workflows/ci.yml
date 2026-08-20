@@ -64,10 +64,7 @@ jobs:
         run: |
           pip install maturin pytest
           maturin build
-          pip install target/wheels/mokume_rs-*.whl
-
-      - name: Install plotting extra for periphery tests
-        run: pip install "numpy" "pandas" "scipy" "matplotlib" "seaborn" "scikit-learn" "pyarrow"
+          pip install "$(ls target/wheels/mokume-*.whl)[plotting,agentic]" pyarrow
 
       - name: Run the Python test suite
         run: pytest tests -v --tb=short

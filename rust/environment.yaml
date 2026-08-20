@@ -11,7 +11,7 @@ dependencies:
   - python >=3.9
   - pip
 
-  # --- Rust toolchain (builds the extension + the CLI binary) ---
+  # --- Rust toolchain (builds the extension) ---
   # rust-toolchain.toml pins 1.96.0; conda-forge's rust may differ. To match CI
   # exactly, prefer `rustup default 1.96.0`; conda's rust is fine otherwise
   # (the abi3 + stdlib features are not version-sensitive).
@@ -36,6 +36,7 @@ dependencies:
   - numpy
   - pandas
   - scipy
+  - duckdb >=0.10.1
   - matplotlib
   - seaborn
   - scikit-learn

@@ -4,7 +4,7 @@
 ``rust/python/mokume`` is a hand-maintained VENDORED COPY of a SUBSET of the
 canonical ``python/mokume`` package: the plotting / QC / analysis / tissue-atlas
 periphery that the Rust compute kernel does not port. ``python/mokume`` is the
-canonical, upstream-facing source; the sidecar rides along inside the ``mokume-rs``
+canonical, upstream-facing source; the sidecar rides along inside the ``mokume``
 wheel so the periphery ships next to the compiled kernel.
 
 Most of that subset is meant to be byte-for-byte identical to its canonical
@@ -49,7 +49,7 @@ allow-list:
   normalization/__init__.py
   quantification/__init__.py
       Trimmed package inits: only the surviving vendored submodules are re-exported
-      (FASTA / IRS / iBAQ respectively), via lazy ``__getattr__``; the Rust-ported
+      (FASTA / IRS / piBAQ respectively), via lazy ``__getattr__``; the Rust-ported
       methods and non-vendored submodules are dropped on purpose.
   io/fasta.py
   imputation/censored.py
@@ -62,7 +62,7 @@ allow-list:
 
 Sidecar-only files (exist ONLY in ``rust/python/mokume`` — no canonical
 counterpart, so never synced): ``__main__.py``, ``commands/de_plots.py``,
-``commands/interactive_report.py``, ``commands/peptides2protein_ibaq.py``,
+``commands/interactive_report.py``, ``commands/peptides2protein_pibaq.py``,
 ``commands/peptides2protein_qc.py``.
 
 Usage
@@ -117,7 +117,7 @@ SHARED_FILES: tuple[str, ...] = (
     "plotting/distributions.py",
     "plotting/pca.py",
     "quantification/families.py",
-    "quantification/ibaq.py",
+    "quantification/pibaq.py",
     "reports/__init__.py",
     "reports/interactive.py",
     "reports/qc_report.py",

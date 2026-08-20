@@ -1,5 +1,5 @@
 {% set name = "mokume" %}
-{% set version = "0.1.0" %}
+{% set version = "0.2.0" %}
 
 package:
   name: {{ name|lower }}
@@ -60,7 +60,7 @@ about:
   license_file: LICENSE
   summary: Proteomics quantification toolkit — a Rust compute kernel with a Python periphery
   description: |
-    mokume is a proteomics quantification toolkit (iBAQ, Top3, TopN, MaxLFQ,
+    mokume is a proteomics quantification toolkit (piBAQ, Top3, TopN, MaxLFQ,
     normalization, imputation, differential expression, batch correction). The
     compute-heavy kernel is implemented in Rust and exposed to Python through a
     PyO3/maturin extension (mokume._mokume); the optional Python periphery
