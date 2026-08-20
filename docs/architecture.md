@@ -7,7 +7,7 @@ wheel contains the compiled `mokume._mokume` extension, a thin Python API, a
 `mokume` console command, and the Python periphery. It does not ship a separate
 Rust executable.
 
-For Rust-native commands, computed values are single-sourced in the kernel.
+For Rust-backed commands, computed values are single-sourced in the kernel.
 Plotting, interactive reports, and piBAQ QC read the tables the kernel writes;
 TissueMap derives a downstream atlas from QPX outputs. Explicit Python-only
 method fallbacks compute capabilities that the kernel does not provide. These
@@ -28,10 +28,10 @@ package computes the same capabilities through its own implementation.
 flowchart TB
     subgraph rust["Rust compute kernel (crates/)"]
         crates["mokume-pipeline / mokume-core<br/>quantification · normalization · imputation<br/>differential expression · ComBat batch correction"]
-        cli_crate["crates/mokume-cli<br/>clap parsing + dispatch library"]
+        command_crate["crates/mokume-command<br/>clap parsing + dispatch library"]
         py_crate["crates/mokume-py (PyO3)"]
-        crates --> cli_crate
-        cli_crate --> py_crate
+        crates --> command_crate
+        command_crate --> py_crate
     end
 
     ext["mokume._mokume extension<br/>(maturin build, in-process)"]
@@ -85,10 +85,18 @@ through the wheel:
 
 Plotting and reporting render kernel tables without re-running the
 kernel-supported computation. TissueMap performs its documented downstream
-analysis, while `mokume.peptides2protein_pibaq` and the `missforest` imputer are
-explicit fallbacks for operations the kernel does not provide (see
+analysis, while the `missforest` imputer is an explicit fallback for an operation
+the kernel does not provide (see
 [Rust Wheel](rust-wheel.md), [Python Periphery](periphery/index.md), and
 [Analysis Fallbacks](periphery/analysis-fallbacks.md)).
+
+piBAQ is a deliberate cross-language path within the base wheel: Python reads the
+installed pyOpenMS `ProteaseDB` and digests the FASTA, PyO3 transfers the complete
+protein-to-theoretical-peptide map, and Rust performs family discovery,
+shared-peptide allocation, denominators, TPA, normalization, and output. Each
+run at the default `debug` level (or explicit `info`) logs the pyOpenMS version,
+canonical enzyme, catalog SHA-256, length bounds, and missed-cleavage count so
+the runtime digest is traceable.
 
 ## The Mokume Plugin
 

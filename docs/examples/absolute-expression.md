@@ -15,7 +15,9 @@ Two entry points:
 
 Both need a **FASTA** file. piBAQ retains iBAQ's theoretical-peptide scaling
 while allocating shared-peptide intensity explicitly and using an owned-peptide
-denominator symmetric with that allocation.
+denominator symmetric with that allocation. Both Rust-backed entry points digest
+through every protease registered in the installed pyOpenMS runtime; Python passes
+the complete theoretical-peptide map to the Rust aggregation kernel.
 
 ## piBAQ inside the pipeline
 

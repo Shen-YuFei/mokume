@@ -33,16 +33,10 @@
 //!   * `--ruler`: the ProteomicRuler copy number / moles / weight /
 //!     concentration columns (requires `--tpa`).
 //!
-//! piBAQ digestion computes natively in Rust for the pyOpenMS enzymes whose
-//! cleavage rules are ported (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P],
-//! Glu-C, Asp-N, Lys-N, PepsinA, and the other rules `supports_pibaq_enzyme`
-//! accepts -- that function is the authoritative ported set), all with zero missed
-//! cleavages; the per-enzyme digests are oracle-locked against pyOpenMS in the
-//! pipeline crate. For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific
-//! cleavage, ...) the Rust kernel has no cleavage rule, so piBAQ for that enzyme is
-//! not supported here and the command fails with a clear error pointing to the
-//! Python wheel; the default `Trypsin` path and every other ported enzyme are
-//! never affected.
+//! piBAQ FASTA digestion uses the complete protease catalog registered by the
+//! installed pyOpenMS runtime, with zero missed cleavages. Python passes the full
+//! canonical protein -> theoretical peptide map into this Rust kernel; shared
+//! allocation, denominators, TPA, normalization, and output remain Rust-native.
 //!
 //! Input format: a comma-separated CSV (matching Python's `pd.read_csv`), a
 //! tab-separated `.tsv`, or a parquet file (matching Python's `is_parquet`
@@ -61,8 +55,8 @@ use mokume_core::quant::parse_topn_from_method_name;
 use mokume_core::{MokumeError, Result};
 use mokume_io::read_peptide_parquet;
 use mokume_pipeline::{
-    run_lfq_from_peptides, run_pibaq_from_peptides, supports_pibaq_enzyme, LfqPeptideObservation,
-    PeptideObservation, PibaqFromPeptidesParams,
+    run_lfq_from_peptides, run_pibaq_from_peptides, LfqPeptideObservation, PeptideObservation,
+    PibaqDigest, PibaqFromPeptidesParams,
 };
 
 use crate::Peptides2ProteinArgs;
@@ -100,8 +94,10 @@ struct PeptideRow {
     intensity: f64,
 }
 
-/// Entry point for the `peptides2protein` command.
-pub fn run_peptides_to_protein(args: &Peptides2ProteinArgs) -> Result<()> {
+pub fn run_peptides_to_protein_with_digest(
+    args: &Peptides2ProteinArgs,
+    pibaq_digest: Option<PibaqDigest>,
+) -> Result<()> {
     let method = args.method.to_ascii_lowercase();
 
     if !args.peptides.exists() {
@@ -123,7 +119,7 @@ pub fn run_peptides_to_protein(args: &Peptides2ProteinArgs) -> Result<()> {
     // on any other method stays the same no-op it is in Python.
 
     match method.as_str() {
-        "pibaq" => run_pibaq(args, output),
+        "pibaq" => run_pibaq(args, output, pibaq_digest),
         "sum" => run_generic(args, &method, output),
         // `--method` is validated (and `topn` normalized to `top3`) by
         // `parse_peptides2protein_method`, so any `top`-prefixed name reaching
@@ -216,14 +212,13 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
 /// piBAQ path: reuse the existing piBAQ core; emit the Python long-format table
 /// plus any requested extras (`--tpa`, `--normalize`, `--ruler`).
 ///
-/// For an enzyme whose cleavage rule is not ported to Rust (anything outside the
-/// set [`supports_pibaq_enzyme`] accepts), the Rust kernel cannot digest the
-/// proteome, so piBAQ for that enzyme is not supported here: the command fails with
-/// a clear `InvalidInput` that points to the Python wheel. The `--fasta`
-/// precondition is still enforced first, matching the native path. The default
-/// `Trypsin` path and every other ported enzyme stay on the native Rust kernel
-/// below.
-fn run_pibaq(args: &Peptides2ProteinArgs, output: &Path) -> Result<()> {
+/// The Python wheel supplies the complete theoretical-peptide map from its
+/// installed pyOpenMS catalog before this Rust aggregation path starts.
+fn run_pibaq(
+    args: &Peptides2ProteinArgs,
+    output: &Path,
+    pibaq_digest: Option<PibaqDigest>,
+) -> Result<()> {
     // Resolve the organism up front (matching Python `OrganismDescription.get`,
     // which raises when the name is unknown). The default is `human`.
     let organism = if args.organism.is_empty() {
@@ -251,22 +246,6 @@ fn run_pibaq(args: &Peptides2ProteinArgs, output: &Path) -> Result<()> {
     if !fasta.exists() {
         return Err(MokumeError::MissingInput {
             path: fasta.clone(),
-        });
-    }
-
-    // Enzymes whose cleavage rule is not ported to the Rust kernel cannot be
-    // digested here. Point the user to the Python fallback shipped in the wheel
-    // rather than silently producing wrong numbers. The `--fasta` precondition
-    // above runs first so an unported enzyme without a FASTA fails on the missing
-    // FASTA, as before.
-    if !supports_pibaq_enzyme(&args.enzyme) {
-        return Err(MokumeError::InvalidInput {
-            message: format!(
-                "piBAQ digestion enzyme '{}' is not ported to the Rust kernel. \
-Install the piBAQ extra and run the Python fallback: pip install mokume[pibaq]; \
-python -m mokume.commands.peptides2protein_pibaq --enzyme '{}' ...",
-                args.enzyme, args.enzyme
-            ),
         });
     }
 
@@ -305,7 +284,10 @@ python -m mokume.commands.peptides2protein_pibaq --enzyme '{}' ...",
         enzyme: args.enzyme.clone(),
         tpa: args.tpa,
     };
-    let rows = run_pibaq_from_peptides(&observations, &params)?;
+    let digest = pibaq_digest.ok_or_else(|| MokumeError::InvalidInput {
+        message: "piBAQ requires the Python wheel's runtime pyOpenMS FASTA digest".to_owned(),
+    })?;
+    let rows = run_pibaq_from_peptides(&observations, &params, digest)?;
 
     // Lift the piBAQ rows into the extra-aware records, attach the requested
     // post-processing columns, then emit. The piBAQ allocation math is never
@@ -1067,6 +1049,39 @@ P3,THIDPECK,S1,A,900.0\n";
     const PROTEOME_FASTA: &str =
         ">P1\nPEPTIDEAKAPEPTIDECKASHAEDPEPK\n>P2\nALYAAEK\n>P3\nTHIDPEAKATHIDPECK\n";
 
+    fn test_pibaq_digest() -> PibaqDigest {
+        PibaqDigest {
+            accession_peptides: HashMap::from([
+                (
+                    "P1".to_owned(),
+                    ["PEPTIDEAK", "APEPTIDECK", "ASHAEDPEPK"]
+                        .map(str::to_owned)
+                        .into_iter()
+                        .collect(),
+                ),
+                (
+                    "P2".to_owned(),
+                    ["ALYAAEK"].map(str::to_owned).into_iter().collect(),
+                ),
+                (
+                    "P3".to_owned(),
+                    ["THIDPEAK", "ATHIDPECK"]
+                        .map(str::to_owned)
+                        .into_iter()
+                        .collect(),
+                ),
+            ]),
+            provenance: mokume_pipeline::PibaqDigestProvenance {
+                pyopenms_version: "test".to_owned(),
+                enzyme: "Trypsin".to_owned(),
+                catalog_hash: "test".to_owned(),
+                min_aa: 7,
+                max_aa: 30,
+                missed_cleavages: 0,
+            },
+        }
+    }
+
     fn base_args(peptides: &Path, output: &Path) -> Peptides2ProteinArgs {
         Peptides2ProteinArgs {
             fasta: None,
@@ -1169,7 +1184,7 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let mut args = base_args(&peptides, &output);
         args.method = "sum".to_owned();
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, None)?;
 
         let (headers, rows) = read_table(&output)?;
         assert_eq!(
@@ -1233,11 +1248,11 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let mut csv_args = base_args(&csv_path, &csv_out);
         csv_args.method = "sum".to_owned();
-        run_peptides_to_protein(&csv_args)?;
+        run_peptides_to_protein_with_digest(&csv_args, None)?;
 
         let mut parquet_args = base_args(&parquet_path, &parquet_out);
         parquet_args.method = "sum".to_owned();
-        run_peptides_to_protein(&parquet_args)?;
+        run_peptides_to_protein_with_digest(&parquet_args, None)?;
 
         let (csv_headers, csv_rows) = read_table(&csv_out)?;
         let (parquet_headers, parquet_rows_out) = read_table(&parquet_out)?;
@@ -1259,7 +1274,7 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let mut args = base_args(&peptides, &output);
         args.method = "top2".to_owned();
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, None)?;
 
         let (headers, rows) = read_table(&output)?;
         assert_cell_close(&headers, &rows, "P1", "S1", "Intensity", 200.0)?;
@@ -1280,7 +1295,7 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let mut args = base_args(&peptides, &output);
         args.method = "top3".to_owned();
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, None)?;
 
         let (headers, rows) = read_table(&output)?;
         assert_cell_close(&headers, &rows, "P1", "S1", "Intensity", 150.0)?;
@@ -1301,7 +1316,7 @@ P3,THIDPECK,S1,A,900.0\n";
         let mut args = base_args(&peptides, &output);
         args.method = "sum".to_owned();
         args.normalize = true;
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, None)?;
 
         let (headers, rows) = read_table(&output)?;
         assert!(headers.contains(&"IntensityNorm".to_owned()));
@@ -1334,7 +1349,7 @@ P3,THIDPECK,S1,A,900.0\n";
         let mut args = base_args(&peptides, &output);
         args.method = "pibaq".to_owned();
         args.fasta = Some(fasta);
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         let (headers, rows) = read_table(&output)?;
         assert_eq!(
@@ -1383,7 +1398,7 @@ P3,THIDPECK,S1,A,900.0\n";
             args.method = "pibaq".to_owned();
             args.fasta = Some(fasta.clone());
             args.high_anchor_threshold = threshold;
-            run_peptides_to_protein(&args)?;
+            run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
             Ok(())
         };
 
@@ -1433,7 +1448,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&peptides, PEPTIDES_CSV)?;
 
         let args = base_args(&peptides, &output);
-        let Err(error) = run_peptides_to_protein(&args) else {
+        let Err(error) = run_peptides_to_protein_with_digest(&args, None) else {
             panic!("piBAQ without --fasta must fail");
         };
         assert!(matches!(error, MokumeError::InvalidInput { .. }));
@@ -1457,7 +1472,7 @@ P3,THIDPECK,S1,A,900.0\n";
         let mut args = base_args(&peptides, &output);
         args.fasta = Some(fasta);
         args.tpa = true;
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         let (headers, rows) = read_table(&output)?;
         assert!(headers.contains(&"MolecularWeight".to_owned()));
@@ -1533,7 +1548,7 @@ P3,THIDPECK,S1,A,900.0\n";
         let mut args = base_args(&peptides, &output);
         args.fasta = Some(fasta);
         args.normalize = true;
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         let (headers, rows) = read_table(&output)?;
         assert!(headers.contains(&"PiBAQNorm".to_owned()));
@@ -1579,7 +1594,7 @@ P3,THIDPECK,S1,A,900.0\n";
         args.organism = "human".to_owned();
         args.ploidy = 2;
         args.cpc = 200.0;
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         let (headers, rows) = read_table(&output)?;
         for column in [
@@ -1676,7 +1691,7 @@ P3,THIDPECK,S1,A,900.0\n";
         args.fasta = Some(fasta);
         args.ruler = true;
         assert!(matches!(
-            run_peptides_to_protein(&args),
+            run_peptides_to_protein_with_digest(&args, None),
             Err(MokumeError::InvalidInput { .. })
         ));
         Ok(())
@@ -1697,7 +1712,7 @@ P3,THIDPECK,S1,A,900.0\n";
         args.fasta = Some(fasta);
         args.organism = "martian".to_owned();
         assert!(matches!(
-            run_peptides_to_protein(&args),
+            run_peptides_to_protein_with_digest(&args, None),
             Err(MokumeError::InvalidInput { .. })
         ));
         Ok(())
@@ -1715,7 +1730,7 @@ P3,THIDPECK,S1,A,900.0\n";
             let output = dir.join(format!("{method}.tsv"));
             let mut args = base_args(&peptides, &output);
             args.method = method.to_owned();
-            run_peptides_to_protein(&args)?;
+            run_peptides_to_protein_with_digest(&args, None)?;
 
             let (headers, rows) = read_table(&output)?;
             assert_eq!(headers.first().map(String::as_str), Some(PROTEIN_NAME));
@@ -1723,56 +1738,6 @@ P3,THIDPECK,S1,A,900.0\n";
             assert_eq!(headers.get(2).map(String::as_str), Some("Intensity"));
             assert!(!rows.is_empty(), "{method} produced rows");
         }
-        Ok(())
-    }
-
-    #[test]
-    fn peptides2protein_unsupported_enzyme_errors_pointing_to_wheel() -> TestResult<()> {
-        // `CNBr` is a real protease pyOpenMS knows but the Rust port has not wired
-        // a cleavage rule for. The piBAQ path does not digest it natively and no
-        // longer delegates to Python; it fails with a clear `InvalidInput` that
-        // names the enzyme and points to the Python fallback (`mokume[pibaq]`).
-        // Supported non-Trypsin enzymes (Lys-C, Chymotrypsin, ...) still compute
-        // natively in Rust; their digests are oracle-locked in the pipeline crate.
-        let dir = temp_dir("enzyme")?;
-        let peptides = dir.join("peptides.csv");
-        let fasta = dir.join("proteome.fasta");
-        let output = dir.join("out.tsv");
-        write_file(&peptides, PEPTIDES_CSV)?;
-        write_file(&fasta, PROTEOME_FASTA)?;
-
-        let mut args = base_args(&peptides, &output);
-        args.fasta = Some(fasta);
-        args.enzyme = "CNBr".to_owned();
-
-        match run_peptides_to_protein(&args) {
-            Err(MokumeError::InvalidInput { message }) => {
-                assert!(
-                    message.contains("CNBr") && message.contains("mokume[pibaq]"),
-                    "error must name the enzyme and the wheel: {message}"
-                );
-            }
-            other => panic!("expected InvalidInput pointing to the wheel, got {other:?}"),
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn peptides2protein_unsupported_enzyme_still_requires_fasta() -> TestResult<()> {
-        // The unported-enzyme path keeps the same `--fasta` precondition the native
-        // piBAQ path enforces: an unported enzyme without a FASTA still fails with an
-        // InvalidInput error.
-        let dir = temp_dir("enzyme-nofasta")?;
-        let peptides = dir.join("peptides.csv");
-        let output = dir.join("out.tsv");
-        write_file(&peptides, PEPTIDES_CSV)?;
-
-        let mut args = base_args(&peptides, &output);
-        args.enzyme = "CNBr".to_owned();
-        let Err(error) = run_peptides_to_protein(&args) else {
-            panic!("piBAQ with an unported enzyme but no --fasta must fail");
-        };
-        assert!(matches!(error, MokumeError::InvalidInput { .. }));
         Ok(())
     }
 
@@ -1795,7 +1760,7 @@ P3,THIDPECK,S1,A,900.0\n";
         args.fasta = Some(fasta);
         args.verbose = true;
         args.qc_report = qc.clone();
-        run_peptides_to_protein(&args)?;
+        run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         // The protein table is written and carries the piBAQ column.
         let (headers, rows) = read_table(&output)?;

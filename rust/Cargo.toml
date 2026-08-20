@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/mokume-cli",
+    "crates/mokume-command",
     "crates/mokume-core",
     "crates/mokume-golden-tests",
     "crates/mokume-imputation",

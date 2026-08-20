@@ -17,7 +17,7 @@ build:
   # built from C source, so the package is platform-specific and MUST NOT be
   # noarch (an abi3 extension still only supports the platform it was built on).
   script:
-    - {{ PYTHON }} -m pip install . -vv --no-build-isolation
+    - {{ PYTHON }} -m pip install . -vv --no-build-isolation --no-deps
 
 requirements:
   build:
@@ -38,10 +38,9 @@ requirements:
     - pip
     - maturin >=1.7,<2
   run:
-    # The core wheel (the mokume._mokume compute kernel + the mokume CLI) has no
-    # third-party runtime dependency: libhdf5 is linked statically and the Rust
-    # is self-contained. The scientific periphery is installed via pip extras.
     - python
+    # piBAQ reads this installation's complete ProteaseDB catalog at runtime.
+    - pyopenms >=3.4,<4
 
 test:
   imports:
@@ -51,6 +50,7 @@ test:
     - pip
   commands:
     - pip check
+    - python -c "import mokume; assert mokume.protease_catalog()"
     - mokume --help           # the console script dispatches through run_cli
 
 about:
@@ -63,8 +63,9 @@ about:
     mokume is a proteomics quantification toolkit (piBAQ, Top3, TopN, MaxLFQ,
     normalization, imputation, differential expression, batch correction). The
     compute-heavy kernel is implemented in Rust and exposed to Python through a
-    PyO3/maturin extension (mokume._mokume); the optional Python periphery
-    (plotting, tissue maps, interactive reports) is installable via pip extras.
+    PyO3/maturin extension (mokume._mokume); pyOpenMS supplies runtime FASTA
+    digestion for piBAQ, and the optional Python periphery (plotting, tissue maps,
+    interactive reports) is installable via pip extras.
   dev_url: https://github.com/bigbio/mokume
   doc_url: https://github.com/bigbio/mokume
 

@@ -35,7 +35,7 @@ live in the Python wheel under `mokume.commands` and are reached through
 periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`,
 `mokume.de_plots`, and `mokume.interactive_report`. Plotting and reporting
 consume kernel tables, while TissueMap derives its downstream atlas from QPX
-data. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `pibaq`,
-`analysis`, or `all`) to pull in the periphery libraries. The agentic workflow
+data. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `analysis`,
+or `all`) to pull in the periphery libraries. The agentic workflow
 is provided by the [Mokume Plugin](agentic-plugin.md), whose local MCP service
 uses the default Rust-backed wheel.

@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::{create_dir_all, File};
 use std::path::{Path, PathBuf};
@@ -20,7 +21,10 @@ use mokume_core::{
     PreprocessingFilterConfig, ProteinFilterConfig, QuantMethod, RatioConfig, RunQcFilterConfig,
     RuntimeConfig,
 };
-use mokume_pipeline::{run_features_to_peptides, run_features_to_proteins};
+use mokume_pipeline::{
+    run_features_to_peptides, run_features_to_proteins, run_features_to_proteins_with_pibaq_digest,
+    PibaqDigest, PibaqDigestProvenance,
+};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 
@@ -3125,7 +3129,7 @@ fn run_synthetic_quantification(
         None
     };
 
-    run_features_to_proteins(&FeatureToProteinsConfig {
+    let config = FeatureToProteinsConfig {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
@@ -3163,7 +3167,21 @@ fn run_synthetic_quantification(
             memory: None,
             threads: Some(24),
         },
-    })?;
+    };
+    if quantification == QuantMethod::Pibaq {
+        run_features_to_proteins_with_pibaq_digest(
+            &config,
+            test_pibaq_digest(&[
+                ("P1", &["PEPTIDEAK", "APEPTIDECK", "ASHAEDPEPK"]),
+                ("P2", &["ALYAAEK"]),
+                ("P3", &["THIDPEAK", "ATHIDPECK"]),
+                ("P4A", &["GAAAPEAK", "AGAAAPECK"]),
+                ("P4B", &["GAAAPEAK", "AGAAAPECK"]),
+            ]),
+        )?;
+    } else {
+        run_features_to_proteins(&config)?;
+    }
 
     read_csv(&output)
 }
@@ -3220,7 +3238,7 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
     )?;
     write_ratio_sdrf(&sdrf)?;
 
-    run_features_to_proteins(&FeatureToProteinsConfig {
+    let config = FeatureToProteinsConfig {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
@@ -3261,7 +3279,8 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
             memory: None,
             threads: Some(24),
         },
-    })?;
+    };
+    run_features_to_proteins(&config)?;
 
     read_csv(&output)
 }
@@ -3324,7 +3343,7 @@ fn run_family_pibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
     write_synthetic_sdrf(&sdrf)?;
     write_family_fasta(&fasta)?;
 
-    run_features_to_proteins(&FeatureToProteinsConfig {
+    let config = FeatureToProteinsConfig {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
@@ -3362,7 +3381,14 @@ fn run_family_pibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
             memory: None,
             threads: Some(24),
         },
-    })?;
+    };
+    run_features_to_proteins_with_pibaq_digest(
+        &config,
+        test_pibaq_digest(&[
+            ("P5A", &["ACDEFGK", "LMNSTYK", "QASTVWK"]),
+            ("P5B", &["ACDEFGK", "LMNSTYK", "GHILMVK"]),
+        ]),
+    )?;
 
     read_csv(&output)
 }
@@ -4520,6 +4546,32 @@ fn write_synthetic_fasta(path: &Path) -> Result<(), Box<dyn Error>> {
         ),
     )?;
     Ok(())
+}
+
+fn test_pibaq_digest(entries: &[(&str, &[&str])]) -> PibaqDigest {
+    let accession_peptides = entries
+        .iter()
+        .map(|(accession, peptides)| {
+            (
+                (*accession).to_owned(),
+                peptides
+                    .iter()
+                    .map(|peptide| (*peptide).to_owned())
+                    .collect::<HashSet<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    PibaqDigest {
+        accession_peptides,
+        provenance: PibaqDigestProvenance {
+            pyopenms_version: "test".to_owned(),
+            enzyme: "Trypsin".to_owned(),
+            catalog_hash: "test".to_owned(),
+            min_aa: 7,
+            max_aa: 50,
+            missed_cleavages: 0,
+        },
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

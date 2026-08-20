@@ -44,7 +44,7 @@ requirements files are consolidated.
 | #34 | Python (pip)   | numpy <2.1.0 -> <2.3.0          | med  | verify-cargo-or-pytest-then-merge | Loosens the `numpy<2.1.0` cap in `python/pyproject.toml` (line 35). Confirm why it was pinned (coexists with `pyopenms`, a numpy-ABI-sensitive dep), then run pytest against numpy 2.2. Also update the duplicate pin in `python/requirements.txt` (line 4) or the two files drift. |
 | #35 | Rust (cargo)   | parquet 58.3.0 -> 59.0.0        | high | needs-code-changes               | COUPLED with #32 (see notes). Same 58 -> 59 major bump in the same two crates (`mokume-io`, `mokume-golden-tests`). Do not merge alone -- must move in lockstep with arrow 59. Failing checks: `test`, `pre-commit`, and all five `wheel *` jobs. |
 | #36 | Rust (cargo)   | regex 1.12.3 -> 1.12.4          | low  | merge-now                        | Patch-level bump in `mokume-pipeline`, no API change. CI already SUCCESS. Merge. |
-| #37 | Rust (cargo)   | hdf5-metno 0.12.6 -> 0.13.0     | low  | verify-cargo-or-pytest-then-merge | Minor bump of the `hdf5-metno` (features `static`) dep in `mokume-cli`. Low risk but a 0.x minor can shift API; `cargo test --workspace` in `mokume-cli` to confirm, then merge. CI currently SUCCESS. |
+| #37 | Rust (cargo)   | hdf5-metno 0.12.6 -> 0.13.0     | low  | verify-cargo-or-pytest-then-merge | Minor bump of the `hdf5-metno` (features `static`) dep in `mokume-command`. Low risk but a 0.x minor can shift API; `cargo test --workspace` in `mokume-command` to confirm, then merge. CI currently SUCCESS. |
 | #38 | Python (pip)   | mkdocs-material >=9.0 -> >=9.7.6 | low | verify-cargo-or-pytest-then-merge | Docs-only dep in `python/requirements-docs.txt`. Verify with `mkdocs build --strict` only; no code impact. Merge if strict build passes. |
 
 ## Key notes
@@ -86,8 +86,8 @@ requirements files are consolidated.
 
 - **regex #36 and hdf5-metno #37 are low-risk.** #36 is a patch bump
   (`1.12.3 -> 1.12.4`) in `mokume-pipeline` with no API surface change. #37 is a
-  minor 0.x bump (`0.12.6 -> 0.13.0`) of `hdf5-metno` in `mokume-cli`; a `cargo
-  test --workspace` covering `mokume-cli` is enough to confirm before merge. Both
+  minor 0.x bump (`0.12.6 -> 0.13.0`) of `hdf5-metno` in `mokume-command`; a `cargo
+  test --workspace` covering `mokume-command` is enough to confirm before merge. Both
   are already CI-green.
 
 ## Suggested merge order

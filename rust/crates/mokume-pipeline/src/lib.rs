@@ -136,7 +136,11 @@ struct FeatureToProteinState {
 }
 
 impl FeatureToProteinState {
-    fn new(config: &FeatureToProteinsConfig, sdrf: Option<&SdrfTable>) -> Result<Self> {
+    fn new(
+        config: &FeatureToProteinsConfig,
+        sdrf: Option<&SdrfTable>,
+        pibaq_digest: Option<PibaqDigest>,
+    ) -> Result<Self> {
         Ok(Self {
             proteins: StringIdRegistry::new(),
             peptides: StringIdRegistry::new(),
@@ -145,7 +149,7 @@ impl FeatureToProteinState {
             peptide_to_canonical: HashMap::new(),
             unique_peptides: HashMap::new(),
             export_rows: IntermediateExports::new(config),
-            aggregation: FeatureAggregation::from_config(config, sdrf)?,
+            aggregation: FeatureAggregation::from_config(config, sdrf, pibaq_digest)?,
             accepted_features: 0,
             accepted_measurements: 0,
             remove_protein_ids: Vec::new(),
@@ -1255,13 +1259,22 @@ struct AggregationMeasurement<'a> {
 }
 
 impl FeatureAggregation {
-    fn from_config(config: &FeatureToProteinsConfig, sdrf: Option<&SdrfTable>) -> Result<Self> {
+    fn from_config(
+        config: &FeatureToProteinsConfig,
+        sdrf: Option<&SdrfTable>,
+        pibaq_digest: Option<PibaqDigest>,
+    ) -> Result<Self> {
         match config.quantification {
             QuantMethod::Sum | QuantMethod::Intensity => Ok(Self::Sum(HashMap::new())),
             QuantMethod::Median => Ok(Self::Median(HashMap::new())),
             QuantMethod::Abd => Ok(Self::Abd(HashMap::new())),
             QuantMethod::SpectralCount => Ok(Self::SpectralCount(HashMap::new())),
-            QuantMethod::Pibaq => Ok(Self::Pibaq(PibaqAggregation::from_config(config)?)),
+            QuantMethod::Pibaq => Ok(Self::Pibaq(PibaqAggregation::from_digest(
+                config,
+                pibaq_digest.ok_or_else(|| {
+                    invalid_input("piBAQ requires a runtime pyOpenMS FASTA digest")
+                })?,
+            )?)),
             QuantMethod::Ratio => Ok(Self::Ratio(RatioAggregation::from_config(config, sdrf)?)),
             QuantMethod::TopN => {
                 if config.topn_peptides == 0 {
@@ -1670,8 +1683,23 @@ impl FeatureAggregation {
 }
 
 impl PibaqAggregation {
-    fn from_config(config: &FeatureToProteinsConfig) -> Result<Self> {
-        let accession_peptides = load_fasta_peptides(config)?;
+    fn from_digest(config: &FeatureToProteinsConfig, digest: PibaqDigest) -> Result<Self> {
+        info!(
+            pyopenms_version = digest.provenance.pyopenms_version,
+            enzyme = digest.provenance.enzyme,
+            catalog_hash = digest.provenance.catalog_hash,
+            min_aa = digest.provenance.min_aa,
+            max_aa = digest.provenance.max_aa,
+            missed_cleavages = digest.provenance.missed_cleavages,
+            "using runtime pyOpenMS FASTA digest"
+        );
+        let mut accession_peptides = digest.accession_peptides;
+        accession_peptides.retain(|_, peptides| !peptides.is_empty());
+        if accession_peptides.is_empty() {
+            return Err(invalid_input(
+                "FASTA did not produce theoretical peptides for piBAQ",
+            ));
+        }
         let peptide_accessions = invert_peptide_index(&accession_peptides);
         let auto_families = discover_families(
             &accession_peptides,
@@ -4470,14 +4498,32 @@ pub struct PibaqFromPeptidesParams {
     pub high_anchor_threshold: usize,
     /// Optional YAML overrides for protein-family grouping.
     pub families_yaml: Option<PathBuf>,
-    /// Digestion enzyme name (pyOpenMS canonical, e.g. `Trypsin`, `Lys-C`,
-    /// `Chymotrypsin`); resolved through `cleavage_rule`.
+    /// Digestion enzyme name registered in the runtime pyOpenMS catalog.
     pub enzyme: String,
     /// Compute the TPA `MolecularWeight` + `TPA` columns (Python `--tpa`). When
     /// `true`, every returned row carries `Some` molecular-weight and TPA
     /// values; when `false` those fields are `None` and the piBAQ path is
     /// unchanged.
     pub tpa: bool,
+}
+
+/// Runtime pyOpenMS metadata attached to one theoretical FASTA digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PibaqDigestProvenance {
+    pub pyopenms_version: String,
+    pub enzyme: String,
+    pub catalog_hash: String,
+    pub min_aa: usize,
+    pub max_aa: usize,
+    pub missed_cleavages: usize,
+}
+
+/// The complete canonical protein -> theoretical peptide mapping produced by
+/// the pyOpenMS installation that accompanies the wheel.
+#[derive(Debug, Clone)]
+pub struct PibaqDigest {
+    pub accession_peptides: HashMap<String, HashSet<String>>,
+    pub provenance: PibaqDigestProvenance,
 }
 
 /// One observed peptide measurement feeding [`run_pibaq_from_peptides`].
@@ -4517,22 +4563,15 @@ pub struct PibaqProteinRow {
     pub tpa: Option<f64>,
 }
 
-/// Compute per-protein piBAQ from a peptide-level table, reusing the existing
-/// piBAQ core (`PibaqAggregation`). This is the engine behind the
-/// `peptides2protein --method pibaq` CLI command. The returned rows carry the
-/// same `NormIntensity` / `PiBAQ` / `FamilyId` / `EvidenceLevel` / `FamilySize`
-/// columns that the Python `peptides_to_protein` emits; the TPA / ProteomicRuler
-/// / normalize-pibaq extras are intentionally not computed here.
+/// Compute piBAQ from a peptide table using a complete theoretical-peptide map
+/// produced by the wheel's runtime pyOpenMS catalog.
 pub fn run_pibaq_from_peptides(
     observations: &[PeptideObservation],
     params: &PibaqFromPeptidesParams,
+    digest: PibaqDigest,
 ) -> Result<Vec<PibaqProteinRow>> {
-    // Reuse the exact piBAQ setup `features2proteins` performs by routing through
-    // `PibaqAggregation::from_config`; only the piBAQ-relevant fields matter.
     let config = pibaq_only_config(params);
-    let mut aggregation = PibaqAggregation::from_config(&config)?;
-    // TPA needs per-canonical molecular weights; load them once, only when
-    // requested, so the piBAQ-only path stays untouched.
+    let mut aggregation = PibaqAggregation::from_digest(&config, digest)?;
     if params.tpa {
         aggregation.mw_map = Some(load_fasta_mw(&params.fasta)?);
     }
@@ -4575,7 +4614,7 @@ pub fn run_pibaq_from_peptides(
 
 /// Build a `FeatureToProteinsConfig` that exercises only the piBAQ digest path.
 /// The non-piBAQ fields use defaults; they are never consumed by
-/// `PibaqAggregation::from_config`.
+/// `PibaqAggregation`.
 fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
@@ -4622,11 +4661,31 @@ fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfi
 }
 
 pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> {
+    if config.quantification == QuantMethod::Pibaq {
+        validate_features_to_proteins(config)?;
+        return Err(invalid_input(
+            "piBAQ requires the Python wheel's runtime pyOpenMS FASTA digest",
+        ));
+    }
     let threads = config.runtime.threads.or(config.directlfq.cores);
-    threading::install(threads, || run_features_to_proteins_inner(config))
+    threading::install(threads, || run_features_to_proteins_inner(config, None))
 }
 
-fn run_features_to_proteins_inner(config: &FeatureToProteinsConfig) -> Result<()> {
+/// Run `features2proteins` with a complete runtime pyOpenMS digest for piBAQ.
+pub fn run_features_to_proteins_with_pibaq_digest(
+    config: &FeatureToProteinsConfig,
+    digest: PibaqDigest,
+) -> Result<()> {
+    let threads = config.runtime.threads.or(config.directlfq.cores);
+    threading::install(threads, move || {
+        run_features_to_proteins_inner(config, Some(digest))
+    })
+}
+
+fn run_features_to_proteins_inner(
+    config: &FeatureToProteinsConfig,
+    pibaq_digest: Option<PibaqDigest>,
+) -> Result<()> {
     // Fold `--de-contrasts-file` into the contrast list up front (mirroring
     // Python's CLI) so validation and the DE stage see one resolved list; the
     // owned, expanded config then shadows the borrowed one for the rest of the run.
@@ -4669,7 +4728,7 @@ fn run_features_to_proteins_inner(config: &FeatureToProteinsConfig) -> Result<()
     )?;
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let dataset_normalization = dataset_sample_normalization_method(config)?;
-    let mut state = FeatureToProteinState::new(config, sdrf.as_ref())?;
+    let mut state = FeatureToProteinState::new(config, sdrf.as_ref(), pibaq_digest)?;
     stream_input_features(&config.input, sdrf.as_ref(), |feature| {
         state.ingest(&feature, sdrf.as_ref(), config.filtering, intensity_factors)
     })?;
@@ -5025,7 +5084,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         )?;
     }
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
-    let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref())?;
+    let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref(), None)?;
     // `--keep-shared-peptides`: keep non-unique rows during ingest (Python skips
     // the `unique == 1` filter) and skip the per-protein `min_unique` gate at
     // export by forcing the effective threshold to 0 (Python skips the
@@ -5470,10 +5529,6 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
             return unsupported("ion-alignment");
         }
     }
-    if config.quantification == QuantMethod::Pibaq && !supports_pibaq_enzyme(&config.pibaq.enzyme) {
-        return unsupported("pibaq-enzyme");
-    }
-
     match config.quantification {
         QuantMethod::Sum
         | QuantMethod::Median
@@ -6570,13 +6625,6 @@ fn sample_condition(sample: &str, sdrf_record: Option<&SdrfRecord>) -> String {
         .unwrap_or_else(|| sample.to_owned())
 }
 
-/// Whether `enzyme` (a pyOpenMS canonical name, case-insensitive) has a ported
-/// cleavage rule for the piBAQ FASTA digest. Shared with the `peptides2protein`
-/// CLI so it can reject unported enzymes with a stable stage before loading.
-pub fn supports_pibaq_enzyme(enzyme: &str) -> bool {
-    cleavage_rule(enzyme).is_some()
-}
-
 fn unsupported(stage: &'static str) -> Result<()> {
     Err(MokumeError::NotImplemented { stage })
 }
@@ -6787,50 +6835,6 @@ fn load_fasta_mw(fasta: &Path) -> Result<HashMap<String, f64>> {
     Ok(mw_map)
 }
 
-fn load_fasta_peptides(
-    config: &FeatureToProteinsConfig,
-) -> Result<HashMap<String, HashSet<String>>> {
-    let Some(fasta) = &config.input.fasta else {
-        return Err(invalid_input(
-            "piBAQ quantification requires --fasta option",
-        ));
-    };
-    let contents = read_to_string(fasta).map_err(|source| MokumeError::Io {
-        path: fasta.clone(),
-        source,
-    })?;
-    let rule = cleavage_rule(&config.pibaq.enzyme).ok_or_else(|| {
-        invalid_input(format!(
-            "piBAQ enzyme `{}` is not supported",
-            config.pibaq.enzyme
-        ))
-    })?;
-    let mut accession_peptides = HashMap::<String, HashSet<String>>::new();
-    for (identifier, sequence) in parse_fasta_entries(&contents) {
-        let accession = canonicalize_isoform(&parse_protein_accession(&identifier));
-        let peptides = digest_protein(
-            &strip_nonstandard_amino_acids(&sequence),
-            &rule,
-            config.filtering.min_aa,
-            config.pibaq.max_aa,
-        );
-        if peptides.is_empty() {
-            continue;
-        }
-        accession_peptides
-            .entry(accession)
-            .or_default()
-            .extend(peptides);
-    }
-    if accession_peptides.is_empty() {
-        return Err(invalid_input(format!(
-            "FASTA `{}` did not produce theoretical peptides for piBAQ",
-            fasta.display()
-        )));
-    }
-    Ok(accession_peptides)
-}
-
 fn parse_fasta_entries(contents: &str) -> Vec<(String, String)> {
     let mut entries = Vec::new();
     let mut current_identifier: Option<String> = None;
@@ -6881,117 +6885,6 @@ fn canonicalize_isoform(accession: &str) -> String {
         base.to_owned()
     } else {
         accession.to_owned()
-    }
-}
-
-/// Cleavage specificity for FASTA digestion, reproducing the pyOpenMS
-/// `ProteaseDigestion` regexes for the enzymes mokume's piBAQ path supports.
-/// `residues` are the standard amino acids that trigger a cut: the pyOpenMS sets
-/// (e.g. Trypsin `(?<=[KRX])(?!P)`) reduce to these once `_strip_nonstandard_aa`
-/// removes `X`/`B`/`Z`/`J`/`U`/`O` before the digest. `cut_before` cuts on the
-/// N-terminal side of a residue (lookahead `(?=[..])`, e.g. Asp-N); otherwise on
-/// the C-terminal side (lookbehind `(?<=[..])`). `block_before_proline` suppresses
-/// a C-terminal cut that is followed by proline (`(?!P)`).
-struct CleavageRule {
-    residues: &'static [char],
-    cut_before: bool,
-    block_before_proline: bool,
-}
-
-/// Map an enzyme name (the pyOpenMS canonical name, case-insensitive) to its
-/// cleavage rule, or `None` when the enzyme is not ported. Each rule is verified
-/// against the pyOpenMS `ProteaseDigestion` digest in the unit tests.
-fn cleavage_rule(enzyme: &str) -> Option<CleavageRule> {
-    let (residues, cut_before, block_before_proline): (&'static [char], bool, bool) =
-        match enzyme.trim().to_ascii_lowercase().as_str() {
-            "trypsin" => (&['K', 'R'], false, true),
-            "trypsin/p" => (&['K', 'R'], false, false),
-            "lys-c" => (&['K'], false, true),
-            "lys-c/p" => (&['K'], false, false),
-            "arg-c" => (&['R'], false, true),
-            "arg-c/p" => (&['R'], false, false),
-            "chymotrypsin" => (&['F', 'Y', 'W', 'L'], false, true),
-            "chymotrypsin/p" => (&['F', 'Y', 'W', 'L'], false, false),
-            "glutamyl endopeptidase" => (&['D', 'E'], false, false),
-            "asp-n" => (&['D'], true, false),
-            "lys-n" => (&['K'], true, false),
-            "pepsina" => (&['F', 'L'], false, false),
-            // Additional pyOpenMS proteases whose `getRegEx()` reduces (after the
-            // X/B/Z/J/U/O strip) to a single-residue-set rule. Each is oracle-
-            // locked against pyOpenMS `ProteaseDigestion` in the unit tests.
-            "leukocyte elastase" => (&['A', 'L', 'I', 'V'], false, true),
-            "clostripain/p" => (&['R'], false, false),
-            "trypchymo" => (&['F', 'Y', 'W', 'L', 'K', 'R'], false, true),
-            "glu-c+p" => (&['D', 'E'], false, true),
-            "alpha-lytic protease" => (&['T', 'A', 'S', 'V'], false, false),
-            "pepsina + p" => (&['F', 'L'], false, true),
-            "elastase-trypsin-chymotrypsin" => {
-                (&['A', 'L', 'I', 'V', 'K', 'R', 'W', 'F', 'Y'], false, true)
-            }
-            "asp-n_ambic" => (&['D', 'E'], true, false),
-            "proline-endopeptidase/hkr" => (&['P'], false, false),
-            _ => return None,
-        };
-    Some(CleavageRule {
-        residues,
-        cut_before,
-        block_before_proline,
-    })
-}
-
-fn digest_protein(
-    sequence: &str,
-    rule: &CleavageRule,
-    min_aa: usize,
-    max_aa: usize,
-) -> HashSet<String> {
-    let residues = sequence.chars().collect::<Vec<_>>();
-    let mut peptides = HashSet::new();
-    let mut start = 0;
-    for index in 0..residues.len() {
-        if is_cleavage_boundary(rule, &residues, index) {
-            push_digest_peptide(&residues, start, index + 1, min_aa, max_aa, &mut peptides);
-            start = index + 1;
-        }
-    }
-    push_digest_peptide(
-        &residues,
-        start,
-        residues.len(),
-        min_aa,
-        max_aa,
-        &mut peptides,
-    );
-    peptides
-}
-
-/// Whether a cut falls between residue `index` and `index + 1`.
-fn is_cleavage_boundary(rule: &CleavageRule, residues: &[char], index: usize) -> bool {
-    if rule.cut_before {
-        // Cut on the N-terminal side of the next residue (lookahead).
-        residues
-            .get(index + 1)
-            .is_some_and(|next| rule.residues.contains(next))
-    } else {
-        // Cut on the C-terminal side of this residue (lookbehind), unless it is
-        // followed by proline and the enzyme blocks that.
-        rule.residues.contains(&residues[index])
-            && (!rule.block_before_proline
-                || residues.get(index + 1).is_none_or(|next| *next != 'P'))
-    }
-}
-
-fn push_digest_peptide(
-    residues: &[char],
-    start: usize,
-    end: usize,
-    min_aa: usize,
-    max_aa: usize,
-    peptides: &mut HashSet<String>,
-) {
-    let length = end.saturating_sub(start);
-    if length >= min_aa && length <= max_aa {
-        peptides.insert(residues[start..end].iter().collect());
     }
 }
 
@@ -7870,14 +7763,13 @@ mod tests {
     use mokume_normalization::SampleNormalizationMethod;
 
     use super::{
-        batch_column_values_for_samples, cleavage_rule, digest_protein, expand_de_contrasts_file,
-        extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
-        irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
-        irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
-        resolve_de_method, resolve_irs_autodetect_channel, run_features_to_proteins,
-        tech_replicate_of, validate_batch_sizes, validate_features_to_proteins,
-        validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
-        ProteinValues,
+        batch_column_values_for_samples, expand_de_contrasts_file, extract_sdrf_covariates,
+        factorize_batch_labels, irs_by_mixture_scale_from_runs, irs_global_scale_from_runs,
+        irs_mixture_first_token, irs_tech_replicate_of, irs_two_stage_scale_from_runs,
+        load_normalization_proteins, match_sdrf_column, resolve_de_method,
+        resolve_irs_autodetect_channel, run_features_to_proteins, tech_replicate_of,
+        validate_batch_sizes, validate_features_to_proteins, validate_implemented_subset, CellKey,
+        IrsStat, NormalizationFactorCollector, ProteinMatrix, ProteinValues,
     };
 
     #[test]
@@ -7976,7 +7868,7 @@ mod tests {
         let mut config = base_config(parquet);
         config.quantification = QuantMethod::Pibaq;
 
-        let error = validate_features_to_proteins(&config).err();
+        let error = run_features_to_proteins(&config).err();
 
         assert_eq!(
             error.map(|error| error.to_string()).as_deref(),
@@ -8623,70 +8515,6 @@ mod tests {
         );
         assert_eq!(validate_batch_sizes(vec![0, 0, 0]), None); // a single batch
         assert_eq!(validate_batch_sizes(vec![0, 0, 1]), None); // batch 1 has one sample
-    }
-
-    #[test]
-    fn digest_protein_matches_pyopenms_oracle_per_enzyme() {
-        // Oracle digests captured from pyOpenMS `ProteaseDigestion` on the
-        // (already nonstandard-stripped) sequence, min_aa=7 max_aa=30
-        // (`/tmp/mokume-enzyme-oracle/gen.py`, run in the Bigbio env).
-        const SEQ: &str =
-            "MKAAAAAAAKPGGGGGGGRSSSSSSSRPTTTTTTTDNNNNNNNEQQQQQQQFHHHHHHHYIIIIIIIWVVVVVVVLCCCCCCCK";
-        let cases: &[(&str, &[&str])] = &[
-            ("Trypsin", &["AAAAAAAKPGGGGGGGR"]),
-            ("Trypsin/P", &["AAAAAAAK", "PGGGGGGGR", "SSSSSSSR"]),
-            ("Lys-C", &[]),
-            ("Lys-C/P", &["AAAAAAAK"]),
-            ("Arg-C", &["MKAAAAAAAKPGGGGGGGR"]),
-            ("Arg-C/P", &["MKAAAAAAAKPGGGGGGGR", "SSSSSSSR"]),
-            (
-                "Chymotrypsin",
-                &["CCCCCCCK", "HHHHHHHY", "IIIIIIIW", "VVVVVVVL"],
-            ),
-            (
-                "Chymotrypsin/P",
-                &["CCCCCCCK", "HHHHHHHY", "IIIIIIIW", "VVVVVVVL"],
-            ),
-            ("glutamyl endopeptidase", &["NNNNNNNE"]),
-            ("Asp-N", &[]),
-            ("Lys-N", &["KAAAAAAA"]),
-            ("PepsinA", &["CCCCCCCK", "HHHHHHHYIIIIIIIWVVVVVVVL"]),
-            ("leukocyte elastase", &["CCCCCCCK"]),
-            ("Clostripain/P", &["MKAAAAAAAKPGGGGGGGR", "SSSSSSSR"]),
-            (
-                "TrypChymo",
-                &[
-                    "AAAAAAAKPGGGGGGGR",
-                    "CCCCCCCK",
-                    "HHHHHHHY",
-                    "IIIIIIIW",
-                    "VVVVVVVL",
-                ],
-            ),
-            ("Glu-C+P", &["NNNNNNNE"]),
-            ("Alpha-lytic protease", &["KPGGGGGGGRS", "LCCCCCCCK"]),
-            ("PepsinA + P", &["CCCCCCCK", "HHHHHHHYIIIIIIIWVVVVVVVL"]),
-            (
-                "elastase-trypsin-chymotrypsin",
-                &["CCCCCCCK", "HHHHHHHY", "KPGGGGGGGR"],
-            ),
-            ("Asp-N_ambic", &["DNNNNNNN"]),
-            (
-                "proline-endopeptidase/HKR",
-                &["GGGGGGGRSSSSSSSRP", "MKAAAAAAAKP"],
-            ),
-        ];
-        for (enzyme, expected) in cases {
-            let Some(rule) = cleavage_rule(enzyme) else {
-                panic!("{enzyme} should have a cleavage rule");
-            };
-            let got = digest_protein(SEQ, &rule, 7, 30);
-            let want: HashSet<String> = expected.iter().map(|pep| (*pep).to_string()).collect();
-            assert_eq!(got, want, "enzyme {enzyme}");
-        }
-        // Case-insensitive names resolve; an unported enzyme has no rule.
-        assert!(cleavage_rule("trypsin").is_some());
-        assert!(cleavage_rule("CNBr").is_none());
     }
 
     fn covariate_fixture() -> Result<SdrfRawTable, Box<dyn std::error::Error>> {

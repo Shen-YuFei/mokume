@@ -299,8 +299,8 @@ Use `--method top5` or `--method top10` for Top5 or Top10-style quantification; 
     `--topn_n` existed in mokume 0.1.0, so scripts written against that release
     and passing it need updating.
 
-!!! note "piBAQ for unported enzymes lives in the wheel"
-    The native piBAQ path digests proteins for the ported pyOpenMS enzymes (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...), oracle-locked against pyOpenMS. For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific cleavage, ...) the kernel has no cleavage rule and fails with an error pointing to the wheel: `mokume.peptides2protein_pibaq(peptides=..., fasta=..., enzyme="CNBr", output=...)` (the `pibaq` extra), which computes the whole piBAQ table in pure Python.
+!!! note "piBAQ uses the installed pyOpenMS catalog"
+    Both piBAQ commands query the installed pyOpenMS `ProteaseDB` at runtime and support its complete catalog. Python digests the FASTA and passes the full protein-to-theoretical-peptide map into Rust; there is no separate unported-enzyme branch or `pibaq` extra. At `debug` or `info` log level, the run log records the pyOpenMS version, canonical enzyme, catalog SHA-256, peptide-length bounds, and missed-cleavage count.
 
 !!! note "`--verbose` no longer draws a QC PDF"
     QC plotting moved to the wheel. On the piBAQ path `--verbose` prints a one-line pointer to `mokume.peptides2protein_qc(protein_table=..., qc_report=...)` (the `plotting` extra), which draws the same density / box plots from the kernel's output table; it writes no PDF itself.

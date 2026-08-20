@@ -129,13 +129,12 @@ mokume.peptides2protein(
 ```
 
 !!! note "piBAQ enzyme coverage and the QC report"
-    piBAQ digests natively in Rust for the ported enzymes (Trypsin[/P], Lys-C[/P],
-    Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...). For any other
-    enzyme pyOpenMS knows (CNBr, V8-DE, ...) the kernel has no cleavage rule and
-    the command errors with a pointer to the pure-Python fallback
-    `mokume.peptides2protein_pibaq` (`pibaq` extra). The `--qc_report` PDF is plotting
-    periphery: `--verbose` prints a one-line pointer to `mokume.peptides2protein_qc`
-    (`plotting` extra), which draws the density / box plots from the kernel's table.
+    piBAQ reads the complete protease catalog from the installed pyOpenMS runtime,
+    including context-dependent rules, unspecific cleavage, and no cleavage. Python
+    supplies the theoretical-peptide map; Rust performs shared-peptide allocation,
+    family handling, denominators, TPA, normalization, and output. The `--qc_report`
+    PDF is plotting periphery: `--verbose` prints a one-line pointer to
+    `mokume.peptides2protein_qc` (`plotting` extra).
 
 ### TopN
 

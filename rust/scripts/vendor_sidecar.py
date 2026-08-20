@@ -51,17 +51,17 @@ allow-list:
       Trimmed package inits: only the surviving vendored submodules are re-exported
       (FASTA / IRS / piBAQ respectively), via lazy ``__getattr__``; the Rust-ported
       methods and non-vendored submodules are dropped on purpose.
-  io/fasta.py
   imputation/censored.py
   imputation/methods.py
   imputation/missforest.py
-      Eager top-level ``pyopenms`` / ``scikit-learn`` imports with the optional-
-      dependency ``try/except ImportError`` guards removed (the wheel bundles those
-      deps as hard requirements). Same computation; only the import ceremony
-      differs.
+      Eager top-level scikit-learn imports with the optional-dependency
+      ``try/except ImportError`` guards removed. scikit-learn comes from the
+      periphery extras that expose these imputation modules. Same computation;
+      only the import ceremony differs.
 
 Sidecar-only files (exist ONLY in ``rust/python/mokume`` — no canonical
-counterpart, so never synced): ``__main__.py``, ``commands/de_plots.py``,
+counterpart, so never synced): ``__main__.py``, ``_pibaq_digest.py``,
+``commands/de_plots.py``,
 ``commands/interactive_report.py``, ``commands/peptides2protein_pibaq.py``,
 ``commands/peptides2protein_qc.py``.
 
@@ -104,6 +104,7 @@ SHARED_FILES: tuple[str, ...] = (
     "imputation/impseqrob.py",
     "imputation/qrilc.py",
     "imputation/seqknn.py",
+    "io/fasta.py",
     "model/__init__.py",
     "model/batch_correction.py",
     "model/labeling.py",
@@ -152,7 +153,6 @@ INTENTIONALLY_EXCLUDED: tuple[str, ...] = (
     "imputation/methods.py",
     "imputation/missforest.py",
     "io/__init__.py",
-    "io/fasta.py",
     "normalization/__init__.py",
     "quantification/__init__.py",
 )

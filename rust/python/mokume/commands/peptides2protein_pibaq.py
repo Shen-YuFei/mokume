@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Pure-Python piBAQ command for digestion enzymes outside the Rust-ported set.
+"""Legacy full-Python piBAQ reference command.
 
-The Rust ``peptides2protein`` piBAQ path natively computes the protein table for
-the enzymes whose pyOpenMS cleavage rules are ported (Trypsin[/P], Lys-C[/P],
-Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA). pyOpenMS knows many
-more proteases (CNBr, V8-DE, unspecific cleavage, ...); for those the Rust kernel
-has no cleavage rule, so the mokume wheel computes the whole piBAQ table here in
-pure Python, calling ``mokume.quantification.pibaq.peptides_to_protein`` exactly
-as the upstream Python CLI ``mokume peptides2protein --method pibaq`` would.
+The normal Rust-backed ``peptides2protein`` and ``features2proteins`` piBAQ paths
+support every protease registered in the installed pyOpenMS ``ProteaseDB``.
+This module retains the upstream full-Python implementation as a reference path;
+it is not an enzyme fallback.
 
 Design (same "copy-py" provenance as ``peptides2protein_qc.py``): no compute is
 duplicated in Rust here -- the command calls the first-class
-``mokume.quantification.pibaq`` and forwards the original argv. The output is ``res.to_csv(output, sep='\t')``
-inside ``peptides_to_protein``, i.e. byte-for-byte the same TSV schema the Rust
-native path writes (ProteinName, SampleID, Condition, NormIntensity, PiBAQ,
+``mokume.quantification.pibaq`` and forwards the original argv. The output is
+``res.to_csv(output, sep='\t')`` inside ``peptides_to_protein``, i.e.
+byte-for-byte the same TSV schema the Rust native path writes (ProteinName,
+SampleID, Condition, NormIntensity, PiBAQ,
 FamilyId, EvidenceLevel, FamilySize, plus the optional TPA / normalize / ruler
 columns), so a downstream consumer cannot tell which branch produced it.
 
@@ -50,9 +48,8 @@ import sys
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
         description=(
-            "Compute the peptides2protein piBAQ table in pure Python via "
-            "mokume.quantification.pibaq, for enzymes outside the "
-            "Rust-ported set."
+            "Compute the peptides2protein piBAQ table through the legacy "
+            "full-Python reference implementation."
         )
     )
     parser.add_argument(
@@ -112,7 +109,7 @@ def main(argv=None):
         raise SystemExit(
             "piBAQ command aborted: the mokume package could not be imported "
             "({0}). Install its third-party dependencies with: "
-            "pip install mokume[pibaq]".format(exc)
+            "pip install mokume[all]".format(exc)
         )
 
     # Mirror the Python CLI ``peptides2protein`` piBAQ branch exactly: it forwards

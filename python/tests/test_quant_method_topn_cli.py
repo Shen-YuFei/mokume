@@ -3,8 +3,8 @@
 N used to travel in a companion option (``--topn`` / ``--topn_n``), which meant
 one N had two spellings and, in the Rust kernel, ``top3 --topn 5`` silently ran
 Top5 -- the digits in the method name were decorative. N now lives in the method
-name alone. These tests pin that contract on the Python side; the Rust CLI is
-held to the same one by ``mokume-cli``'s own suite.
+name alone. These tests pin that contract on the Python side; the internal Rust
+``mokume-command`` crate is held to the same one by its own suite.
 """
 
 from pathlib import Path

@@ -6,9 +6,13 @@ import logging
 from collections import defaultdict
 from typing import Dict, List, Set, Tuple
 
-from pyopenms import AASequence, FASTAFile, ProteaseDigestion
+import pyopenms
 
 from mokume.core.constants import build_accession_map, get_accession
+
+AASequence = getattr(pyopenms, "AASequence")
+FASTAFile = getattr(pyopenms, "FASTAFile")
+ProteaseDigestion = getattr(pyopenms, "ProteaseDigestion")
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -371,6 +375,7 @@ def digest_fasta_full(
     fasta_proteins = load_fasta(fasta)
     digestor = ProteaseDigestion()
     digestor.setEnzyme(enzyme)
+    digestor.setMissedCleavages(0)
 
     accession_to_peptides: Dict[str, Set[str]] = {}
     accession_to_mw: Dict[str, float] = {}

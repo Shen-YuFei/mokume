@@ -24,7 +24,7 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
 # Reuse the shared clap parsing + dispatch via `run_from_args`, so the flag ->
 # config mapping is not duplicated in the PyO3 bindings.
-mokume-cli = { path = "../mokume-cli" }
+mokume-command = { path = "../mokume-command" }
 mokume-core = { path = "../mokume-core" }
 mokume-pipeline = { path = "../mokume-pipeline" }
 mokume-stats = { path = "../mokume-stats" }

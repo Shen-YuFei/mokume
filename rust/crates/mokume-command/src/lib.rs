@@ -17,6 +17,7 @@ use mokume_core::{
 };
 use mokume_pipeline::{
     resolve_irs_autodetect_channel, run_features_to_peptides, run_features_to_proteins,
+    run_features_to_proteins_with_pibaq_digest, PibaqDigest,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -59,6 +60,16 @@ impl LogLevel {
             Self::Warn => "warn",
         }
     }
+}
+
+/// The FASTA digestion requested by a parsed piBAQ command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PibaqDigestRequest {
+    pub fasta: PathBuf,
+    pub enzyme: String,
+    pub min_aa: usize,
+    pub max_aa: usize,
+    pub missed_cleavages: usize,
 }
 
 #[derive(Debug, Subcommand)]
@@ -887,13 +898,53 @@ fn split_ensemble_methods(value: Option<String>) -> Option<Vec<String>> {
 }
 
 /// Dispatch a fully-built [`Cli`] to its subcommand.
-fn dispatch(cli: Cli) -> mokume_core::Result<()> {
+fn dispatch(cli: Cli, pibaq_digest: Option<PibaqDigest>) -> mokume_core::Result<()> {
     init_logging(cli.log_level, cli.log_file).and_then(|()| match cli.command {
-        Commands::Features2Proteins(args) => dispatch_features_to_proteins(args.into_config()),
+        Commands::Features2Proteins(args) => {
+            dispatch_features_to_proteins(args.into_config(), pibaq_digest)
+        }
         Commands::Features2Peptides(args) => dispatch_features_to_peptides(&args),
-        Commands::Peptides2Protein(args) => peptides2protein::run_peptides_to_protein(&args),
+        Commands::Peptides2Protein(args) => {
+            peptides2protein::run_peptides_to_protein_with_digest(&args, pibaq_digest)
+        }
         Commands::CorrectBatches(args) => correct_batches::run_correct_batches(&args),
     })
+}
+
+/// Parse an argv vector and return the runtime pyOpenMS digest request when the
+/// selected command is piBAQ. Parse/help errors return `None`; the normal CLI
+/// entry point remains authoritative for rendering those errors.
+pub fn pibaq_digest_request_from_args<I, T>(args: I) -> Option<PibaqDigestRequest>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let cli = Cli::try_parse_from(args).ok()?;
+    match cli.command {
+        Commands::Features2Proteins(args) if args.quant_method.method == QuantMethod::Pibaq => {
+            let fasta = args.fasta?;
+            fasta.is_file().then_some(PibaqDigestRequest {
+                fasta,
+                enzyme: args.pibaq_enzyme,
+                min_aa: args.min_aa,
+                max_aa: args.pibaq_max_aa,
+                missed_cleavages: 0,
+            })
+        }
+        Commands::Peptides2Protein(args)
+            if args.method.eq_ignore_ascii_case("pibaq") && args.output.is_some() =>
+        {
+            let fasta = args.fasta?;
+            fasta.is_file().then_some(PibaqDigestRequest {
+                fasta,
+                enzyme: args.enzyme,
+                min_aa: args.min_aa,
+                max_aa: args.max_aa,
+                missed_cleavages: 0,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Library entry point used by the internal `mokume-py` PyO3 crate: parse an
@@ -908,7 +959,22 @@ where
     let cli = Cli::try_parse_from(args).map_err(|error| MokumeError::InvalidInput {
         message: error.to_string(),
     })?;
-    dispatch(cli)
+    dispatch(cli, None)
+}
+
+/// Parse and run a command with a runtime pyOpenMS theoretical-peptide map.
+pub fn run_from_args_with_pibaq_digest<I, T>(
+    args: I,
+    digest: PibaqDigest,
+) -> mokume_core::Result<()>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let cli = Cli::try_parse_from(args).map_err(|error| MokumeError::InvalidInput {
+        message: error.to_string(),
+    })?;
+    dispatch(cli, Some(digest))
 }
 
 /// Console-script entry point for the `mokume` wheel: parse an explicit argument
@@ -922,7 +988,7 @@ where
     T: Into<OsString> + Clone,
 {
     match Cli::try_parse_from(args) {
-        Ok(cli) => match dispatch(cli) {
+        Ok(cli) => match dispatch(cli, None) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("{error}");
@@ -938,13 +1004,40 @@ where
     }
 }
 
+/// Console-script entry point with a runtime pyOpenMS theoretical-peptide map.
+pub fn run_cli_from_args_with_pibaq_digest<I, T>(args: I, digest: PibaqDigest) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    match Cli::try_parse_from(args) {
+        Ok(cli) => match dispatch(cli, Some(digest)) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        },
+        Err(error) => {
+            let _ = error.print();
+            error.exit_code()
+        }
+    }
+}
+
 /// Run `features2proteins`: the Rust pipeline is pure-compute. It writes the
 /// protein-matrix CSV and, when `--de-output` is set, one differential-expression
 /// result CSV per contrast. Plotting, the interactive HTML report, and the other
 /// visualization periphery now live in the Python wheel
 /// (`python/mokume/commands/`) and are no longer invoked from here.
-fn dispatch_features_to_proteins(config: FeatureToProteinsConfig) -> mokume_core::Result<()> {
-    run_features_to_proteins(&config)
+fn dispatch_features_to_proteins(
+    config: FeatureToProteinsConfig,
+    pibaq_digest: Option<PibaqDigest>,
+) -> mokume_core::Result<()> {
+    match pibaq_digest {
+        Some(digest) => run_features_to_proteins_with_pibaq_digest(&config, digest),
+        None => run_features_to_proteins(&config),
+    }
 }
 
 fn dispatch_features_to_peptides(args: &Features2PeptidesArgs) -> mokume_core::Result<()> {
@@ -1205,6 +1298,7 @@ fn init_logging_once(level: LogLevel, log_file: Option<PathBuf>) -> mokume_core:
         })?;
         if let Err(error) = tracing_subscriber::fmt()
             .with_env_filter(filter)
+            .with_ansi(false)
             .with_writer(Mutex::new(file))
             .try_init()
         {

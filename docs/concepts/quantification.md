@@ -17,9 +17,10 @@ mokume supports multiple protein quantification methods, each suited to differen
 | **Median** | Median of peptide intensities | No | `median` |
 | **Spectral Count** | Count of distinct peptides per (protein, sample) | No | `spectral_count` |
 
-All methods are implemented in the native Rust kernel (no third-party Python
-extras). MaxLFQ and DirectLFQ are native Rust ports — DirectLFQ is no longer a
-separate Python dependency.
+All aggregation methods run in the Rust kernel. piBAQ obtains its theoretical
+peptide map from the base pyOpenMS dependency; the other methods need no Python
+compute dependency. MaxLFQ and DirectLFQ are native Rust ports — DirectLFQ is no
+longer a separate Python dependency.
 
 ## Choosing a Method
 
@@ -110,10 +111,10 @@ piBAQ requires a **FASTA file** to compute theoretical peptide counts via in-sil
     ```
 
 !!! note
-    piBAQ enzymes outside the Rust-ported pyOpenMS set (e.g. `CNBr`, or
-    context-dependent rules like `proline endopeptidase`) are computed in pure
-    Python via `mokume.peptides2protein_pibaq` (`pip install mokume[pibaq]`); the
-    kernel errors with a pointer there.
+    piBAQ uses every protease registered by the installed pyOpenMS runtime,
+    including `CNBr` and context-dependent rules such as
+    `proline endopeptidase`. Python supplies the complete theoretical-peptide
+    map and Rust performs the piBAQ aggregation.
 
 The piBAQ output adds three metadata columns to the per-protein long-format table so users can audit protein-family support:
 

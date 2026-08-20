@@ -4,14 +4,15 @@
 //! `rust/python/mokume/` package imports. It is the FFI boundary between the Rust
 //! compute crates and the Python periphery (plotting / tissue maps / reports).
 //!
-//! The compute commands are reached through [`mokume_cli::run_from_args`], so
+//! The compute commands are reached through [`mokume_command::run_from_args`], so
 //! clap parsing and dispatch stay single-sourced. The Python layer in
 //! `rust/python/mokume/` builds the argument vector from ergonomic keyword arguments.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use mokume_core::{DifferentialExpressionConfig, ImputationConfig};
 use mokume_pipeline::MatrixDifferentialExpressionResults;
+use mokume_pipeline::{PibaqDigest, PibaqDigestProvenance};
 use mokume_stats::de::{DeResult, EnsembleResult, Significance};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
@@ -35,7 +36,59 @@ fn run(args: Vec<String>) -> PyResult<()> {
     let mut argv = Vec::with_capacity(args.len() + 1);
     argv.push("mokume".to_string());
     argv.extend(args);
-    mokume_cli::run_from_args(argv).map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    mokume_command::run_from_args(argv).map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+/// Return the runtime pyOpenMS digestion request for a parsed piBAQ command.
+#[pyfunction]
+fn pibaq_digest_request(args: Vec<String>) -> Option<(String, String, usize, usize, usize)> {
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push("mokume".to_string());
+    argv.extend(args);
+    mokume_command::pibaq_digest_request_from_args(argv).map(|request| {
+        (
+            request.fasta.to_string_lossy().into_owned(),
+            request.enzyme,
+            request.min_aa,
+            request.max_aa,
+            request.missed_cleavages,
+        )
+    })
+}
+
+type PibaqDigestProvenanceTuple = (String, String, String, usize, usize, usize);
+
+fn runtime_pibaq_digest(
+    accession_peptides: HashMap<String, HashSet<String>>,
+    provenance: PibaqDigestProvenanceTuple,
+) -> PibaqDigest {
+    let (pyopenms_version, enzyme, catalog_hash, min_aa, max_aa, missed_cleavages) = provenance;
+    PibaqDigest {
+        accession_peptides,
+        provenance: PibaqDigestProvenance {
+            pyopenms_version,
+            enzyme,
+            catalog_hash,
+            min_aa,
+            max_aa,
+            missed_cleavages,
+        },
+    }
+}
+
+/// Run a parsed command with a complete runtime pyOpenMS theoretical-peptide map.
+#[pyfunction]
+fn run_with_pibaq_digest(
+    args: Vec<String>,
+    accession_peptides: HashMap<String, HashSet<String>>,
+    provenance: PibaqDigestProvenanceTuple,
+) -> PyResult<()> {
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push("mokume".to_string());
+    argv.extend(args);
+    let digest = runtime_pibaq_digest(accession_peptides, provenance);
+    mokume_command::run_from_args_with_pibaq_digest(argv, digest)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 /// Run a mokume command as a CLI and return the process exit code.
@@ -50,7 +103,21 @@ fn run_cli(args: Vec<String>) -> i32 {
     let mut argv = Vec::with_capacity(args.len() + 1);
     argv.push("mokume".to_string());
     argv.extend(args);
-    mokume_cli::run_cli_from_args(argv)
+    mokume_command::run_cli_from_args(argv)
+}
+
+/// Run a CLI command with a complete runtime pyOpenMS theoretical-peptide map.
+#[pyfunction]
+fn run_cli_with_pibaq_digest(
+    args: Vec<String>,
+    accession_peptides: HashMap<String, HashSet<String>>,
+    provenance: PibaqDigestProvenanceTuple,
+) -> i32 {
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push("mokume".to_string());
+    argv.extend(args);
+    let digest = runtime_pibaq_digest(accession_peptides, provenance);
+    mokume_command::run_cli_from_args_with_pibaq_digest(argv, digest)
 }
 
 /// Normalize a row-major linear-intensity matrix with the Rust kernel.
@@ -366,12 +433,20 @@ fn significance_label(significance: Significance) -> &'static str {
     }
 }
 
+fn register_pibaq_functions(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(pibaq_digest_request, module)?)?;
+    module.add_function(wrap_pyfunction!(run_with_pibaq_digest, module)?)?;
+    module.add_function(wrap_pyfunction!(run_cli_with_pibaq_digest, module)?)?;
+    Ok(())
+}
+
 /// The `mokume._mokume` extension module.
 #[pymodule]
 fn _mokume(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(version, module)?)?;
     module.add_function(wrap_pyfunction!(run, module)?)?;
     module.add_function(wrap_pyfunction!(run_cli, module)?)?;
+    register_pibaq_functions(module)?;
     module.add_function(wrap_pyfunction!(normalize_matrix_py, module)?)?;
     module.add_function(wrap_pyfunction!(impute_matrix_py, module)?)?;
     module.add_function(wrap_pyfunction!(differential_expression_py, module)?)?;

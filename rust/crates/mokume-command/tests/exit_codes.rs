@@ -4,7 +4,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use mokume_cli::run_from_args;
+use mokume_command::run_from_args;
 
 #[test]
 fn features2proteins_missing_input_returns_error() {

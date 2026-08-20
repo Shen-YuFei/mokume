@@ -76,9 +76,8 @@ __all__ = [
 ]
 
 
-# write_queue pulls in pyarrow, which only the parquet-writing compute path needs
-# (the ``pibaq`` extra). Import it
-# lazily so importing mokume.core for logging /
+# write_queue pulls in pyarrow, which only the optional Python periphery needs.
+# Import it lazily so importing mokume.core for logging /
 # constants / the plotting periphery does not require pyarrow. WriteCSVTask /
 # WriteParquetTask stay reachable as ``mokume.core.WriteCSVTask`` via this hook,
 # but are kept out of ``__all__`` since they are not eagerly bound.

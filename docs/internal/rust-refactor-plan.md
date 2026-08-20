@@ -63,7 +63,7 @@ Aligned now:
   continuous data; the outlier-removal pass mirrors Python's library function,
   which `combiner.py` imports but the main pipeline does not call).
   `--export-anndata` (h5ad) is implemented in `correct-batches`: a Rust-native
-  `.h5ad` writer (`crates/mokume-cli/src/h5ad.rs`, via the statically vendored
+  `.h5ad` writer (`crates/mokume-command/src/h5ad.rs`, via the statically vendored
   `hdf5-metno`) whose layout/dtypes/values match Python `anndata.write_h5ad`.
 - `mokume-stats` is now a Cargo dependency of `mokume-pipeline`, so the limma /
   DE catalog / ComBat libraries are reachable (no longer dead code).
@@ -126,7 +126,19 @@ per-contrast DE CSVs, the wheel renders the figures/HTML; verified end-to-end pr
 PNGs + a plotly HTML, multi-contrast file topology byte-matching Python). `peptides2protein
 --method pibaq` with an enzyme outside the natively-ported set became the wheel's pure-Python
 `mokume.peptides2protein_pibaq` (CNBr / unspecific-cleavage / V8-DE byte-identical to Python),
-and the default `Trypsin` path stays Rust-native (zero regression).
+and the default `Trypsin` path stayed Rust-native (zero regression). That interim
+split has since been superseded: both piBAQ commands now digest through the complete
+installed pyOpenMS runtime catalog and send the resulting theoretical-peptide map to
+the Rust aggregation kernel; there is no unported-enzyme branch or `pibaq` extra.
+Before deleting the native cleavage rules, a migration gate confirmed that all 21
+legacy enzyme names were present in the 33-entry pyOpenMS catalog and compared their
+peptide sets across 582 sequence cases and six length-bound combinations (73,332
+digests, zero missed cleavages). Every result matched exactly. The duplicate rules
+and the one-time verifier were then removed instead of becoming a second maintained
+digestion implementation. A post-migration whole-catalog gate then compared the
+Rust-backed and full-Python piBAQ tables for all 33 proteases: protein/sample keys,
+condition and family metadata matched exactly, while `NormIntensity` and `PiBAQ`
+matched within `1e-12` absolute and relative tolerance.
 The audit also re-confirmed `deqms` (see caveats). Intentionally deferred as
 library-only (Python exposes no CLI for them either): the iterative PCA+HDBSCAN
 outlier-removal pass beyond the implemented kernel, and the multi-study `Combiner`
@@ -341,12 +353,10 @@ The current Rust implementation is concentrated in `features2proteins`:
 - The SDRF parser builds `run` and `run + label` indexes.
 - `features2proteins` supports streaming QPX reading, filtering, aggregation,
   IRS, coverage filter, partial imputation, and CSV output.
-- piBAQ supports FASTA digestion for the ported pyOpenMS enzymes (Trypsin[/P],
-  Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA — digests
-  oracle-locked vs pyOpenMS, zero missed cleavages), family discovery, and the
-  shared-peptide assignment; enzymes outside that set error with a pointer to the
-  wheel's pure-Python piBAQ path (`mokume.peptides2protein_pibaq`), so the default
-  `Trypsin` path stays Rust-native.
+- piBAQ queries the installed pyOpenMS `ProteaseDB` at runtime, digests every
+  FASTA protein with `ProteaseDigestion`, and passes the complete theoretical
+  peptide map into Rust for family discovery, shared-peptide assignment,
+  denominators, and expression-matrix output.
 - DirectLFQ ports the Mann-Labs `directlfq` algorithm and matches the Python
   output to a median relative error of 0 with per-sample Spearman 0.9999 on
   PXD003539 (the residual is agglomerative-clustering tie-breaking, a tolerance
@@ -603,12 +613,10 @@ Tasks:
   thread-count parameter for the Rayon thread pool.]
 - Extend piBAQ: non-trypsin enzyme, `pibaq-high-anchor-threshold`, TPA,
   ProteomicRuler, organism, CPC, ploidy, and unknown-protein behavior.
-  [Done: FASTA digestion for the ported pyOpenMS enzymes (Trypsin[/P],
-  Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA), digests
-  oracle-locked vs pyOpenMS; family discovery, family YAML, `pibaq-min-shared`,
+  [Done: runtime FASTA digestion for the complete installed pyOpenMS protease
+  catalog; family discovery, family YAML, `pibaq-min-shared`,
   `pibaq-min-anchors`, TPA, ProteomicRuler, organism, CPC, ploidy, and
-  shared-peptide assignment are implemented/tested. Enzymes outside the ported
-  set return `NotImplemented`.]
+  shared-peptide assignment are implemented/tested.]
 
 Acceptance:
 
@@ -820,9 +828,10 @@ Prioritize porting the non-agent parts of these Python tests:
   `correct-batches`, `tsne_visualization`, and `tissuemap` is covered by tests,
   but the main flow of these commands is still `NotImplemented`.]
 - piBAQ: `tests/test_pibaq.py`, `tests/test_ibaq_denominator_uniqueness.py`,
-  `tests/test_pibaq_tpa_numerator_proteotypic.py` [Partially done: the trypsin
-  denominator, family shared-peptide allocation, and basic piBAQ synthetic oracles
-  are covered; TPA/piBAQ and others are still missing.]
+  `tests/test_pibaq_tpa_numerator_proteotypic.py` [Partially done: theoretical
+  peptide denominators, family shared-peptide allocation, TPA, and basic piBAQ
+  synthetic oracles are covered; the remaining Python edge cases are not all
+  ported as Rust golden tests.]
 - accession: `tests/test_accession_normalization.py` [Partially done: QPX protein
   accession parsing and group output are covered; FASTA accession normalization is
   still missing.]

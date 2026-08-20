@@ -3,7 +3,8 @@
 `mokume` is the Rust distribution of mokume. It packages the compiled
 `mokume._mokume` extension together with a Python API, a `mokume` console
 command, and the Python periphery for plots, tissue maps, reports, and selected
-fallbacks. There is no separately distributed Rust binary.
+fallbacks. pyOpenMS is a base dependency that supplies runtime FASTA digestion
+for piBAQ. There is no separately distributed Rust binary.
 
 ## Three interfaces, one installed wheel
 
@@ -63,7 +64,7 @@ executable.
 | Interactive HTML DE report | `mokume.interactive_report` |
 | piBAQ QC report PDF | `mokume.peptides2protein_qc` |
 | `missforest` imputation | `mokume.impute(method=...)` |
-| piBAQ for an unported enzyme | `mokume.peptides2protein_pibaq` |
+| piBAQ with any installed pyOpenMS protease | `mokume.peptides2protein(...)` or `mokume.features2proteins(...)` |
 | Agent-host method recommendation | Mokume Plugin + local MCP service |
 
 The compute command surface contains `features2proteins`, `features2peptides`,
@@ -102,8 +103,8 @@ For example, `quant_method="maxlfq"` becomes `--quant-method maxlfq` and
 | Interactive HTML DE report | Python periphery | `mokume.interactive_report` |
 | QC and workflow comparison | Python periphery | report wrappers |
 | `missforest` imputation | Python fallback | `mokume.impute` |
-| piBAQ for unported enzymes | Python fallback | `mokume.peptides2protein_pibaq` |
+| piBAQ FASTA digestion | pyOpenMS runtime catalog feeding the Rust kernel | `mokume.peptides2protein` / `mokume.features2proteins` |
 
-DirectLFQ and ComBat are native Rust and require no optional Python compute
-dependency. Install only the periphery extras needed for presentation or
-fallback functionality.
+DirectLFQ and ComBat are native Rust. pyOpenMS and its numpy, pandas, and
+matplotlib dependencies are installed with the base wheel; install only the
+periphery extras needed for additional presentation or fallback functionality.

@@ -39,6 +39,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dynamic = ["version"]
+dependencies = ["pyopenms>=3.4,<4"]
 
 # `pip install mokume` exposes the `mokume` command; it runs the compute
 # kernel in-process through the extension (no separate binary needed).
@@ -49,10 +50,9 @@ mokume = "mokume.__main__:main"
 Repository = "https://github.com/bigbio/mokume"
 Issues = "https://github.com/bigbio/mokume/issues"
 
-# Third-party stacks the pure-Python periphery commands (mokume.commands.*) need.
-# The compute path (the mokume._mokume extension) needs none of these; install
-# only the extra for the periphery command you run, e.g. pip install
-# mokume[plotting].
+# Third-party stacks the optional Python periphery commands need. pyOpenMS is a
+# base dependency because both Rust-backed piBAQ commands digest their FASTA
+# through the installed runtime catalog.
 [project.optional-dependencies]
 plotting = ["numpy", "pandas", "scipy", "matplotlib", "seaborn", "scikit-learn"]
 reports = ["numpy", "pandas", "plotly"]
@@ -69,7 +69,6 @@ tissuemap = [
     "seaborn",
     "pyarrow",
 ]
-pibaq = ["numpy", "pandas", "scipy", "pyopenms", "pyarrow", "PyYAML"]
 # QC / workflow-comparison reports + the pure-Python method fallback
 # (missforest imputation) the Rust kernel does not reproduce.
 analysis = ["numpy", "pandas", "scipy", "scikit-learn"]
@@ -95,7 +94,6 @@ all = [
     "anndata",
     "umap-learn",
     "combat",
-    "pyopenms",
     "pyarrow",
     "PyYAML",
     "mcp>=1.23,<2",

@@ -23,7 +23,6 @@ pip install mokume              # compute kernel + Python API
 pip install "mokume[plotting]"  # + t-SNE / DE plots / piBAQ QC report
 pip install "mokume[tissuemap]" # + per-dataset tissue proteome analysis
 pip install "mokume[reports]"   # + interactive HTML DE report
-pip install "mokume[pibaq]"     # + pure-Python piBAQ for unported enzymes
 pip install "mokume[analysis]"  # + QC/comparison reports + missforest
 pip install "mokume[all]"       # everything
 ```
@@ -42,6 +41,7 @@ import mokume
 mokume.features2proteins(parquet="features.parquet", output="proteins.csv")
 mokume.peptides2protein(method="pibaq", peptides="peptides.parquet",
                         fasta="proteome.fasta", output="proteins.tsv")
+catalog = mokume.protease_catalog()  # installed pyOpenMS ProteaseDB
 # full control over the argument vector:
 mokume.run(["correct-batches", "--folder", "pibaq", "--output", "corrected.tsv"])
 ```
@@ -75,8 +75,6 @@ wrapper on the top-level package:
 mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")
 mokume.tissuemap(scan_dir="./data", output_dir="./out")
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
-mokume.peptides2protein_pibaq(peptides="peptides.parquet", fasta="proteome.fasta",
-                             enzyme="CNBr", output="proteins.tsv")
 # de_plots / interactive_report take an explicit argv (the per-contrast
 # --contrast KEY A B CSV flag repeats, which keyword arguments cannot express):
 mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
@@ -88,9 +86,10 @@ mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
 ```
 
 The plotting and reporting functions read the tables the kernel wrote without
-recomputing them, so their cells match the kernel output. The explicit
-`peptides2protein_pibaq` and `impute(method="missforest")` fallbacks instead
-compute operations the Rust kernel does not provide.
+recomputing them. pyOpenMS is a base dependency (and itself installs numpy,
+pandas, and matplotlib): both piBAQ commands query its complete runtime protease
+catalog and pass the theoretical-peptide map into Rust.
+`impute(method="missforest")` remains an explicit Python fallback.
 
 | Command                       | Extra        | Third-party libraries                                  |
 | ----------------------------- | ------------ | ------------------------------------------------------ |
@@ -99,7 +98,6 @@ compute operations the Rust kernel does not provide.
 | `mokume.de_plots`             | `plotting`   | numpy, pandas, matplotlib, seaborn, scikit-learn       |
 | `mokume.interactive_report`   | `reports`    | numpy, pandas, plotly                                  |
 | `mokume.tissuemap`            | `tissuemap`  | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
-| `mokume.peptides2protein_pibaq` | `pibaq` | pyopenms, pyarrow, PyYAML, numpy, pandas, scipy |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn         |
 | `mokume.impute`                                   | `analysis` | numpy, pandas, scipy, scikit-learn         |
 

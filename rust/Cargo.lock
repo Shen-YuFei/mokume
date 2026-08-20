@@ -959,7 +959,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mokume-cli"
+name = "mokume-command"
 version = "0.2.0"
 dependencies = [
  "clap",
@@ -1045,7 +1045,7 @@ dependencies = [
 name = "mokume-py"
 version = "0.2.0"
 dependencies = [
- "mokume-cli",
+ "mokume-command",
  "mokume-core",
  "mokume-pipeline",
  "mokume-stats",

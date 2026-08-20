@@ -19,8 +19,8 @@ def main():
             raise SystemExit(str(exc)) from None
     if args and args[0] == "mcp":
         raise SystemExit("Usage: mokume mcp serve --knowledge PATH")
-    native = importlib.import_module("mokume._mokume")
-    raise SystemExit(getattr(native, "run_cli")(args))
+    package = importlib.import_module("mokume")
+    raise SystemExit(getattr(package, "_run_cli")(args))
 
 
 if __name__ == "__main__":

@@ -27,15 +27,12 @@ options can differ between the two implementations. See the repository's
 pip install mokume-py
 ```
 
-The base install is lightweight and covers the **core LFQ workflow** — MaxLFQ,
-Top3/TopN, feature/peptide normalization, and parquet/SDRF I/O. Features that pull
-heavier dependencies (pyOpenMS, scikit-learn, statsmodels, anndata) are opt-in via
-extras. Each raises a clear install hint if used without it.
+The base install covers the **core LFQ and piBAQ workflows** — MaxLFQ, Top3/TopN,
+FASTA digestion through pyOpenMS, feature/peptide normalization, and parquet/SDRF
+I/O. Optional features that require scikit-learn, statsmodels, or anndata remain
+available through extras.
 
 ```bash
-# piBAQ / TPA / ProteomicRuler (FASTA digestion via pyOpenMS)
-pip install mokume-py[pibaq]
-
 # Differential expression, FDR, DEqMS, LOESS / RLR normalization (statsmodels)
 pip install mokume-py[analysis]
 

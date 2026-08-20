@@ -38,14 +38,14 @@ pip install mokume
 > 0.2.0, this Rust-backed wheel is the default `mokume` distribution; the
 > pure-Python implementation is available as `mokume-py`.
 
-Optional periphery features (plots, reports, tissue maps, piBAQ helpers) are
-available as extras:
+pyOpenMS and its numpy, pandas, and matplotlib dependencies are installed with
+the base wheel so piBAQ can use every protease in the runtime catalog. Optional
+plotting, reporting, tissue-map, and analysis stacks remain extras:
 
 ```bash
 pip install "mokume[plotting]"   # matplotlib / seaborn figures
 pip install "mokume[reports]"    # interactive plotly QC reports
 pip install "mokume[tissuemap]"  # tissue-map + AnnData export
-pip install "mokume[pibaq]"      # Python piBAQ fallback for unported enzymes
 pip install "mokume[analysis]"   # QC/comparison reports + missforest
 pip install "mokume[agentic]"    # local MCP service for the Mokume Plugin
 pip install "mokume[all]"        # everything above

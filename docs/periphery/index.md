@@ -1,8 +1,8 @@
 # Python Periphery
 
 The periphery is the Python half of the toolkit: plotting, tissue maps,
-interactive reports, the piBAQ QC report, the pure-Python piBAQ path for unported
-enzymes, and the pure-Python method fallbacks. It lives in
+interactive reports, the piBAQ QC report, and the pure-Python method fallbacks.
+It lives in
 `rust/python/mokume/commands/` (plus `rust/python/mokume/reports/`,
 `rust/python/mokume/normalization/`, `rust/python/mokume/imputation/` for the
 analysis fallbacks) and is reached **only** through the
@@ -16,18 +16,18 @@ re-running kernel-supported computation. TissueMap instead derives its
 documented downstream normalization, batch correction, tissue-specificity, and
 atlas outputs from QPX data.
 
-Two explicit fallbacks compute operations the Rust kernel does not provide:
-`mokume.peptides2protein_pibaq` handles enzymes outside the Rust-ported set, and
-`mokume.impute(method='missforest')` runs the scikit-learn estimator. They are
+One explicit fallback computes an operation the Rust kernel does not provide:
+`mokume.impute(method='missforest')` runs the scikit-learn estimator. It is
 documented under [Rust Wheel](../rust-wheel.md) and
 [Analysis Fallbacks](analysis-fallbacks.md), rather than being presented as
 kernel-produced results.
 
 ## Extras matrix
 
-The compute kernel (`mokume._mokume`) needs **no** third-party Python
-dependencies. The extras pull in only the libraries a given periphery command
-needs. Install just the extra for the command you run.
+The base wheel depends on pyOpenMS because both Rust-backed piBAQ commands use
+the installed `ProteaseDB` catalog for FASTA digestion. pyOpenMS itself installs
+numpy, pandas, and matplotlib; the extras select each command's additional
+libraries. Install just the extra for the command you run.
 
 | Command | Extra | Third-party libraries |
 | --- | --- | --- |
@@ -36,7 +36,6 @@ needs. Install just the extra for the command you run.
 | `mokume.de_plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
 | `mokume.interactive_report` | `reports` | numpy, pandas, plotly |
 | `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
-| `mokume.peptides2protein_pibaq` | `pibaq` | pyopenms, pyarrow, PyYAML, numpy, pandas, scipy |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
 
@@ -45,7 +44,6 @@ pip install mokume                 # compute kernel + Python API
 pip install "mokume[plotting]"     # + t-SNE / DE plots / piBAQ QC report
 pip install "mokume[reports]"      # + interactive HTML DE report
 pip install "mokume[tissuemap]"    # + per-dataset tissue proteome analysis
-pip install "mokume[pibaq]"         # + pure-Python piBAQ for unported enzymes
 pip install "mokume[analysis]"     # + QC/comparison reports + missforest
 pip install "mokume[all]"          # everything
 ```
@@ -54,9 +52,9 @@ The exact dependency lists are declared in `pyproject.toml`'s
 `[project.optional-dependencies]`.
 
 !!! note "Removed extras"
-    The old `directlfq` and `batch-correction` extras are **gone**. DirectLFQ and
-    ComBat are now native Rust in the kernel and need no extra and no third-party
-    Python dependency.
+    The old `directlfq`, `batch-correction`, and `pibaq` extras are **gone**.
+    DirectLFQ and ComBat are native Rust, while pyOpenMS-backed FASTA digestion
+    is now a base piBAQ capability.
 
 ## The import-then-call pattern
 
@@ -72,8 +70,6 @@ import mokume
 mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")
 mokume.tissuemap(scan_dir="./data", output_dir="./out")
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
-mokume.peptides2protein_pibaq(peptides="peptides.parquet", fasta="proteome.fasta",
-                             enzyme="CNBr", output="proteins.tsv")
 
 # de_plots / interactive_report take an explicit argv (the per-contrast
 # --contrast KEY A B CSV flag repeats, which keyword arguments cannot express):

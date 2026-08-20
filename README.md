@@ -66,14 +66,15 @@ pip install mokume
 ```
 
 The base wheel contains the native quantification, normalization, imputation,
-batch-correction, and differential-expression kernel. Python periphery
-dependencies remain opt-in:
+batch-correction, and differential-expression kernel. It also installs pyOpenMS
+(including pyOpenMS's numpy, pandas, and matplotlib dependencies); piBAQ reads
+that runtime's complete protease catalog and passes the theoretical peptide map
+into the Rust kernel. Extras select Mokume's additional periphery stacks:
 
 ```bash
 pip install "mokume[plotting]"   # t-SNE, DE plots, and piBAQ QC
 pip install "mokume[reports]"    # interactive HTML reports
 pip install "mokume[tissuemap]"  # tissue-specificity pipeline
-pip install "mokume[pibaq]"      # fallback for enzymes not ported to Rust
 pip install "mokume[analysis]"   # QC, workflow comparison, and missforest
 pip install "mokume[agentic]"    # local MCP service used by the Mokume Plugin
 pip install "mokume[all]"        # all Python periphery dependencies
@@ -81,11 +82,12 @@ pip install "mokume[all]"        # all Python periphery dependencies
 
 The optional Plugin/MCP workflow requires Python 3.10 or newer.
 
-For the separate pure-Python implementation, use `pip install mokume-py`. Do
-not install `mokume` and `mokume-py` together because both provide the `mokume`
-import package and console command. Agentic recommendation belongs to the
-default `mokume` distribution and its installable plugin, not `mokume-py`. See
-[Installation](docs/installation.md).
+For the separate pure-Python implementation, use `pip install mokume-py`; its
+base install also includes pyOpenMS and piBAQ calls pyOpenMS digestion directly.
+Do not install `mokume` and `mokume-py` together because both provide the
+`mokume` import package and console command. Agentic recommendation belongs to
+the default `mokume` distribution and its installable plugin, not `mokume-py`.
+See [Installation](docs/installation.md).
 
 ## Quick start
 

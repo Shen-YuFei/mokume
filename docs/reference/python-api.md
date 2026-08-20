@@ -189,7 +189,7 @@ path = mokume.workflow_comparison(
 
 Both need the `analysis` extra. For volcano gene-highlighting, call `mokume.reports.qc_report.generate_qc_report` directly.
 
-### Pure-Python method fallbacks
+### Pure-Python method fallback
 
 A method not reproducible bit-for-bit in the Rust kernel: the kernel's `features2proteins` errors point here (needs the `analysis` extra):
 
@@ -200,27 +200,30 @@ mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
 
 `mokume.impute` also reaches every other supported method (`knn`, `minprob`, `qrilc`, ...); it accepts a wide protein-matrix CSV path or a DataFrame and returns the imputed DataFrame, writing `output` if given.
 
-### piBAQ for unported enzymes
-
-The native piBAQ path digests proteins for the ported pyOpenMS enzymes (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...). For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific cleavage, ...) the kernel has no cleavage rule and points you here — the whole piBAQ table is then computed in pure Python (the `pibaq` extra):
+### Runtime piBAQ protease catalog
 
 ```python
-mokume.peptides2protein_pibaq(peptides="peptides.parquet", fasta="proteome.fasta",
-                             enzyme="CNBr", output="proteins.tsv")
+catalog = mokume.protease_catalog()
+print([(entry["name"], entry["regex"]) for entry in catalog])
 ```
+
+This reads the installed pyOpenMS `ProteaseDB` at call time. Both Rust-backed
+piBAQ commands accept every entry in this catalog; Python supplies the complete
+theoretical-peptide map and Rust performs the aggregation.
 
 ---
 
 ## Install extras { #install-extras }
 
-The compute path (the `mokume._mokume` extension) needs **no** third-party Python dependencies. Install only the extra for the periphery command you run:
+pyOpenMS is a base dependency used by both piBAQ commands and itself depends on
+numpy, pandas, and matplotlib. Install only the extra for any additional
+periphery command you run:
 
 ```bash
 pip install mokume                 # compute kernel + Python API
 pip install "mokume[plotting]"     # + t-SNE / DE plots / piBAQ QC report
 pip install "mokume[tissuemap]"    # + per-dataset tissue proteome analysis
 pip install "mokume[reports]"      # + interactive HTML DE report
-pip install "mokume[pibaq]"         # + pure-Python piBAQ for unported enzymes
 pip install "mokume[analysis]"     # + QC / comparison reports + missforest
 pip install "mokume[agentic]"     # + local MCP service for the Mokume Plugin
 pip install "mokume[all]"          # everything
@@ -233,12 +236,13 @@ pip install "mokume[all]"          # everything
 | `mokume.de_plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
 | `mokume.interactive_report` | `reports` | numpy, pandas, plotly |
 | `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
-| `mokume.peptides2protein_pibaq` | `pibaq` | pyopenms, pyarrow, PyYAML, numpy, pandas, scipy |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | Mokume Plugin MCP service | `agentic` | mcp, numpy, pandas, scipy, scikit-learn, statsmodels, PyYAML |
 
-The exact dependency lists are declared in `pyproject.toml`'s `[project.optional-dependencies]`. The retired `directlfq` and `batch-correction` extras are gone: DirectLFQ and ComBat are now native Rust and need no extra.
+The exact dependency lists are declared in `pyproject.toml`. The retired
+`directlfq`, `batch-correction`, and `pibaq` extras are gone: DirectLFQ and ComBat
+are native Rust, while pyOpenMS-backed digestion is part of the base piBAQ path.
 
 !!! note "Agentic reasoning belongs to the host"
     The wheel provides deterministic MCP tools, not a model client. Install and

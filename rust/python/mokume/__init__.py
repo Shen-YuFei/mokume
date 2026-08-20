@@ -21,13 +21,22 @@ control, call :func:`run` with an explicit argument list.
 
 import importlib
 import importlib.metadata
+import sys
 import warnings
 
-from mokume._mokume import run as _run
 from mokume._mokume import differential_expression as _differential_expression
 from mokume._mokume import impute_matrix as _impute_matrix
 from mokume._mokume import normalize_matrix
+from mokume._mokume import run as _native_run
 from mokume._mokume import version
+
+_NATIVE_EXTENSION = importlib.import_module("mokume._mokume")
+_pibaq_digest_request = getattr(_NATIVE_EXTENSION, "pibaq_digest_request")
+_native_run_cli = getattr(_NATIVE_EXTENSION, "run_cli")
+_native_run_cli_with_pibaq_digest = getattr(
+    _NATIVE_EXTENSION, "run_cli_with_pibaq_digest"
+)
+_native_run_with_pibaq_digest = getattr(_NATIVE_EXTENSION, "run_with_pibaq_digest")
 
 # `mokume` (this Rust kernel) and `mokume-py` (pure Python) both install the
 # `mokume` import package, so pip silently overwrites files when both are
@@ -54,6 +63,7 @@ __all__ = [
     "normalize_matrix",
     "impute_matrix",
     "differential_expression",
+    "protease_catalog",
     "tsne_visualization",
     "tissuemap",
     "peptides2protein_qc",
@@ -117,6 +127,58 @@ def _build_args(command, kwargs):
     return [command, *_flags(kwargs)]
 
 
+def _prepare_pibaq_digest(args):
+    request = _pibaq_digest_request(args)
+    if request is None:
+        return None
+    module = importlib.import_module("mokume._pibaq_digest")
+    return getattr(module, "build_pibaq_digest")(request)
+
+
+def _pibaq_provenance_tuple(provenance):
+    return (
+        provenance["pyopenms_version"],
+        provenance["enzyme"],
+        provenance["catalog_hash"],
+        provenance["min_aa"],
+        provenance["max_aa"],
+        provenance["missed_cleavages"],
+    )
+
+
+def _run(args):
+    args = list(args)
+    try:
+        payload = _prepare_pibaq_digest(args)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"piBAQ digestion failed: {exc}") from None
+    if payload is None:
+        return _native_run(args)
+    accession_peptides, provenance = payload
+    return _native_run_with_pibaq_digest(
+        args,
+        accession_peptides,
+        _pibaq_provenance_tuple(provenance),
+    )
+
+
+def _run_cli(args):
+    args = list(args)
+    try:
+        payload = _prepare_pibaq_digest(args)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"piBAQ digestion failed: {exc}", file=sys.stderr)
+        return 1
+    if payload is None:
+        return _native_run_cli(args)
+    accession_peptides, provenance = payload
+    return _native_run_cli_with_pibaq_digest(
+        args,
+        accession_peptides,
+        _pibaq_provenance_tuple(provenance),
+    )
+
+
 def run(args):
     """Run a mokume subcommand in-process from an explicit argument list.
 
@@ -126,6 +188,12 @@ def run(args):
                     "--output", "y.csv"])
     """
     _run(list(args))
+
+
+def protease_catalog():
+    """Return every protease registered by the installed pyOpenMS runtime."""
+    module = importlib.import_module("mokume._pibaq_digest")
+    return getattr(module, "installed_protease_catalog")()
 
 
 def features2peptides(**kwargs):
@@ -209,7 +277,7 @@ def peptides2protein_qc(**kwargs):
 
 
 def peptides2protein_pibaq(**kwargs):
-    """Compute piBAQ in Python for non-Rust-ported enzymes (``pibaq`` extra)."""
+    """Run the legacy full-Python piBAQ reference path (``all`` extra)."""
     _run_command("peptides2protein_pibaq", _flags(kwargs))
 
 

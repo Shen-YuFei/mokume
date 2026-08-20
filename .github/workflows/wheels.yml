@@ -2,7 +2,7 @@
 #
 # The Rust kernel is exposed to Python through the `mokume._mokume` PyO3
 # extension that maturin builds from `crates/mokume-py`. Because that crate
-# transitively depends on the `mokume-cli` command library -> `hdf5-metno`
+# transitively depends on the `mokume-command` dispatch library -> `hdf5-metno`
 # (features = ["static"]),
 # every wheel statically compiles libhdf5 from C source at build time, so each
 # runner must provide cmake + a C compiler. The `abi3-py39` pyo3 feature yields a
@@ -98,8 +98,8 @@ jobs:
           python -m venv smoke
           if [ -f smoke/bin/activate ]; then . smoke/bin/activate; else . smoke/Scripts/activate; fi
           python -m pip install --upgrade pip
-          pip install --no-index --find-links dist mokume
-          python -c "import mokume._mokume as m; print('mokume', m.version()); assert m.version()"
+          pip install "$(ls dist/*.whl)"
+          python -c "import mokume; print('mokume', mokume.version(), 'proteases', len(mokume.protease_catalog())); assert mokume.version() and mokume.protease_catalog()"
           mokume --version
 
       - uses: actions/upload-artifact@v7
