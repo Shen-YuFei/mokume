@@ -14,6 +14,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from mokume.io import feature as qpx_feature
+
 # Arrow type constants for new QPX format
 _NEW_INTENSITIES_TYPE = pa.list_(
     pa.struct([("label", pa.string()), ("intensity", pa.float32())])
@@ -158,6 +160,35 @@ def _make_lfq_qpx_parquet(path: str) -> None:
                     {"label": "run_a", "intensity": 30.0},
                     {"label": "RUN_B.wiff", "intensity": 40.0},
                 ],
+            ],
+        },
+        schema=_NEW_QPX_SCHEMA,
+    )
+    pq.write_table(table, path)
+
+
+def _make_raw_placeholder_lfq_qpx_parquet(path: str) -> None:
+    """Create the older QPX LFQ dialect whose only intensity label is ``raw``."""
+    protein = {
+        "accession": "sp|P12345|PROT_HUMAN",
+        "start": 10,
+        "end": 18,
+        "pre": "K",
+        "post": "A",
+    }
+    table = pa.table(
+        {
+            "sequence": ["PEPTIDEA", "PEPTIDEB"],
+            "peptidoform": ["PEPTIDEA", "PEPTIDEB"],
+            "pg_accessions": [[protein], [protein]],
+            "anchor_protein": [protein["accession"], protein["accession"]],
+            "charge": [2, 2],
+            "run_file_name": ["Run_A", "Run_B"],
+            "unique": [True, True],
+            "is_decoy": [False, False],
+            "intensities": [
+                [{"label": "raw", "intensity": 10.0}],
+                [{"label": "raw", "intensity": 20.0}],
             ],
         },
         schema=_NEW_QPX_SCHEMA,
@@ -331,6 +362,29 @@ class TestQpxSdrfIdentity:
             ("sample-b", "RUN_B.wiff", None, 60.0),
         ]
         assert set(feature.samples) == {"sample-a", "sample-b"}
+
+    def test_raw_placeholder_lfq_label_matches_canonical_sdrf_label(self, tmp_path):
+        """Archived run suffixes and raw LFQ labels map to canonical SDRF rows."""
+        parquet_file = tmp_path / "raw-placeholder.feature.parquet"
+        sdrf_file = tmp_path / "raw-placeholder.sdrf.tsv"
+        _make_raw_placeholder_lfq_qpx_parquet(str(parquet_file))
+        _write_sdrf(
+            sdrf_file,
+            [
+                ("sample-a", "Run_A.d.zip", "Label free sample", "A"),
+                ("sample-b", "Run_B.mzML.gz", "LFQ", "B"),
+            ],
+        )
+        feature = qpx_feature.Feature(str(parquet_file))
+        feature.enrich_with_sdrf(str(sdrf_file))
+
+        assert feature.parquet_db.execute(
+            "SELECT sample_accession, run, sum(intensity) "
+            "FROM parquet_db GROUP BY ALL ORDER BY sample_accession"
+        ).fetchall() == [
+            ("sample-a", "Run_A", 10.0),
+            ("sample-b", "Run_B", 20.0),
+        ]
 
     def test_lfq_run_rejects_reporter_labeled_sdrf(self, tmp_path):
         parquet_file = tmp_path / "lfq.feature.parquet"

@@ -4,7 +4,7 @@
 that still carry a ``unique`` flag from QPX. piBAQ must not trust that flag as
 an upstream filter: it derives peptide sharing from the FASTA digest, collapses
 razor-mirror shared rows once, and re-allocates shared intensity through the
-same family-aware path used by ``features2proteins --quant-method ibaq``.
+same family-aware path used by ``features2proteins --quant-method pibaq``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from mokume.quantification.ibaq import peptides_to_protein
+from mokume.quantification.pibaq import peptides_to_protein
 
 # Two toy homologs share one tryptic peptide; the unique tails carry no
 # internal K/R so trypsin produces exactly one extra unique peptide each.

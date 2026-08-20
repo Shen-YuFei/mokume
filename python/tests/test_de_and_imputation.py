@@ -13,17 +13,23 @@ import pandas as pd
 import pytest
 
 import mokume.analysis.ensemble as ensemble_module
+from mokume.analysis._helpers import filter_testable, per_group_summary
 from mokume.analysis.differential_expression import DifferentialExpression
-from mokume.analysis.deqms import run_deqms
+from mokume.analysis.deqms import _two_sided_t_log_pvalue, run_deqms
 from mokume.analysis.limma import run_limma
 from mokume.analysis.limrots import run_limrots
 from mokume.analysis.proda import run_proda
 from mokume.analysis.rots import run_rots
 from mokume.analysis.ensemble import combine_de_results, run_ensemble
-from mokume.pipeline.config import DEConfig, InputConfig, PipelineConfig
+from mokume.pipeline.config import (
+    DEConfig,
+    ImputationConfig,
+    InputConfig,
+    PipelineConfig,
+)
 from mokume.pipeline.features_to_proteins import QuantificationPipeline
 from mokume.pipeline.runner import run_pipeline
-from mokume.pipeline.stages import PostprocessingStage
+from mokume.pipeline.stages import ImputationStage, PostprocessingStage
 from mokume.imputation.censored import (
     impute_minprob,
     impute_mindet,
@@ -136,6 +142,19 @@ class TestDEDEqMS:
         result = run_deqms(log2_mat, sa, sb, ("A", "B"))
         assert len(result) > 0
         assert "pvalue" in result.columns
+        assert "log_pvalue" in result.columns
+
+    def test_deqms_log_pvalue_survives_float_underflow(self):
+        log_pvalue = _two_sided_t_log_pvalue(
+            np.array([40.837, 87.944]),
+            np.array([10_000.0, 10_000.0]),
+        )
+
+        assert np.all(np.isfinite(log_pvalue))
+        assert log_pvalue == pytest.approx(
+            [-775.0382247148757, -2868.950716179171],
+            abs=3e-11,
+        )
 
     def test_deqms_with_peptide_counts(self):
         rng = np.random.default_rng(42)
@@ -491,12 +510,105 @@ class TestNonFiniteLog2FCGuard:
     def test_inf_log2fc_not_counted_significant(self):
         out = self._finalize([np.inf, -np.inf, 3.0, -3.0], [1e-6, 1e-6, 1e-6, 1e-6])
         out = out.set_index("ProteinName")
-        # non-finite folds stay Unchanged despite a significant p-value
-        assert out.loc["P0", "significance"] == "Unchanged"
-        assert out.loc["P1", "significance"] == "Unchanged"
+        # non-finite folds are non-estimable, not evidence of no change
+        assert out.loc["P0", "significance"] == "NotTested"
+        assert out.loc["P1", "significance"] == "NotTested"
         # genuine finite folds are still classified
         assert out.loc["P2", "significance"] == "UP"
         assert out.loc["P3", "significance"] == "DOWN"
+
+    def test_nonfinite_pvalue_is_not_tested(self):
+        out = self._finalize([2.0, 2.0], [np.inf, 1e-6]).set_index("ProteinName")
+        assert np.isnan(out.loc["P0", "pvalue"])
+        assert np.isnan(out.loc["P0", "adj_pvalue"])
+        assert out.loc["P0", "significance"] == "NotTested"
+        assert out.loc["P1", "significance"] == "UP"
+
+
+def test_de_helpers_count_only_finite_observations():
+    matrix = pd.DataFrame(
+        {
+            "A1": [1.0, np.inf, np.inf],
+            "A2": [2.0, 2.0, 2.0],
+            "A3": [3.0, 4.0, np.nan],
+            "B1": [3.0, 3.0, 3.0],
+            "B2": [4.0, 4.0, 4.0],
+            "B3": [5.0, 5.0, 5.0],
+        },
+        index=["finite", "infinite", "insufficient"],
+    )
+
+    samples_a = ["A1", "A2", "A3"]
+    samples_b = ["B1", "B2", "B3"]
+    testable = filter_testable(matrix, samples_a, samples_b)
+    assert list(testable.index) == ["finite", "infinite"]
+    assert np.isnan(testable.loc["infinite", "A1"])
+
+    summary = per_group_summary(matrix, samples_a, samples_b, "A", "B")
+    infinite = summary.set_index("ProteinName").loc["infinite"]
+    assert infinite["mean_A"] == 3.0
+    assert infinite["n_a"] == 2
+    assert infinite["mean_B"] == 4.0
+    assert infinite["n_b"] == 3
+
+
+def test_differential_expression_rejects_infinite_input():
+    matrix = pd.DataFrame(
+        {
+            "ProteinName": ["P1"],
+            "A1": [1.0],
+            "A2": [np.inf],
+            "B1": [2.0],
+            "B2": [3.0],
+        }
+    )
+    sample_to_condition = {"A1": "A", "A2": "A", "B1": "B", "B2": "B"}
+
+    with pytest.raises(ValueError, match="contains an infinite intensity"):
+        DifferentialExpression(method="limma").run(
+            matrix, sample_to_condition, ("A", "B")
+        )
+
+
+def test_pipeline_imputation_rejects_linear_scale_overflow(monkeypatch):
+    config = PipelineConfig(
+        input=InputConfig(parquet="unused.parquet"),
+        imputation=ImputationConfig(enabled=True, method="mindet"),
+    )
+    stage = ImputationStage(config)
+    matrix = pd.DataFrame(
+        {
+            "ProteinName": ["P1", "P2"],
+            "S1": [100.0, np.nan],
+            "S2": [200.0, 300.0],
+        }
+    )
+    overflow = pd.DataFrame(
+        [[np.log2(100.0), np.log2(200.0)], [2048.0, np.log2(300.0)]],
+        index=["P1", "P2"],
+        columns=["S1", "S2"],
+    )
+    monkeypatch.setattr(stage, "_dispatch", lambda method, wide: overflow)
+
+    with pytest.raises(ValueError, match="overflowed on the linear scale"):
+        stage.impute(matrix)
+
+
+def test_pipeline_imputation_rejects_infinite_input():
+    config = PipelineConfig(
+        input=InputConfig(parquet="unused.parquet"),
+        imputation=ImputationConfig(enabled=True, method="mindet"),
+    )
+    matrix = pd.DataFrame(
+        {
+            "ProteinName": ["P1", "P2"],
+            "S1": [100.0, np.inf],
+            "S2": [200.0, 300.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="contains an infinite intensity"):
+        ImputationStage(config).impute(matrix)
 
 
 # ---------------------------------------------------------------------------
@@ -771,3 +883,21 @@ class TestDEEnsemble:
             "methods_significant",
         ):
             assert col in result.columns
+
+    def test_ensemble_preserves_not_tested_semantics(self):
+        member = pd.DataFrame(
+            {
+                "ProteinName": ["P1"],
+                "log2FC": [np.nan],
+                "pvalue": [np.nan],
+                "adj_pvalue": [np.nan],
+                "significance": ["NotTested"],
+            }
+        )
+
+        result = combine_de_results({"limma": member}, min_k=1)
+
+        assert len(result) == 1
+        assert result.loc[0, "significance"] == "NotTested"
+        assert np.isnan(result.loc[0, "log2FC"])
+        assert np.isnan(result.loc[0, "pvalue"])

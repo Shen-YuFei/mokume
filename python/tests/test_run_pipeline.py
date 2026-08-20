@@ -8,7 +8,7 @@ common post-processing. The production CLI uses ``features_to_proteins``
 (i.e. ``QuantificationPipeline.run_dataset``) instead, so before these tests
 no coverage exercised ``run_pipeline`` against real data.
 
-The correctness oracle here is that, for the pure-Python backend,
+The correctness oracle here is that the pure-Python pipeline's
 ``run_pipeline(config)`` must produce a protein matrix identical (within
 1e-9) to ``QuantificationPipeline(config).run_dataset().get_level('proteins')``
 for the same config. A divergence would mean a flow loads or normalizes
@@ -113,7 +113,7 @@ def _max_abs_diff(quant_method: str) -> float:
 
 
 class TestRunPipelineMatchesRunDataset:
-    """run_pipeline must equal run_dataset within 1e-9 (pure-Python backend)."""
+    """run_pipeline must equal run_dataset within 1e-9."""
 
     @pytest.mark.parametrize("quant_method", ["median", "sum"])
     def test_standard_flow_matches(self, quant_method):

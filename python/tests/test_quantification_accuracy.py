@@ -471,7 +471,7 @@ class TestSmallDiannSubset:
             pytest.skip("DirectLFQ import not available")
 
         if not is_directlfq_available():
-            pytest.skip("DirectLFQ not installed (pip install mokume[directlfq])")
+            pytest.skip("DirectLFQ not installed (pip install mokume-py[directlfq])")
 
         from mokume.quantification import MaxLFQQuantification
 

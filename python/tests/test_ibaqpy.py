@@ -1,6 +1,6 @@
 import logging
 
-from mokume.quantification.ibaq import peptides_to_protein
+from mokume.quantification.pibaq import peptides_to_protein
 
 from pathlib import Path
 
@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def test_ibaq_compute():
+def test_pibaq_compute():
     """
-    Test the computation of IBAQ values using the peptides_to_protein function.
+    Test the computation of piBAQ values using the peptides_to_protein function.
 
     This test sets up the necessary arguments, including paths to input files,
     enzyme type, normalization options, and output paths, and then calls the
@@ -37,7 +37,7 @@ def test_ibaq_compute():
         "ploidy": 2,
         "cpc": 200,
         "organism": "human",
-        "output": str(TESTS_DIR / "example" / "out" / "PXD017834-ibaq.tsv"),
+        "output": str(TESTS_DIR / "example" / "out" / "PXD017834-pibaq.tsv"),
         "verbose": True,
         "qc_report": str(TESTS_DIR / "example/out/QCprofile.pdf"),
     }
