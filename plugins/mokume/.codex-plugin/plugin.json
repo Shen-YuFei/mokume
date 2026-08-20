@@ -1,0 +1,38 @@
+{
+  "name": "mokume",
+  "version": "0.1.0+codex.20260820090946",
+  "description": "Traceable proteomics method selection and evaluation with Mokume",
+  "author": {
+    "name": "BigBio",
+    "url": "https://github.com/bigbio"
+  },
+  "homepage": "https://mokume.quantms.org",
+  "repository": "https://github.com/bigbio/mokume",
+  "license": "MIT",
+  "keywords": ["proteomics", "mass-spectrometry", "normalization", "DEA"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mokume",
+    "shortDescription": "Inspect proteomics data and evaluate analysis settings.",
+    "longDescription": "Profile protein matrices, bind benchmark evidence, and evaluate normalization, imputation, and differential-expression settings through the local Mokume Rust kernel.",
+    "developerName": "BigBio",
+    "category": "Sciences",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Inspect this protein matrix and recommend traceable Mokume settings.",
+      "Evaluate these Mokume analysis candidates for my contrast."
+    ]
+  },
+  "mcpServers": {
+    "mokume": {
+      "command": "mokume",
+      "args": [
+        "mcp",
+        "serve",
+        "--knowledge",
+        "./knowledge/knowledge.yaml"
+      ],
+      "cwd": "."
+    }
+  }
+}

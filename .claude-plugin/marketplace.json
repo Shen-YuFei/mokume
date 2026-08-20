@@ -1,0 +1,15 @@
+{
+  "name": "bigbio",
+  "description": "BigBio plugins for proteomics workflows",
+  "owner": {
+    "name": "BigBio",
+    "url": "https://github.com/bigbio"
+  },
+  "plugins": [
+    {
+      "name": "mokume",
+      "source": "./plugins/mokume",
+      "description": "Traceable proteomics method selection and evaluation with Mokume"
+    }
+  ]
+}

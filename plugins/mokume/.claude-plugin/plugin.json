@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "mokume",
+  "displayName": "Mokume",
+  "version": "0.1.0+codex.20260820090946",
+  "description": "Traceable proteomics method selection and evaluation with Mokume",
+  "author": {
+    "name": "BigBio",
+    "url": "https://github.com/bigbio"
+  },
+  "homepage": "https://mokume.quantms.org",
+  "repository": "https://github.com/bigbio/mokume",
+  "license": "MIT",
+  "keywords": ["proteomics", "mass-spectrometry", "normalization", "DEA"],
+  "mcpServers": {
+    "mokume": {
+      "command": "mokume",
+      "args": [
+        "mcp",
+        "serve",
+        "--knowledge",
+        "${CLAUDE_PLUGIN_ROOT}/knowledge/knowledge.yaml"
+      ]
+    }
+  }
+}

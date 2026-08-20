@@ -1,0 +1,162 @@
+"""Canonical method contract for agentic configuration generation."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+import re
+from typing import Any
+
+DE_METHODS: tuple[str, ...] = (
+    "limrots",
+    "limma",
+    "deqms",
+    "proda",
+    "rots",
+    "ensemble",
+)
+FDR_METHODS: tuple[str, ...] = ("bh", "ihw", "bky", "storey")
+NORMALIZATION_METHODS: tuple[str, ...] = (
+    "none",
+    "median",
+    "quantile",
+    "mean",
+    "rlr",
+    "loess",
+)
+IMPUTATION_METHODS: tuple[str, ...] = (
+    "none",
+    "minprob",
+    "mindet",
+    "knn",
+    "missforest",
+    "seqknn",
+    "qrilc",
+    "impseq",
+    "impseqrob",
+    "bpca",
+    "gms",
+)
+QUANTIFICATION_METHODS: tuple[str, ...] = (
+    "directlfq",
+    "pibaq",
+    "maxlfq",
+    "sum",
+    "median",
+    "ratio",
+    "abd",
+    "intensity",
+    "spectral_count",
+    "top3",
+)
+ENSEMBLE_PRESETS: tuple[str, ...] = (
+    "none",
+    "limma,deqms,proda",
+    "limma,rots,deqms",
+    "limma,rots,deqms,proda",
+)
+CONFIDENCE_LEVELS: tuple[str, ...] = ("low", "moderate", "high")
+GENERATED_CONFIG_FIELDS: tuple[str, ...] = (
+    "name",
+    "de_method",
+    "fdr_method",
+    "normalization",
+    "imputation",
+    "ensemble",
+    "ensemble_k",
+    "log2fc_threshold",
+    "reasoning",
+    "expected_outcome",
+)
+GENERATED_BLOCK_FIELDS: tuple[str, ...] = (
+    "configs",
+    "evidence_refs",
+    "confidence",
+    "limitations",
+    "abstain_reason",
+)
+EXECUTABLE_AXES: tuple[str, ...] = (
+    "normalization",
+    "imputation",
+    "de_method",
+    "fdr_method",
+    "log2fc_threshold",
+    "ensemble",
+    "ensemble_k",
+)
+FROZEN_AXES: tuple[str, ...] = (
+    "quantification",
+    "run_normalization",
+    "sample_normalization",
+    "peptide_filters",
+    "protein_filters",
+    "batch_correction",
+    "irs",
+)
+
+
+def method_contract() -> dict[str, Any]:
+    """Return the runtime method contract exposed to policy and the LLM."""
+    return {
+        "de_method": list(DE_METHODS),
+        "fdr_method": list(FDR_METHODS),
+        "normalization": list(NORMALIZATION_METHODS),
+        "imputation": list(IMPUTATION_METHODS),
+        "quantification": [*QUANTIFICATION_METHODS, "top<N>"],
+        "ensemble": list(ENSEMBLE_PRESETS),
+        "log2fc_threshold": {"number": [0.0, 10.0], "sentinels": ["auto"]},
+        "ensemble_k": [1, 5],
+        "generated_config_fields": list(GENERATED_CONFIG_FIELDS),
+        "generated_block_fields": list(GENERATED_BLOCK_FIELDS),
+        "executable_axes": list(EXECUTABLE_AXES),
+        "frozen_axes": list(FROZEN_AXES),
+    }
+
+
+def is_supported_quantification(value: str) -> bool:
+    """Return whether a canonical quantification name is understood by Mokume."""
+    return value in QUANTIFICATION_METHODS or bool(re.fullmatch(r"top[1-9]\d*", value))
+
+
+def validate_config_values(item: Mapping[str, Any]) -> None:
+    """Reject a generated configuration that violates the runtime contract."""
+    _require_member(item, "de_method", DE_METHODS)
+    _require_member(item, "fdr_method", FDR_METHODS)
+    _require_member(item, "normalization", NORMALIZATION_METHODS)
+    _require_member(item, "imputation", IMPUTATION_METHODS)
+    _require_member(item, "ensemble", ENSEMBLE_PRESETS)
+
+    de_method = item["de_method"]
+    ensemble = item["ensemble"]
+    ensemble_k = item["ensemble_k"]
+    if isinstance(ensemble_k, bool) or not isinstance(ensemble_k, int):
+        raise ValueError("ensemble_k must be an integer")
+    if not 1 <= ensemble_k <= 5:
+        raise ValueError("ensemble_k must be between 1 and 5")
+    if de_method == "ensemble":
+        if ensemble == "none":
+            raise ValueError("de_method=ensemble requires an ensemble preset")
+        member_count = len(ensemble.split(","))
+        if ensemble_k > member_count:
+            raise ValueError("ensemble_k cannot exceed the ensemble member count")
+    elif ensemble != "none":
+        raise ValueError("ensemble must be 'none' unless de_method=ensemble")
+
+    gate = item["log2fc_threshold"]
+    if isinstance(gate, str):
+        if gate.lower() != "auto":
+            raise ValueError("log2fc_threshold string must be 'auto'")
+    elif isinstance(gate, bool) or not isinstance(gate, (int, float)):
+        raise ValueError("log2fc_threshold must be a number or 'auto'")
+    elif not 0 <= float(gate) <= 10:
+        raise ValueError("log2fc_threshold must be between 0 and 10")
+
+
+def _require_member(
+    item: Mapping[str, Any],
+    field: str,
+    allowed: tuple[str, ...],
+) -> None:
+    """Validate one enumerated configuration field."""
+    value = item.get(field)
+    if value not in allowed:
+        raise ValueError(f"Unsupported {field}={value!r}; choose from {allowed}")
