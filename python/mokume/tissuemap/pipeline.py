@@ -141,6 +141,7 @@ class TissueMapPipeline:
             feature_prefix=self.config.input.feature_prefix,
             min_tissue_samples=self.config.input.min_tissue_samples,
             low_sample_warning_threshold=self.config.input.low_sample_warning_threshold,
+            n_jobs=self._embed_n_jobs,
         )
 
         logger.info("Log2 + median normalization")
