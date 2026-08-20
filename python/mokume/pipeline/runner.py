@@ -24,7 +24,7 @@ logger = get_logger("mokume.pipeline.runner")
 # Map input_level -> flow module.
 # Each flow module must have a run(method, config) -> QpxDataset function.
 FLOW_DISPATCH: Dict[str, object] = {
-    "peptides": flows.standard,  # iBAQ, TopN, sum, median
+    "peptides": flows.standard,  # piBAQ, TopN, sum, median
     "psms": flows.ratio,  # Ratio quantification (PS protocol)
     "peptides_raw": flows.directlfq,  # DirectLFQ (handles its own normalization)
 }
@@ -59,15 +59,6 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
             "Ratio quantification requires PSM-level QPX input; "
             "MSstats feature tables do not contain the required PSM evidence"
         )
-
-    # The Rust backend routes every method through the kernel flow. The kernel
-    # owns method dispatch via ``--quant-method``, so it needs neither the
-    # Python plugin registry nor an input_level lookup.
-    if config.runtime.backend == "rust":
-        import mokume.pipeline.flows.rust as _rust_flow
-
-        dataset = _rust_flow.run(None, config)
-        return _postprocess(dataset, config)
 
     # Ensure built-in methods are registered
     import mokume.quantification  # noqa: F401
@@ -148,17 +139,13 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
             rows_out=len(protein_df),
         )
 
-    # Imputation (after the coverage filter, before batch correction). This
-    # mirrors QuantificationPipeline.run(): the Rust kernel only loads, filters,
-    # normalizes and quantifies, so imputation runs in Python for both backends.
+    # Imputation (after the coverage filter, before batch correction)
     if config.imputation.enabled:
         protein_df = ImputationStage(config).impute(protein_df)
         dataset.proteins = protein_df
         dataset.record_step("imputation", method=config.imputation.method)
 
-    # Batch correction. The Rust kernel does not apply batch correction, so this
-    # pass runs in Python for both backends (after imputation), keeping the two
-    # backends on an identical post-processing path.
+    # Batch correction (after imputation)
     if config.batch.enabled:
         protein_df = post_stage.apply_batch_correction(protein_df, dataset=dataset)
         dataset.proteins = protein_df

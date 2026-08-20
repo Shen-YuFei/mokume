@@ -27,9 +27,18 @@ def _normalize_run_key(value: object) -> str:
     if pd.isna(value):
         return ""
     key = str(value).strip().replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
-    for extension in (".raw", ".mzml", ".d", ".wiff"):
-        if key.endswith(extension):
-            return key[: -len(extension)]
+    # SDRF data files can name an archived vendor directory/file, for example
+    # ``sample.d.zip`` or ``sample.mzML.gz``, while QPX stores ``sample``.
+    # Peel a chain of known transport and acquisition suffixes.
+    extensions = (".zip", ".gz", ".raw", ".mzml", ".d", ".wiff")
+    stripped = True
+    while stripped:
+        stripped = False
+        for extension in extensions:
+            if key.endswith(extension):
+                key = key[: -len(extension)]
+                stripped = True
+                break
     return key
 
 
@@ -43,7 +52,11 @@ def _normalize_label_key(value: object) -> str:
             label = part[3:].strip()
             break
     key = label.lower()
-    if key in {"lfq", "label-free", "label free sample"}:
+    # Older quantms.io/QPX feature files use ``raw`` as the sole
+    # ``intensities.label`` value for label-free runs. It is a quantification
+    # placeholder, not a reporter channel, and must match the SDRF's canonical
+    # ``label free sample`` term.
+    if key in {"raw", "lfq", "label-free", "label free sample"}:
         return "label free sample"
     return key
 

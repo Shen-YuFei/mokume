@@ -55,7 +55,7 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
         raise ImportError(
             "DirectLFQ quantification requires the directlfq package.\n"
             "Install with: pip install directlfq\n"
-            "Or: pip install mokume[directlfq]"
+            "Or: pip install mokume-py[directlfq]"
         ) from exc
 
     from mokume.pipeline.stages import LoadingStage

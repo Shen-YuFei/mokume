@@ -42,6 +42,7 @@ from mokume.core.constants import (
     PARQUET_COLUMNS,
     AGGREGATION_LEVEL_SAMPLE,
     CONDITION,
+    PIBAQ,
 )
 from mokume.core.logger import get_logger
 from mokume.postprocessing.batch_correction import (
@@ -341,7 +342,7 @@ class LoadingStage:
         agreeing to relative 1e-7, the precision limit of the float32 intensity
         column stored in parquet).
         """
-        keep_shared_peptides = self.config.quantification.method.lower() == "ibaq"
+        keep_shared_peptides = self.config.quantification.method.lower() == "pibaq"
         filter_builder = SQLFilterBuilder(
             remove_contaminants=self.config.filtering.remove_contaminants,
             min_peptide_length=self.config.filtering.min_aa,
@@ -447,7 +448,7 @@ class LoadingStage:
         min_aa = self.config.filtering.min_aa
         min_unique = (
             0
-            if self.config.quantification.method.lower() == "ibaq"
+            if self.config.quantification.method.lower() == "pibaq"
             else self.config.filtering.min_unique_peptides
         )
 
@@ -532,7 +533,7 @@ class LoadingStage:
         min_aa = self.config.filtering.min_aa
         min_unique = (
             0
-            if self.config.quantification.method.lower() == "ibaq"
+            if self.config.quantification.method.lower() == "pibaq"
             else self.config.filtering.min_unique_peptides
         )
         metric_expr = _SQL_RUN_METRIC_EXPR[run_norm]
@@ -571,7 +572,7 @@ class LoadingStage:
 
             for sample in samples:
                 dataset_df = df[df["sample_accession"] == sample].copy()
-                if self.config.quantification.method.lower() != "ibaq":
+                if self.config.quantification.method.lower() != "pibaq":
                     dataset_df = dataset_df[dataset_df["unique"] == 1]
                 dataset_df = dataset_df[PARQUET_COLUMNS]
 
@@ -583,7 +584,7 @@ class LoadingStage:
                 )
 
                 # Filter by min unique peptides
-                if self.config.quantification.method.lower() != "ibaq":
+                if self.config.quantification.method.lower() != "pibaq":
                     dataset_df = dataset_df.groupby(PROTEIN_NAME).filter(
                         lambda x: (
                             len(set(x[PEPTIDE_CANONICAL]))
@@ -735,7 +736,7 @@ class LoadingStage:
             raise ImportError(
                 "polars is required for MaxLFQ DirectLFQ-streaming conversion. "
                 "Install it with `pip install polars` or "
-                "`pip install mokume[directlfq]`."
+                "`pip install mokume-py[directlfq]`."
             ) from exc
 
         pdf = pl.from_arrow(table)
@@ -836,7 +837,7 @@ class LoadingStage:
             raise ImportError(
                 "polars is required for the DirectLFQ format conversion. "
                 "Install it with `pip install polars` or "
-                "`pip install mokume[directlfq]`."
+                "`pip install mokume-py[directlfq]`."
             ) from exc
 
         pdf = pl.from_arrow(table)
@@ -1231,8 +1232,8 @@ class QuantificationStage:
 
         quant_method = self.config.quantification.method.lower()
 
-        if quant_method == "ibaq":
-            return self._quantify_ibaq(peptide_df)
+        if quant_method == "pibaq":
+            return self._quantify_pibaq(peptide_df)
         if quant_method in (
             "maxlfq",
             "sum",
@@ -1309,28 +1310,28 @@ class QuantificationStage:
 
         return wide_df.reset_index()
 
-    def _quantify_ibaq(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
+    def _quantify_pibaq(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
         """Quantify using piBAQ (paralog-aware iBAQ).
 
-        Delegates to :func:`mokume.quantification.ibaq.compute_pibaq`, the
+        Delegates to :func:`mokume.quantification.pibaq.compute_pibaq`, the
         same core used by the standalone ``peptides2protein`` CLI. The two
-        entry points share that core, so they agree on iBAQ values **when
+        entry points share that core, so they agree on piBAQ values **when
         configured identically** -- the digestion enzyme, ``min_aa`` /
         ``max_aa``, family ``min_shared`` and any YAML family overrides must
         all match. Those knobs are sourced here from
         :class:`~mokume.pipeline.config.QuantificationConfig`
-        (``ibaq_enzyme`` / ``ibaq_max_aa`` / ``ibaq_min_shared`` /
-        ``ibaq_families_yaml`` / ``ibaq_min_anchors`` /
-        ``ibaq_high_anchor_threshold``) and :attr:`FilterConfig.min_aa`.
+        (``pibaq_enzyme`` / ``pibaq_max_aa`` / ``pibaq_min_shared`` /
+        ``pibaq_families_yaml`` / ``pibaq_min_anchors`` /
+        ``pibaq_high_anchor_threshold``) and :attr:`FilterConfig.min_aa`.
 
         TPA is intentionally **not** emitted on this path: the pipeline
-        contract returns a single wide protein x sample iBAQ matrix, which
+        contract returns a single wide protein x sample piBAQ matrix, which
         has no column for a parallel TPA value. Use the ``peptides2protein``
         CLI with ``--tpa`` when a TPA table is needed. Accordingly
         ``mw_map`` is left ``None`` here.
         """
         from mokume.io.fasta import digest_fasta_full
-        from mokume.quantification.ibaq import compute_pibaq
+        from mokume.quantification.pibaq import compute_pibaq
         from mokume.quantification.families import (
             discover_families,
             load_families_yaml,
@@ -1339,7 +1340,7 @@ class QuantificationStage:
 
         if not self.config.input.fasta_file:
             raise ValueError(
-                "iBAQ quantification requires a FASTA file. Use --fasta to provide one."
+                "piBAQ quantification requires a FASTA file. Use --fasta to provide one."
             )
 
         quant_cfg = self.config.quantification
@@ -1347,26 +1348,26 @@ class QuantificationStage:
             "Computing piBAQ for %d proteins using FASTA "
             "(enzyme=%s, max_aa=%d, min_shared=%d)...",
             peptide_df[PROTEIN_NAME].nunique(),
-            quant_cfg.ibaq_enzyme,
-            quant_cfg.ibaq_max_aa,
-            quant_cfg.ibaq_min_shared,
+            quant_cfg.pibaq_enzyme,
+            quant_cfg.pibaq_max_aa,
+            quant_cfg.pibaq_min_shared,
         )
 
         accession_to_peptides, peptide_to_accessions, _ = digest_fasta_full(
             fasta=self.config.input.fasta_file,
-            enzyme=quant_cfg.ibaq_enzyme,
+            enzyme=quant_cfg.pibaq_enzyme,
             min_aa=self.config.filtering.min_aa,
-            max_aa=quant_cfg.ibaq_max_aa,
+            max_aa=quant_cfg.pibaq_max_aa,
             canonicalize_isoforms=True,
             compute_mw=False,
         )
         families = discover_families(
             accession_to_peptides,
             peptide_to_accessions,
-            min_shared=quant_cfg.ibaq_min_shared,
+            min_shared=quant_cfg.pibaq_min_shared,
         )
-        if quant_cfg.ibaq_families_yaml:
-            overrides = load_families_yaml(Path(quant_cfg.ibaq_families_yaml))
+        if quant_cfg.pibaq_families_yaml:
+            overrides = load_families_yaml(Path(quant_cfg.pibaq_families_yaml))
             families = merge_overrides(families, overrides)
 
         long_df = compute_pibaq(
@@ -1375,20 +1376,20 @@ class QuantificationStage:
             peptide_to_accessions,
             families,
             mw_map=None,
-            min_anchors=quant_cfg.ibaq_min_anchors,
-            high_anchor_threshold=quant_cfg.ibaq_high_anchor_threshold,
+            min_anchors=quant_cfg.pibaq_min_anchors,
+            high_anchor_threshold=quant_cfg.pibaq_high_anchor_threshold,
         )
 
         if long_df.empty:
-            logger.info("iBAQ complete: 0 proteins")
+            logger.info("piBAQ complete: 0 proteins")
             return pd.DataFrame(columns=[PROTEIN_NAME])
 
         result_wide = long_df.pivot(
             index=PROTEIN_NAME,
             columns=SAMPLE_ID,
-            values="Ibaq",
+            values=PIBAQ,
         )
-        logger.info("iBAQ complete: %d proteins", len(result_wide))
+        logger.info("piBAQ complete: %d proteins", len(result_wide))
         return result_wide.reset_index()
 
     def _quantify_median(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
@@ -1454,6 +1455,8 @@ class ImputationStage:
 
         sample_cols = [c for c in protein_df.columns if c != protein_col]
         wide = protein_df.set_index(protein_col)[sample_cols]
+        if np.isinf(wide.to_numpy(dtype=float)).any():
+            raise ValueError("Protein matrix contains an infinite intensity")
 
         wide_log2 = np.log2(wide.replace(0, np.nan))
         n_before = int(wide_log2.isna().sum().sum())
@@ -1462,12 +1465,26 @@ class ImputationStage:
             return protein_df
 
         imputed_log2 = self._dispatch(method, wide_log2)
+        imputed_values = imputed_log2.to_numpy(dtype=float)
+        if np.isinf(imputed_values).any():
+            raise ValueError(f"Imputation method '{method}' produced an infinite value")
+        observed = np.isfinite(wide_log2.to_numpy(dtype=float))
+        if not np.isfinite(imputed_values[observed]).all():
+            raise ValueError(
+                f"Imputation method '{method}' replaced an observed value with missing data"
+            )
         n_after = int(imputed_log2.isna().sum().sum())
         logger.info(
             "Imputation (%s): %d -> %d missing values", method, n_before, n_after
         )
 
-        imputed_linear = 2**imputed_log2
+        try:
+            with np.errstate(over="raise", invalid="raise"):
+                imputed_linear = np.exp2(imputed_log2)
+        except FloatingPointError as exc:
+            raise ValueError(
+                f"Imputation method '{method}' overflowed on the linear scale"
+            ) from exc
         return imputed_linear.reset_index()
 
     def _dispatch(self, method: str, wide: pd.DataFrame) -> pd.DataFrame:
@@ -1514,6 +1531,22 @@ class ImputationStage:
             return impute_impseq(wide)
 
         raise ValueError(f"Unknown imputation method: {method}")
+
+
+def _auto_select_de_method(
+    sample_to_condition: dict[str, str],
+    quant: str,
+) -> str:
+    """Pick a DE method from replicate counts and quantification metadata.
+
+    With tiny groups (min < 3), prefer the permutation-based ROTS; otherwise
+    keep the quantification-based default (DEqMS for directLFQ, LimROTS
+    otherwise).
+    """
+    min_grp = min(Counter(sample_to_condition.values()).values(), default=3)
+    if min_grp < 3:
+        return "rots"
+    return "deqms" if quant == "directlfq" else "limrots"
 
 
 class PostprocessingStage:
@@ -1638,7 +1671,7 @@ class PostprocessingStage:
         if not is_batch_correction_available():
             raise ImportError(
                 "Batch correction requires inmoose package. "
-                "Install with: pip install mokume[batch-correction]"
+                "Install with: pip install mokume-py[batch-correction]"
             )
 
         protein_col, sample_cols = self._protein_and_sample_columns(protein_df)
@@ -1712,15 +1745,41 @@ class PostprocessingStage:
             contrasts.append((parts[0].strip(), parts[1].strip()))
         return contrasts
 
-    def _resolve_de_method(self) -> str:
-        """Resolve the configured DE method, including auto selection."""
+    def _resolve_de_method(
+        self,
+        protein_df: Optional[pd.DataFrame] = None,
+        sample_to_condition: Optional[dict] = None,
+    ) -> str:
+        """Resolve the configured DE method, including data-aware auto selection.
+
+        When ``auto`` and sample metadata are available, use replicate counts
+        before falling back to the quantification-based default.
+        """
         de_method = self.config.de.method.strip().lower()
         if de_method != "auto":
             return de_method
 
         quant = self.config.quantification.method.lower()
+        if protein_df is not None and sample_to_condition:
+            active_conditions = {
+                sample: sample_to_condition.get(sample, "unknown")
+                for sample in protein_df.columns[1:]
+            }
+            choice = _auto_select_de_method(active_conditions, quant)
+            min_grp = min(Counter(active_conditions.values()).values(), default=0)
+            logger.info(
+                "Auto-selected DE method: %s (n_proteins=%d, min_group=%d, quant=%s)",
+                choice,
+                len(protein_df),
+                min_grp,
+                quant,
+            )
+            return choice
+
         de_method = "deqms" if quant == "directlfq" else "limrots"
-        logger.info("Auto-selected DE method: %s (quant=%s)", de_method, quant)
+        logger.info(
+            "Auto-selected DE method: %s (quant=%s, no profile)", de_method, quant
+        )
         return de_method
 
     def _load_de_peptide_counts(self, de_method: str) -> Optional[pd.Series]:
@@ -1854,7 +1913,7 @@ class PostprocessingStage:
         if not contrasts:
             return None
 
-        de_method = self._resolve_de_method()
+        de_method = self._resolve_de_method(protein_df, sample_to_condition)
         peptide_counts = self._load_de_peptide_counts(de_method)
 
         if de_method == "ensemble":
@@ -2012,7 +2071,7 @@ class PostprocessingStage:
         if not is_plotting_available():
             logger.warning(
                 "Plotting dependencies not available. "
-                "Install with: pip install mokume[plotting]"
+                "Install with: pip install mokume-py[plotting]"
             )
             return
 
@@ -2042,7 +2101,7 @@ class PostprocessingStage:
         if not is_interactive_available():
             logger.warning(
                 "Interactive report dependencies (plotly) not available. "
-                "Install with: pip install mokume[reports]"
+                "Install with: pip install mokume-py[reports]"
             )
             return
 

@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 _PYOPENMS_INSTALL_HINT = (
-    "pyopenms is required for FASTA loading / enzyme digestion / iBAQ / TPA. "
-    "Install it with: pip install mokume[ibaq]"
+    "pyopenms is required for FASTA loading / enzyme digestion / piBAQ / TPA. "
+    "Install it with: pip install mokume-py[pibaq]"
 )
 
 
@@ -207,8 +207,8 @@ def extract_fasta(
     .. note::
         This proteotypic-only count is the **legacy ibaqpy denominator** and
         is symmetric only with a proteotypic-only numerator. The default
-        mokume iBAQ path is now piBAQ
-        (:func:`mokume.quantification.ibaq.compute_pibaq`), which re-allocates
+        Mokume piBAQ path
+        (:func:`mokume.quantification.pibaq.compute_pibaq`), which re-allocates
         shared-peptide intensity into the numerator and therefore uses a
         *total-potential* denominator (proteotypic + shared) derived from
         :func:`digest_fasta_full` instead of this function. The two

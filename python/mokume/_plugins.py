@@ -28,7 +28,7 @@ _PLUGIN_MODULES = {
     ("quantification", "tmt_abundance"): "mokume.quantification.tmt_abundance",
     ("quantification", "tmt_reporter"): "mokume.quantification.tmt_reporter",
     ("quantification", "topn"): "mokume.quantification.topn",
-    ("quantification", "ibaq"): "mokume.quantification._dev_registrations",
+    ("quantification", "pibaq"): "mokume.quantification._dev_registrations",
     ("imputation", "mean"): "mokume.imputation.simple",
     ("imputation", "median"): "mokume.imputation.simple",
     ("imputation", "most_frequent"): "mokume.imputation.simple",

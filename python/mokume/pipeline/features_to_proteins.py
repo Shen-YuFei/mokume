@@ -128,10 +128,10 @@ class QuantificationPipeline:
             )
 
         if (
-            self.config.quantification.method.lower() == "ibaq"
+            self.config.quantification.method.lower() == "pibaq"
             and not self.config.input.fasta_file
         ):
-            raise ValueError("iBAQ quantification requires --fasta-file")
+            raise ValueError("piBAQ quantification requires --fasta-file")
 
         if (
             self.config.quantification.method.lower() == "ratio"
@@ -308,7 +308,7 @@ class QuantificationPipeline:
             raise ImportError(
                 "DirectLFQ quantification requires the directlfq package.\n"
                 "Install with: pip install directlfq\n"
-                "Or: pip install mokume[directlfq]"
+                "Or: pip install mokume-py[directlfq]"
             ) from exc
 
         logger.info("Loading and filtering data for DirectLFQ...")
@@ -379,7 +379,7 @@ class QuantificationPipeline:
             raise ImportError(
                 "MaxLFQ DirectLFQ-streaming path requires the directlfq package.\n"
                 "Install with: pip install directlfq\n"
-                "Or: pip install mokume[directlfq]"
+                "Or: pip install mokume-py[directlfq]"
             ) from exc
 
         logger.info("Loading and filtering data for MaxLFQ DirectLFQ-streaming...")
@@ -498,12 +498,12 @@ def features_to_proteins(
     fasta_file: Optional[str] = None,
     ion_alignment: Optional[str] = None,
     # piBAQ-specific (paralog-aware iBAQ)
-    ibaq_enzyme: str = "Trypsin",
-    ibaq_max_aa: int = 50,
-    ibaq_min_shared: int = 2,
-    ibaq_families_yaml: Optional[str] = None,
-    ibaq_min_anchors: int = 1,
-    ibaq_high_anchor_threshold: int = 3,
+    pibaq_enzyme: str = "Trypsin",
+    pibaq_max_aa: int = 50,
+    pibaq_min_shared: int = 2,
+    pibaq_families_yaml: Optional[str] = None,
+    pibaq_min_anchors: int = 1,
+    pibaq_high_anchor_threshold: int = 3,
     directlfq_num_cores: Optional[int] = None,
     directlfq_min_nonan: int = 1,
     export_peptides: Optional[str] = None,
@@ -580,7 +580,7 @@ def features_to_proteins(
     quant_method : str
         Quantification method. Options:
         - 'directlfq': Uses DirectLFQ package (normalization + quantification)
-        - 'ibaq': Intensity-Based Absolute Quantification
+        - 'pibaq': Paralog-aware iBAQ with shared-peptide allocation
         - 'maxlfq': MaxLFQ algorithm
         - 'top3': Top 3 peptides per protein
         - 'top5': Top 5 peptides per protein
@@ -606,26 +606,25 @@ def features_to_proteins(
     normalization_proteins_file : str, optional
         File with protein IDs to use for normalization (one per line).
     fasta_file : str, optional
-        FASTA file path. Required for iBAQ quantification.
+        FASTA file path. Required for piBAQ quantification.
     ion_alignment : str, optional
         Ion alignment method for MaxLFQ: none, hierarchical.
-    ibaq_enzyme : str
+    pibaq_enzyme : str
         Protease used to digest the FASTA for the piBAQ denominator.
         Default: 'Trypsin'.
-    ibaq_max_aa : int
+    pibaq_max_aa : int
         Maximum peptide length retained from the FASTA digest for piBAQ.
         Default: 50 (min length comes from ``min_aa``).
-    ibaq_min_shared : int
+    pibaq_min_shared : int
         Minimum distinct peptides two proteins must share to co-cluster
         into one piBAQ family. Default: 2.
-    ibaq_families_yaml : str, optional
+    pibaq_families_yaml : str, optional
         Path to a YAML file with explicit piBAQ family overrides. When
         ``None`` (default) family discovery is purely data-driven.
-    ibaq_min_anchors : int
-        Minimum proteotypic ("anchor") peptides a family member needs for
-        the family to stay on the per-protein branch; the family rolls up to
-        a single iBAQ only when no member reaches it. Default: 1.
-    ibaq_high_anchor_threshold : int
+    pibaq_min_anchors : int
+        Unique-anchor threshold. If no family member reaches it, shared signal
+        is split equally and evidence is ``family_only``. Default: 1.
+    pibaq_high_anchor_threshold : int
         Minimum anchor count (weakest member) for a family to be labelled
         ``EvidenceLevel == "high"``. Default: 3.
     directlfq_num_cores : int, optional
@@ -680,12 +679,12 @@ def features_to_proteins(
             ratio_fraction_merge=ratio_fraction_merge,
             directlfq_num_cores=directlfq_num_cores,
             directlfq_min_nonan=directlfq_min_nonan,
-            ibaq_enzyme=ibaq_enzyme,
-            ibaq_max_aa=ibaq_max_aa,
-            ibaq_min_shared=ibaq_min_shared,
-            ibaq_families_yaml=ibaq_families_yaml,
-            ibaq_min_anchors=ibaq_min_anchors,
-            ibaq_high_anchor_threshold=ibaq_high_anchor_threshold,
+            pibaq_enzyme=pibaq_enzyme,
+            pibaq_max_aa=pibaq_max_aa,
+            pibaq_min_shared=pibaq_min_shared,
+            pibaq_families_yaml=pibaq_families_yaml,
+            pibaq_min_anchors=pibaq_min_anchors,
+            pibaq_high_anchor_threshold=pibaq_high_anchor_threshold,
         ),
         irs=IRSConfig(
             enabled=irs,

@@ -702,7 +702,7 @@ class QpxDataset:
         except ImportError:
             raise ImportError(
                 "anndata is required for to_anndata(). "
-                "Install with: pip install mokume[h5ad]"
+                "Install with: pip install mokume-py[h5ad]"
             )
 
         df = self.get_level(level)

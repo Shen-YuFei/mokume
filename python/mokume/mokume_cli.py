@@ -14,7 +14,6 @@ from mokume.commands.peptides2protein import peptides2protein
 from mokume.commands.visualize import tsne_visualization
 from mokume.commands.batch_correct import correct_batches
 from mokume.commands.tissuemap import tissuemap_cmd
-from mokume.commands.agentic import agentic_cmd
 
 import mokume
 
@@ -52,7 +51,7 @@ def cli(log_level: str = "debug", log_file: Optional[Path] = None):
     mokume - A comprehensive proteomics quantification library.
 
     Aggregate and normalize quantitative proteomics data using multiple
-    quantification methods (iBAQ, Top3, TopN, MaxLFQ) for the quantms ecosystem.
+    quantification methods (piBAQ, Top3, TopN, MaxLFQ) for the quantms ecosystem.
     """
     logging.basicConfig(
         format="%(asctime)s [%(funcName)s] - %(message)s",
@@ -78,19 +77,12 @@ cli.add_command(peptides2protein)
 cli.add_command(tsne_visualization)
 cli.add_command(correct_batches)
 cli.add_command(tissuemap_cmd)
-cli.add_command(agentic_cmd)
 
 
 def main():
     """
     Main function to run the CLI.
     """
-    try:
-        from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
-
-        load_dotenv()
-    except ImportError:
-        pass
     try:
         cli()
     except SystemExit as e:

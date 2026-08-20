@@ -34,7 +34,7 @@ def _import_yaml():
     if not _check_yaml_available():
         raise ImportError(
             "YAML configuration support requires the 'pyyaml' package.\n"
-            "Install with: pip install mokume[directlfq]\n"
+            "Install with: pip install mokume-py[directlfq]\n"
             "Or: pip install pyyaml"
         )
     import yaml
