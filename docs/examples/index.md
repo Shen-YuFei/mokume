@@ -7,21 +7,21 @@ own data:
 
 - `feature_wide.parquet` — a 500-feature QPX slice from PXD020192 (10 samples).
 - `PXD020192.sdrf.tsv` — the matching SDRF metadata.
-- `PXD017834-peptides.csv` — a normalized peptide table used for iBAQ.
+- `PXD017834-peptides.csv` — a normalized peptide table used for piBAQ.
 - `Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta` — a human
-  UniProt FASTA used as the iBAQ digestion reference.
+  UniProt FASTA used as the piBAQ digestion reference.
 
 Each page uses the same three tabs you saw in the [Quick Start](../quickstart.md):
 
-- **CLI** — the `mokume` kernel binary (or `mokume.run([...])` from the wheel).
-- **Python (wheel)** — the thin keyword wrappers exposed by `pip install mokume-rs`
+- **CLI** — the `mokume` console command installed by the wheel.
+- **Python (wheel)** — the thin keyword wrappers exposed by `pip install mokume`
   (`mokume.features2proteins(...)`, `mokume.peptides2protein(...)`). These call
   the same Rust kernel in-process.
-- **Python (package)** — the pure-Python `mokume` package (`pip install mokume`),
-  which exposes the object-oriented `PipelineConfig` / `QpxDataset` API plus the
-  `mokume.analysis` and `mokume.agentic` modules.
+- **Python (package)** — the pure-Python `mokume-py` package (`pip install mokume-py`),
+  which exposes the object-oriented `PipelineConfig` / `QpxDataset` API and
+  `mokume.analysis`.
 
-See [CLI vs Wheel](../cli-vs-wheel.md) for the full picture of which surface does
+See [Rust Wheel](../rust-wheel.md) for the full picture of which surface does
 what.
 
 ## Analysis pages
@@ -34,18 +34,18 @@ Covers all three surfaces and how the quant method is selected.
 ### [Differential Expression](differential-expression.md)
 
 Test proteins for abundance changes between conditions. Covers the kernel's
-`--de` flags, the Python `DifferentialExpression` class and the standalone
-`run_*` functions, and the LLM-free agentic optimizer.
+`--de` flags, the Python `DifferentialExpression` class, standalone `run_*`
+functions, and the separate Mokume Plugin workflow.
 
 ### [Absolute Expression](absolute-expression.md)
 
-Estimate per-protein copy numbers and concentrations with iBAQ, TPA, and the
+Estimate per-protein copy numbers and concentrations with piBAQ, TPA, and the
 ProteomicRuler. Explains every computed column
-(`Ibaq`, `IbaqNorm`, `TPA`, `CopyNumber`, `EvidenceLevel`, ...).
+(`PiBAQ`, `PiBAQNorm`, `TPA`, `CopyNumber`, `EvidenceLevel`, ...).
 
 ### [Full Pipeline](pipeline.md)
 
 Wire quantification, normalization, imputation, batch correction, IRS, and DE
 into one `PipelineConfig` and run it through `run_pipeline` /
 `QuantificationPipeline.run_dataset`. Shows the `QpxDataset` result API and how
-to switch to the Rust backend.
+to choose between the separate Python and Rust distributions.

@@ -1,16 +1,18 @@
 # mokume
 
-[![Rust CI](https://github.com/bigbio/mokume/actions/workflows/rust.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/rust.yml)
-[![Build wheels](https://github.com/bigbio/mokume/actions/workflows/wheels.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/wheels.yml)
+[![Rust](https://github.com/bigbio/mokume/actions/workflows/rust.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/rust.yml)
+[![Wheels](https://github.com/bigbio/mokume/actions/workflows/wheels.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/wheels.yml)
+[![PyPI version](https://badge.fury.io/py/mokume.svg)](https://badge.fury.io/py/mokume)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
 
 **mokume** is a proteomics quantification toolkit: it turns peptide-level mass
 spectrometry intensities into protein expression matrices, with built-in
 normalization, imputation, batch correction, and differential expression. It is
-designed for the [quantms](https://github.com/bigbio/quantms) ecosystem and is
-available as both a standalone command-line tool and a Python wheel.
+designed for the [quantms](https://github.com/bigbio/quantms) ecosystem and works
+through both Python and an installed console command.
 
-It supports iBAQ, TopN, MaxLFQ, and DirectLFQ quantification, and ships both as a
-fast standalone CLI binary and as a `pip install mokume-rs` wheel.
+It supports piBAQ, TopN, MaxLFQ, and DirectLFQ quantification and ships as the
+`mokume` wheel.
 
 ## Why mokume?
 
@@ -20,7 +22,8 @@ flowing pattern. mokume does the same with proteomics data: it melds many noisy,
 overlapping peptide intensities into one coherent protein expression profile.
 
 mokume is an evolution of [ibaqpy](https://github.com/bigbio/ibaqpy), extended
-well beyond iBAQ to a broader range of quantification, normalization, and
+well beyond the original iBAQ workflow to a broader range of quantification,
+normalization, and
 differential-expression methods, with the heavy lifting rewritten in Rust.
 
 ## Installation
@@ -28,33 +31,31 @@ differential-expression methods, with the heavy lifting rewritten in Rust.
 The Python wheel is the recommended way to install mokume:
 
 ```bash
-pip install mokume-rs
+pip install mokume
 ```
 
-> **Note:** `mokume-rs` is not published on PyPI yet. Until it is, build the wheel
-> from source (`pip install .` from this `rust/` directory, or `pip install ./rust`
-> from the repo root), or use the pure-Python package: `pip install mokume`.
+> **Distribution transition:** `mokume<=0.1.0` was pure Python. Starting with
+> 0.2.0, this Rust-backed wheel is the default `mokume` distribution; the
+> pure-Python implementation is available as `mokume-py`.
 
-Optional periphery features (plots, reports, tissue maps, iBAQ helpers) are
+Optional periphery features (plots, reports, tissue maps, piBAQ helpers) are
 available as extras:
 
 ```bash
-pip install "mokume-rs[plotting]"   # matplotlib / seaborn figures
-pip install "mokume-rs[reports]"    # interactive plotly QC reports
-pip install "mokume-rs[tissuemap]"  # tissue-map + AnnData export
-pip install "mokume-rs[ibaq]"       # Python iBAQ fallback for unported enzymes
-pip install "mokume-rs[analysis]"   # QC/comparison reports + missforest
-pip install "mokume-rs[all]"        # everything above
+pip install "mokume[plotting]"   # matplotlib / seaborn figures
+pip install "mokume[reports]"    # interactive plotly QC reports
+pip install "mokume[tissuemap]"  # tissue-map + AnnData export
+pip install "mokume[pibaq]"      # Python piBAQ fallback for unported enzymes
+pip install "mokume[analysis]"   # QC/comparison reports + missforest
+pip install "mokume[agentic]"    # local MCP service for the Mokume Plugin
+pip install "mokume[all]"        # everything above
 ```
 
-To install the standalone CLI binary (no Python runtime required):
+The optional Plugin/MCP workflow requires Python 3.10 or newer.
 
-```bash
-cargo install --path crates/mokume-cli
-```
-
-A conda/mamba environment is also provided in `environment.yaml`. See
-[docs/installation.md](../docs/installation.md) for details.
+The wheel also installs the `mokume` console command. A conda/mamba environment
+is provided in `environment.yaml`. See
+[Installation](../docs/installation.md) for details.
 
 ## Quick start
 
@@ -93,8 +94,8 @@ mokume.features2proteins(
 )
 ```
 
-The wheel and the CLI binary run the identical compute kernel, so a result
-produced either way is the same.
+The Python API and console command run the identical compute kernel, so a result
+produced through either interface is the same.
 
 ## Commands
 
@@ -117,8 +118,8 @@ steps around them. The full catalog of methods is documented in the
   <img src="../docs/assets/pipeline.svg" alt="The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
 </p>
 
-- **Quantification:** `maxlfq`, `directlfq`, `ibaq`, `top3`/`topn`, `sum`
-  (also `median`, `ratio`, `abd`, `intensity`, `spectral_count`). iBAQ requires
+- **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top3`/`topn`, `sum`
+  (also `median`, `ratio`, `abd`, `intensity`, `spectral_count`). piBAQ requires
   a FASTA; TopN, MaxLFQ, and Sum do not.
 - **Normalization:** run-level and sample-level options including `median`,
   `quantile`, `rlr`, and `loess`.
@@ -128,27 +129,29 @@ steps around them. The full catalog of methods is documented in the
   covariate-aware) that removes technical batch effects while preserving
   biological signal.
 - **Differential expression:** `limma`, `deqms`, `rots`, `limrots`,
-  `proda`, and an ensemble, with BH (default) or IHW FDR control. LimROTS gives
+  `proda`, and an ensemble, with BH (default), IHW, BKY, or Storey FDR control
+  and fixed or data-driven effect-size gates. LimROTS gives
   the best sensitivity on MaxLFQ data, DEqMS controls false positives better on
   noisier DirectLFQ data, and proDA models missing values as informative
   dropouts.
 
 ## How it works
 
-This Rust implementation has one compute kernel exposed through two entry
-points:
-
-- a standalone CLI binary (`mokume`) that needs no Python runtime, and
-- a `pip install mokume-rs` wheel whose compiled extension runs the same kernel
-  in-process (no subprocess, no recomputation).
+mokume's compute lives once in a Rust kernel shipped in the `mokume` wheel.
+The compiled extension runs in-process, and the installed `mokume` console
+command reaches that extension through Python without a subprocess.
 
 A thin Python periphery adds plots and reports on top. You never need to know it
-is Rust to use it. The repository also contains a separately maintained
-pure-Python computation implementation under `../python/`; it is not part of the
-Rust CLI/wheel identity guarantee. The Rust kernel leads new native computation
-work. For the full design and maintenance policy, see
+is Rust to use it. The repository also contains the separately maintained
+pure-Python `mokume-py` distribution. The Rust kernel leads new native
+computation work. For the full design and maintenance policy, see
 [Architecture](../docs/architecture.md) and
 [Maintenance scope](../docs/maintenance-scope.md).
+
+Agentic method recommendation is an installable plugin over this wheel. Its
+bundled local MCP configuration calls deterministic profile, policy, and
+evaluation services; the agent host owns the model and credentials. See the
+[Mokume Plugin guide](../docs/user-guide/agentic-plugin.md).
 
 ## Example
 
@@ -179,15 +182,14 @@ expression.*
 *AdaTiSS tissue-specificity score distribution (with the GMM-fitted
 specific / enriched / housekeeping thresholds) and the tissue-specific protein
 count per tissue. `mokume.tissuemap` also emits marker heatmaps, dotplots, and
-dendrograms — see
-[`docs/periphery/tissuemap.md`](../docs/periphery/tissuemap.md).*
+dendrograms — see [`docs/periphery/tissuemap.md`](../docs/periphery/tissuemap.md).*
 
 ## Documentation
 
 - [Documentation home](../docs/index.md)
 - [Quick start](../docs/quickstart.md)
 - [Installation](../docs/installation.md)
-- [CLI vs. wheel](../docs/cli-vs-wheel.md)
+- [Rust wheel](../docs/rust-wheel.md)
 - [Architecture](../docs/architecture.md)
 - [Maintenance scope](../docs/maintenance-scope.md)
 - [Benchmarks](../benchmarks/)

@@ -1,20 +1,21 @@
 # mokume
 
+[![Rust](https://github.com/bigbio/mokume/actions/workflows/rust.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/rust.yml)
 [![Python application](https://github.com/bigbio/mokume/actions/workflows/python-app.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-app.yml)
-[![Upload Python Package](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml)
+[![Wheels](https://github.com/bigbio/mokume/actions/workflows/wheels.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/wheels.yml)
 [![PyPI version](https://badge.fury.io/py/mokume.svg)](https://badge.fury.io/py/mokume)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
 
 **mokume** is a comprehensive proteomics quantification toolkit: it turns
 peptide-level mass-spectrometry intensities into protein expression matrices,
 with built-in normalization, imputation, batch correction, and differential
-expression. It supports iBAQ, TopN, MaxLFQ, and DirectLFQ quantification, is
+expression. It supports piBAQ, TopN, MaxLFQ, and DirectLFQ quantification, is
 designed for the [quantms](https://github.com/bigbio/quantms) ecosystem, and
-can be used as either a Python library or a standalone command-line tool.
+works as both a Python library and a command-line tool.
 
 mokume is an evolution of [ibaqpy](https://github.com/bigbio/ibaqpy), extended
-well beyond iBAQ to a broader range of quantification, normalization, and
-differential-expression methods.
+well beyond the original iBAQ workflow to a broader range of quantification,
+normalization, and differential-expression methods.
 
 ## Why "mokume"?
 
@@ -33,58 +34,58 @@ language):
 
 ```text
 mokume/
-├── docs/      # one shared documentation site (mkdocs)
-├── python/    # the pure-Python implementation — the `mokume` package
-└── rust/      # a Rust compute kernel: a standalone CLI binary + a maturin wheel
+├── .agents/         # Codex marketplace metadata
+├── .claude-plugin/  # Claude Code marketplace metadata
+├── docs/            # one shared documentation site (mkdocs)
+├── plugins/         # Codex/Claude plugin (shared skill + MCP + knowledge)
+├── python/          # the pure-Python implementation — `mokume-py`
+└── rust/            # the default Rust-backed `mokume` wheel
 ```
 
-- **`rust/`** — the Rust compute kernel: the **leading implementation** of the
-  native computation commands, shipped as a standalone CLI binary and an
-  in-process `mokume._mokume` wheel.
-- **`python/`** — the pure-Python `mokume` package (`pip install mokume`).
-  Added value: readable implementations of overlapping methods that are easy to
-  extend and script against, plus compatibility baselines for covered kernel
-  behavior.
+- **`rust/`** — the default `mokume` distribution (`pip install mokume`) and
+  **leading implementation** of the native computation commands. Its Rust
+  kernel is exposed through the in-process `mokume._mokume` extension.
+- **`python/`** — the pure-Python `mokume-py` distribution (`pip install
+  mokume-py`). It provides readable, independently maintained implementations
+  and compatibility baselines for covered kernel behavior.
 
 Both expose the same four computation command names, with different support
 levels. **mokume is Rust-first**: new computation lands in the Rust kernel, and
 overlapping supported paths are parity-tested where coverage exists. See
-[Maintenance scope](#maintenance-scope) below.
+[Maintenance scope](#maintenance-scope) below. Its measured advantage is
+bounded: on `sum` (PXD003539 / PXD004701, 24 threads, bit-identical output) it
+is ~1.5× faster wall-clock with ~7× lower peak memory. See
+[docs/architecture.md](docs/architecture.md) for the numbers.
 
 ## Installation
 
-The Python package is the recommended way to get started:
+Install the default Rust-backed distribution:
 
 ```bash
 pip install mokume
 ```
 
-The base install is lightweight and covers the **core LFQ workflow** — MaxLFQ,
-Top3/TopN, feature/peptide normalization, and parquet/SDRF I/O. Features that pull
-heavier dependencies are opt-in via extras (each raises a clear install hint if
-used without it):
+The base wheel contains the native quantification, normalization, imputation,
+batch-correction, and differential-expression kernel. Python periphery
+dependencies remain opt-in:
 
 ```bash
-pip install "mokume[ibaq]"        # FASTA digestion + iBAQ / piBAQ / TPA absolute quant
-pip install "mokume[analysis]"    # differential expression, FDR, DEqMS, LOESS/RLR
-pip install "mokume[imputation]"  # KNN / missForest imputation
-pip install "mokume[directlfq]"   # DirectLFQ backend for MaxLFQ
-pip install "mokume[plotting]"    # QC reports and visualizations
-pip install "mokume[tissuemap]"   # tissue-specificity pipeline + AnnData export
-pip install "mokume[agentic]"     # AI-assisted DE optimization (DeepSeek / OpenAI)
-pip install "mokume[all]"         # everything (all optional dependencies)
+pip install "mokume[plotting]"   # t-SNE, DE plots, and piBAQ QC
+pip install "mokume[reports]"    # interactive HTML reports
+pip install "mokume[tissuemap]"  # tissue-specificity pipeline
+pip install "mokume[pibaq]"      # fallback for enzymes not ported to Rust
+pip install "mokume[analysis]"   # QC, workflow comparison, and missforest
+pip install "mokume[agentic]"    # local MCP service used by the Mokume Plugin
+pip install "mokume[all]"        # all Python periphery dependencies
 ```
 
-For the **Rust accelerated build** — a standalone CLI binary that needs no
-Python runtime, running the same compute kernel — build from the `rust/`
-workspace:
+The optional Plugin/MCP workflow requires Python 3.10 or newer.
 
-```bash
-cargo install --path rust/crates/mokume-cli   # standalone `mokume` CLI binary
-```
-
-A conda environment and build-from-source instructions are in
-[docs/installation.md](docs/installation.md).
+For the separate pure-Python implementation, use `pip install mokume-py`. Do
+not install `mokume` and `mokume-py` together because both provide the `mokume`
+import package and console command. Agentic recommendation belongs to the
+default `mokume` distribution and its installable plugin, not `mokume-py`. See
+[Installation](docs/installation.md).
 
 ## Quick start
 
@@ -97,6 +98,10 @@ mokume features2proteins \
   --quant-method maxlfq \
   --output proteins.csv
 ```
+
+> **Distribution transition.** `mokume<=0.1.0` was the pure-Python package.
+> Starting with 0.2.0, `mokume` is Rust-backed and the pure-Python package is
+> named `mokume-py`.
 
 Add differential expression by passing `--de` with one or more contrasts:
 
@@ -121,7 +126,7 @@ from mokume.quantification import TopNQuantification
 # columns: ProteinName, PeptideCanonical, NormIntensity, SampleID
 peptides = pd.read_csv("peptides.csv")
 
-# TopN protein quantification; MaxLFQ / iBAQ / DirectLFQ share the .quantify interface
+# TopN protein quantification; MaxLFQ / piBAQ / DirectLFQ share the .quantify interface
 proteins = TopNQuantification(n=3).quantify(peptides)
 ```
 
@@ -137,7 +142,7 @@ One `features2proteins` command drives every workflow — swap a flag to change
 the analysis. Each snippet is a complete run; deeper options are one link away.
 
 **Relative quantification** — pick a method with `--quant-method` (`maxlfq`,
-`directlfq`, `top3`/`topn`, `sum`, ...):
+`directlfq`, `top3` / `top5` / any `top<N>`, `sum`, ...):
 
 ```bash
 mokume features2proteins \
@@ -146,14 +151,14 @@ mokume features2proteins \
   --output proteins.csv
 ```
 
-**Absolute expression (iBAQ)** — add a FASTA to get iBAQ / piBAQ / TPA
-abundances instead of relative intensities:
+**Absolute expression (piBAQ)** — add a FASTA to get piBAQ / TPA /
+ProteomicRuler abundances instead of relative intensities:
 
 ```bash
 mokume features2proteins \
   --parquet features.parquet --sdrf samples.sdrf.tsv \
-  --quant-method ibaq --fasta proteome.fasta \
-  --output proteins_ibaq.csv
+  --quant-method pibaq --fasta proteome.fasta \
+  --output proteins_pibaq.csv
 ```
 
 **Differential expression** — append `--de` and one or more contrasts to any of
@@ -183,7 +188,7 @@ proteins = run_pipeline(config).get_level("proteins")  # proteins x samples matr
 ```
 
 Runnable examples per analysis: [quantification methods](docs/examples/quantification.md)
-· [absolute expression / iBAQ](docs/examples/absolute-expression.md)
+· [absolute expression / piBAQ](docs/examples/absolute-expression.md)
 · [differential expression](docs/examples/differential-expression.md)
 · [full Python pipeline](docs/examples/pipeline.md).
 
@@ -204,9 +209,10 @@ Runnable examples per analysis: [quantification methods](docs/examples/quantific
   <img src="docs/assets/pipeline.svg" alt="The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
 </p>
 
-- **Quantification:** `maxlfq`, `directlfq`, `ibaq`, `top3`/`topn`, `sum` (also
-  `median`, `ratio`, `abd`, `intensity`, `spectral_count`). iBAQ requires a
-  FASTA; TopN, MaxLFQ, and Sum do not.
+- **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top<N>` (`top3`, `top5`,
+  `top10`, ... — the N is part of the method name), `sum` (also `median`,
+  `ratio`, `abd`, `intensity`, `spectral_count`). piBAQ requires a FASTA; TopN,
+  MaxLFQ, and Sum do not.
 - **Normalization:** run-level and sample-level options including `median`,
   `quantile`, `rlr`, and `loess`.
 - **Imputation:** a wide set of imputers, from simple (`mindet`, `knn`) to
@@ -248,30 +254,38 @@ results = de.run_comparisons(
 LimROTS and ROTS report their own permutation-based FDR, so requesting IHW does
 not overwrite it. See [docs/concepts/differential-expression.md](docs/concepts/differential-expression.md).
 
-## AI-assisted optimization
+## AI-assisted method selection
 
-mokume can tune its own differential-expression configuration with an
-OpenAI-compatible LLM (DeepSeek by default) layered on top of deterministic
-rule-based heuristics — profile the data, propose a method/filter/normalization
-configuration, and iterate. It degrades gracefully to rule-based only when no
-API key is set. Install with `pip install "mokume[agentic]"`; see
-[docs/](docs/index.md) for setup.
+The installable Mokume Plugin lets Codex or Claude Code inspect a protein
+matrix, bind traceable benchmark evidence, and evaluate bounded normalization,
+imputation, and differential-expression candidates through the Rust kernel.
+The host owns the model and credentials; Mokume contains no BYOK model client.
+Its bundled local MCP server starts automatically when the plugin is enabled.
+With ground truth it ranks by Score A; without ground truth it reports
+exploratory diagnostics without selecting a winner. See the
+[Mokume Plugin guide](docs/user-guide/agentic-plugin.md).
 
 ## How it works
 
 mokume's computation is available through two implementations with overlapping
 functionality:
 
-- a Rust compute kernel — the leading implementation that runs the heavy lifting,
-  shipped as a standalone CLI binary (`mokume`, no Python runtime needed) and an
-  in-process `mokume._mokume` wheel; and
-- the pure-Python `mokume` package — added value, ideal for reading, extending,
-  and interactive analysis. Overlapping supported paths are parity-tested where
-  coverage exists.
+- the leading Rust compute kernel, shipped in the default `mokume` wheel with
+  an in-process Python API and an installed `mokume` console command; and
+- the pure-Python `mokume-py` distribution, which provides independently
+  maintained implementations for extension and interactive analysis.
 
-The Rust CLI binary and the `mokume-rs` wheel share one compiled kernel, so a
-result computed through either Rust entry point is identical. For the full
-design, see [docs/architecture.md](docs/architecture.md).
+The Mokume Plugin is a separate installable host bundle. It contributes a
+skill, a traceable knowledge snapshot, and automatic local MCP configuration;
+the MCP tools call the default wheel's Rust-backed matrix APIs.
+
+The wheel's Python API and console command share one compiled kernel, so a
+result computed through either interface is identical. Where the kernel does
+apply, its measured advantage is bounded rather than unbounded: on `sum`
+(PXD003539 / PXD004701, 24 threads, bit-identical output) it is ~1.5× faster
+wall-clock (6.7s vs 10.3s; 12.3s vs 19.4s) with ~7× lower peak memory (0.83 vs
+5.5 GB; 1.2 vs 8.9 GB). For the full design, see
+[docs/architecture.md](docs/architecture.md).
 
 ## Maintenance scope
 
@@ -301,8 +315,9 @@ mokume is **Rust-first**:
 | `correct-batches`    | ✅ Leading — authoritative (native ComBat) | ✅ Added value · best-effort |
 
 This scope covers the **computation implementations only**. The Python pipeline
-API and its shared post-processing, plotting, reporting, TissueMap, and the
-`agentic` optimizer are Python-only by design and out of scope here. Full policy:
+API and its shared post-processing, plotting, reporting, and TissueMap remain
+periphery. Agentic recommendation is maintained as a plugin over the default
+Rust-backed wheel, rather than as a second computation backend. Full policy:
 [docs/maintenance-scope.md](docs/maintenance-scope.md).
 
 ## Example: a tissue proteome atlas
@@ -341,7 +356,7 @@ count per tissue. See [docs/periphery/tissuemap.md](docs/periphery/tissuemap.md)
 - [Quick start](docs/quickstart.md)
 - [Installation](docs/installation.md)
 - [User guide](docs/user-guide/) · [Method concepts](docs/concepts/)
-- [CLI vs. wheel](docs/cli-vs-wheel.md) · [Architecture](docs/architecture.md) · [Maintenance scope](docs/maintenance-scope.md)
+- [Rust wheel](docs/rust-wheel.md) · [Architecture](docs/architecture.md) · [Maintenance scope](docs/maintenance-scope.md)
 - [Benchmarks](benchmarks/)
 
 ## Citation

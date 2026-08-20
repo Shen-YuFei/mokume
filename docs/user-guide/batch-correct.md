@@ -5,7 +5,7 @@ The `correct-batches` command applies native Rust ComBat batch correction (oracl
 !!! tip "Prefer the integrated pipeline"
     For most use cases, batch correction is easier to apply via `features2proteins --batch-correction`. Use this standalone command when you have pre-existing protein quantification files that need correction.
 
-This page documents the standalone CLI command `mokume correct-batches`.
+This page documents the `mokume correct-batches` CLI subcommand.
 
 ## Basic Usage
 
@@ -13,9 +13,9 @@ This page documents the standalone CLI command `mokume correct-batches`.
 
     ```bash
     mokume correct-batches \
-        -f ibaq_folder/ \
-        -p "*ibaq.tsv" \
-        -o corrected_ibaq.tsv
+        -f pibaq_folder/ \
+        -p "*pibaq.tsv" \
+        -o corrected_pibaq.tsv
     ```
 
 === "Python (wheel)"
@@ -26,9 +26,9 @@ This page documents the standalone CLI command `mokume correct-batches`.
     import mokume
 
     mokume.correct_batches(
-        folder="ibaq_folder/",
-        pattern="*ibaq.tsv",
-        output="corrected_ibaq.tsv",
+        folder="pibaq_folder/",
+        pattern="*pibaq.tsv",
+        output="corrected_pibaq.tsv",
     )
     ```
 
@@ -39,9 +39,9 @@ This page documents the standalone CLI command `mokume correct-batches`.
 
     mokume.run([
         "correct-batches",
-        "--folder", "ibaq_folder/",
-        "--pattern", "*ibaq.tsv",
-        "--output", "corrected_ibaq.tsv",
+        "--folder", "pibaq_folder/",
+        "--pattern", "*pibaq.tsv",
+        "--output", "corrected_pibaq.tsv",
     ])
     ```
 
@@ -50,12 +50,12 @@ This page documents the standalone CLI command `mokume correct-batches`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-f/--folder` | required | Folder containing TSV files |
-| `-p/--pattern` | `*ibaq.tsv` | File matching pattern |
+| `-p/--pattern` | `*pibaq.tsv` | File matching pattern |
 | `-o/--output` | required | Output file path |
 | `--sample_id_column` / `--sid` | `SampleID` | Sample ID column name |
 | `--protein_id_column` / `--pid` | `ProteinName` | Protein ID column name |
-| `--ibaq_raw_column` / `--ibaq` | `Ibaq` | Raw intensity column |
-| `--ibaq_corrected_column` | `IbaqBec` | Corrected intensity column |
+| `--pibaq_raw_column` / `--pibaq` | `PiBAQ` | Raw intensity column |
+| `--pibaq_corrected_column` | `PiBAQBec` | Corrected intensity column |
 | `--comment` | `#` | Comment character in files |
 | `--sep` | `\t` | Field separator |
 | `--export_anndata` | off | Export to AnnData h5ad format |
@@ -63,7 +63,7 @@ This page documents the standalone CLI command `mokume correct-batches`.
 ## With Covariates
 
 To preserve biological signal during batch correction, supply covariates. The
-standalone `correct-batches` command runs ComBat on the combined iBAQ folder and
+standalone `correct-batches` command runs ComBat on the combined piBAQ folder and
 does **not** expose batch-method or covariate options. Covariate-aware correction
 is driven from the [`features2proteins`](features2proteins.md#batch-correction)
 flow, which extracts the covariates from the SDRF:
@@ -100,9 +100,9 @@ Export corrected data to AnnData format for downstream analysis with scanpy or o
 
 ```bash
 mokume correct-batches \
-    -f ibaq_folder/ \
-    -p "*ibaq.tsv" \
-    -o corrected_ibaq.tsv \
+    -f pibaq_folder/ \
+    -p "*pibaq.tsv" \
+    -o corrected_pibaq.tsv \
     --export_anndata
 ```
 

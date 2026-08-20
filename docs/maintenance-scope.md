@@ -2,7 +2,7 @@
 
 mokume ships its computation in two codebases — a **Rust compute kernel**
 (`rust/crates/`) and a **pure-Python package** (`python/mokume/`, `pip install
-mokume`) — which expose the same four computation commands with different
+mokume-py`) — which expose the same four computation commands with different
 support levels: `features2proteins`, `features2peptides`, `peptides2protein`, and
 `correct-batches`. This page states which implementation leads, what each is
 maintained for, and where new work goes, so overlapping behavior does not drift.
@@ -19,10 +19,11 @@ normalization, imputation, batch-correction, and differential-expression logic
 behind the four commands above.
 
 It does **not** govern the Python periphery — the Python pipeline API and its
-shared post-processing, plotting, reporting,
-[TissueMap](periphery/tissuemap.md), and the `agentic` optimizer. Those are
-Python-only by design and are out of scope here; see
-[Architecture](architecture.md) and [CLI vs Wheel](cli-vs-wheel.md).
+shared post-processing, plotting, reporting, and
+[TissueMap](periphery/tissuemap.md). Agentic recommendation is an installable
+plugin over the default Rust-backed wheel, not a third computation
+implementation. See
+[Architecture](architecture.md) and [Rust Wheel](rust-wheel.md).
 
 ## The rule
 
@@ -31,8 +32,8 @@ Python-only by design and are out of scope here; see
    implements the same capability, it follows the shared public contract. This
    does not transfer ownership of the Python pipeline's orchestration and
    post-processing, or of intentional Python-only fallbacks, to Rust. The CLI
-   binary and the `mokume-rs` wheel are two front doors onto the kernel (see
-   [Architecture](architecture.md)).
+   command and Python API installed by the `mokume` wheel are two front doors
+   onto the same kernel (see [Architecture](architecture.md)).
 2. **New computation is written in Rust first.** When a feature touches the
    computation commands — for example [native SDRF + MSstats input
    support](https://github.com/bigbio/mokume/pull/74) — it is implemented and
@@ -43,7 +44,7 @@ Python-only by design and are out of scope here; see
    pipelines and inspect readable implementations. A Python equivalent of new
    computation is built **only** when someone needs it for their pipeline or
    maintainers choose to expand compatibility coverage — and that can be done
-   later, or agentically.
+   later.
 4. **Parity is checked, not assumed.** Where both implementations and
    compatibility coverage exist, tests compare results within the documented
    floating-point tolerance. `rust/tests/test_rust_python_equivalence.py` covers
@@ -73,20 +74,18 @@ Legend:
   needs the function in a Python pipeline or maintainers choose to expand
   compatibility coverage, not as a release gate.
 
-### Backend selection
+### Distribution selection
 
-Within the pure-Python pipeline API, `RuntimeConfig.backend` selects, **for
-`features2proteins` only**, whether the features-to-proteins step computes in
-pure Python or delegates to the compiled Rust kernel; both paths then share the
-Python post-processing layer. The other three commands have implementations in
-both codebases but are not routed through `RuntimeConfig.backend`. See the
-hybrid stage boundary in [Architecture](architecture.md#the-pure-python-package-and-its-compute-backends).
+There is no runtime backend selector. Install `mokume` for the leading Rust
+kernel or `mokume-py` for the separately maintained pure-Python implementation.
+Both distributions provide the `mokume` import package and console command, so
+use them in separate environments rather than installing both together.
 
 ## Practical guidance
 
 - **Contributing computation changes?** Implement them in the Rust crates and
   their tests. A pure-Python counterpart is optional and can follow later.
-- **Need a computation function in a Python pipeline?** Prefer the `mokume-rs`
+- **Need a computation function in a Python pipeline?** Prefer the `mokume`
   wheel (`mokume.features2proteins(...)`, `mokume.peptides2protein(...)`, …),
   which runs the Rust kernel in-process. The pure-Python package remains
   available when you specifically want the readable Python implementation or to

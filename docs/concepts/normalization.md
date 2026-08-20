@@ -65,7 +65,7 @@ Applied after all samples are loaded, operating on the complete dataset:
 | `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
 
 !!! tip "When to use hierarchical normalization"
-    Use `--sample-normalization hierarchical` when you want DirectLFQ-style normalization **combined with a different quantification method** (e.g., iBAQ). This gives you the normalization quality of DirectLFQ with the quantification approach of your choice.
+    Use `--sample-normalization hierarchical` when you want DirectLFQ-style normalization **combined with a different quantification method** (e.g., piBAQ). This gives you the normalization quality of DirectLFQ with the quantification approach of your choice.
 
 ### Global Median
 

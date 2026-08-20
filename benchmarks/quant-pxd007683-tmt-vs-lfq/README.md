@@ -90,7 +90,7 @@ The benchmark includes comprehensive analysis scripts that answer three core sci
 > When using DirectLFQ quantification in benchmarks, **always use the external directlfq package** directly rather than any fallback implementation. This ensures reproducibility and uses the official Mann Lab algorithm.
 >
 > ```bash
-> pip install mokume[directlfq]
+> pip install mokume-py[directlfq]
 > ```
 
 ### Quick Start

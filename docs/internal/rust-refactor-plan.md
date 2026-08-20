@@ -1,7 +1,7 @@
 # Rust Refactor Plan
 
 > **Status — historical planning record.** The authoritative current state is the
-> "Current Status (2026-06-27)" section below. The per-phase sections and the
+> "Current Status" section below. The per-phase sections and the
 > "Current Conclusion" / "Key Differences" sections further down predate the
 > completed DE / ComBat / batch-correction / channel-IRS build-out: they still
 > describe as "not yet supported" capabilities that have since shipped and been
@@ -9,14 +9,12 @@
 > excluded from the published docs site (`exclude_docs: internal/*`).
 
 This document records the port of the upstream Python `mokume` implementation to
-the Rust `mokume` compute kernel (now shipped as a CLI binary and a PyO3/maturin
-wheel) and any remaining gaps. The goal is better system performance while
-keeping behavior verifiable. The
-`agentic` feature is not ported in this stage; it depends on conventional
-normalization, imputation, and differential-expression capabilities, and those
-underlying capabilities still need to be implemented in Rust.
+the Rust `mokume` compute kernel (now shipped in a PyO3/maturin wheel) and any
+remaining gaps. The goal is better system performance while
+keeping behavior verifiable. Agentic recommendation is an installable host
+plugin whose local MCP service calls the Rust-backed matrix APIs.
 
-## Current Status (2026-06-27 — authoritative; per-phase sections below may be stale)
+## Current Status (2026-08-19 — authoritative; per-phase sections below may be stale)
 
 A full method-level audit plus the DE/ComBat build-out and a real-data parity pass
 align the computation core: every quant/normalization/imputation/DE/batch method is
@@ -107,26 +105,27 @@ sklearn) and the native `.h5ad`/AnnData writer for `correct-batches --export-ann
 cmake at build time). The visualization/QC surface ships in the `mokume` Python wheel (PyO3/maturin):
 the periphery lives in `python/mokume/commands/` and reads the kernel's
 TSV/parquet output to render figures, so the numbers stay single-sourced in Rust.
-The Rust CLI binary is pure compute and no longer shells out to Python — the
-former `tsne_visualization` / `tissuemap` subcommands and the
-`features2proteins --plot-*` / `--interactive-report` flags moved to the wheel
-(`mokume.tsne_visualization(...)`, `mokume.de_plots(...)`, etc.), and
+The former `tsne_visualization` / `tissuemap` subcommands and the
+`features2proteins --plot-*` / `--interactive-report` flags moved to wheel APIs
+(`mokume.tsne_visualization(...)`, `mokume.de_plots(...)`, etc.), so they are no
+longer part of the Rust compute command surface. Meanwhile,
 `peptides2protein --verbose` writes the numeric TSV while the wheel renders the QC
 PDF (`mokume.peptides2protein_qc`). The `tsne_visualization` command carries a
 small sklearn-version shim (`n_iter`→`max_iter`, removed upstream in sklearn 1.5+)
-so it runs on current sklearn. `agentic` is intentionally not ported.
+so it runs on current sklearn. Agentic reasoning is now host-owned; the wheel
+provides a deterministic MCP service rather than another model or compute core.
 
 Recently closed (2026-06-28b — gap-audit follow-ups, three commits): a 5-agent rs<->py
 gap audit found the remaining user-facing gaps were peripheral output. They were first
 delivered via vendored Python delegation and then moved into the `mokume` wheel by the
-PyO3/maturin migration (see the lead paragraph above); the Rust CLI no longer carries them.
+PyO3/maturin migration (see the lead paragraph above); the Rust compute command surface no longer carries them.
 `features2proteins` DE plotting (`--plot-volcano`/`--plot-heatmap`/`--plot-pca`/
 `--highlight-genes`) and the interactive HTML report (`--interactive-report`) became the
 wheel's `mokume.de_plots` / `mokume.interactive_report` (Rust writes the protein matrix +
 per-contrast DE CSVs, the wheel renders the figures/HTML; verified end-to-end producing real
 PNGs + a plotly HTML, multi-contrast file topology byte-matching Python). `peptides2protein
---method ibaq` with an enzyme outside the natively-ported set became the wheel's pure-Python
-`mokume.peptides2protein_ibaq` (CNBr / unspecific-cleavage / V8-DE byte-identical to Python),
+--method pibaq` with an enzyme outside the natively-ported set became the wheel's pure-Python
+`mokume.peptides2protein_pibaq` (CNBr / unspecific-cleavage / V8-DE byte-identical to Python),
 and the default `Trypsin` path stays Rust-native (zero regression).
 The audit also re-confirmed `deqms` (see caveats). Intentionally deferred as
 library-only (Python exposes no CLI for them either): the iterative PCA+HDBSCAN
@@ -136,16 +135,14 @@ orchestration.
 Remaining gaps (irreducible or niche):
 
 1. Computation methods the Rust kernel does not reproduce natively but that now
-   ship in the `mokume` wheel (`pip install mokume-rs[analysis]`): `missforest`
+   ship in the `mokume` wheel (`pip install mokume[analysis]`): `missforest`
    (wraps scikit-learn `IterativeImputer` + `RandomForestRegressor`, whose
    tree internals + RNG cannot be reproduced cross-language) via
    `mokume.impute(matrix, method=...)`. The kernel's `features2proteins` returns a
    stable `NotImplemented` whose message points at these wheel functions. The
    single-matrix QC report and the multi-workflow comparison report were never a
    porting target and likewise ship in the wheel (`mokume.qc_report` /
-   `mokume.workflow_comparison`, `analysis` extra). The `agentic` LLM-driven
-   optimizer is intentionally not migrated to the Rust track (it stays in the
-   separate `mokume_py` package); `postprocessing/reshape.py`'s three library-only
+   `mokume.workflow_comparison`, `analysis` extra). `postprocessing/reshape.py`'s three library-only
    helpers and the group-level run-QC filters remain unported (see the parity doc).
 
 Honest caveats: `deqms` log2FC and the quantitative matrix are cell-exact vs Python;
@@ -198,7 +195,7 @@ workspace already provides:
 - Integer-ID registries for proteins, peptides, samples, runs, and ions.
 - `features2proteins` protein-matrix CSV output.
 - Quantification methods: `sum`, `median`, `topn`, `maxlfq`, `directlfq`,
-  `ibaq`, `ratio`, `abd`, `intensity`, `spectral_count`.
+  `pibaq`, `ratio`, `abd`, `intensity`, `spectral_count`.
 - Run normalization: `none`, `mean`, `median`, `max`, `global`, `max_min`,
   `iqr`.
 - Sample normalization: `none`, `globalmedian`, `conditionmedian`, `quantile`,
@@ -287,24 +284,13 @@ anything:
   tie-breaking in the agglomerative clustering. The earlier self-developed
   approximation has been removed.
 
-## Scope Not Ported in This Stage
+## Agentic scope
 
-The following Python agent features are not ported for now:
-
-- `mokume/agentic/`
-- `mokume/commands/agentic.py`
-- `docs/user-guide/agentic-optimization.md`
-- `tests/test_agentic/`
-- `mokume/agentic/skills/*`
-
-The Rust top-level CLI should not expose an `agentic` command. An existing Rust
-CLI test asserts that help does not contain `agentic`, and that requirement
-should be kept.
-
-Note that the agent runtime invokes ordinary differential-expression,
-normalization, missing-value imputation, and ensemble logic. Those underlying
-capabilities are non-agent capabilities and remain in scope for the Rust
-refactor.
+Agentic recommendation lives in `plugins/mokume/` plus
+`rust/python/mokume/agentic/`: the plugin host supplies reasoning, the MCP layer
+binds policy and evidence, and the Rust matrix APIs perform normalization,
+imputation, and DEA. `mokume mcp serve` is an integration entry point rather
+than a fifth compute command.
 
 ## Python Capability Surface
 
@@ -315,9 +301,9 @@ The non-agent capabilities of the Python implementation include:
 - QPX, SDRF, FASTA, CSV, TSV, parquet, and AnnData reading/writing.
 - feature to peptide: filtering, run/sample aggregation, IRS, log2, CSV/parquet
   output.
-- peptide to protein: iBAQ/piBAQ, Top3, TopN, MaxLFQ, DirectLFQ, Sum, Median,
+- peptide to protein: piBAQ, Top3, TopN, MaxLFQ, DirectLFQ, Sum, Median,
   Ratio, TMT abundance, TMT reporter intensity, Spectral count.
-- iBAQ details: FASTA digestion, enzyme, min/max peptide length, TPA,
+- piBAQ details: FASTA digestion, enzyme, min/max peptide length, TPA,
   ProteomicRuler, organism, CPC, ploidy, family YAML, shared-peptide family
   rollup, and anchor rules.
 - Run normalization: `none`, `mean`, `median`, `max`, `global`, `max_min`,
@@ -332,7 +318,8 @@ The non-agent capabilities of the Python implementation include:
 - Missing-value imputation: `none`, `knn`, `minprob`, `mindet`, `qrilc`,
   `missforest`, `seqknn`, `impseq`, `gms`, `bpca`, `impseqrob`.
 - Differential expression: `limrots`, `limma`, `deqms`, `proda`, `rots`,
-  `ensemble`, plus `BH` and `IHW` FDR.
+  `ensemble`, plus `BH`, `IHW`, `BKY`, and `Storey` FDR and both data-driven
+  effect-size gates.
 - Batch correction: standalone `correct-batches` and
   `features2proteins --batch-correction`.
 - Output: protein CSV, peptide CSV/parquet, ion CSV, DE CSV, plot PNG/PDF,
@@ -354,11 +341,11 @@ The current Rust implementation is concentrated in `features2proteins`:
 - The SDRF parser builds `run` and `run + label` indexes.
 - `features2proteins` supports streaming QPX reading, filtering, aggregation,
   IRS, coverage filter, partial imputation, and CSV output.
-- iBAQ supports FASTA digestion for the ported pyOpenMS enzymes (Trypsin[/P],
+- piBAQ supports FASTA digestion for the ported pyOpenMS enzymes (Trypsin[/P],
   Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA — digests
   oracle-locked vs pyOpenMS, zero missed cleavages), family discovery, and the
   shared-peptide assignment; enzymes outside that set error with a pointer to the
-  wheel's pure-Python iBAQ path (`mokume.peptides2protein_ibaq`), so the default
+  wheel's pure-Python piBAQ path (`mokume.peptides2protein_pibaq`), so the default
   `Trypsin` path stays Rust-native.
 - DirectLFQ ports the Mann-Labs `directlfq` algorithm and matches the Python
   output to a median relative error of 0 with per-sample Spearman 0.9999 on
@@ -374,7 +361,8 @@ The current Rust implementation is concentrated in `features2proteins`:
 
 ### CLI Differences
 
-- Rust hides `agentic`, matching the current goal.
+- Rust keeps agentic recommendation out of the clap compute surface; the Python
+  wheel dispatcher exposes only the plugin-internal `mcp serve` entry point.
 - Rust exposes the non-agent top-level commands;
   `features2peptides --generate-filter-config` is implemented, while the
   `features2peptides` main flow and the other non-`features2proteins` top-level
@@ -418,10 +406,10 @@ The current Rust implementation is concentrated in `features2proteins`:
 - Python's QPX compatibility tests cover both new and legacy formats; Rust
   already has legacy flatten unit tests, and has added parser assertions for the
   new-format struct `pg_accessions`, `anchor_protein`, and label-only intensity.
-- Python's SQL-first tests cover filtering, charge aggregation, iBAQ shared
+- Python's SQL-first tests cover filtering, charge aggregation, piBAQ shared
   rows, and normalization consistency with the legacy pandas path; Rust
   currently lacks a same-source shared fixture.
-- Python's iBAQ/piBAQ tests cover denominator, isoform, unknown protein, TPA,
+- Python's piBAQ tests cover denominator, isoform, unknown protein, TPA,
   ProteomicRuler, and family allocation; Rust covers only part of these.
 - Python's benchmark has rich trend metrics; Rust still lacks stable real-data
   comparison and performance reporting.
@@ -465,7 +453,7 @@ Tasks:
 - Port the Python SQL-first synthetic data into Rust golden tests, covering
   filtering, charge aggregation, shared peptide, and basic normalization.
   [Partially done: golden tests cover filtering, charge aggregation,
-  canonical-peptide counting, shared-peptide/iBAQ family allocation,
+  canonical-peptide counting, shared-peptide/piBAQ family allocation,
   `globalmedian`, `conditionmedian`, run `median`, and run `max_min`; a
   same-source SQL-first shared fixture is still missing.]
 - Expand the usage notes for `scripts/compare_protein_matrices.py` so each
@@ -542,10 +530,10 @@ Acceptance:
 ```bash
 mkdir -p /tmp/mokume-parity/PXD003539/python /tmp/mokume-parity/PXD003539/rust
 
-cd /home/shenyufei/Git-repository/Bigbio/mokume_py
+cd /home/shenyufei/Git-repository/Bigbio/mokume/python
 python -m mokume.mokume_cli features2proteins \
   --parquet /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/qpx/PXD003539.feature.parquet \
-  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD003539/sdrf/PXD003539.sdrf.tsv \
+  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/mokume/sdrf/PXD003539.sdrf.tsv \
   --output /tmp/mokume-parity/PXD003539/python/sum_none.csv \
   --quant-method sum \
   --run-normalization none \
@@ -553,9 +541,9 @@ python -m mokume.mokume_cli features2proteins \
   --duckdb-threads 24
 
 cd /home/shenyufei/Git-repository/Bigbio/mokume
-cargo run -p mokume-cli -- features2proteins \
+mokume features2proteins \
   --parquet /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/qpx/PXD003539.feature.parquet \
-  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD003539/sdrf/PXD003539.sdrf.tsv \
+  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/mokume/sdrf/PXD003539.sdrf.tsv \
   --output /tmp/mokume-parity/PXD003539/rust/sum_none.csv \
   --quant-method sum \
   --run-normalization none \
@@ -613,12 +601,12 @@ Tasks:
   parameter is wired into the Rust-native DirectLFQ solver subset and has
   config-parsing/acceptance tests; `directlfq-cores` is wired in as the fallback
   thread-count parameter for the Rayon thread pool.]
-- Extend iBAQ: non-trypsin enzyme, `ibaq-high-anchor-threshold`, TPA,
+- Extend piBAQ: non-trypsin enzyme, `pibaq-high-anchor-threshold`, TPA,
   ProteomicRuler, organism, CPC, ploidy, and unknown-protein behavior.
   [Done: FASTA digestion for the ported pyOpenMS enzymes (Trypsin[/P],
   Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA), digests
-  oracle-locked vs pyOpenMS; family discovery, family YAML, `ibaq-min-shared`,
-  `ibaq-min-anchors`, TPA, ProteomicRuler, organism, CPC, ploidy, and
+  oracle-locked vs pyOpenMS; family discovery, family YAML, `pibaq-min-shared`,
+  `pibaq-min-anchors`, TPA, ProteomicRuler, organism, CPC, ploidy, and
   shared-peptide assignment are implemented/tested. Enzymes outside the ported
   set return `NotImplemented`.]
 
@@ -667,14 +655,14 @@ algorithms from Phases 1/2.
 
 This is Wave 4 — NOT yet done. Together with the differential-expression
 methods (`limma`, `rots`, `deqms`, `limrots`, `proda`, `ensemble`,
-plus BH/IHW) tracked in Phase 6.
+plus BH/IHW/BKY/Storey and the data-driven effect-size gates) tracked in Phase 6.
 
 Tasks:
 
 - Support peptide CSV/TSV/parquet input.
-- Implement `ibaq`, `top3`, `topn`, `maxlfq`, `sum`, and `directlfq`.
+- Implement `pibaq`, `top3`, `topn`, `maxlfq`, `sum`, and `directlfq`.
 - Output parquet for a `.parquet` suffix, otherwise TSV.
-- Complete the iBAQ FASTA, enzyme, TPA, ProteomicRuler, organism, CPC, ploidy,
+- Complete the piBAQ FASTA, enzyme, TPA, ProteomicRuler, organism, CPC, ploidy,
   family YAML, and anchor parameters.
 - Support `--normalize`, `--verbose`, and `--qc_report`. If QC report is not
   implemented first, it must keep an explicit `NotImplemented` and documentation
@@ -733,8 +721,9 @@ Tasks:
   `ensemble`.
 - Implement `auto` method selection: `directlfq` defaults to `deqms`, others
   default to `limrots`.
-- Implement BH and IHW FDR. If IHW is hard to reproduce stably, implement BH
-  first and keep IHW as `NotImplemented` or with an explicit fallback behavior.
+- Implement BH, IHW, BKY, and Storey FDR, including the adaptive-pi0 reliability
+  fallback used by Python.
+- Implement fixed and data-driven (`mixture`, `null_quantile`) effect-size gates.
 - Implement DE CSV output, with fields including `ProteinName`, `log2FC`,
   `pvalue`, `adj_pvalue`, and `significance`.
 - Implement volcano, heatmap, and PCA output. If using a Rust plotting library,
@@ -824,15 +813,15 @@ Prioritize porting the non-agent parts of these Python tests:
   DirectLFQ synthetic solver and ion export have Rust golden tests; a comparison
   against the Python `directlfq` package output is still missing.]
 - CLI parameters: `tests/test_features2proteins_cli.py`,
-  `tests/test_features2peptides_cli.py` [Partially done: the Rust CLI help and
+  `tests/test_features2peptides_cli.py` [Partially done: the wheel command help and
   `features2proteins` parameter parsing have tests;
   `features2peptides --generate-filter-config` has YAML/JSON generation and
   missing-parameter error tests; the help option surface of `peptides2protein`,
   `correct-batches`, `tsne_visualization`, and `tissuemap` is covered by tests,
   but the main flow of these commands is still `NotImplemented`.]
-- iBAQ/piBAQ: `tests/test_pibaq.py`, `tests/test_ibaq_denominator_uniqueness.py`,
-  `tests/test_ibaq_tpa_numerator_proteotypic.py` [Partially done: the trypsin
-  denominator, family shared-peptide allocation, and basic iBAQ synthetic oracles
+- piBAQ: `tests/test_pibaq.py`, `tests/test_ibaq_denominator_uniqueness.py`,
+  `tests/test_pibaq_tpa_numerator_proteotypic.py` [Partially done: the trypsin
+  denominator, family shared-peptide allocation, and basic piBAQ synthetic oracles
   are covered; TPA/piBAQ and others are still missing.]
 - accession: `tests/test_accession_normalization.py` [Partially done: QPX protein
   accession parsing and group output are covered; FASTA accession normalization is
@@ -859,9 +848,8 @@ Prioritize porting the non-agent parts of these Python tests:
   `tests/test_batch_correction_integration.py`
 - Filter config: `tests/test_filter_configs.py`
 
-Not included in this stage's migration:
-
-- `tests/test_agentic/*`
+Plugin policy, evaluation, and MCP registration are tested separately under
+`rust/tests/test_agentic_plugin.py`.
 
 ## Real-Data Comparison Matrix
 
@@ -890,7 +878,7 @@ For each dataset, first run:
 
 Then extend to:
 
-- iBAQ + FASTA.
+- piBAQ + FASTA.
 - Ratio + IRS.
 - MaxLFQ.
 - DirectLFQ.
@@ -937,7 +925,7 @@ Then extend to:
   unimplemented for now.
 - The algorithm details of DirectLFQ and MaxLFQ may not be cell-for-cell
   reproducible; an acceptable threshold needs to be determined.
-- iBAQ family allocation and shared-peptide rules are prone to small numerical
+- piBAQ family allocation and shared-peptide rules are prone to small numerical
   differences.
 - h5ad, the interactive report, and plotting output may require new dependency
   evaluation in Rust.
@@ -951,7 +939,8 @@ When this goal is complete, the following must hold:
 
 - The Rust non-agent CLI covers the Python non-agent user-visible features, with
   unimplemented exceptions clearly recorded and confirmed acceptable to keep.
-- `agentic` is still not in the Rust top-level CLI.
+- Agentic recommendation is not a `mokume` compute command; it is a plugin over
+  the local MCP integration surface.
 - The Python/Rust shared tests, Rust golden tests, and real-data parity reports
   can all prove that the main-path behavior is consistent or the difference is
   acceptable.

@@ -12,7 +12,7 @@ protein quantification from a single experiment.
     `mokume.tissuemap(**kwargs)` (or `python -m mokume.commands.tissuemap`) and
     requires the `tissuemap` extra:
     ```bash
-    pip install "mokume-rs[tissuemap]"
+    pip install "mokume[tissuemap]"
     ```
 
 ## When to Use TissueMap

@@ -1,14 +1,14 @@
 # CLI Reference
 
-The `mokume` binary is the Rust compute kernel's command-line entry point. It exposes exactly four compute subcommands — `features2proteins`, `features2peptides`, `peptides2protein`, and `correct-batches` — and shells out to nothing. Most users start with `features2proteins` for quantification workflows.
+The `mokume` console command is installed by the `mokume` wheel. It exposes exactly four compute subcommands — `features2proteins`, `features2peptides`, `peptides2protein`, and `correct-batches` — and runs the compiled Rust kernel in-process. Most users start with `features2proteins` for quantification workflows.
 Use `mokume --help` or `mokume <command> --help` for details.
 
-The same `mokume` command is available two ways: as a standalone Rust binary (built with `cargo`, no Python) and from the `pip install mokume-rs` wheel, which runs the identical kernel in-process through the `mokume._mokume` extension. The flag surface below is single-sourced in Rust and is identical for both.
+The flag surface below is single-sourced in Rust and is shared with the wheel's thin Python API.
 
 !!! note "Plotting, tissue maps, and reports live in the Python wheel"
     The visualization periphery — t-SNE, tissue-proteome maps, DE plots,
-    interactive HTML reports, iBAQ QC — is **not** part of this CLI. It ships in
-    the `pip install mokume-rs` wheel as `mokume.tsne_visualization(...)`,
+    interactive HTML reports, piBAQ QC — is **not** part of this CLI. It ships in
+    the `pip install mokume` wheel as `mokume.tsne_visualization(...)`,
     `mokume.tissuemap(...)`, `mokume.de_plots([...])`,
     `mokume.interactive_report([...])`, and
     `mokume.peptides2protein_qc(...)`. Plotting and reporting consume kernel
@@ -44,12 +44,20 @@ mokume features2proteins [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, ibaq, topn, top3, sum, median, ratio, abd (TMT abundance), intensity (TMT reporter), spectral_count |
-| `--fasta` | none | FASTA file (required for iBAQ) |
-| `--topn` | 3 | N for TopN quantification |
+| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, pibaq, `top<N>` (top3, top5, top10, ...), sum, median, ratio, abd (TMT abundance), intensity (TMT reporter), spectral_count |
+| `--fasta` | none | FASTA file (required for piBAQ) |
 | `--ion-alignment` | none | Ion alignment: none or hierarchical |
 | `--directlfq-cores` | auto | CPU cores for DirectLFQ |
 | `--directlfq-min-nonan` | 1 | Min non-NaN values for DirectLFQ |
+
+!!! note "Write the N in the method name: `--quant-method top<N>`"
+    TopN quantification takes its N from the method name — `--quant-method top3`,
+    `top5`, `top10`, and so on for any N ≥ 1.
+
+    The `--topn` option has been removed: replace `--quant-method topn --topn 5`
+    with `--quant-method top5`. Bare `--quant-method topn` still works and still
+    means N = 3, the same as `--quant-method top3`. A `top` name with no arabic
+    numeral (`topa`) is rejected rather than silently treated as Top3.
 
 ### Normalization
 
@@ -105,7 +113,7 @@ ComBat is a native Rust implementation, oracle-verified against inmoose (paramet
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--impute` | off | Enable missing-value imputation on the protein matrix |
-| `--impute-method` | `none` | Method: none, knn, minprob, mindet, qrilc, missforest, seqknn, impseq, gms, bpca, impseqrob |
+| `--impute-method` | `none` | Method: none, mean, median, constant, zero, most_frequent, knn, minprob, mindet, qrilc, missforest, seqknn, impseq, gms, bpca, impseqrob |
 | `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet/QRILC low-tail draw |
 | `--impute-shift` | 1.6 | MinProb shift in standard deviations |
 | `--impute-scale` | 0.3 | MinProb scale factor for the imputation distribution sigma |
@@ -126,9 +134,10 @@ Imputation runs in log2 space (the matrix is transformed before imputation and b
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
 | `--de-ensemble-methods` | `limrots,deqms,proda` | Comma-separated DE methods used when `--de-method=ensemble` |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
-| `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
+| `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
+| `--de-effect-size-gate` | none | Explicit data-driven gate: mixture or null_quantile; a numeric log2FC value is its fallback |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
-| `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
+| `--de-fdr-method` | `bh` | FDR correction: bh, ihw, bky, or storey |
 | `--de-output` | none | DE results file; with multiple contrasts each is written as `<stem>_<A-B>.<ext>` |
 
 Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrasts-file`. Both can be combined.
@@ -261,35 +270,40 @@ mokume peptides2protein [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-p/--peptides` | required | Input peptide intensity file |
-| `-f/--fasta` | none | FASTA file (required for iBAQ) |
-| `--method` | `ibaq` | Method: ibaq, top3, topn, maxlfq, sum, directlfq |
+| `-f/--fasta` | none | FASTA file (required for piBAQ) |
+| `--method` | `pibaq` | Method: pibaq, `top<N>` (top3, top5, top10, ...), maxlfq, sum, directlfq |
 | `-e/--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
 | `-n/--normalize` | off | Normalize quantification values |
 | `--min_aa` | 7 | Min amino acid length |
 | `--max_aa` | 30 | Max amino acid length |
-| `-t/--tpa` | off | Calculate TPA (iBAQ only) |
-| `-r/--ruler` | off | ProteomicRuler (iBAQ only) |
+| `-t/--tpa` | off | Calculate TPA (piBAQ only) |
+| `-r/--ruler` | off | ProteomicRuler (piBAQ only) |
 | `-i/--ploidy` | 2 | Ploidy number |
 | `-m/--organism` | `human` | Organism for histone data |
 | `-c/--cpc` | 200 | Cellular protein concentration (g/L) |
-| `--topn_n` | 3 | N for TopN quantification |
 | `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
 | `--min_nonan` | 1 | Min non-NaN for DirectLFQ |
-| `--families` | none | YAML file with explicit family overrides (iBAQ only; see [user guide](../user-guide/peptides2protein.md#family-discovery-tuning)) |
-| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (iBAQ only) |
-| `--min-anchors` | 1 | Minimum anchor peptides per family member (iBAQ only) |
-| `--high-anchor-threshold` | 3 | Anchors required for an `EvidenceLevel` of `high` (iBAQ only) |
+| `--families` | none | YAML file with explicit family overrides (piBAQ only; see [user guide](../user-guide/peptides2protein.md#family-discovery-tuning)) |
+| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (piBAQ only) |
+| `--min-anchors` | 1 | Anchor threshold; if no member reaches it, shared signal is split equally and evidence is `family_only` (piBAQ only) |
+| `--high-anchor-threshold` | 3 | Anchors every member must reach for `EvidenceLevel=high` (piBAQ only) |
 | `-o/--output` | required | Output file path |
 | `--verbose` | off | Print a pointer to the wheel QC report command |
 | `--qc_report` | QCprofile.pdf | QC report path echoed by `--verbose` |
 
-Use `--method topn --topn_n 5` or `--method topn --topn_n 10` for Top5 or Top10-style quantification. `--output` is required for every method.
+Use `--method top5` or `--method top10` for Top5 or Top10-style quantification; `top3` is the named method from [Silva et al. 2006](https://doi.org/10.1074/mcp.M500230-MCP200). `--output` is required for every method.
 
-!!! note "iBAQ for unported enzymes lives in the wheel"
-    The native iBAQ path digests proteins for the ported pyOpenMS enzymes (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...), oracle-locked against pyOpenMS. For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific cleavage, ...) the kernel has no cleavage rule and fails with an error pointing to the wheel: `mokume.peptides2protein_ibaq(peptides=..., fasta=..., enzyme="CNBr", output=...)` (the `ibaq` extra), which computes the whole iBAQ table in pure Python.
+!!! warning "`--topn_n` has been removed"
+    N now comes from the method name only. Replace `--method topn --topn_n 5`
+    with `--method top5`. Bare `--method topn` still works and still means N = 3.
+    `--topn_n` existed in mokume 0.1.0, so scripts written against that release
+    and passing it need updating.
+
+!!! note "piBAQ for unported enzymes lives in the wheel"
+    The native piBAQ path digests proteins for the ported pyOpenMS enzymes (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...), oracle-locked against pyOpenMS. For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific cleavage, ...) the kernel has no cleavage rule and fails with an error pointing to the wheel: `mokume.peptides2protein_pibaq(peptides=..., fasta=..., enzyme="CNBr", output=...)` (the `pibaq` extra), which computes the whole piBAQ table in pure Python.
 
 !!! note "`--verbose` no longer draws a QC PDF"
-    QC plotting moved to the wheel. On the iBAQ path `--verbose` prints a one-line pointer to `mokume.peptides2protein_qc(protein_table=..., qc_report=...)` (the `plotting` extra), which draws the same density / box plots from the kernel's output table; it writes no PDF itself.
+    QC plotting moved to the wheel. On the piBAQ path `--verbose` prints a one-line pointer to `mokume.peptides2protein_qc(protein_table=..., qc_report=...)` (the `plotting` extra), which draws the same density / box plots from the kernel's output table; it writes no PDF itself.
 
 ---
 
@@ -304,12 +318,12 @@ mokume correct-batches [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-f/--folder` | required | Folder with TSV files |
-| `-p/--pattern` | `*ibaq.tsv` | File matching pattern |
+| `-p/--pattern` | `*pibaq.tsv` | File matching pattern |
 | `-o/--output` | required | Output file path |
 | `--sample_id_column` / `--sid` | `SampleID` | Sample ID column |
 | `--protein_id_column` / `--pid` | `ProteinName` | Protein ID column |
-| `--ibaq_raw_column` / `--ibaq` | `Ibaq` | Raw intensity column |
-| `--ibaq_corrected_column` | `IbaqBec` | Corrected intensity column |
+| `--pibaq_raw_column` / `--pibaq` | `PiBAQ` | Raw intensity column |
+| `--pibaq_corrected_column` | `PiBAQBec` | Corrected intensity column |
 | `--comment` | `#` | Comment character |
 | `--sep` | `\t` | Field separator |
 | `--export_anndata` | off | Export to AnnData h5ad |
@@ -321,7 +335,7 @@ ComBat here is the native Rust implementation, oracle-verified against inmoose. 
 ## Periphery (tissue maps, t-SNE)
 
 Tissue-proteome maps and t-SNE visualization are **not** CLI subcommands; they
-ship in the `pip install mokume-rs` wheel. t-SNE visualization reads a protein
+ship in the `pip install mokume` wheel. t-SNE visualization reads a protein
 matrix, while TissueMap derives a downstream atlas from QPX data:
 
 ```python

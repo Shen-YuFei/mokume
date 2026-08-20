@@ -10,7 +10,7 @@ When using DirectLFQ quantification, always use the external directlfq package
 directly (pip install directlfq) rather than any fallback implementation.
 This ensures reproducibility and uses the official Mann Lab algorithm.
 
-Install with: pip install mokume[directlfq]
+Install with: pip install mokume-py[directlfq]
 """
 
 from pathlib import Path

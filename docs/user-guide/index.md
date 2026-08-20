@@ -1,10 +1,16 @@
 # User Guide
 
-This section covers the Rust computation commands. The kernel ships both as a standalone CLI binary (`mokume`, built with cargo and no Python) and as a PyO3/maturin wheel (`pip install mokume-rs`) that imports the compiled `mokume._mokume` extension and runs the same commands in-process — no subprocess delegation. These two Rust entry points share one implementation; the separately maintained pure-Python computation package is documented under [Python API (package)](../reference/python-api-package.md).
+This section covers the practical usage of each mokume command. The
+`mokume` wheel installs a `mokume` console command backed by the compiled
+`mokume._mokume` extension. It runs the leading Rust kernel in-process. The
+separately maintained pure-Python distribution is documented under
+[Python API (package)](../reference/python-api-package.md).
 
 ## Compute commands
 
-The CLI binary exposes exactly four compute subcommands. Each can also be driven from the wheel through a thin keyword wrapper (`mokume.<command>(**kwargs)`) or with an explicit argument list (`mokume.run([...])`).
+The console command exposes exactly four compute subcommands. Each can also be
+driven through a thin keyword wrapper (`mokume.<command>(**kwargs)`) or with an
+explicit argument list (`mokume.run([...])`).
 
 ### [features2proteins: Unified Pipeline](features2proteins.md)
 
@@ -16,7 +22,7 @@ Normalizes and filters feature-level data into peptide intensities. Use this whe
 
 ### [peptides2protein: Protein Quantification](peptides2protein.md)
 
-Quantifies proteins from normalized peptide data. Supports iBAQ (with TPA and ProteomicRuler), TopN, MaxLFQ, DirectLFQ, and Sum.
+Quantifies proteins from normalized peptide data. Supports piBAQ (with TPA and ProteomicRuler), TopN, MaxLFQ, DirectLFQ, and Sum.
 
 ### [correct-batches: Batch Correction](batch-correct.md)
 
@@ -29,7 +35,7 @@ live in the Python wheel under `mokume.commands` and are reached through
 periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`,
 `mokume.de_plots`, and `mokume.interactive_report`. Plotting and reporting
 consume kernel tables, while TissueMap derives its downstream atlas from QPX
-data. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `ibaq`,
+data. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `pibaq`,
 `analysis`, or `all`) to pull in the periphery libraries. The agentic workflow
-search remains in the separately installed pure-Python `mokume` package and is
-not part of the Rust CLI or wheel.
+is provided by the [Mokume Plugin](agentic-plugin.md), whose local MCP service
+uses the default Rust-backed wheel.

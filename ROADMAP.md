@@ -49,7 +49,7 @@ Based on comprehensive benchmarking comparing 7 algorithms × 3 quantification m
 
 - [x] **Protein-level batch correction** - benchmark confirms most robust strategy
 - [x] **ComBat** - native Rust implementation (oracle-verified against inmoose), with covariate support
-- [x] **MaxLFQ, Top3/TopN, iBAQ quantification** - all three tested, MaxLFQ recommended
+- [x] **MaxLFQ, Top3/TopN, piBAQ quantification** - all three tested, MaxLFQ recommended
 
 ### Evaluation Metrics to Consider
 

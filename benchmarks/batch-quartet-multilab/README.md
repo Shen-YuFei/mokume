@@ -167,7 +167,7 @@ batch-quartet-multilab/
 ### Requirements
 
 ```bash
-pip install mokume[directlfq]
+pip install mokume-py[directlfq]
 pip install inmoose        # For ComBat
 pip install matplotlib seaborn
 ```

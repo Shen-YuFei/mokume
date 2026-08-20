@@ -51,8 +51,8 @@ The `features2proteins` command is the recommended way to go from raw feature da
 |--------|----------|:--------------:|-------------|
 | MaxLFQ | `--quant-method maxlfq` | No | Delayed normalization (default) |
 | DirectLFQ | `--quant-method directlfq` | No | Hierarchical alignment (native Rust) |
-| iBAQ | `--quant-method ibaq` | Yes | Absolute quantification |
-| TopN | `--quant-method topn` | No | Average of N most intense peptides |
+| piBAQ | `--quant-method pibaq` | Yes | Absolute quantification |
+| TopN | `--quant-method top3` / `top5` / any `top<N>` | No | Average of the N most intense peptides |
 | Sum | `--quant-method sum` | No | Sum of all peptides |
 | Median | `--quant-method median` | No | Median peptide intensity |
 | Ratio | `--quant-method ratio` | No | Log2 sample/reference (TMT) |
@@ -64,19 +64,27 @@ In practice:
 
 - Use `maxlfq` as the default starting point for standard LFQ workflows.
 - Use `directlfq` when you explicitly want the DirectLFQ package to handle normalization and quantification together.
-- Use `ibaq` when you need absolute-style quantification and have a FASTA file. The pipeline path delegates to the same piBAQ (paralog-aware iBAQ) algorithm as the `peptides2protein` CLI -- see [Quantification Methods → iBAQ](../concepts/quantification.md#ibaq-pibaq-paralog-aware) for the family discovery and fallback semantics; the wide-format pipeline output retains per-protein `Ibaq` values but does not surface the `FamilyId` / `EvidenceLevel` metadata columns.
+- Use `pibaq` when you need absolute-style quantification and have a FASTA
+  file. The pipeline delegates to the same piBAQ algorithm as
+  `peptides2protein` -- see
+  [Quantification Methods → piBAQ](../concepts/quantification.md#pibaq-paralog-aware-ibaq)
+  for family discovery and exact shared-peptide allocation. The wide-format
+  pipeline output retains per-protein `PiBAQ` values but does not surface the
+  `FamilyId` / `EvidenceLevel` metadata columns.
 - Use `ratio` for TMT PS-style reference-based analysis.
+- Use `top<N>` for the classic Top3-style summary; `top3` is the method from
+  Silva et al. 2006, and any other N works the same way (`top5`, `top10`, ...).
 
 ```bash
-# iBAQ (requires FASTA)
+# piBAQ (requires FASTA)
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
-    --quant-method ibaq --fasta proteome.fasta
+    --quant-method pibaq --fasta proteome.fasta
 
-# TopN (Top5)
+# TopN — the N lives in the method name (top3, top5, top10, ...)
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
-    --quant-method topn --topn 5
+    --quant-method top5
 
 # DirectLFQ (native Rust, no extra dependency)
 mokume features2proteins \
@@ -300,9 +308,10 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
 | `--de-ensemble-methods` | `limrots,deqms,proda` | Comma-separated DE methods used when `--de-method=ensemble` |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
-| `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
+| `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
+| `--de-effect-size-gate` | — | Explicit data-driven gate: `mixture` or `null_quantile`; a numeric `--de-log2fc` becomes its fallback |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
-| `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
+| `--de-fdr-method` | `bh` | FDR correction: bh, ihw, bky, or storey |
 | `--de-output` | — | DE results file; with multiple contrasts each is written as `<stem>_<A-B>.<ext>` |
 
 !!! warning "Contrasts are required"
@@ -316,6 +325,8 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
     `--de-method auto` chooses `deqms` for `directlfq`
     quantification and `limrots` for all others. All methods
     run in the native Rust kernel — no R or rpy2 required.
+    BKY and Storey fall back to BH when their pi0 estimate is not reliable.
+    ROTS and LimROTS retain their own permutation FDR.
     See [Differential Expression
     concepts](../concepts/differential-expression.md) for a
     detailed comparison of methods.
@@ -357,7 +368,7 @@ mokume features2proteins \
 | Imputation Option | Default | Description |
 |-------------------|---------|-------------|
 | `--impute` | off | Enable imputation on the protein matrix |
-| `--impute-method` | `none` | none, knn, minprob, mindet, qrilc, missforest, seqknn, impseq, gms, bpca, impseqrob |
+| `--impute-method` | `none` | none, mean, median, constant, zero, most_frequent, knn, minprob, mindet, qrilc, missforest, seqknn, impseq, gms, bpca, impseqrob |
 | `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet/QRILC low-tail draw |
 | `--impute-shift` | 1.6 | MinProb shift in standard deviations |
 | `--impute-scale` | 0.3 | MinProb scale factor for sigma |

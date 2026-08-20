@@ -70,17 +70,17 @@ sample-substring fallback, `pd.factorize` encoding, single-value columns
 dropped) and fed to the covariate ComBat design. ComBat runs on the proteins
 with no missing cells; the rest are kept uncorrected.
 
-### Standalone iBAQ correction
+### Standalone piBAQ correction
 
-To correct already-written iBAQ tables (e.g. when merging datasets), use the
+To correct already-written piBAQ tables (e.g. when merging datasets), use the
 dedicated `correct-batches` command, which runs the sample-prefix ComBat flow
-over a folder of iBAQ TSVs:
+over a folder of piBAQ TSVs:
 
 === "CLI"
 
     ```bash
     mokume correct-batches \
-        --folder ./ibaq_outputs --pattern "*ibaq.tsv" \
+        --folder ./pibaq_outputs --pattern "*pibaq.tsv" \
         --output corrected.tsv
     ```
 
@@ -89,7 +89,7 @@ over a folder of iBAQ TSVs:
     ```python
     import mokume
 
-    mokume.correct_batches(folder="./ibaq_outputs", pattern="*ibaq.tsv",
+    mokume.correct_batches(folder="./pibaq_outputs", pattern="*pibaq.tsv",
                            output="corrected.tsv")
     ```
 

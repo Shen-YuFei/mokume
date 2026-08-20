@@ -1,0 +1,118 @@
+# Mokume Plugin
+
+The Mokume Plugin adds traceable proteomics method recommendation to Codex and
+Claude Code. The host model performs the reasoning; Mokume supplies the
+knowledge snapshot, deterministic policy checks, validation, and the
+Rust-backed normalization, imputation, and differential-expression tools.
+
+The plugin does not ask for, store, or call a model API key. It bundles a local
+stdio MCP configuration, so enabling the plugin starts the Mokume MCP server
+automatically for the task. Do not add a second custom MCP entry or run the
+server manually.
+
+## Install
+
+Install the default Rust-backed distribution with the plugin dependencies:
+
+```bash
+pip install "mokume[agentic]"
+```
+
+The MCP SDK used by this optional workflow requires Python 3.10 or newer. The
+core `mokume` wheel continues to support its wider declared Python range.
+
+### Codex
+
+Add the repository marketplace and install the plugin:
+
+```bash
+codex plugin marketplace add bigbio/mokume
+codex plugin add mokume@bigbio
+```
+
+In the Codex app, the same setup is available under **Plugins → Add
+marketplace**. Use `https://github.com/bigbio/mokume` as the Git source and
+leave the sparse path empty. Start a new task after installation so Codex loads
+the skill and its MCP tools.
+
+The `mokume` executable must remain available on `PATH` to the Codex process.
+Installation is complete when the task exposes `mokume.inspect_dataset` and
+`mokume.evaluate_recommendation`.
+
+### Claude Code
+
+Add the same repository as a Claude Code marketplace and install the same
+plugin bundle:
+
+```bash
+claude plugin marketplace add bigbio/mokume
+claude plugin install mokume@bigbio
+```
+
+Start a new Claude Code session after installation. The plugin discovers the
+shared `analyze-proteomics` skill and starts the bundled Mokume MCP server with
+an installation-independent knowledge path. The `mokume` executable must be on
+the `PATH` inherited by Claude Code. No separate `/mcp` setup is required.
+
+## Use
+
+Ask Codex to use `$mokume:analyze-proteomics`, or invoke
+`/mokume:analyze-proteomics` in Claude Code, and provide:
+
+- an absolute protein-matrix path;
+- an absolute SDRF path;
+- the contrast and, when known, `LFQ`, `DIA`, or `TMT` data type;
+- the upstream quantification and engine when known;
+- an absolute output directory; and
+- optionally, a ground-truth protein list for a spike-in benchmark.
+
+The workflow first calls `inspect_dataset`. This profiles the matrix and binds
+only compatible evidence into typed context blocks. The host may then propose
+at most five configurations under the returned contract and pass the exact
+block to `evaluate_recommendation`.
+
+The MCP schema keeps file paths and the generated recommendation explicit while
+grouping declared acquisition facts in `metadata` and runtime controls in
+`options`; evaluation also places its required `output_dir` in `options`. The
+contrast is a two-item list using the canonical condition labels returned in
+`profile.samples_per_condition`, not longer raw SDRF values that inspection may
+have normalized. Unknown object fields are rejected rather than silently ignored.
+The output path must be absolute and must not already exist; Mokume never
+overwrites a previous evaluation round. Repeat the inspection metadata inside the
+evaluation `options` so both calls bind the same policy context.
+
+With relevant ground truth and an explicit `UP` or `DOWN` expected direction,
+the tool ranks measured candidates with Score A.
+Without ground truth, set the expected direction to null; the tool returns
+exploratory diagnostics and no winner. For a Score A result, report each
+candidate's tested universe (`TP + FP + FN + TN`). If those totals differ, the
+ranking is candidate-universe-specific and must not be presented as general
+method superiority.
+Quantification is recorded as provenance but remains frozen because this entry
+point starts from an existing protein matrix.
+
+Each evaluated round writes one DE table per candidate,
+`method_sensitivity.tsv`, and `evaluation.json`. The sensitivity table separates
+signed calls shared by every tested candidate from calls that depend on the
+chosen method; it is descriptive and never selects a winner. The JSON artifact
+records the knowledge fingerprint, evidence references, confidence, limitations,
+input scale, diagnostics, measurements, and ranking status.
+
+## Repository layout
+
+```text
+.agents/plugins/marketplace.json       # Codex marketplace
+.claude-plugin/marketplace.json        # Claude Code marketplace
+plugins/mokume/
+├── .codex-plugin/                      # Codex manifest and MCP adapter
+├── .claude-plugin/plugin.json         # Claude Code manifest and MCP adapter
+├── knowledge/knowledge.yaml           # evidence index
+├── knowledge/sources/                 # immutable benchmark source artifacts
+└── skills/analyze-proteomics/          # shared workflow and output contract
+rust/python/mokume/agentic/             # deterministic MCP service
+```
+
+Update the knowledge index separately from model prompts. Every eligible
+record must retain its source, captured date, artifact hashes, applicability,
+metrics, confidence, status, and limitations. Single-dataset oracle results are
+not eligible priors.

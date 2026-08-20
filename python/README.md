@@ -1,9 +1,9 @@
-# mokume
+# mokume-py
 
 [![Python application](https://github.com/bigbio/mokume/actions/workflows/python-app.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-app.yml)
-[![Upload Python Package](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml)
-[![PyPI version](https://badge.fury.io/py/mokume.svg)](https://badge.fury.io/py/mokume)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
+[![Publish mokume-py](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml/badge.svg)](https://github.com/bigbio/mokume/actions/workflows/python-publish.yml)
+[![PyPI version](https://badge.fury.io/py/mokume-py.svg)](https://badge.fury.io/py/mokume-py)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume-py)
 
 ## Why "mokume"?
 
@@ -11,7 +11,10 @@ The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (�
 
 ## Overview
 
-**mokume** is a comprehensive proteomics quantification library that supports multiple protein quantification methods including iBAQ, TopN, MaxLFQ, and DirectLFQ. It provides feature/peptide normalization, batch correction, and various summarization strategies for the quantms ecosystem. This library is an evolution of [ibaqpy](https://github.com/bigbio/ibaqpy), extended to support a broader range of protein quantification methods beyond iBAQ.
+**mokume-py** is the pure-Python distribution of mokume. It supports protein
+quantification methods including piBAQ, TopN, MaxLFQ, and DirectLFQ, while the
+installed import package and console command remain named `mokume`. This
+library is an evolution of [ibaqpy](https://github.com/bigbio/ibaqpy).
 
 This directory contains the separately maintained pure-Python implementation.
 The Rust kernel under `../rust/` leads new native computation work, so supported
@@ -21,7 +24,7 @@ options can differ between the two implementations. See the repository's
 ## Installation
 
 ```bash
-pip install mokume
+pip install mokume-py
 ```
 
 The base install is lightweight and covers the **core LFQ workflow** — MaxLFQ,
@@ -30,35 +33,32 @@ heavier dependencies (pyOpenMS, scikit-learn, statsmodels, anndata) are opt-in v
 extras. Each raises a clear install hint if used without it.
 
 ```bash
-# iBAQ / piBAQ / TPA absolute quantification (FASTA digestion via pyOpenMS)
-pip install mokume[ibaq]
+# piBAQ / TPA / ProteomicRuler (FASTA digestion via pyOpenMS)
+pip install mokume-py[pibaq]
 
 # Differential expression, FDR, DEqMS, LOESS / RLR normalization (statsmodels)
-pip install mokume[analysis]
+pip install mokume-py[analysis]
 
 # KNN / missForest imputation (scikit-learn)
-pip install mokume[imputation]
+pip install mokume-py[imputation]
 
 # DirectLFQ backend for MaxLFQ
-pip install mokume[directlfq]
+pip install mokume-py[directlfq]
 
 # Plotting support (QC reports and visualizations)
-pip install mokume[plotting]
+pip install mokume-py[plotting]
 
 # .h5ad / AnnData export
-pip install mokume[h5ad]
+pip install mokume-py[h5ad]
 
 # TissueMap pipeline (tissue specificity analysis)
-pip install mokume[tissuemap]
+pip install mokume-py[tissuemap]
 
 # ComBat batch correction
-pip install mokume[batch-correction]
-
-# AI-assisted agentic optimization (DeepSeek / OpenAI-compatible)
-pip install mokume[agentic]
+pip install mokume-py[batch-correction]
 
 # Everything (all optional dependencies)
-pip install mokume[all]
+pip install mokume-py[all]
 ```
 
 Or install from source:
@@ -113,7 +113,7 @@ mokume/
 │
 ├── quantification/          # Protein quantification methods
 │   ├── base.py              # Abstract base class
-│   ├── ibaq.py              # iBAQ implementation
+│   ├── pibaq.py             # canonical piBAQ implementation
 │   ├── topn.py              # TopN quantification (generic, supports any N)
 │   ├── top3.py              # Top3 alias (backward compatibility)
 │   ├── maxlfq.py            # MaxLFQ algorithm (parallelized)
@@ -141,7 +141,7 @@ mokume/
 │   ├── batch_correction.py  # ComBat batch correction
 │   └── combiner.py          # Multi-file combining
 │
-├── plotting/                # Visualization (optional: pip install mokume[plotting])
+├── plotting/                # Visualization (optional: pip install mokume-py[plotting])
 │   ├── distributions.py     # Distribution and box plots
 │   └── pca.py               # PCA and t-SNE plots
 │
@@ -149,18 +149,10 @@ mokume/
 │   ├── parquet.py           # Parquet/TSV reading, AnnData creation
 │   └── fasta.py             # FASTA file handling
 │
-├── agentic/                 # AI-assisted DE optimization
-│   ├── config.py            # AgenticConfig (provider, model, API key)
-│   ├── llm_client.py        # OpenAI-compatible LLM client
-│   ├── proposer.py          # LLM + rule-based config proposal
-│   ├── optimizer.py         # Multi-round optimization loop
-│   └── profiler.py          # Data profiling for LLM context
-│
 ├── commands/                # CLI commands
 │   ├── features2peptides.py # Feature to peptide conversion
 │   ├── peptides2protein.py  # Protein quantification
 │   ├── batch_correct.py     # Batch correction
-│   ├── agentic.py           # Agentic optimization CLI
 │   ├── tissuemap.py         # TissueMap pipeline CLI
 │   └── visualize.py         # t-SNE visualization
 │
@@ -188,10 +180,10 @@ mokume/
 
 | Method | Description | Requires FASTA | Class | Optional |
 |--------|-------------|----------------|-------|----------|
-| **iBAQ** | Intensity-Based Absolute Quantification | Yes | `peptides_to_protein()` | No |
+| **piBAQ** | Paralog-aware iBAQ | Yes | `peptides_to_protein()` | Yes (`pibaq`) |
 | **TopN** | Average of N most intense peptides (configurable N) | No | `TopNQuantification` | No |
-| **MaxLFQ** | Delayed normalization with parallelization | No | `MaxLFQQuantification` | No* |
-| **DirectLFQ** | Intensity traces with hierarchical alignment | No | `DirectLFQQuantification` | Yes** |
+| **MaxLFQ** | Delayed normalization with parallelization | No | `MaxLFQQuantification` | No |
+| **DirectLFQ** | Intensity traces with hierarchical alignment | No | `DirectLFQQuantification` | Yes (`directlfq`) |
 | **Sum** | Sum of all peptide intensities | No | `AllPeptidesQuantification` | No |
 | **Median** | Median of peptide intensities | No | Built-in | No |
 | **Ratio** | Log2 sample/reference per plex (PS protocol, TMT) | No | `RatioQuantification` | No |
@@ -199,9 +191,8 @@ mokume/
 | **TMT Reporter** (`intensity`) | Sum of raw reporter intensities | No | `TMTReporterIntensityQuantification` | No |
 | **Spectral Count** | Count of peptidoforms per (protein, sample) | No | `SpectralCountQuantification` | No |
 
-*MaxLFQ automatically uses DirectLFQ when installed for best accuracy, falling back to built-in implementation otherwise.
-
-**DirectLFQ requires optional install: `pip install mokume[directlfq]`
+MaxLFQ automatically uses DirectLFQ when installed for best accuracy, falling
+back to the built-in implementation otherwise.
 
 > **Note:** `Top3Quantification` is available as a backward-compatible alias for `TopNQuantification(n=3)`.
 
@@ -260,7 +251,7 @@ results = de.run_comparisons(protein_df, sample_to_condition, contrasts)
 # Returns dict: {"Treatment-Control": DataFrame, "Drug-Control": DataFrame}
 ```
 
-Output columns: `ProteinName`, `log2FC`, `pvalue`, `adj_pvalue`, `significance` (`UP` / `DOWN` / `Unchanged`).
+Output columns: `ProteinName`, `log2FC`, `pvalue`, `adj_pvalue`, `significance` (`UP` / `DOWN` / `Unchanged` / `NotTested`).
 
 ### Missing Value Imputation
 
@@ -334,11 +325,11 @@ mokume features2proteins \
 ### Peptides to Protein Quantification
 
 ```bash
-# Using iBAQ (default) - requires FASTA
-mokume peptides2protein --method ibaq \
+# Using piBAQ (default) - requires FASTA
+mokume peptides2protein --method pibaq \
     -f proteome.fasta \
     -p peptides.csv \
-    -o proteins-ibaq.tsv
+    -o proteins-pibaq.tsv
 
 # Using TopN - no FASTA required (N can be any number: top3, top5, top10, etc.)
 mokume peptides2protein --method top3 \
@@ -361,7 +352,7 @@ mokume peptides2protein --method maxlfq \
     -p peptides.csv \
     -o proteins-maxlfq.tsv
 
-# Using DirectLFQ (requires: pip install mokume[directlfq])
+# Using DirectLFQ (requires: pip install mokume-py[directlfq])
 mokume peptides2protein --method directlfq \
     -p peptides.csv \
     -o proteins-directlfq.tsv
@@ -372,7 +363,7 @@ mokume peptides2protein --method sum \
     -o proteins-sum.tsv
 ```
 
-### Full iBAQ with TPA and ProteomicRuler
+### Full piBAQ with TPA and ProteomicRuler
 
 ```bash
 mokume peptides2protein \
@@ -385,7 +376,7 @@ mokume peptides2protein \
     --ploidy 2 \
     --cpc 200 \
     --organism human \
-    --output proteins-ibaq.tsv \
+    --output proteins-pibaq.tsv \
     --verbose \
     --qc_report QC.pdf
 ```
@@ -454,9 +445,9 @@ mokume features2peptides \
 ```bash
 # Standalone batch correction (post-quantification)
 mokume correct-batches \
-    -f ibaq_folder/ \
-    -p "*ibaq.tsv" \
-    -o corrected_ibaq.tsv \
+    -f pibaq_folder/ \
+    -p "*pibaq.tsv" \
+    -o corrected_pibaq.tsv \
     --export_anndata
 ```
 
@@ -519,7 +510,7 @@ from mokume.quantification import (
     AllPeptidesQuantification,
     get_quantification_method,
     is_directlfq_available,
-    peptides_to_protein,  # iBAQ function
+    peptides_to_protein,  # piBAQ function
 )
 
 # Load peptide data
@@ -556,7 +547,7 @@ result = maxlfq.quantify(peptides, protein_column="ProteinName", ...)
 print(f"Using DirectLFQ: {maxlfq.using_directlfq}")
 print(f"Implementation: {maxlfq.name}")  # "MaxLFQ (DirectLFQ)" or "MaxLFQ (built-in)"
 
-# For best accuracy, install DirectLFQ: pip install mokume[directlfq]
+# For best accuracy, install DirectLFQ: pip install mokume-py[directlfq]
 
 # Force built-in implementation (for testing/comparison)
 maxlfq_builtin = MaxLFQQuantification(min_peptides=2, force_builtin=True)
@@ -590,9 +581,9 @@ result = method.quantify(peptides, ...)
 # --- Check available methods ---
 from mokume.quantification import list_quantification_methods
 print(list_quantification_methods())
-# {'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
+# Includes pibaq, topN, maxlfq, directlfq, sum, and the TMT methods.
 
-# --- iBAQ with Full Pipeline ---
+# --- piBAQ with Full Pipeline ---
 peptides_to_protein(
     fasta="proteome.fasta",
     peptides="peptides.csv",
@@ -603,7 +594,7 @@ peptides_to_protein(
     ploidy=2,
     cpc=200,
     organism="human",
-    output="proteins-ibaq.tsv",
+    output="proteins-pibaq.tsv",
     min_aa=7,
     max_aa=30,
     verbose=True,
@@ -728,7 +719,7 @@ Without covariates:  Batch effect removed, but tissue signal also reduced
 With covariates:     Batch effect removed, tissue signal preserved
 ```
 
-**Requires optional dependency:** `pip install mokume[batch-correction]`
+**Requires optional dependency:** `pip install mokume-py[batch-correction]`
 
 #### Integrated Pipeline Approach (Recommended)
 
@@ -768,7 +759,7 @@ from mokume.postprocessing import (
 )
 
 # Reshape to wide format (proteins x samples)
-df_wide = pivot_wider(df, row_name="ProteinName", col_name="SampleID", values="Ibaq")
+df_wide = pivot_wider(df, row_name="ProteinName", col_name="SampleID", values="PiBAQ")
 
 # Detect batches from sample names
 batch_indices = detect_batches(
@@ -831,14 +822,14 @@ from mokume.postprocessing.reshape import (
 )
 
 # Long to wide format
-df_wide = pivot_wider(df, row_name="ProteinName", col_name="SampleID", values="Ibaq")
+df_wide = pivot_wider(df, row_name="ProteinName", col_name="SampleID", values="PiBAQ")
 
 # Wide to long format
-df_long = pivot_longer(df_wide, row_name="ProteinName", col_name="SampleID", values="Ibaq")
+df_long = pivot_longer(df_wide, row_name="ProteinName", col_name="SampleID", values="PiBAQ")
 
 # Quality filtering
 df_filtered = remove_samples_low_protein_number(df, min_protein_num=100)
-df_filtered = remove_missing_values(df, missingness_percentage=20, expression_column="Ibaq")
+df_filtered = remove_missing_values(df, missingness_percentage=20, expression_column="PiBAQ")
 
 # Get expression statistics
 metrics = describe_expression_metrics(df)
@@ -854,8 +845,8 @@ adata = create_anndata(
     df,
     obs_col="SampleID",           # Observation (sample) column
     var_col="ProteinName",        # Variable (protein) column
-    value_col="Ibaq",             # Main data values
-    layer_cols=["IbaqNorm", "IbaqLog", "IbaqBec"],  # Additional layers
+    value_col="PiBAQ",             # Main data values
+    layer_cols=["PiBAQNorm", "PiBAQLog", "PiBAQBec"],  # Additional layers
     obs_metadata_cols=["Condition"],  # Sample metadata
     var_metadata_cols=["GeneName"],   # Protein metadata
 )
@@ -918,12 +909,12 @@ print(human.histone_entries)  # List of histone protein accessions
 
 | Column | Description | Method |
 |--------|-------------|--------|
-| `Ibaq` | Total intensity / theoretical peptides | iBAQ |
-| `IbaqNorm` | `ibaq / sum(ibaq)` per sample | iBAQ |
-| `IbaqLog` | `10 + log10(IbaqNorm)` | iBAQ |
-| `IbaqPpb` | `IbaqNorm * 100,000,000` | iBAQ |
-| `IbaqBec` | Batch effect corrected | iBAQ + ComBat |
-| `TPA` | `NormIntensity / MolecularWeight` | iBAQ |
+| `PiBAQ` | Proteotypic plus allocated shared intensity / owned theoretical peptides | piBAQ |
+| `PiBAQNorm` | `PiBAQ / sum(PiBAQ)` per sample | piBAQ |
+| `PiBAQLog` | `10 + log10(PiBAQNorm)` | piBAQ |
+| `PiBAQPpb` | `PiBAQNorm * 100,000,000` | piBAQ |
+| `PiBAQBec` | Batch effect corrected | piBAQ + ComBat |
+| `TPA` | `NormIntensity / MolecularWeight` | piBAQ |
 | `CopyNumber` | Protein copies per cell | ProteomicRuler |
 | `Concentration[nM]` | Protein concentration | ProteomicRuler |
 | `TopNIntensity` | Average of top N peptides (e.g., Top3Intensity, Top5Intensity) | TopN |
@@ -1060,15 +1051,15 @@ mokume features2peptides \
 10. Assemble peptidoforms to peptides
 11. Optional log2 transformation
 
-### iBAQ Calculation
+### piBAQ Calculation
 
 1. Load peptide intensity data
-2. Extract protein info from FASTA (theoretical peptide counts, MW)
-3. Group peptide intensities by protein, sample, and condition
-4. Sum protein intensities within each group
-5. Normalize by detected peptide count
-6. Divide by theoretical peptide count
-7. Optional: Calculate TPA, copy number, concentration
+2. Digest the FASTA and discover shared-peptide protein families
+3. Allocate each shared-peptide intensity proportionally to unique-anchor
+   signal, or equally when no anchor signal exists
+4. Add each member's proteotypic and allocated shared intensities
+5. Divide by that member's owned theoretical-peptide count
+6. Optionally calculate normalized piBAQ, TPA, copy number, and concentration
 
 ### TissueMap Pipeline API
 
@@ -1129,78 +1120,12 @@ pipeline.run()
 | **house-keeping** | All tissues, all \|TS\| < 2.0 |
 | **other** | Everything else |
 
-## Agentic Optimization
+## Agentic Recommendation
 
-AI-assisted differential expression parameter optimization using LLMs (DeepSeek, or any OpenAI-compatible provider).
-
-The agent now proposes configurations across the full method catalogue:
-
-- **DE methods**: `limma`, `rots`, `deqms`, `proda`, and **`ensemble`** (top-k consensus combining multiple methods)
-- **Normalization**: `none`, `median`, `quantile`, `mean`, `rlr`, `loess`
-- **Imputation** (10 methods): `minprob`, `mindet`, `knn`, `missforest`, `seqknn`, `qrilc`, `impseq`, `impseqrob`, `bpca`, `gms`
-- **Ensemble presets**: `limma,deqms,proda` (2/3 consensus), `limma,rots,deqms,proda` (3/4 consensus), configurable via `ensemble_strategies` in `skills/proteomics-heuristics/data.yaml`
-
-See the [agentic optimization example](../docs/examples/differential-expression.md#agentic-optimization)
-for the workflow and configuration examples.
-
-### Setup
-
-```bash
-pip install mokume[agentic]
-```
-
-### API Key Configuration
-
-The API key can be provided in three ways (in priority order):
-
-1. **Auto-saved `.env`** — pass `--llm-api-key` once, it is automatically saved to `.env` for future runs
-2. **Environment variable** — `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`
-3. **CLI flag** — `--llm-api-key sk-xxx`
-
-### Usage
-
-```bash
-# Default provider (DeepSeek)
-mokume agentic optimize \
-  --protein-matrix proteins.tsv \
-  --sdrf sdrf.tsv \
-  --contrasts "treated vs control" \
-  --llm-api-key sk-xxx
-
-# Custom OpenAI-compatible provider
-mokume agentic optimize \
-  --protein-matrix proteins.tsv \
-  --sdrf sdrf.tsv \
-  --contrasts "treated vs control" \
-  --llm-provider custom \
-  --llm-base-url https://api.openai.com/v1 \
-  --llm-model gpt-4o \
-  --llm-api-key sk-xxx
-
-# Rule-based only (no LLM)
-mokume agentic optimize \
-  --protein-matrix proteins.tsv \
-  --sdrf sdrf.tsv \
-  --contrasts "treated vs control" \
-  --no-llm
-```
-
-### Python API
-
-```python
-from mokume.agentic.config import AgenticConfig
-
-# DeepSeek (default)
-config = AgenticConfig(llm_api_key="sk-xxx")
-
-# Custom provider
-config = AgenticConfig(
-    llm_provider="custom",
-    llm_base_url="https://api.openai.com/v1",
-    llm_model="gpt-4o",
-    llm_api_key="sk-xxx",
-)
-```
+Agentic recommendation is provided by the installable Mokume Plugin over the
+default Rust-backed `mokume[agentic]` distribution. The plugin host owns the
+model and credentials. See the
+[Mokume Plugin guide](../docs/user-guide/agentic-plugin.md).
 
 ## Citation
 

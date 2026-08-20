@@ -1,8 +1,8 @@
 # Python API (package)
 
-The pure-Python `mokume` package (`pip install mokume`) exposes a class-based API
+The pure-Python `mokume-py` package (`pip install mokume-py`) exposes a class-based API
 for quantification and differential expression, built on an OOP data layer
-(`QpxDataset`) with a pluggable method registry and a selectable compute backend.
+(`QpxDataset`) with a pluggable method registry and runtime resource controls.
 The reference below is rendered directly from the package source, so it always
 matches the installed version rather than a hand-written copy.
 
@@ -61,7 +61,7 @@ decorator; resolve one with `get`; list a group with `available`.
 from mokume.core.registry import PluginRegistry
 
 PluginRegistry.available("quantification")
-# ['directlfq', 'ibaq', 'maxlfq', 'median', 'ratio', 'spectral_count', 'sum', ...]
+# ['directlfq', 'maxlfq', 'median', 'pibaq', 'ratio', 'spectral_count', 'sum', ...]
 method = PluginRegistry.get("quantification", "maxlfq")
 ```
 
@@ -71,17 +71,13 @@ method = PluginRegistry.get("quantification", "maxlfq")
 
 ::: mokume.pipeline.runner.run_pipeline
 
-## Compute backend
+## Runtime resources
 
-`RuntimeConfig.backend` selects the compute engine. The default `"python"` runs
-the pure-Python pipeline; `"rust"` routes supported loading, filtering,
-normalization, and quantification settings through the compiled
-`mokume._mokume` kernel (installed with the `mokume-rs` wheel), then returns to
-Python for postprocessing. When the kernel is absent, the `"rust"` backend
-raises a clear error rather than silently falling back. The hybrid profile also
-rejects `duckdb_memory`, `duckdb_threads`, and ion alignment other than `None`
-or `"none"` before invoking the extension because it cannot honor those settings
-with their documented semantics.
+`RuntimeConfig` controls the DuckDB memory and thread hints used by the
+pure-Python pipeline. `run_pipeline` always uses the pure-Python implementation;
+it does not dispatch into `mokume`. To use the Rust implementation, install
+`mokume` in a separate environment and use its [thin Python API](python-api.md)
+or installed console command.
 
 ```python
 from mokume.pipeline.config import RuntimeConfig
@@ -89,28 +85,16 @@ from mokume.pipeline.config import RuntimeConfig
 config = PipelineConfig(
     input=InputConfig(parquet="features.parquet"),
     quantification=QuantificationConfig(method="sum"),
-    runtime=RuntimeConfig(backend="rust"),  # requires the mokume-rs wheel
+    runtime=RuntimeConfig(duckdb_memory="80GB", duckdb_threads=24),
 )
 dataset = run_pipeline(config)
 ```
 
 ::: mokume.pipeline.config.RuntimeConfig
 
-## Agentic optimization
+## Agentic recommendation
 
-`optimize_from_dataset` runs the LLM-driven differential-expression optimizer on
-the protein matrix carried by a `QpxDataset`, mirroring the DataFrame-based
-`optimize` entry point.
-
-```python
-from mokume.agentic.config import AgenticConfig
-from mokume.agentic.optimizer import optimize_from_dataset
-
-states = optimize_from_dataset(
-    dataset,                                    # a QpxDataset with .proteins populated
-    sample_to_condition={"S1": "A", "S2": "B"},
-    config=AgenticConfig(use_llm=False),
-)
-```
-
-::: mokume.agentic.optimizer.optimize_from_dataset
+Agentic recommendation is not part of `mokume-py`. Install the default
+Rust-backed `mokume[agentic]` distribution and the
+[Mokume Plugin](../user-guide/agentic-plugin.md); use the plugin in a separate
+environment because both distributions provide the same `mokume` import name.

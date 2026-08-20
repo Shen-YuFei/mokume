@@ -54,8 +54,11 @@ table = results["Treatment-Control"]
 
 `method` accepts any of `limrots`, `deqms`, `proda`, `limma`, or `rots`
 (the `ensemble` consensus is exposed through the CLI / `run_ensemble`,
-not this class); `fdr_method` is `bh` (default) or `ihw`. LimROTS and ROTS report
-their own permutation-based FDR, which an `ihw` request leaves untouched. The
+not this class); `fdr_method` is `bh` (default), `ihw`, `bky`, or `storey`.
+BKY and Storey fall back to BH when pi0 is not reliable. LimROTS and ROTS report
+their own permutation-based FDR, which another FDR request leaves untouched.
+`log2fc_threshold="auto"` estimates a mixture-model effect-size gate; the Rust
+CLI exposes the same behavior as `--de-log2fc auto`. The
 Rust build runs the same methods through the CLI shown below (and the in-process
 wheel binding).
 
@@ -201,7 +204,7 @@ methods agree on direction (UP or DOWN) and the Fisher-combined p-value
 passes the FDR threshold.
 
 **Output columns** include the median log2FC across members, the
-Fisher-combined p-value (BH-adjusted), `n_methods_up`, `n_methods_down`,
+Fisher-combined p-value (adjusted with the requested FDR method), `n_methods_up`, `n_methods_down`,
 and `methods_significant` (comma-separated list of members that called
 the protein).
 

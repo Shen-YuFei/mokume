@@ -3,37 +3,43 @@
 ## From PyPI
 
 ```bash
-pip install mokume-rs
+pip install mokume
 ```
 
-!!! warning "`mokume-rs` is not on PyPI yet"
+`mokume` is the default Rust-kernel distribution. It installs the compiled
+`mokume._mokume` extension, its Python API and periphery, and the `mokume`
+console command.
 
-    The Rust wheel has not been published to PyPI yet, so `pip install mokume-rs`
-    does not work today. Until it ships, either install the pure-Python package
-    (`pip install mokume` — the same import name, but a separately maintained API)
-    or build the wheel from source: `pip install ./rust` (needs the Rust toolchain
-    and cmake). The `mokume-rs` instructions on this page describe the wheel for
-    when it is released.
+!!! note "Distribution names changed in 0.2.0"
 
-!!! warning "Install `mokume-rs` **or** `mokume` — never both"
+    `mokume<=0.1.0` was the pure-Python implementation. Starting with 0.2.0,
+    `mokume` is the Rust-backed wheel and the pure-Python implementation is
+    published separately as `mokume-py`.
+
+!!! warning "Install `mokume` **or** `mokume-py` — never both"
 
     Both distributions install the same `mokume` import package, so having both
     in one environment makes pip silently overwrite files (it does not detect the
     collision). Keep only one; to switch, `pip uninstall` the other first. Each
     package warns at import time if it finds its sibling installed.
 
-`pip install mokume-rs` gives you the Rust compute kernel (the compiled
+Install the pure-Python implementation explicitly when needed:
+
+```bash
+pip install mokume-py
+```
+
+`pip install mokume` gives you the Rust compute kernel (the compiled
 `mokume._mokume` extension) and the thin Python API that drives it in-process.
 The kernel needs no third-party Python dependencies, so for standard
 quantification workflows the core package is enough. Extras pull in only the
 Python periphery libraries; install one when you need a specific periphery
 command.
 
-!!! note "Standalone CLI binary"
+!!! note "Console command"
 
-    The kernel also ships as a standalone CLI binary `mokume`, built from
-    `rust/crates/mokume-cli` with cargo and requiring no Python at all. The wheel and
-    the binary expose the same four compute subcommands over the same kernel.
+    The wheel installs a `mokume` console command exposing the four compute
+    subcommands through the same in-process extension as the Python API.
 
 ### Optional Extras
 
@@ -42,16 +48,16 @@ mokume uses optional dependencies for the periphery commands:
 === "Plotting"
 
     ```bash
-    pip install mokume-rs[plotting]
+    pip install mokume[plotting]
     ```
 
-    Enables the t-SNE visualization, DE plots, and iBAQ QC report periphery
+    Enables the t-SNE visualization, DE plots, and piBAQ QC report periphery
     commands (numpy, pandas, scipy, scikit-learn, matplotlib, seaborn).
 
 === "Interactive Reports"
 
     ```bash
-    pip install mokume-rs[reports]
+    pip install mokume[reports]
     ```
 
     Enables the interactive HTML report periphery command (plotly).
@@ -59,27 +65,27 @@ mokume uses optional dependencies for the periphery commands:
 === "TissueMap"
 
     ```bash
-    pip install mokume-rs[tissuemap]
+    pip install mokume[tissuemap]
     ```
 
     Enables the `mokume.tissuemap` periphery command for per-dataset tissue atlas
     analysis, including AdaTiSS tissue-specificity scoring, embeddings, and atlas
     plots (scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow).
 
-=== "iBAQ"
+=== "piBAQ"
 
     ```bash
-    pip install mokume-rs[ibaq]
+    pip install mokume[pibaq]
     ```
 
-    Enables the pure-Python `mokume.peptides2protein_ibaq` fallback for enzymes
+    Enables the pure-Python `mokume.peptides2protein_pibaq` fallback for enzymes
     the Rust kernel does not digest (pyopenms, pyarrow, PyYAML, numpy, pandas,
     scipy).
 
 === "Analysis"
 
     ```bash
-    pip install mokume-rs[analysis]
+    pip install mokume[analysis]
     ```
 
     Enables the QC / workflow-comparison reports and the pure-Python method
@@ -87,30 +93,43 @@ mokume uses optional dependencies for the periphery commands:
     — plus `mokume.qc_report`
     and `mokume.workflow_comparison` (numpy, pandas, scipy, scikit-learn).
 
+=== "Mokume Plugin"
+
+    ```bash
+    pip install "mokume[agentic]"
+    ```
+
+    This optional MCP workflow requires Python 3.10 or newer.
+
+    Installs the local MCP service used by the installable Mokume Plugin. The
+    plugin host owns the model and credentials; Mokume does not need a model API
+    key. Continue with the [plugin installation](user-guide/agentic-plugin.md).
+
 === "Everything"
 
     ```bash
-    pip install mokume-rs[all]
+    pip install mokume[all]
     ```
 
-    Installs all optional periphery dependencies.
+    Installs all optional periphery and local MCP dependencies.
 
 ## From Source
 
 mokume builds from two project roots, one per distribution:
 
-- **`mokume` (pure Python)** — `python/pyproject.toml` uses standard PEP 621
+- **`mokume-py` (pure Python)** — `python/pyproject.toml` uses standard PEP 621
   metadata with the **hatchling** build backend
   (`build-backend = "hatchling.build"`, not Poetry). Install it from source with:
 
   ```bash
   git clone https://github.com/bigbio/mokume
   cd mokume
-  pip install ./python          # builds the mokume package via the hatchling backend
+  pip install ./python          # builds mokume-py via the hatchling backend
   ```
 
-- **`mokume-rs` (Rust wheel)** — the wheel is built with maturin, which compiles
-  the `mokume-py` PyO3 crate into the `mokume._mokume` extension and packages it
+- **`mokume` (Rust wheel)** — the default distribution is built with maturin,
+  which compiles the internal `crates/mokume-py` PyO3 binding crate into the
+  `mokume._mokume` extension and packages it
   with the Python periphery. The maturin project lives in `rust/`:
 
   ```bash
@@ -119,11 +138,7 @@ mokume builds from two project roots, one per distribution:
 
 For a development checkout of the Rust wheel, build the extension in place with
 `maturin develop` run from `rust/`; the periphery is plain Python and needs no
-build step. The standalone CLI binary is built from the same workspace:
-
-```bash
-cargo build --release --manifest-path rust/Cargo.toml -p mokume-cli
-```
+separate build step.
 
 ## Using Conda
 
@@ -135,14 +150,16 @@ pip install ./rust
 
 ## Requirements
 
-- Python >= 3.9 (for the wheel) — the standalone CLI binary needs no Python
+- Python >= 3.9
 - The compute kernel needs **no third-party Python dependencies**; the periphery
   extras pull in numpy, pandas, scipy, scikit-learn, pyopenms, pyarrow, plotly,
   scanpy, and friends only for the periphery commands you run
-- The quantification methods (DirectLFQ, MaxLFQ, iBAQ), ComBat batch correction,
+- The quantification methods (DirectLFQ, MaxLFQ, piBAQ), ComBat batch correction,
   DE methods (limma, DEqMS, proDA, LimROTS, ROTS), and most imputation methods
   run in the **native Rust kernel** — no R or rpy2 required. ComBat is
   oracle-verified against inmoose
 - A method stays in the Python periphery because the kernel cannot reproduce
   it cross-language: the `missforest` imputer (`mokume.impute`), in the
   `analysis` extra
+- The Mokume Plugin requires an agent host plus `mokume[agentic]`; its bundled
+  stdio MCP server is started by the host and calls the local Rust-backed wheel

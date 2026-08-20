@@ -16,12 +16,12 @@ CSV: the first column is `ProteinName`, the remaining columns are one per sample
 |------------------|-------------|
 | `maxlfq` | MaxLFQ pairwise ratio estimation (default) |
 | `directlfq` | DirectLFQ intensity traces (native Rust) |
-| `top3` | Mean of the 3 most intense peptides |
-| `topn` | Mean of the top N peptides (`--topn`, default 3) |
+| `top3` | Mean of the 3 most intense peptides (Silva et al. 2006) |
+| `top<N>` | Mean of the N most intense peptides — `top5`, `top10`, ... |
 | `sum` | Sum of all peptide intensities |
 | `median` | Median peptide intensity |
 
-`ibaq`, `ratio`, `abd`, `intensity`, and `spectral_count` are also valid; iBAQ is
+`pibaq`, `ratio`, `abd`, `intensity`, and `spectral_count` are also valid; piBAQ is
 covered on the [Absolute Expression](absolute-expression.md) page.
 
 ## Run a quantification

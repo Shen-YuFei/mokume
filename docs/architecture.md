@@ -1,71 +1,76 @@
 # Architecture
 
-mokume has two computation implementations: the leading **Rust compute kernel**
-and a separately maintained **pure-Python package**. The Rust kernel is shipped
-through two entry points:
-
-1. a **standalone CLI binary** `mokume` (built with `cargo`, no Python runtime
-   needed), and
-2. a **`pip install mokume-rs` wheel** (PyO3/maturin) whose compiled extension
-   `mokume._mokume` runs the same kernel **in-process** — there is **no
-   subprocess** and no shelling out to Python.
+mokume is a **toolkit with two installable compute distributions**: the
+leading Rust-backed `mokume` wheel and the separately maintained pure-Python
+`mokume-py` package. The Rust
+wheel contains the compiled `mokume._mokume` extension, a thin Python API, a
+`mokume` console command, and the Python periphery. It does not ship a separate
+Rust executable.
 
 For Rust-native commands, computed values are single-sourced in the kernel.
-Plotting, interactive reports, and iBAQ QC read the tables the kernel writes;
+Plotting, interactive reports, and piBAQ QC read the tables the kernel writes;
 TissueMap derives a downstream atlas from QPX outputs. Explicit Python-only
 method fallbacks compute capabilities that the kernel does not provide. These
-periphery and fallback paths are documented separately below.
+periphery and fallback paths are documented separately below. The pure-Python
+package computes the same capabilities through its own implementation.
 
-## The kernel + wheel split
+> **Distribution transition and measured performance.** `mokume<=0.1.0` was
+> pure Python. Starting with 0.2.0, `mokume` is the Rust-backed wheel and the
+> pure-Python distribution is `mokume-py`. The Rust kernel's measured advantage is
+> bounded, not "much faster": on `sum` (PXD003539 / PXD004701, 24 threads,
+> bit-identical output) it is ~1.5× faster wall-clock (6.7s vs 10.3s; 12.3s vs
+> 19.4s) with ~7× lower peak memory (0.83 vs 5.5 GB; 1.2 vs 8.9 GB). Quote these
+> figures rather than unbounded speed claims.
+
+## The Rust wheel
 
 ```mermaid
 flowchart TB
     subgraph rust["Rust compute kernel (crates/)"]
         crates["mokume-pipeline / mokume-core<br/>quantification · normalization · imputation<br/>differential expression · ComBat batch correction"]
-        cli_crate["crates/mokume-cli"]
+        cli_crate["crates/mokume-cli<br/>clap parsing + dispatch library"]
         py_crate["crates/mokume-py (PyO3)"]
         crates --> cli_crate
-        crates --> py_crate
+        cli_crate --> py_crate
     end
 
-    bin["mokume CLI binary<br/>(cargo build, no Python)"]
     ext["mokume._mokume extension<br/>(maturin build, in-process)"]
-    cli_crate --> bin
     py_crate --> ext
 
-    subgraph wheel["pip install mokume-rs (the wheel)"]
+    subgraph wheel["pip install mokume (the wheel)"]
         ext
         api["thin Python API<br/>features2proteins() · peptides2protein() · run([...])"]
+        console["mokume console command<br/>Python entry point"]
         periphery["Python periphery<br/>rust/python/mokume/commands/*"]
         ext --> api
+        ext --> console
     end
 
-    out["kernel output<br/>protein matrix CSV · peptide parquet · iBAQ TSV · DE CSV"]
+    out["kernel output<br/>protein matrix CSV · peptide parquet · piBAQ TSV · DE CSV"]
     qpx["QPX data"]
-    bin --> out
     api --> out
+    console --> out
     out -. plots and reports .-> periphery
     qpx -. TissueMap .-> periphery
     periphery --> figs["plots · tissue maps · HTML reports"]
 ```
 
-The CLI binary and the wheel are two front doors onto the **same** crates. The
-wheel's compute wrappers parse their arguments through the same `clap`
-definition the binary uses, so flag handling stays single-sourced in Rust.
+The wheel's console command and compute wrappers parse their arguments through
+the same `clap` definition, so flag handling stays single-sourced in Rust.
 
 ## In-process, no subprocess
 
-The wheel does **not** launch the CLI binary as a child process. `import mokume;
-mokume.features2proteins(...)` calls straight into the compiled `mokume._mokume`
+The `mokume` console command and `import mokume;
+mokume.features2proteins(...)` both call the compiled `mokume._mokume`
 extension, which executes the Rust pipeline in the current process. This is the
 PyO3/maturin layout used by projects such as polars and pydantic-core: Python
 imports a compiled Rust extension rather than driving an external program.
 
 !!! note "Why this matters"
-    The CLI binary, the wheel's `mokume.features2proteins(...)`, and
-    `mokume.run([...])` all reach the same Rust implementation. A result computed
-    through either Rust entry point therefore comes from the same kernel. The
-    separate pure-Python computation package is not part of this guarantee.
+    There is exactly one Rust implementation of every quantity. The installed
+    `mokume` command, `mokume.features2proteins(...)`, and `mokume.run([...])`
+    all reach the same Rust code. The separate pure-Python distribution is not
+    part of this in-wheel guarantee.
 
 ## Rust-native compute and the Python periphery
 
@@ -76,51 +81,53 @@ through the wheel:
   plots and the HTML report built from the `features2proteins` matrix / DE CSVs.
 - `mokume.tissuemap` — downstream per-dataset normalization, batch correction,
   tissue-specificity scoring, embeddings, and atlas plots from QPX outputs.
-- `mokume.peptides2protein_qc` — the iBAQ `--verbose` QC report PDF.
+- `mokume.peptides2protein_qc` — the piBAQ `--verbose` QC report PDF.
 
 Plotting and reporting render kernel tables without re-running the
 kernel-supported computation. TissueMap performs its documented downstream
-analysis, while `mokume.peptides2protein_ibaq` and the `missforest` imputer are
+analysis, while `mokume.peptides2protein_pibaq` and the `missforest` imputer are
 explicit fallbacks for operations the kernel does not provide (see
-[CLI vs Wheel](cli-vs-wheel.md) and [Python Periphery](periphery/index.md)).
+[Rust Wheel](rust-wheel.md), [Python Periphery](periphery/index.md), and
+[Analysis Fallbacks](periphery/analysis-fallbacks.md)).
 
-## What stays in the pure-Python package
+## The Mokume Plugin
 
-`agentic` — the LLM-driven workflow optimizer — is intentionally **not** migrated
-to the Rust track and does **not** appear in the Rust CLI or `mokume-rs` wheel.
-It remains in the separately installed pure-Python `mokume` package under
-`python/mokume/agentic/`.
+Agentic recommendation is shipped as an installable host plugin under
+`plugins/mokume/`, not as a model client inside either computation package. The
+bundle contains one skill, automatic local MCP configuration, and a committed
+knowledge snapshot. Its MCP process is provided by `mokume[agentic]` in the
+default Rust-backed wheel.
 
-## The pure-Python package and its compute backends
+The host model reads the skill and calls `mokume.inspect_dataset` to receive a
+typed profile, deterministic diagnostics, compatible evidence, and a bounded
+generation contract. It returns an exact recommendation block to
+`mokume.evaluate_recommendation`, which validates the block before running the
+Rust matrix APIs. Mokume never receives the host's model API key.
 
-Separately from the wheel, the pure-Python `pip install mokume` package carries a
+The scientific boundary is explicit: ground-truth datasets may be ranked with
+Score A; unlabelled datasets remain exploratory and have no winner. The plugin
+starts from a protein matrix, so upstream quantification is provenance rather
+than an executable search axis.
+
+## The separate pure-Python package
+
+Separately from the wheel, the pure-Python `pip install mokume-py` package carries a
 full OOP compute pipeline: a `QpxDataset` container, a `PluginRegistry` of
 quantification / normalization / imputation / harmonization methods, and
-`run_pipeline(config) -> QpxDataset`. By default it computes in pure Python; set
-`RuntimeConfig.backend = "rust"` to route the supported features-to-proteins
-configuration through the compiled `mokume._mokume` kernel instead (it raises a
-clear error when the kernel is not installed).
+`run_pipeline(config) -> QpxDataset`. This entry point always uses the
+pure-Python implementation. `RuntimeConfig` controls its DuckDB memory and
+thread hints; it does not select another computation implementation.
 
-The hybrid profile has an explicit stage boundary:
-
-| Configuration area | Effective owner |
-| --- | --- |
-| Parquet and FASTA input, filtering, run/sample normalization, protein quantification, and peptide/ion exports | Rust kernel |
-| QPX metadata, coverage filtering, IRS, imputation, batch correction, differential expression, plots, reports, and AnnData export | Python postprocessing |
-| SDRF context, quantification-method selection, and ratio reference-sample selection | Shared across the boundary |
-| Backend selection | Python hybrid adapter |
-
-`duckdb_memory` and `duckdb_threads` are rejected for this profile because the
-in-process kernel cannot enforce their documented per-run resource semantics.
-Ion alignment accepts only `None` or `"none"`. Other method-specific invalid
-combinations are forwarded so the Rust kernel retains its detailed validation
-error. These checks happen before the extension is invoked or temporary output
-is allocated.
+Rust computation is reached through the default `mokume` wheel. The two
+distributions both provide the `mokume` import
+package, so they must not be installed together in one environment. Select the
+implementation at installation time rather than routing one distribution into
+the other at runtime.
 
 Because the pure-Python package has its **own** implementation of the compute —
 distinct from the Rust kernel — covered overlapping paths agree within their
 documented floating-point tolerance, not bit-for-bit as the wheel's wrappers do
-against the binary. Selected `features2proteins` paths are checked against
+within the Rust distribution. Selected `features2proteins` paths are checked against
 frozen compatibility goldens in `rust/tests/test_rust_python_equivalence.py`.
 The API is documented under
 [Python API (package)](reference/python-api-package.md).

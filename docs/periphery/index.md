@@ -1,13 +1,13 @@
 # Python Periphery
 
 The periphery is the Python half of the toolkit: plotting, tissue maps,
-interactive reports, the iBAQ QC report, the pure-Python iBAQ path for unported
+interactive reports, the piBAQ QC report, the pure-Python piBAQ path for unported
 enzymes, and the pure-Python method fallbacks. It lives in
 `rust/python/mokume/commands/` (plus `rust/python/mokume/reports/`,
 `rust/python/mokume/normalization/`, `rust/python/mokume/imputation/` for the
 analysis fallbacks) and is reached **only** through the
-`pip install mokume-rs` wheel. The standalone Rust CLI binary is pure compute
-and carries none of this.
+`pip install mokume` wheel. The Rust compute extension does not import this
+periphery.
 
 ## Reporting reads kernel output; fallbacks are explicit
 
@@ -17,9 +17,9 @@ documented downstream normalization, batch correction, tissue-specificity, and
 atlas outputs from QPX data.
 
 Two explicit fallbacks compute operations the Rust kernel does not provide:
-`mokume.peptides2protein_ibaq` handles enzymes outside the Rust-ported set, and
+`mokume.peptides2protein_pibaq` handles enzymes outside the Rust-ported set, and
 `mokume.impute(method='missforest')` runs the scikit-learn estimator. They are
-documented under [CLI vs Wheel](../cli-vs-wheel.md) and
+documented under [Rust Wheel](../rust-wheel.md) and
 [Analysis Fallbacks](analysis-fallbacks.md), rather than being presented as
 kernel-produced results.
 
@@ -36,18 +36,18 @@ needs. Install just the extra for the command you run.
 | `mokume.de_plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
 | `mokume.interactive_report` | `reports` | numpy, pandas, plotly |
 | `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
-| `mokume.peptides2protein_ibaq` | `ibaq` | pyopenms, pyarrow, PyYAML, numpy, pandas, scipy |
+| `mokume.peptides2protein_pibaq` | `pibaq` | pyopenms, pyarrow, PyYAML, numpy, pandas, scipy |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
 
 ```bash
-pip install mokume-rs                 # compute kernel + Python API
-pip install "mokume-rs[plotting]"     # + t-SNE / DE plots / iBAQ QC report
-pip install "mokume-rs[reports]"      # + interactive HTML DE report
-pip install "mokume-rs[tissuemap]"    # + per-dataset tissue proteome analysis
-pip install "mokume-rs[ibaq]"         # + pure-Python iBAQ for unported enzymes
-pip install "mokume-rs[analysis]"     # + QC/comparison reports + missforest
-pip install "mokume-rs[all]"          # everything
+pip install mokume                 # compute kernel + Python API
+pip install "mokume[plotting]"     # + t-SNE / DE plots / piBAQ QC report
+pip install "mokume[reports]"      # + interactive HTML DE report
+pip install "mokume[tissuemap]"    # + per-dataset tissue proteome analysis
+pip install "mokume[pibaq]"         # + pure-Python piBAQ for unported enzymes
+pip install "mokume[analysis]"     # + QC/comparison reports + missforest
+pip install "mokume[all]"          # everything
 ```
 
 The exact dependency lists are declared in `pyproject.toml`'s
@@ -72,7 +72,7 @@ import mokume
 mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")
 mokume.tissuemap(scan_dir="./data", output_dir="./out")
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
-mokume.peptides2protein_ibaq(peptides="peptides.parquet", fasta="proteome.fasta",
+mokume.peptides2protein_pibaq(peptides="peptides.parquet", fasta="proteome.fasta",
                              enzyme="CNBr", output="proteins.tsv")
 
 # de_plots / interactive_report take an explicit argv (the per-contrast
@@ -85,7 +85,7 @@ mokume.qc_report(protein_matrix="proteins.csv", sdrf="x.sdrf.tsv", output="qc.ht
 mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
 ```
 
-The kwarg wrappers follow the [kwargs &rarr; flags rule](../cli-vs-wheel.md)
+The kwarg wrappers follow the [kwargs &rarr; flags rule](../rust-wheel.md)
 (`key=value` &rarr; `--key value` with `_` rewritten to `-`; `key=True` &rarr;
 `--key`; a list repeats the flag; `None` / `False` skipped). `de_plots` and
 `interactive_report` take a literal argument list because their per-contrast

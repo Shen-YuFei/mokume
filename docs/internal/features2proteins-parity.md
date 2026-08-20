@@ -13,10 +13,10 @@ intent for each parameter.
 | `--parquet` | Input | Required QPX feature parquet input. | Required QPX feature parquet input. | Implemented |
 | `--sdrf` | Input | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Implemented subset |
 | `--output` | Output | Required protein matrix output path. | Required protein matrix output path. | Implemented |
-| `--quant-method` | Quantification | Selects directlfq, ibaq, maxlfq, topn, sum, median, ratio, abd, intensity, or spectral_count. | Selects the same method set for `features2proteins`. Missing protein x sample cells follow Python's per-method convention (`pivot_table(fill_value=0)` over the observed samples): the additive methods (sum / intensity / spectral_count / directlfq) write `0` for a missing cell in an observed sample, the average/ratio methods (median / topn / abd / maxlfq / ratio) leave it empty; a sample with no observations stays empty for every method. PXD003539 sum is cell-exact (0 NaN-pattern mismatches). | Implemented subset |
-| `--topn` | Quantification | Sets N for TopN when `--quant-method topn`. | Sets N for TopN when `--quant-method topn`. | Implemented |
+| `--quant-method` | Quantification | Selects directlfq, pibaq, maxlfq, `top<N>`, sum, median, ratio, abd, intensity, or spectral_count. | Selects the same method set for `features2proteins`. Missing protein x sample cells follow Python's per-method convention (`pivot_table(fill_value=0)` over the observed samples): the additive methods (sum / intensity / spectral_count / directlfq) write `0` for a missing cell in an observed sample, the average/ratio methods (median / topn / abd / maxlfq / ratio) leave it empty; a sample with no observations stays empty for every method. PXD003539 sum is cell-exact (0 NaN-pattern mismatches). | Implemented subset |
+| `--topn` | Quantification | Removed: N is spelled in the method name (`--quant-method top5`). | Removed: same. Both CLIs parse `top<N>` themselves and reject a `top` name with no numeral. | Removed on both sides |
 | `--min-aa` | Filtering | Removes peptide sequences shorter than the threshold. | Removes peptide sequences shorter than the threshold. | Implemented |
-| `--min-unique` | Filtering | Requires a minimum number of unique peptides per protein/sample cell. | Requires a minimum number of unique peptides per protein/sample cell for non-iBAQ methods. | Implemented subset |
+| `--min-unique` | Filtering | Requires a minimum number of unique peptides per protein/sample cell. | Requires a minimum number of unique peptides per protein/sample cell for non-piBAQ methods. | Implemented subset |
 | `--remove-contaminants` / `--keep-contaminants` | Filtering | Controls contaminant and decoy removal. | Controls contaminant and decoy removal. | Implemented subset |
 | `--run-normalization` | Normalization | Supports none, mean, median, max, global, max_min, and iqr. | Supports none, mean, median, max, global, max_min, and iqr. | Implemented subset |
 | `--sample-normalization` | Normalization | Supports none, globalmedian, conditionmedian, hierarchical, quantile, mediancenter, meancenter, rlr, and loess. | Supports none, globalmedian, conditionmedian, quantile, mediancenter, meancenter, rlr, loess, and hierarchical. hierarchical has non-identity real-path golden oracles and is cell-exact; loess is ~2e-3 vs statsmodels lowess; mediancenter/meancenter/hierarchical are real-data cell-exact on PXD003539. | Implemented subset |
@@ -28,7 +28,7 @@ intent for each parameter.
 | `--coverage-threshold` | Postprocessing | Drops proteins below per-condition non-missing coverage. | Applies a per-condition coverage filter when SDRF condition metadata is available. | Implemented subset |
 | `--impute` and basic imputation options | Postprocessing | Supports a broad imputation catalog. | Supports none, mindet, minprob, mean, median, constant, zero, most_frequent, knn, seqknn, qrilc, impseq, gms, bpca, and impseqrob. `missforest` is accepted by the CLI but returns `NotImplemented` — a documented gap: it wraps scikit-learn's `IterativeImputer` driven by `RandomForestRegressor`, whose output is the artifact of sklearn's exact tree-building internals plus its RNG. Cross-language alignment would require reimplementing the estimator bit-for-bit (the model differs structurally, not just in RNG draws, unlike the bootstrap DE methods), so no meaningful tolerance tier is reachable; a Rust ML crate (linfa) would not align either. | Implemented subset |
 | batch correction options | Postprocessing | Runs ComBat when optional dependencies are available. | ComBat (parametric, covariate (covar_mod), non-parametric (par_prior=false), with ref_batch/mean_only, oracle-verified vs inmoose ~1e-6 / 1e-9) is wired into both the standalone `correct-batches` command and the `features2proteins` pipeline (`--batch-correction`). In `features2proteins`, batches come from `sample_prefix` or explicit `column` detection (`--batch-method column` + `--batch-column`, mapped via SDRF `source name -> column`, missing samples `"unknown"`), and `--batch-covariates` are extracted from the SDRF (`extract_covariates_from_sdrf`: column match, sample-substring fallback, `pd.factorize` encoding, single-value columns dropped — oracle-locked) and fed to the covariate ComBat design. ComBat runs on the proteins with no missing cells (the rest are kept uncorrected, mirroring `_complete_batch_matrix`). `--batch-method run` has no run-level mapping in the protein-matrix flow and errors at runtime, the same as Python's `_detect_batch_indices` (`run_info required`); fraction / techreplicate detection are not exposed by the `features2proteins` CLI (Python `click.Choice` is `sample_prefix`/`run`/`column`). PCA+HDBSCAN outlier removal is not ported; `--export-anndata` (h5ad) is implemented only in `correct-batches` (Rust-native `.h5ad` matching Python `anndata.write_h5ad`, verified via `anndata.read_h5ad`), which does not expose batch-method/covariate options. | Implemented subset |
-| differential expression options | Postprocessing | Runs DE methods and writes optional DE output. | `features2proteins --de --de-contrasts "A vs B" --de-method <m>` runs the full catalog via a Rust dispatcher: limma, deqms, rots, limrots, proda, ensemble (with BH). Conditions resolve from the SDRF by both `source name` and `comment[data file]` stem (so run-level matrices work). Deterministic kernels are cell-exact on real data (PXD004701: limma/deqms log2FC ~5e-15, 100% significance-call agreement); RNG/optimizer-driven methods (rots/limrots/proda) are faithful-not-bit-exact (log2FC cell-exact, p-value rank-level). Both BH and IHW FDR are supported (`--de-fdr-method`); IHW (covariate-binned weighted BH) is cell-exact vs Python. Contrasts come from inline `--de-contrasts "A vs B"` and/or the TSV `--de-contrasts-file` (group1/group2 columns, appended after the inline entries, mirroring features2proteins.py:768); `--de-method auto` resolves to `deqms` for directlfq, otherwise `limrots` (Python's `_resolve_de_method`). | Implemented (tiered) |
+| differential expression options | Postprocessing | Runs DE methods and writes optional DE output. | `features2proteins --de --de-contrasts "A vs B" --de-method <m>` runs the full catalog via a Rust dispatcher: limma, deqms, rots, limrots, proda, ensemble. Conditions resolve from the SDRF by both `source name` and `comment[data file]` stem (so run-level matrices work). Deterministic kernels are cell-exact on real data (PXD004701: limma/deqms log2FC ~5e-15, 100% significance-call agreement); RNG/optimizer-driven methods (rots/limrots/proda) are faithful-not-bit-exact (log2FC cell-exact, p-value rank-level). BH, IHW, BKY, and Storey are supported (`--de-fdr-method`); IHW is cell-exact vs Python, while BKY/Storey match Python oracles including pi0 estimation, the conservative lower bound, and reliability fallback to BH. `--de-log2fc auto` runs the Python-compatible two-Gaussian mixture gate; `--de-effect-size-gate null_quantile` exposes the robust alternative, and both are oracle-locked. Adaptive FDR and effect-size gates are applied at both member and ensemble-combination layers; ROTS/LimROTS retain their permutation FDR. Contrasts come from inline `--de-contrasts "A vs B"` and/or the TSV `--de-contrasts-file`; `--de-method auto` resolves to `deqms` for directlfq, otherwise `limrots`. | Implemented (tiered) |
 | plotting and report options | Output | Writes plots and optional HTML reports. | Returns `NotImplemented`. | Not implemented |
 
 ## Real-Data Parity Matrix
@@ -37,10 +37,10 @@ Use the local cell-line QPX data for Rust/Python comparisons.
 
 | Dataset | Role | Feature Parquet | SDRF |
 | --- | --- | --- | --- |
-| `PXD003539` | First-pass baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/qpx/PXD003539.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD003539/sdrf/PXD003539.sdrf.tsv` |
-| `PXD004701` | Normalization and TopN baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD004701/qpx/PXD004701.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD004701/sdrf/PXD004701.sdrf.tsv` |
-| `PXD041421` | Normalization and TopN baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD041421/qpx/PXD041421.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD041421/sdrf/PXD041421.sdrf.tsv` |
-| `PXD030304` | Stress baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD030304/qpx/PXD030304.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD030304/sdrf/PXD030304.sdrf.tsv` |
+| `PXD003539` | First-pass baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/qpx/PXD003539.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/mokume/sdrf/PXD003539.sdrf.tsv` |
+| `PXD004701` | Normalization and TopN baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD004701/qpx/PXD004701.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD004701/mokume/sdrf/PXD004701.sdrf.tsv` |
+| `PXD041421` | Normalization and TopN baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD041421/qpx/PXD041421.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD041421/mokume/sdrf/PXD041421.sdrf.tsv` |
+| `PXD030304` | Stress baseline | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD030304/qpx/PXD030304.feature.parquet` | `/home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD030304/mokume/sdrf/PXD030304.sdrf.tsv` |
 
 ## Required Comparison Metrics
 
@@ -65,7 +65,7 @@ Python baseline:
 ```bash
 python -m mokume.mokume_cli features2proteins \
   --parquet /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/qpx/PXD003539.feature.parquet \
-  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD003539/sdrf/PXD003539.sdrf.tsv \
+  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/mokume/sdrf/PXD003539.sdrf.tsv \
   --output /tmp/mokume-parity/PXD003539/python/sum_none.csv \
   --quant-method sum \
   --run-normalization none \
@@ -73,12 +73,12 @@ python -m mokume.mokume_cli features2proteins \
   --duckdb-threads 24
 ```
 
-Rust baseline:
+`mokume` wheel baseline:
 
 ```bash
-cargo run -p mokume-cli -- features2proteins \
+mokume features2proteins \
   --parquet /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/qpx/PXD003539.feature.parquet \
-  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell_lines_mokume/PXD003539/sdrf/PXD003539.sdrf.tsv \
+  --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/mokume/sdrf/PXD003539.sdrf.tsv \
   --output /tmp/mokume-parity/PXD003539/rust/sum_none.csv \
   --quant-method sum \
   --run-normalization none \
@@ -148,8 +148,10 @@ not the agglomerative clustering — tracked separately. `ratio` has no real-dat
 test cell-exact vs Python `RatioQuantification`.
 
 Since the 2026-06-20 audit: the DE family (limma/deqms/rots/limrots/proda/
-ensemble) plus `IHW` and covariate/non-parametric ComBat were ported and wired;
-`most_frequent` imputation and the iBAQ extras (TPA/ProteomicRuler/normalize_ibaq)
+ensemble), all four FDR choices (BH/IHW/BKY/Storey), both data-driven
+effect-size gates (mixture/null_quantile), and covariate/non-parametric ComBat
+were ported and wired;
+`most_frequent` imputation and the piBAQ extras (TPA/ProteomicRuler/normalize_pibaq)
 landed; `peptides2protein`, `correct-batches`, and `features2peptides` (filters +
 peptide normalization) are wired; `ratio` switched to an SDRF-driven `sample_to_plex`
 map; `maxlfq` and `directlfq` protein-set divergences were fixed and real-data verified.

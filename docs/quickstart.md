@@ -11,16 +11,17 @@ You need:
 1. A **parquet file** in quantms.io/qpx format (output from quantms pipeline)
 2. Optionally, an **SDRF file** for sample metadata
 
-For most workflows, `pip install mokume-rs` is enough. The wheel runs the Rust
-compute kernel in-process; you can also use the standalone `mokume` CLI binary
-(built from `rust/crates/mokume-cli` with cargo, no Python). If you want the
-TissueMap periphery command from the wheel, install `mokume-rs[tissuemap]`.
+For most workflows, `pip install mokume` is enough. The wheel runs the Rust
+compute kernel in-process and installs the `mokume` console command. If you want
+the TissueMap periphery command, install `mokume[tissuemap]` first.
 
-!!! warning "`mokume-rs` is not on PyPI yet"
-    `pip install mokume-rs` does not work yet — the Rust wheel is unreleased. Use
-    `pip install mokume` (pure Python, with the same import name but a separately
-    maintained API) or build the wheel from `rust/`; see
-    [Installation](installation.md).
+For evidence-bound method recommendation, install `mokume[agentic]` and the
+[Mokume Plugin](user-guide/agentic-plugin.md). Do not configure a second MCP
+entry or put a model API key in Mokume.
+
+!!! note "Distribution names changed in 0.2.0"
+    `mokume<=0.1.0` was pure Python. Starting with 0.2.0, `mokume` is the
+    Rust-backed wheel; install `mokume-py` for the separate pure-Python API.
 
 ## One-Step Pipeline (Recommended)
 
@@ -52,11 +53,11 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
         -o proteins.csv \
         --quant-method directlfq
 
-    # iBAQ (requires FASTA)
+    # piBAQ (requires FASTA)
     mokume features2proteins \
         -p features.parquet \
         -o proteins.csv \
-        --quant-method ibaq \
+        --quant-method pibaq \
         --fasta proteome.fasta
     ```
 
@@ -93,7 +94,8 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
 
 === "Python (package)"
 
-    The pure-Python `mokume` package (`pip install ./python`) exposes a
+    The pure-Python `mokume-py` package (`pip install mokume-py` or
+    `pip install ./python`) exposes a
     class-based API. Build a `PipelineConfig`, run it, and read the protein
     matrix off the returned `QpxDataset`:
 
@@ -113,7 +115,7 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
     ```
 
     See [Python API (package)](reference/python-api-package.md) for the full
-    OOP surface (`QpxDataset`, backend selection, the plugin registry).
+    OOP surface (`QpxDataset`, runtime resource controls, the plugin registry).
 
 !!! note "Plots and reports are periphery commands"
 
@@ -153,7 +155,7 @@ subcommand) and lives only in the wheel:
 ```python
 import mokume
 
-# Install the optional dependencies first: pip install mokume-rs[tissuemap]
+# Install the optional dependencies first: pip install mokume[tissuemap]
 mokume.tissuemap(
     scan_dir="QPX_data/tissues-mq/PXD016999",
     output_dir="./tissuemap_results",
@@ -164,7 +166,7 @@ This workflow generates batch-corrected AnnData outputs, tissue-specificity scor
 
 ## What's Next?
 
-- [Quantification Methods](concepts/quantification.md) — understand iBAQ, MaxLFQ, TopN, and more
+- [Quantification Methods](concepts/quantification.md) — understand piBAQ, MaxLFQ, TopN, and more
 - [Normalization](concepts/normalization.md) — learn about the normalization pipeline
 - [Unified Pipeline](user-guide/features2proteins.md) — full reference for features2proteins
 - [Tissue Proteome Atlas](periphery/tissuemap.md) — run the per-dataset TissueMap periphery command

@@ -7,11 +7,11 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
 === "CLI"
 
     ```bash
-    # iBAQ (default, requires FASTA)
-    mokume peptides2protein --method ibaq \
+    # piBAQ (default, requires FASTA)
+    mokume peptides2protein --method pibaq \
         -f proteome.fasta \
         -p peptides.csv \
-        -o proteins-ibaq.tsv
+        -o proteins-pibaq.tsv
 
     # TopN (no FASTA needed)
     mokume peptides2protein --method top3 \
@@ -32,12 +32,12 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
     ```python
     import mokume
 
-    # iBAQ (requires FASTA)
+    # piBAQ (requires FASTA)
     mokume.peptides2protein(
-        method="ibaq",
+        method="pibaq",
         fasta="proteome.fasta",
         peptides="peptides.csv",
-        output="proteins-ibaq.tsv",
+        output="proteins-pibaq.tsv",
     )
 
     # TopN (no FASTA needed)
@@ -47,20 +47,25 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
 
 ## Methods
 
-### iBAQ
+### piBAQ
 
-Intensity-Based Absolute Quantification with the **piBAQ (paralog-aware iBAQ)** algorithm: per-protein proportional allocation when each family member has at least one detected proteotypic peptide, with automatic fallback to family-level rollup when one or more members have zero anchors (e.g. the actin family). See [Quantification Methods](../concepts/quantification.md#ibaq-pibaq-paralog-aware) for the underlying algorithm. **Requires a FASTA file**.
+piBAQ is Mokume's paralog-aware extension of iBAQ. For each sample,
+shared-peptide signal is allocated in proportion to mapped members'
+proteotypic-peptide intensities; if all mapped members lack that signal, it is
+split equally. Each shared intensity is allocated exactly once. See
+[Quantification Methods](../concepts/quantification.md#pibaq-paralog-aware-ibaq)
+for the underlying algorithm. **Requires a FASTA file**.
 
 ```bash
-mokume peptides2protein --method ibaq \
+mokume peptides2protein --method pibaq \
     -f proteome.fasta \
     -p peptides.csv \
     -e Trypsin \
     --normalize \
-    --output proteins-ibaq.tsv
+    --output proteins-pibaq.tsv
 ```
 
-The output adds three metadata columns -- `FamilyId`, `FamilySize`, `EvidenceLevel` -- so users can audit which path each protein took. When `EvidenceLevel == "family_only"`, every member of the family carries the same iBAQ value (member-level resolution was not identifiable from the data); when it is `medium` or `high` the iBAQ is per-protein.
+The output adds three metadata columns -- `FamilyId`, `FamilySize`, `EvidenceLevel` -- so users can audit family support. `family_only` means that no family member reaches the minimum anchor threshold; it does not duplicate one family-level piBAQ across all members. Every reported piBAQ remains a per-member estimate with a per-member theoretical-peptide denominator.
 
 #### Family Discovery Tuning
 
@@ -68,11 +73,11 @@ Families are discovered automatically by collapsing UniProt isoform suffixes (`-
 
 ```bash
 # Lower the shared-peptide threshold for very tightly homologous families
-mokume peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+mokume peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
     --min-shared 1 -o out.tsv
 
 # Pin specific families with an audit-friendly YAML override
-mokume peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+mokume peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
     --families families.yaml -o out.tsv
 ```
 
@@ -86,7 +91,7 @@ families:
     members: [P0C0S5, Q96QV6, P04908]
 ```
 
-#### Full iBAQ with TPA and ProteomicRuler
+#### Full piBAQ with TPA and ProteomicRuler
 
 ```bash
 mokume peptides2protein \
@@ -99,7 +104,7 @@ mokume peptides2protein \
     --ploidy 2 \
     --cpc 200 \
     --organism human \
-    --output proteins-ibaq.tsv \
+    --output proteins-pibaq.tsv \
     --verbose \
     --qc_report QC.pdf
 ```
@@ -117,18 +122,18 @@ mokume.peptides2protein(
     ploidy=2,
     cpc=200,
     organism="human",
-    output="proteins-ibaq.tsv",
+    output="proteins-pibaq.tsv",
     min_aa=7,
     max_aa=30,
 )
 ```
 
-!!! note "iBAQ enzyme coverage and the QC report"
-    iBAQ digests natively in Rust for the ported enzymes (Trypsin[/P], Lys-C[/P],
+!!! note "piBAQ enzyme coverage and the QC report"
+    piBAQ digests natively in Rust for the ported enzymes (Trypsin[/P], Lys-C[/P],
     Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...). For any other
     enzyme pyOpenMS knows (CNBr, V8-DE, ...) the kernel has no cleavage rule and
     the command errors with a pointer to the pure-Python fallback
-    `mokume.peptides2protein_ibaq` (`ibaq` extra). The `--qc_report` PDF is plotting
+    `mokume.peptides2protein_pibaq` (`pibaq` extra). The `--qc_report` PDF is plotting
     periphery: `--verbose` prints a one-line pointer to `mokume.peptides2protein_qc`
     (`plotting` extra), which draws the density / box plots from the kernel's table.
 
@@ -137,22 +142,24 @@ mokume.peptides2protein(
 Averages the N most intense peptides per protein per sample.
 
 ```bash
-# Top3 (most common)
+# Top3 (most common) -- the named method from Silva et al. 2006
 mokume peptides2protein --method top3 -p peptides.csv -o out.tsv
 
 # Top5
-mokume peptides2protein --method topn --topn_n 5 -p peptides.csv -o out.tsv
+mokume peptides2protein --method top5 -p peptides.csv -o out.tsv
 
 # Top10
-mokume peptides2protein --method topn --topn_n 10 -p peptides.csv -o out.tsv
+mokume peptides2protein --method top10 -p peptides.csv -o out.tsv
 ```
+
+N is spelled in the method name, so any N works the same way and there is no
+companion option to keep in sync.
 
 ```python
 import mokume
 
 mokume.peptides2protein(method="top3", peptides="peptides.csv", output="out.tsv")
-mokume.peptides2protein(method="topn", topn_n=5, peptides="peptides.csv",
-                        output="out.tsv")
+mokume.peptides2protein(method="top5", peptides="peptides.csv", output="out.tsv")
 ```
 
 ### MaxLFQ
@@ -212,25 +219,24 @@ mokume.peptides2protein(method="sum", peptides="peptides.csv",
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-f/--fasta` | none | FASTA file (required for iBAQ) |
+| `-f/--fasta` | none | FASTA file (required for piBAQ) |
 | `-p/--peptides` | required | Input peptide intensity file |
-| `--method` | `ibaq` | Quantification method: ibaq, top3, topn, maxlfq, sum, directlfq |
+| `--method` | `pibaq` | Quantification method: pibaq, `top<N>` (for example top3 or top5), maxlfq, sum, directlfq |
 | `-e/--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
 | `-n/--normalize` | off | Normalize quantification values |
 | `--min_aa` | 7 | Minimum amino acid length |
 | `--max_aa` | 30 | Maximum amino acid length |
-| `-t/--tpa` | off | Calculate TPA (iBAQ only) |
-| `-r/--ruler` | off | Use ProteomicRuler (iBAQ only) |
+| `-t/--tpa` | off | Calculate TPA (piBAQ only) |
+| `-r/--ruler` | off | Use ProteomicRuler (piBAQ only) |
 | `-i/--ploidy` | 2 | Ploidy number |
 | `-m/--organism` | `human` | Organism for histone data |
 | `-c/--cpc` | 200 | Cellular protein concentration (g/L) |
-| `--topn_n` | 3 | N for TopN quantification |
 | `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
 | `--min_nonan` | 1 | Min non-NaN values (DirectLFQ) |
-| `--families` | none | Optional YAML file with explicit family overrides (iBAQ only) |
-| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (iBAQ only) |
+| `--families` | none | Optional YAML file with explicit family overrides (piBAQ only) |
+| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (piBAQ only) |
 | `-o/--output` | none | Output file path |
 | `--verbose` | off | Print distribution info |
 | `--qc_report` | QCprofile.pdf | Path for QC report PDF |
 
-`-o/--output` is effectively required for `--method ibaq`; for the other methods, omitting it prints the result table to stdout.
+`-o/--output` is effectively required for `--method pibaq`; for the other methods, omitting it prints the result table to stdout.

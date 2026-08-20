@@ -183,7 +183,7 @@ quant-hela-method-comparison/
 ### Requirements
 
 ```bash
-pip install mokume[directlfq]
+pip install mokume-py[directlfq]
 pip install matplotlib seaborn
 ```
 

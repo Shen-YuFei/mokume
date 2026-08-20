@@ -109,7 +109,7 @@ Generally the most accurate of the MAR family but the slowest.
     `IterativeImputer` driven by `RandomForestRegressor`, whose tree-building and
     RNG cannot be reproduced cross-language. The kernel rejects
     `--impute-method missforest` and points to the wheel:
-    `mokume.impute(matrix, method="missforest")` (`pip install mokume-rs[analysis]`).
+    `mokume.impute(matrix, method="missforest")` (`pip install mokume[analysis]`).
 
 ## Latent / Matrix-Completion Methods
 
@@ -175,7 +175,7 @@ Practical defaults:
 The wheel exposes a single helper that runs any supported method on a wide
 protein matrix CSV (or DataFrame) outside the pipeline. It reaches both the
 kernel methods and the wheel-only `missforest` imputer, and is
-available with `pip install mokume-rs[analysis]`:
+available with `pip install mokume[analysis]`:
 
 ```python
 import mokume

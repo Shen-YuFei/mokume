@@ -10,14 +10,17 @@ The four compute subcommands of the `mokume` binary and their options: `features
 
 ## [Python API (wheel)](python-api.md)
 
-The thin `pip install mokume-rs` wheel: the in-process compute wrappers (`mokume.features2proteins(...)`, `mokume.run([...])`, ...) and the Python periphery functions (t-SNE, tissue maps, DE plots, interactive reports, QC, the missforest fallback).
+The thin `pip install mokume` wheel: the in-process compute wrappers (`mokume.features2proteins(...)`, `mokume.run([...])`, ...) and the Python periphery functions (t-SNE, tissue maps, DE plots, interactive reports, QC, the missforest fallback).
 
 ## [Python API (package)](python-api-package.md)
 
 The separately maintained pure-Python `mokume` package: its class-based
 pipeline, `QpxDataset`, plugin registry, differential-expression API, and
-agentic optimizer.
+runtime resource controls.
+
+Agentic recommendation is provided by the default Rust-backed wheel through the
+[Mokume Plugin](../user-guide/agentic-plugin.md), not by `mokume-py`.
 
 ## [Computed Values](computed-values.md)
 
-Column names and formulas for all output values (iBAQ, TopN, MaxLFQ, TPA, CopyNumber, etc.).
+Column names and formulas for all output values (piBAQ, TopN, MaxLFQ, TPA, CopyNumber, etc.).

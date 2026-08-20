@@ -3,7 +3,7 @@
 Comprehensive analysis of TMT vs LFQ quantification using mokume.
 
 > **Note**: When using DirectLFQ quantification, always use the external directlfq package
-> directly (`pip install mokume[directlfq]`) rather than any fallback implementation.
+> directly (`pip install mokume-py[directlfq]`) rather than any fallback implementation.
 > This ensures reproducibility and uses the official Mann Lab algorithm.
 
 ---

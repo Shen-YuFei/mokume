@@ -12,10 +12,10 @@ recomputes the numbers).
     Plotting and reports are **not** part of the Rust CLI. They are wheel-only
     commands; install the extra you need:
     ```bash
-    pip install "mokume-rs[plotting]"   # matplotlib + seaborn (DE plots, t-SNE, iBAQ QC)
-    pip install "mokume-rs[reports]"    # plotly interactive DE report
-    pip install "mokume-rs[analysis]"   # single-matrix QC + workflow-comparison reports
-    pip install "mokume-rs[all]"        # everything
+    pip install "mokume[plotting]"   # matplotlib + seaborn (DE plots, t-SNE, piBAQ QC)
+    pip install "mokume[reports]"    # plotly interactive DE report
+    pip install "mokume[analysis]"   # single-matrix QC + workflow-comparison reports
+    pip install "mokume[all]"        # everything
     ```
 
 !!! warning "The `--plot-*` / `--interactive-report` flags are gone"

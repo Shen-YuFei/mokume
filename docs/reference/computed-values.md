@@ -6,21 +6,21 @@ Reference for all output columns produced by mokume's quantification methods.
 
 | Column | Method | Description |
 |--------|--------|-------------|
-| `Ibaq` | iBAQ | Per-protein iBAQ (proportional branch) **or** family-level iBAQ (fallback). Interpretation depends on `EvidenceLevel`. |
-| `IbaqNorm` | iBAQ | `ibaq / sum(ibaq)` per sample |
-| `IbaqLog` | iBAQ | `10 + log10(IbaqNorm)` |
-| `IbaqPpb` | iBAQ | `IbaqNorm * 100,000,000` (parts per billion) |
-| `IbaqBec` | iBAQ + ComBat | Batch effect corrected iBAQ |
-| `FamilyId` | iBAQ | Canonical accession identifying the protein family used by the piBAQ algorithm |
-| `FamilySize` | iBAQ | Number of canonical members in the family (1 = singleton, isolated protein) |
-| `EvidenceLevel` | iBAQ | `high` (≥3 unique anchors), `medium` (1-2 anchors), or `family_only` (zero anchors -> aggregated) |
+| `PiBAQ` | piBAQ | Per-protein piBAQ after shared-peptide signal is allocated proportionally or, without anchor signal, equally. |
+| `PiBAQNorm` | piBAQ | `PiBAQ / sum(PiBAQ)` per sample |
+| `PiBAQLog` | piBAQ | `10 + log10(PiBAQNorm)` |
+| `PiBAQPpb` | piBAQ | `PiBAQNorm * 100,000,000` (parts per billion) |
+| `PiBAQBec` | piBAQ + ComBat | Batch effect corrected piBAQ |
+| `FamilyId` | piBAQ | Canonical accession identifying the protein family used by the piBAQ algorithm |
+| `FamilySize` | piBAQ | Number of canonical members in the family (1 = singleton, isolated protein) |
+| `EvidenceLevel` | piBAQ | `high` (all members meet the high-anchor threshold), `medium` (at least one member meets the minimum), or `family_only` (none does) |
 | `TopNIntensity` | TopN | Average of top N peptides (e.g., Top3Intensity, Top5Intensity) |
 | `MaxLFQIntensity` | MaxLFQ | MaxLFQ algorithm result |
 | `DirectLFQIntensity` | DirectLFQ | DirectLFQ intensity traces |
 | `SumIntensity` | Sum | Sum of all peptide intensities |
 | `Intensity` | Unified pipeline | Standard output column (all methods) |
 
-## Derived Values (iBAQ)
+## Derived Values (piBAQ)
 
 | Column | Formula | Description |
 |--------|---------|-------------|
@@ -49,6 +49,7 @@ The kernel writes one DE result CSV per contrast. The leading columns are shared
 | `log2FC` | Log2 fold change between conditions |
 | `pvalue` | Raw p-value |
 | `adj_pvalue` | FDR-adjusted p-value |
+| `log_pvalue` | Natural logarithm of the raw p-value (DEqMS only; remains finite when `pvalue` underflows to zero) |
 | `significance` | Whether the protein passes the `--de-log2fc` / `--de-fdr` thresholds |
 
 ## Pipeline Output Format

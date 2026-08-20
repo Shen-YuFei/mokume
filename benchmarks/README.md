@@ -30,7 +30,7 @@ Compares TMT and LFQ on same samples (PXD007683).
 ## Running Benchmarks
 
 ```bash
-pip install "mokume[analysis]"   # compute kernel + analysis extras
+pip install "mokume-py[analysis]"   # compute kernel + analysis extras
 cd benchmarks/<benchmark-name>
 python scripts/run_benchmark.py
 ```
@@ -52,6 +52,6 @@ benchmarks/<benchmark-name>/
 ├── README.md           # Overview, results, methodology (expandable)
 ├── scripts/            # Benchmark scripts
 ├── data/               # GIT-IGNORED: large data files
-├── results/            # CSV metrics (baselines from the original mokume_py runs)
+├── results/            # CSV metrics (baselines from the original mokume-py runs)
 └── figures/            # PNG visualizations
 ```
