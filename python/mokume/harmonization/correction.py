@@ -8,7 +8,7 @@ Key Concepts:
 - Covariates: Biological variables to PRESERVE (e.g., sex, tissue from SDRF characteristics)
 
 Note: This module requires the optional 'inmoose' dependency.
-Install it with: pip install mokume[batch-correction]
+Install it with: pip install mokume-py[batch-correction]
 """
 
 import importlib.util
@@ -47,7 +47,7 @@ def is_batch_correction_available() -> bool:
 
     Notes
     -----
-    Install batch correction support with: pip install mokume[batch-correction]
+    Install batch correction support with: pip install mokume-py[batch-correction]
     """
     return is_inmoose_available()
 
@@ -348,7 +348,7 @@ def apply_batch_correction(
     Apply batch correction using pycombat from inmoose.
 
     Note: Requires the optional 'inmoose' dependency.
-    Install it with: pip install mokume[inmoose]
+    Install it with: pip install mokume-py[inmoose]
 
     Parameters
     ----------
@@ -378,7 +378,7 @@ def apply_batch_correction(
     if not is_inmoose_available():
         raise ImportError(
             "inmoose is required for batch correction but is not installed. "
-            "Install it with: pip install mokume[inmoose]"
+            "Install it with: pip install mokume-py[inmoose]"
         )
 
     if kwargs is None:
@@ -439,7 +439,7 @@ def iterative_outlier_removal(
     if verbose and not can_plot:
         logger.warning(
             "Plotting skipped: plotting dependencies not installed. "
-            "Install with: pip install mokume[plotting]"
+            "Install with: pip install mokume-py[plotting]"
         )
 
     for i in range(n_iter):

@@ -13,6 +13,8 @@ estimation in differential protein expression analysis. *Mol Cell Proteomics*.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 from scipy.special import digamma, polygamma
@@ -34,6 +36,96 @@ from mokume.core.logger import get_logger
 logger = get_logger("mokume.analysis.deqms")
 
 
+def _beta_continued_fraction(a: float, b: float, x: float) -> float:
+    """Evaluate the continued fraction used by the incomplete beta."""
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    tiny = 1e-300
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    result = d
+
+    for iteration in range(1, 301):
+        m = float(iteration)
+        m2 = 2.0 * m
+        term = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + term * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + term / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        result *= d * c
+
+        term = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + term * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + term / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        result *= delta
+        if abs(delta - 1.0) < 1e-15:
+            break
+    return result
+
+
+def _log_regularized_incomplete_beta(a: float, b: float, x: float) -> float:
+    """Compute ``log(I_x(a, b))`` without underflow."""
+    if x <= 0.0:
+        return -math.inf
+    if x >= 1.0:
+        return 0.0
+
+    log_front = (
+        math.lgamma(a + b)
+        - math.lgamma(a)
+        - math.lgamma(b)
+        + a * math.log(x)
+        + b * math.log1p(-x)
+    )
+    if x < (a + 1.0) / (a + b + 2.0):
+        fraction = _beta_continued_fraction(a, b, x)
+        return log_front + math.log(fraction) - math.log(a)
+
+    fraction = _beta_continued_fraction(b, a, 1.0 - x)
+    complement = min(math.exp(log_front) * fraction / b, 1.0)
+    return math.log1p(-complement)
+
+
+def _two_sided_t_log_pvalue(
+    t_statistic: np.ndarray,
+    degrees_freedom: np.ndarray,
+) -> np.ndarray:
+    """Return two-sided Student-t log p-values without float underflow."""
+    t_abs, df = np.broadcast_arrays(
+        np.abs(np.asarray(t_statistic, dtype=float)),
+        np.asarray(degrees_freedom, dtype=float),
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        result = np.log(2.0) + t_dist.logsf(t_abs, df)
+
+    flat_result = result.ravel()
+    flat_t = t_abs.ravel()
+    flat_df = df.ravel()
+    underflow = np.isneginf(flat_result) & np.isfinite(flat_t) & (flat_df > 0.0)
+    for index in np.flatnonzero(underflow):
+        x = flat_df[index] / (flat_df[index] + flat_t[index] ** 2)
+        flat_result[index] = _log_regularized_incomplete_beta(
+            flat_df[index] / 2.0,
+            0.5,
+            x,
+        )
+    return np.minimum(result, 0.0)
+
+
 # ---------------------------------------------------------------------------
 # spectraCounteBayes: count-aware variance moderation (Zhu et al. 2020)
 # ---------------------------------------------------------------------------
@@ -42,10 +134,10 @@ logger = get_logger("mokume.analysis.deqms")
 def _spectra_count_ebayes(
     fit: EBayesResult,
     counts: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     """Apply spectra-count-aware Bayes moderation (R DEqMS::spectraCounteBayes).
 
-    Returns (sca_t, sca_pvalue, sca_var_post, d0).
+    Returns (sca_t, sca_pvalue, log_pvalue, sca_var_post, d0).
     """
     sigma2 = fit.sigma**2
     log_var = np.log(sigma2)
@@ -68,7 +160,7 @@ def _spectra_count_ebayes(
             "falling back to standard eBayes",
             valid.sum(),
         )
-        return fit.t_stat[:, 0], fit.p_value[:, 0], fit.s2_post, fit.df_prior
+        return _standard_ebayes_statistics(fit)
 
     x_valid = x[valid]
     x_range = float(np.ptp(x_valid))
@@ -76,14 +168,14 @@ def _spectra_count_ebayes(
         logger.warning(
             "spectraCounteBayes: all counts identical, falling back to standard eBayes",
         )
-        return fit.t_stat[:, 0], fit.p_value[:, 0], fit.s2_post, fit.df_prior
+        return _standard_ebayes_statistics(fit)
 
     try:
         from statsmodels.nonparametric.smoothers_lowess import lowess
     except ImportError as exc:
         raise ImportError(
             "statsmodels is required for the DEqMS method. "
-            "Install it with: pip install mokume[analysis]"
+            "Install it with: pip install mokume-py[analysis]"
         ) from exc
 
     try:
@@ -95,7 +187,7 @@ def _spectra_count_ebayes(
         )
     except Exception:
         logger.warning("LOESS failed, falling back to standard eBayes")
-        return fit.t_stat[:, 0], fit.p_value[:, 0], fit.s2_post, fit.df_prior
+        return _standard_ebayes_statistics(fit)
 
     y_pred = np.full(n_genes, np.nan)
     y_pred[valid] = fitted
@@ -122,8 +214,26 @@ def _spectra_count_ebayes(
 
     sca_t = fit.coefficients[:, 0] / (fit.stdev_unscaled[:, 0] * np.sqrt(post_var))
     sca_pvalue = 2.0 * t_dist.sf(np.abs(sca_t), post_df)
+    log_pvalue = _two_sided_t_log_pvalue(sca_t, post_df)
 
-    return sca_t, sca_pvalue, post_var, d0
+    return sca_t, sca_pvalue, log_pvalue, post_var, d0
+
+
+def _standard_ebayes_statistics(
+    fit: EBayesResult,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    """Return the plain eBayes fallback with stable log p-values."""
+    df_total = np.minimum(
+        fit.df_residual + fit.df_prior,
+        np.nansum(fit.df_residual),
+    )
+    return (
+        fit.t_stat[:, 0],
+        fit.p_value[:, 0],
+        _two_sided_t_log_pvalue(fit.t_stat[:, 0], df_total),
+        fit.s2_post,
+        fit.df_prior,
+    )
 
 
 def _grid_search_d0(mean_myfct: float, n_genes: int) -> float:
@@ -240,7 +350,7 @@ def run_deqms(
 
     counts = _build_count_vector(gene_names, peptide_counts)
 
-    sca_t, sca_pvalue, _, _ = _spectra_count_ebayes(fit_eb, counts)
+    sca_t, sca_pvalue, log_pvalue, _, _ = _spectra_count_ebayes(fit_eb, counts)
 
     raw = pd.DataFrame(
         {
@@ -249,6 +359,7 @@ def run_deqms(
             "sca_t": sca_t,
             "sca_pvalue": sca_pvalue,
             "peptide_count": counts,
+            "log_pvalue": log_pvalue,
         }
     )
 
@@ -271,6 +382,7 @@ def run_deqms(
         "n_a",
         "n_b",
         "peptide_count",
+        "log_pvalue",
     ]
     available = [c for c in columns if c in merged.columns]
     return merged[available].sort_values("adj_pvalue").reset_index(drop=True)

@@ -79,7 +79,7 @@ class RlrNormalizer:
         except ImportError as exc:
             raise ImportError(
                 "statsmodels is required for RLR normalization. "
-                "Install it with: pip install mokume[analysis]"
+                "Install it with: pip install mokume-py[analysis]"
             ) from exc
         x = sm.add_constant(reference[valid].values)
         y = sample_log[valid].values
