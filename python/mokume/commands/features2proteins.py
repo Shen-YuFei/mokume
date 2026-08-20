@@ -5,6 +5,8 @@ This command provides a single-step workflow from feature-level parquet
 files to protein intensities, supporting multiple quantification methods.
 """
 
+import re
+
 import click
 
 from mokume.model.normalization import (
@@ -15,6 +17,76 @@ from mokume.model.normalization import (
 
 # Build choices for sample normalization (including hierarchical)
 SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
+
+# Quantification methods with a fixed name. ``top<N>`` is handled separately
+# because N is part of the method name and can be any integer >= 1.
+FIXED_QUANT_METHODS = [
+    "directlfq",
+    "pibaq",
+    "maxlfq",
+    "sum",
+    "median",
+    "ratio",
+    "abd",
+    "intensity",
+    "spectral_count",
+]
+
+_TOPN_METHOD_RE = re.compile(r"^top(\d+)$")
+
+
+class QuantMethodParamType(click.ParamType):
+    """Accept the fixed quantification methods plus any ``top<N>`` form.
+
+    ``top<N>`` (top1, top3, top5, top10, ...) carries N in the method name, so
+    TopN needs no companion option. Bare ``topn`` keeps the placeholder letter
+    and is normalized to ``top3``, the canonical named method (Silva 2006) and
+    the factory's own default when a name carries no digits. A ``top`` name with
+    no arabic numeral (``topa``) is rejected rather than silently defaulted.
+    Matching is case-insensitive and values are normalized to lower case.
+    """
+
+    name = "quant_method"
+
+    def get_metavar(self, param, ctx=None):
+        return "[" + "|".join(FIXED_QUANT_METHODS) + "|top<N>]"
+
+    def convert(self, value, param, ctx):
+        if not isinstance(value, str):
+            self.fail(f"{value!r} is not a valid quantification method", param, ctx)
+
+        normalized = value.strip().lower()
+        if normalized in FIXED_QUANT_METHODS:
+            return normalized
+
+        # ``topn`` keeps the placeholder letter and means the canonical Top3
+        # (Silva 2006). Normalizing it here leaves exactly one internal spelling
+        # of every TopN request, so downstream only ever sees ``top<digits>``.
+        if normalized == "topn":
+            return "top3"
+
+        match = _TOPN_METHOD_RE.match(normalized)
+        if match:
+            if int(match.group(1)) >= 1:
+                return normalized
+            self.fail(
+                f"'{value}' is not a valid quantification method: N in 'top<N>' "
+                "must be an integer >= 1 (e.g. top1, top3, top5).",
+                param,
+                ctx,
+            )
+
+        self.fail(
+            f"'{value}' is not a valid quantification method. Choose one of "
+            + ", ".join(FIXED_QUANT_METHODS)
+            + ", or use 'top<N>' with an integer N >= 1 (e.g. top3, top5, top10).",
+            param,
+            ctx,
+        )
+        return None  # pragma: no cover - ``fail`` always raises
+
+
+QUANT_METHOD = QuantMethodParamType()
 
 
 @click.command(
@@ -50,34 +122,12 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
     "--quant-method",
     "quant_method",
     help=(
-        "Quantification method: directlfq, ibaq, maxlfq, topn, sum, "
-        "median, ratio, abd (TMT abundance), intensity (TMT reporter), "
-        "spectral_count (PSM-based count)"
+        "Quantification method: directlfq, pibaq, maxlfq, top<N> (e.g. top3, "
+        "top5, top10), sum, median, ratio, abd (TMT abundance), "
+        "intensity (TMT reporter), spectral_count (PSM-based count)"
     ),
-    type=click.Choice(
-        [
-            "directlfq",
-            "ibaq",
-            "maxlfq",
-            "topn",
-            "sum",
-            "median",
-            "ratio",
-            "abd",
-            "intensity",
-            "spectral_count",
-        ],
-        case_sensitive=False,
-    ),
+    type=QUANT_METHOD,
     default="maxlfq",
-    show_default=True,
-)
-@click.option(
-    "--topn",
-    "topn_peptides",
-    help="Number of top peptides for TopN quantification (used when --quant-method=topn)",
-    type=int,
-    default=3,
     show_default=True,
 )
 # Filtering options
@@ -135,7 +185,7 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--fasta",
     "fasta_file",
-    help="FASTA file (required for iBAQ)",
+    help="FASTA file (required for piBAQ)",
     type=click.Path(exists=True),
     default=None,
 )
@@ -148,51 +198,50 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 )
 # piBAQ-specific options (paralog-aware iBAQ)
 @click.option(
-    "--ibaq-enzyme",
-    "ibaq_enzyme",
-    help="Protease used to digest the FASTA for the piBAQ denominator (iBAQ only)",
+    "--pibaq-enzyme",
+    "pibaq_enzyme",
+    help="Protease used to digest the FASTA for piBAQ",
     default="Trypsin",
     show_default=True,
 )
 @click.option(
-    "--ibaq-max-aa",
-    "ibaq_max_aa",
-    help="Maximum peptide length from the FASTA digest for piBAQ (iBAQ only)",
+    "--pibaq-max-aa",
+    "pibaq_max_aa",
+    help="Maximum peptide length from the FASTA digest for piBAQ",
     type=int,
     default=50,
     show_default=True,
 )
 @click.option(
-    "--ibaq-min-shared",
-    "ibaq_min_shared",
+    "--pibaq-min-shared",
+    "pibaq_min_shared",
     help="Minimum distinct peptides two proteins must share to co-cluster "
-    "into one piBAQ family (iBAQ only)",
+    "into one piBAQ family",
     type=int,
     default=2,
     show_default=True,
 )
 @click.option(
-    "--ibaq-families",
-    "ibaq_families_yaml",
-    help="YAML file with explicit piBAQ family overrides (iBAQ only)",
+    "--pibaq-families",
+    "pibaq_families_yaml",
+    help="YAML file with explicit piBAQ family overrides",
     type=click.Path(exists=True),
     default=None,
 )
 @click.option(
-    "--ibaq-min-anchors",
-    "ibaq_min_anchors",
-    help="Minimum proteotypic anchors a family member needs to stay on the "
-    "per-protein branch; the family rolls up only when no member reaches it "
-    "(iBAQ only)",
+    "--pibaq-min-anchors",
+    "pibaq_min_anchors",
+    help="Unique-anchor threshold; if no family member reaches it, shared "
+    "signal is split equally",
     type=int,
     default=1,
     show_default=True,
 )
 @click.option(
-    "--ibaq-high-anchor-threshold",
-    "ibaq_high_anchor_threshold",
+    "--pibaq-high-anchor-threshold",
+    "pibaq_high_anchor_threshold",
     help="Minimum anchor count (weakest member) for a family to be labelled "
-    "EvidenceLevel='high' (iBAQ only)",
+    "EvidenceLevel='high'",
     type=int,
     default=3,
     show_default=True,
@@ -474,8 +523,12 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--de-fdr-method",
     "de_fdr_method",
-    help="FDR correction method",
-    type=click.Choice(["bh", "ihw"], case_sensitive=False),
+    help=(
+        "FDR correction method: bh (Benjamini-Hochberg), ihw, or the adaptive-pi0 "
+        "procedures bky (Benjamini-Krieger-Yekutieli) / storey (q-values), which "
+        "fall back to bh when pi0 is untrustworthy"
+    ),
+    type=click.Choice(["bh", "ihw", "bky", "storey"], case_sensitive=False),
     default="bh",
     show_default=True,
 )
@@ -525,7 +578,7 @@ SAMPLE_NORM_CHOICES = [p.name.lower() for p in PeptideNormalizationMethod]
 @click.option(
     "--interactive-report",
     "interactive_report",
-    help="Generate interactive HTML report with plotly (requires mokume[reports])",
+    help="Generate interactive HTML report with plotly (requires mokume-py[reports])",
     is_flag=True,
     default=False,
 )
@@ -565,7 +618,6 @@ def features2proteins(
     output: str,
     sdrf: str,
     quant_method: str,
-    topn_peptides: int,
     min_aa: int,
     min_unique: int,
     remove_contaminants: bool,
@@ -574,12 +626,12 @@ def features2proteins(
     normalization_proteins: str,
     fasta_file: str,
     ion_alignment: str,
-    ibaq_enzyme: str,
-    ibaq_max_aa: int,
-    ibaq_min_shared: int,
-    ibaq_families_yaml: str,
-    ibaq_min_anchors: int,
-    ibaq_high_anchor_threshold: int,
+    pibaq_enzyme: str,
+    pibaq_max_aa: int,
+    pibaq_min_shared: int,
+    pibaq_families_yaml: str,
+    pibaq_min_anchors: int,
+    pibaq_high_anchor_threshold: int,
     directlfq_cores: int,
     directlfq_min_nonan: int,
     export_peptides: str,
@@ -644,9 +696,10 @@ def features2proteins(
     \b
     QUANTIFICATION METHODS:
       directlfq  - DirectLFQ (uses directlfq package for everything)
-      ibaq       - Intensity-Based Absolute Quantification (requires --fasta)
+      pibaq      - Paralog-aware iBAQ with shared-peptide allocation (requires --fasta)
       maxlfq     - MaxLFQ algorithm
-      topn       - Top N peptides per protein (use --topn to set N, default 3)
+      top<N>     - Average of the N most intense peptides, N taken from the
+                   method name (top3 = Silva 2006, also top1/top5/top10/...)
       sum        - Sum of all peptides
       median     - Median of peptides
       ratio      - PS protocol: log2(sample/reference) per plex (requires --sdrf)
@@ -658,7 +711,7 @@ def features2proteins(
       - Run normalization: normalizes technical replicates within samples
       - Sample normalization: normalizes samples relative to each other
         Use 'hierarchical' for DirectLFQ-style clustering normalization
-        combined with other quantification methods (e.g., iBAQ).
+        combined with other quantification methods (e.g., piBAQ).
 
     \b
     IRS NORMALIZATION (multi-plex TMT):
@@ -683,9 +736,9 @@ def features2proteins(
       # DirectLFQ quantification (uses directlfq package)
       mokume features2proteins -p data.parquet -o proteins.csv --quant-method directlfq
 
-      # iBAQ with hierarchical normalization
+      # piBAQ with hierarchical normalization
       mokume features2proteins -p data.parquet -o proteins.csv \\
-        --quant-method ibaq --sample-normalization hierarchical --fasta uniprot.fasta
+        --quant-method pibaq --sample-normalization hierarchical --fasta uniprot.fasta
 
       # Ratio quantification (PS protocol) with coverage filter + DE
       mokume features2proteins -p data.parquet -o proteins.csv -s sdrf.tsv \\
@@ -699,9 +752,9 @@ def features2proteins(
     if msstats and not sdrf:
         raise click.UsageError("--msstats requires --sdrf")
 
-    # Validate iBAQ requires fasta
-    if quant_method.lower() == "ibaq" and not fasta_file:
-        raise click.UsageError("iBAQ quantification requires --fasta option")
+    # Validate piBAQ requires FASTA.
+    if quant_method.lower() == "pibaq" and not fasta_file:
+        raise click.UsageError("piBAQ quantification requires --fasta option")
 
     # Validate ratio requires sdrf
     if quant_method.lower() == "ratio" and not sdrf:
@@ -748,11 +801,11 @@ def features2proteins(
             err=True,
         )
 
-    # Handle topn method - construct the method name with N
+    # 'top<N>' carries N in the method name; the engine parses it out.
     effective_quant_method = quant_method
-    if quant_method.lower() == "topn":
-        effective_quant_method = f"top{topn_peptides}"
-        click.echo(f"Using Top{topn_peptides} quantification method")
+    topn_match = _TOPN_METHOD_RE.match(quant_method)
+    if topn_match:
+        click.echo(f"Using Top{int(topn_match.group(1))} quantification method")
 
     # Parse comma-separated CLI values
     parsed_irs_ref_samples = (
@@ -815,12 +868,12 @@ def features2proteins(
         normalization_proteins_file=normalization_proteins,
         fasta_file=fasta_file,
         ion_alignment=ion_alignment,
-        ibaq_enzyme=ibaq_enzyme,
-        ibaq_max_aa=ibaq_max_aa,
-        ibaq_min_shared=ibaq_min_shared,
-        ibaq_families_yaml=ibaq_families_yaml,
-        ibaq_min_anchors=ibaq_min_anchors,
-        ibaq_high_anchor_threshold=ibaq_high_anchor_threshold,
+        pibaq_enzyme=pibaq_enzyme,
+        pibaq_max_aa=pibaq_max_aa,
+        pibaq_min_shared=pibaq_min_shared,
+        pibaq_families_yaml=pibaq_families_yaml,
+        pibaq_min_anchors=pibaq_min_anchors,
+        pibaq_high_anchor_threshold=pibaq_high_anchor_threshold,
         directlfq_num_cores=directlfq_cores,
         directlfq_min_nonan=directlfq_min_nonan,
         export_peptides=export_peptides,

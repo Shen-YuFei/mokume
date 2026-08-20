@@ -2,23 +2,25 @@
 Protein quantification methods for the mokume package.
 
 This module provides implementations for various protein quantification
-methods including iBAQ, Top3, TopN, MaxLFQ, DirectLFQ, and AllPeptides.
+methods including piBAQ, Top3, TopN, MaxLFQ, DirectLFQ, and AllPeptides.
 
 DirectLFQ is an optional dependency. Install with:
-    pip install mokume[directlfq]
+    pip install mokume-py[directlfq]
 """
 
 import re
 
 from mokume._lazy import module_api
+from mokume.core.registry import PluginRegistry
 from mokume.quantification.base import ProteinQuantificationMethod
 
 __all__ = [
     # Base class
     "ProteinQuantificationMethod",
-    # iBAQ
+    # piBAQ
     "peptides_to_protein",
-    "normalize_ibaq",
+    "compute_pibaq",
+    "normalize_pibaq",
     "extract_fasta",
     "ConcentrationWeightByProteomicRuler",
     # Quantification methods
@@ -40,11 +42,12 @@ __all__ = [
 
 
 _LAZY_EXPORTS = {
-    "peptides_to_protein": ("mokume.quantification.ibaq", "peptides_to_protein"),
-    "normalize_ibaq": ("mokume.quantification.ibaq", "normalize_ibaq"),
-    "extract_fasta": ("mokume.quantification.ibaq", "extract_fasta"),
+    "peptides_to_protein": ("mokume.quantification.pibaq", "peptides_to_protein"),
+    "compute_pibaq": ("mokume.quantification.pibaq", "compute_pibaq"),
+    "normalize_pibaq": ("mokume.quantification.pibaq", "normalize_pibaq"),
+    "extract_fasta": ("mokume.quantification.pibaq", "extract_fasta"),
     "ConcentrationWeightByProteomicRuler": (
-        "mokume.quantification.ibaq",
+        "mokume.quantification.pibaq",
         "ConcentrationWeightByProteomicRuler",
     ),
     "Top3Quantification": (
@@ -116,7 +119,7 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     method : str
         Name of the quantification method. One of:
         'topN' (where N is any number, e.g., 'top3', 'top5', 'top10'),
-        'maxlfq', 'directlfq', 'all', 'sum',
+        'pibaq', 'maxlfq', 'directlfq', 'all', 'sum',
         'abd' / 'abundance', 'intensity' / 'reporter', 'ratio'.
     **kwargs
         Additional arguments passed to the quantification method constructor.
@@ -132,6 +135,10 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
             - min_nonan: int (default 1)
             - num_cores: int (default None)
             - deactivate_normalization: bool (default False)
+
+        For piBAQ:
+            - fasta: str (required before quantification)
+            - enzyme: str (default "Trypsin")
 
         For 'ratio' (TMT ratio quantification):
             - reference_samples: list[str] (required)
@@ -166,6 +173,9 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     >>> method = get_quantification_method("directlfq", min_nonan=2)
     """
     method_lower = method.lower()
+
+    if method_lower == "pibaq":
+        return PluginRegistry.get("quantification", "pibaq", **kwargs)
 
     # Handle topN methods (top3, top5, top10, etc.)
     if method_lower.startswith("top"):
@@ -210,7 +220,7 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
         )
 
     available = (
-        "topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum, "
+        "pibaq, topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum, "
         "abd/abundance, intensity/reporter, ratio"
     )
     raise ValueError(
@@ -232,10 +242,11 @@ def list_quantification_methods() -> dict:
     --------
     >>> from mokume.quantification import list_quantification_methods
     >>> methods = list_quantification_methods()
-    >>> print(methods)
-    {'top3': True, 'topn': True, 'maxlfq': True, 'directlfq': False, 'sum': True}
+    >>> "pibaq" in methods
+    True
     """
     return {
+        "pibaq": True,
         "top3": True,
         "topn": True,
         "maxlfq": True,

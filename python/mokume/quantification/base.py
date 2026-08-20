@@ -26,7 +26,7 @@ class ProteinQuantificationMethod(ABC):
     """
     Abstract base class for protein quantification methods.
 
-    All quantification methods (iBAQ, Top3, TopN, MaxLFQ, etc.) should
+    All quantification methods (piBAQ, Top3, TopN, MaxLFQ, etc.) should
     inherit from this class and implement the required methods.
 
     All methods produce a standard output column named 'Intensity'.
@@ -44,7 +44,7 @@ class ProteinQuantificationMethod(ABC):
 
         Used by the pipeline runner (``FLOW_DISPATCH``) to select the
         appropriate flow. Defaults to ``"peptides"`` for methods that
-        operate on assembled, normalized peptide intensities (iBAQ, TopN,
+        operate on assembled, normalized peptide intensities (piBAQ, TopN,
         sum, median). Subclasses override this to declare a different
         level (e.g. ``"psms"`` for ratio, ``"peptides_raw"`` for DirectLFQ).
 

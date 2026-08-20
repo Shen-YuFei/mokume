@@ -5,7 +5,7 @@ This module provides a wrapper around the DirectLFQ package for protein
 quantification using intensity traces and hierarchical normalization.
 
 DirectLFQ is an optional dependency. Install with:
-    pip install mokume[directlfq]
+    pip install mokume-py[directlfq]
 
 Reference:
     Ammar C, et al. Accurate label-free quantification by directLFQ to compare
@@ -50,7 +50,7 @@ def _import_directlfq():
     if not _check_directlfq_available():
         raise ImportError(
             "DirectLFQ support requires the 'directlfq' package.\n"
-            "Install with: pip install mokume[directlfq]\n"
+            "Install with: pip install mokume-py[directlfq]\n"
             "Or: pip install directlfq"
         )
     import directlfq.lfq_manager as lfq_manager
@@ -96,7 +96,7 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
     Notes
     -----
     DirectLFQ is an optional dependency. Install with:
-        pip install mokume[directlfq]
+        pip install mokume-py[directlfq]
 
     References
     ----------
