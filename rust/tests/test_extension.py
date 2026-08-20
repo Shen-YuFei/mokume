@@ -32,3 +32,37 @@ def test_run_cli_subcommand_help_exits_zero():
 
 def test_run_cli_unknown_subcommand_is_nonzero():
     assert run_cli(["definitely-not-a-subcommand"]) != 0
+
+
+def test_matrix_level_compute_api():
+    matrix = [
+        [2.0, 4.0, 8.0, 32.0, 64.0, 128.0],
+        [8.0, 16.0, 32.0, 8.0, 16.0, 32.0],
+        [32.0, None, 128.0, 4.0, 8.0, 16.0],
+    ]
+    normalized = mokume.normalize_matrix(
+        matrix,
+        "median",
+        ["a1", "a2", "a3", "b1", "b2", "b3"],
+        2,
+    )
+    assert len(normalized) == len(matrix)
+    assert all(len(row) == 6 for row in normalized)
+
+    imputed = mokume.impute_matrix(normalized, "mean", threads=2)
+    assert imputed[2][1] is not None
+
+    results = mokume.differential_expression(
+        ["P1", "P2", "P3"],
+        imputed,
+        3,
+        3,
+        "limma",
+        condition_a="case",
+        condition_b="control",
+        threads=2,
+    )
+    assert results
+    assert {"ProteinName", "log2FC", "pvalue", "adj_pvalue", "significance"} <= set(
+        results[0]
+    )

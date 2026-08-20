@@ -14,9 +14,9 @@ use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::record_batch::RecordBatch;
 use mokume_core::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig,
-    InputConfig, IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat,
-    MaxLfqConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig,
+    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
+    IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
+    NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig, PibaqConfig,
     PreprocessingFilterConfig, ProteinFilterConfig, QuantMethod, RatioConfig, RunQcFilterConfig,
     RuntimeConfig,
 };
@@ -1350,7 +1350,7 @@ fn features2peptides_keep_shared_still_applies_min_peptide_filter() -> Result<()
 // pre-pass must INCLUDE shared (non-unique) peptides, mirroring Python's
 // `SQLFilterBuilder(require_unique = not keep_shared)` (`peptide.py:168/176`,
 // consumed by `get_median_map` at `peptide.py:197`). Previously the Rust median
-// collector derived `keep_shared = (quantification == Ibaq)`, but the peptide
+// collector derived `keep_shared = (quantification == Pibaq)`, but the peptide
 // path pins quantification to `Sum` (`peptide_export_config`), so shared rows
 // were always excluded -- biasing every per-sample factor and scaling every
 // NormIntensity in the sample by a constant (~0.41% on PXD003539, max_rel
@@ -2386,13 +2386,14 @@ fn features2proteins_extra_quant_methods_match_synthetic_oracles() -> Result<(),
     assert_numeric_cell_close(&spectral_count, "P3", "sample-1", 2.0);
     assert_numeric_cell_close(&spectral_count, "P4A;P4B", "sample-1", 2.0);
 
-    let ibaq = run_synthetic_quantification(QuantMethod::Ibaq, 3)?;
-    assert_numeric_cell_close(&ibaq, "P1", "sample-1", 3450.0);
-    assert_numeric_cell_close(&ibaq, "P1", "sample-2", 100.0);
-    assert_numeric_cell_close(&ibaq, "P2", "sample-1", 500.0);
-    assert_numeric_cell_close(&ibaq, "P3", "sample-1", 800.0);
-    assert_numeric_cell_close(&ibaq, "P4A", "sample-1", 15.0);
-    assert_numeric_cell_close(&ibaq, "P4B", "sample-1", 15.0);
+    let pibaq = run_synthetic_quantification(QuantMethod::Pibaq, 3)?;
+    assert_numeric_cell_close(&pibaq, "P1", "sample-1", 3450.0);
+    assert_numeric_cell_close(&pibaq, "P1", "sample-2", 100.0);
+    assert_numeric_cell_close(&pibaq, "P2", "sample-1", 500.0);
+    assert_numeric_cell_close(&pibaq, "P3", "sample-1", 800.0);
+    // P4A/P4B have no unique anchors, so their shared signal is split once.
+    assert_numeric_cell_close(&pibaq, "P4A", "sample-1", 7.5);
+    assert_numeric_cell_close(&pibaq, "P4B", "sample-1", 7.5);
     Ok(())
 }
 
@@ -2511,8 +2512,8 @@ fn features2proteins_ratio_per_plex_differs_from_global_reference() -> Result<()
 }
 
 #[test]
-fn features2proteins_ibaq_allocates_family_shared_peptides() -> Result<(), Box<dyn Error>> {
-    let table = run_family_ibaq_quantification()?;
+fn features2proteins_pibaq_allocates_family_shared_peptides() -> Result<(), Box<dyn Error>> {
+    let table = run_family_pibaq_quantification()?;
 
     assert_numeric_cell_close(&table, "P5A", "sample-1", 250.0);
     assert_numeric_cell_close(&table, "P5B", "sample-1", 250.0 / 3.0);
@@ -3117,7 +3118,7 @@ fn run_synthetic_quantification(
 
     write_synthetic_qpx(&parquet)?;
     write_synthetic_sdrf(&sdrf)?;
-    let fasta = if quantification == QuantMethod::Ibaq {
+    let fasta = if quantification == QuantMethod::Pibaq {
         write_synthetic_fasta(&fasta)?;
         Some(fasta)
     } else {
@@ -3150,7 +3151,7 @@ fn run_synthetic_quantification(
         quantification,
         topn_peptides,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
@@ -3245,7 +3246,7 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
         quantification: QuantMethod::Ratio,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig {
@@ -3303,7 +3304,7 @@ fn run_ratio_multiplex_quantification() -> Result<CsvTable, Box<dyn Error>> {
     read_csv(&output)
 }
 
-fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
+fn run_family_pibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("family.features.parquet");
@@ -3346,10 +3347,10 @@ fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
             sample_method: "none".to_owned(),
             normalization_proteins: None,
         },
-        quantification: QuantMethod::Ibaq,
+        quantification: QuantMethod::Pibaq,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
@@ -4025,7 +4026,7 @@ fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> Featu
         quantification: QuantMethod::Sum,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
@@ -4086,7 +4087,7 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
         quantification: QuantMethod::Sum,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
@@ -5392,6 +5393,7 @@ fn features2proteins_deqms_wires_per_protein_peptide_counts() -> Result<(), Box<
             "n_a",
             "n_b",
             "peptide_count",
+            "log_pvalue",
             "significance",
         ]
     );
@@ -5406,7 +5408,7 @@ fn features2proteins_deqms_wires_per_protein_peptide_counts() -> Result<(), Box<
 /// Assert every protein row matches the count-aware Python deqms oracle. Field
 /// layout: ProteinName(0), log2FC(1), pvalue(2), adj_pvalue(3), sca_t(4),
 /// sca_pvalue(5), sca_adj_pvalue(6), mean_A(7), mean_B(8), n_a(9), n_b(10),
-/// peptide_count(11), significance(12).
+/// peptide_count(11), log_pvalue(12), significance(13).
 fn assert_deqms_oracle_rows(table: &CsvTable) -> Result<(), Box<dyn Error>> {
     for &(protein, log2fc, sca_t, sca_p, count) in DEQMS_PIPELINE_ORACLE {
         let row = find_de_row(table, protein)?;

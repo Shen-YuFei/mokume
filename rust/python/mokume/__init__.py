@@ -10,8 +10,8 @@ operations the kernel does not provide.
 
 This is the PyO3/maturin layout used by projects such as polars and
 pydantic-core (Python imports a compiled Rust extension). The compute commands
-run *in-process* (no subprocess) through the same clap parsing + dispatch the
-standalone CLI binary uses, so the flag handling stays single-sourced in Rust.
+run *in-process* (no subprocess) through the same clap parsing + dispatch as the
+installed console command, so the flag handling stays single-sourced in Rust.
 
 Each wrapper maps keyword arguments to CLI flags (``key=value`` -> ``--key
 value`` with ``_`` rewritten to ``-``; ``key=True`` -> ``--key``; a list value
@@ -24,17 +24,20 @@ import importlib.metadata
 import warnings
 
 from mokume._mokume import run as _run
+from mokume._mokume import differential_expression as _differential_expression
+from mokume._mokume import impute_matrix as _impute_matrix
+from mokume._mokume import normalize_matrix
 from mokume._mokume import version
 
-# `mokume-rs` (this Rust kernel) and `mokume` (pure Python) both install the
+# `mokume` (this Rust kernel) and `mokume-py` (pure Python) both install the
 # `mokume` import package, so pip silently overwrites files when both are
 # present. Warn so the user keeps only one.
 try:
-    importlib.metadata.distribution("mokume")
+    importlib.metadata.distribution("mokume-py")
     warnings.warn(
-        "Both 'mokume-rs' (Rust kernel) and 'mokume' (pure-Python) are installed; "
+        "Both 'mokume' (Rust kernel) and 'mokume-py' (pure-Python) are installed; "
         "they share the 'mokume' import name and overwrite each other's files. "
-        "Keep only one: uninstall the other (`pip uninstall mokume`).",
+        "Keep only one: uninstall the other (`pip uninstall mokume-py`).",
         RuntimeWarning,
         stacklevel=2,
     )
@@ -48,10 +51,13 @@ __all__ = [
     "features2proteins",
     "peptides2protein",
     "correct_batches",
+    "normalize_matrix",
+    "impute_matrix",
+    "differential_expression",
     "tsne_visualization",
     "tissuemap",
     "peptides2protein_qc",
-    "peptides2protein_ibaq",
+    "peptides2protein_pibaq",
     "de_plots",
     "interactive_report",
     "qc_report",
@@ -138,8 +144,31 @@ def peptides2protein(**kwargs):
 
 
 def correct_batches(**kwargs):
-    """Run ``correct-batches`` (ComBat batch-effect correction on iBAQ output)."""
+    """Run ``correct-batches`` (ComBat batch-effect correction on piBAQ output)."""
     _run(_build_args("correct-batches", kwargs))
+
+
+def impute_matrix(values, method, **options):
+    """Run matrix-level Rust imputation without QPX I/O."""
+    return _impute_matrix(values, method, options or None)
+
+
+def differential_expression(proteins, values, n_a, n_b, method, **options):
+    """Run matrix-level Rust differential expression without QPX I/O.
+
+    ``values`` is a row-major linear-intensity matrix whose first ``n_a``
+    columns are group A and next ``n_b`` columns are group B. Missing cells may
+    be ``None`` or non-finite floats. Options include ``peptide_counts``,
+    ``ensemble_methods``, thresholds, condition labels, and ``threads``.
+    """
+    return _differential_expression(
+        list(proteins),
+        values,
+        n_a,
+        n_b,
+        method,
+        options or None,
+    )
 
 
 def _run_command(module_name, argv):
@@ -175,13 +204,13 @@ def tissuemap(**kwargs):
 
 
 def peptides2protein_qc(**kwargs):
-    """Render the iBAQ QC report from a protein table (``plotting`` extra)."""
+    """Render the piBAQ QC report from a protein table (``plotting`` extra)."""
     _run_command("peptides2protein_qc", _flags(kwargs))
 
 
-def peptides2protein_ibaq(**kwargs):
-    """Compute iBAQ in pure Python for non-Rust-ported enzymes (``ibaq`` extra)."""
-    _run_command("peptides2protein_ibaq", _flags(kwargs))
+def peptides2protein_pibaq(**kwargs):
+    """Compute piBAQ in Python for non-Rust-ported enzymes (``pibaq`` extra)."""
+    _run_command("peptides2protein_pibaq", _flags(kwargs))
 
 
 def de_plots(args):

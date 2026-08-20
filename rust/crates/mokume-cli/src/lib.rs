@@ -2,17 +2,18 @@ use std::{
     ffi::OsString,
     fs::{create_dir_all, read_to_string, write, File},
     path::{Path, PathBuf},
-    process::ExitCode,
+    str::FromStr,
     sync::Mutex,
 };
 
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use mokume_core::quant::parse_topn_from_method_name;
 use mokume_core::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig,
-    InputConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig, MokumeError,
-    NormalizationConfig, OutputConfig, OutputFormat, PreprocessingFilterConfig, QuantMethod,
-    RatioConfig, RuntimeConfig,
+    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
+    IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig, MokumeError, NormalizationConfig,
+    OutputConfig, OutputFormat, PibaqConfig, PreprocessingFilterConfig, QuantMethod, RatioConfig,
+    RuntimeConfig,
 };
 use mokume_pipeline::{
     resolve_irs_autodetect_channel, run_features_to_peptides, run_features_to_proteins,
@@ -198,9 +199,14 @@ struct Peptides2ProteinArgs {
     #[arg(short = 'p', long = "peptides")]
     peptides: PathBuf,
 
-    #[arg(long = "method", default_value = "ibaq", value_parser = [
-        "ibaq", "top3", "topn", "maxlfq", "sum", "directlfq",
-    ], ignore_case = true)]
+    #[arg(
+        long = "method",
+        default_value = "pibaq",
+        value_name = "[pibaq|maxlfq|sum|directlfq|top<N>]",
+        value_parser = parse_peptides2protein_method,
+        help = "Quantification method: pibaq, maxlfq, sum, directlfq, or top<N> -- the TopN \
+family spells its peptide count in the name (e.g. top3, top5)"
+    )]
     method: String,
 
     #[arg(short = 'e', long = "enzyme", default_value = "Trypsin")]
@@ -243,9 +249,6 @@ struct Peptides2ProteinArgs {
     )]
     qc_report: PathBuf,
 
-    #[arg(long = "topn_n", visible_alias = "topn-n", default_value_t = 3)]
-    topn_n: usize,
-
     #[arg(long = "threads", default_value_t = -1)]
     threads: i32,
 
@@ -270,7 +273,7 @@ struct CorrectBatchesArgs {
     #[arg(short = 'f', long = "folder")]
     folder: PathBuf,
 
-    #[arg(short = 'p', long = "pattern", default_value = "*ibaq.tsv")]
+    #[arg(short = 'p', long = "pattern", default_value = "*pibaq.tsv")]
     pattern: String,
 
     #[arg(long = "comment", default_value = "#")]
@@ -297,18 +300,21 @@ struct CorrectBatchesArgs {
     protein_id_column: String,
 
     #[arg(
-        long = "ibaq_raw_column",
-        visible_aliases = ["ibaq-raw-column", "ibaq"],
-        default_value = "Ibaq"
+        long = "pibaq_raw_column",
+        visible_aliases = [
+            "pibaq-raw-column",
+            "pibaq"
+        ],
+        default_value = "PiBAQ"
     )]
-    ibaq_raw_column: String,
+    pibaq_raw_column: String,
 
     #[arg(
-        long = "ibaq_corrected_column",
-        visible_alias = "ibaq-corrected-column",
-        default_value = "IbaqBec"
+        long = "pibaq_corrected_column",
+        visible_alias = "pibaq-corrected-column",
+        default_value = "PiBAQBec"
     )]
-    ibaq_corrected_column: String,
+    pibaq_corrected_column: String,
 
     #[arg(long = "export_anndata", visible_alias = "export-anndata")]
     export_anndata: bool,
@@ -345,12 +351,13 @@ struct Features2ProteinsArgs {
         long = "quant-method",
         alias = "method",
         default_value = "maxlfq",
-        ignore_case = true
+        value_name = "[directlfq|pibaq|maxlfq|sum|median|ratio|abd|intensity|spectral_count|top<N>]",
+        value_parser = parse_quant_method,
+        help = "Quantification method: directlfq, pibaq, maxlfq, sum, median, ratio, abd, \
+intensity, spectral_count, or top<N> -- the TopN family spells its peptide count in the name \
+(e.g. top3, top5)"
     )]
     quant_method: QuantMethodArg,
-
-    #[arg(long = "topn", default_value_t = 3)]
-    topn_peptides: usize,
 
     #[arg(long = "min-aa", default_value_t = 7)]
     min_aa: usize,
@@ -392,23 +399,23 @@ struct Features2ProteinsArgs {
     #[arg(long = "ion-alignment", value_parser = ["none", "hierarchical"], ignore_case = true)]
     ion_alignment: Option<String>,
 
-    #[arg(long = "ibaq-enzyme", default_value = "Trypsin")]
-    ibaq_enzyme: String,
+    #[arg(long = "pibaq-enzyme", default_value = "Trypsin")]
+    pibaq_enzyme: String,
 
-    #[arg(long = "ibaq-max-aa", default_value_t = 50)]
-    ibaq_max_aa: usize,
+    #[arg(long = "pibaq-max-aa", default_value_t = 50)]
+    pibaq_max_aa: usize,
 
-    #[arg(long = "ibaq-min-shared", default_value_t = 2)]
-    ibaq_min_shared: usize,
+    #[arg(long = "pibaq-min-shared", default_value_t = 2)]
+    pibaq_min_shared: usize,
 
-    #[arg(long = "ibaq-families")]
-    ibaq_families_yaml: Option<PathBuf>,
+    #[arg(long = "pibaq-families")]
+    pibaq_families_yaml: Option<PathBuf>,
 
-    #[arg(long = "ibaq-min-anchors", default_value_t = 1)]
-    ibaq_min_anchors: usize,
+    #[arg(long = "pibaq-min-anchors", default_value_t = 1)]
+    pibaq_min_anchors: usize,
 
-    #[arg(long = "ibaq-high-anchor-threshold", default_value_t = 3)]
-    ibaq_high_anchor_threshold: usize,
+    #[arg(long = "pibaq-high-anchor-threshold", default_value_t = 3)]
+    pibaq_high_anchor_threshold: usize,
 
     #[arg(long = "directlfq-cores")]
     directlfq_cores: Option<usize>,
@@ -549,13 +556,16 @@ struct Features2ProteinsArgs {
     #[arg(long = "de-ensemble-min-k", default_value_t = 2)]
     de_ensemble_min_k: usize,
 
-    #[arg(long = "de-log2fc", default_value_t = 0.5)]
-    de_log2fc_threshold: f64,
+    #[arg(long = "de-log2fc", default_value = "0.5", value_parser = parse_de_log2fc)]
+    de_log2fc_threshold: DeLog2FcArg,
+
+    #[arg(long = "de-effect-size-gate", value_parser = ["mixture", "null_quantile"], ignore_case = true)]
+    de_effect_size_gate: Option<String>,
 
     #[arg(long = "de-fdr", default_value_t = 0.05)]
     de_fdr_threshold: f64,
 
-    #[arg(long = "de-fdr-method", default_value = "bh", value_parser = ["bh", "ihw"], ignore_case = true)]
+    #[arg(long = "de-fdr-method", default_value = "bh", value_parser = ["bh", "ihw", "bky", "storey"], ignore_case = true)]
     de_fdr_method: String,
 
     #[arg(long = "de-output")]
@@ -570,14 +580,21 @@ struct Features2ProteinsArgs {
 
 impl Features2ProteinsArgs {
     fn into_config(self) -> FeatureToProteinsConfig {
-        let quantification = QuantMethod::from(self.quant_method);
         let remove_contaminants = if self.keep_contaminants {
             false
         } else {
             self.remove_contaminants || !self.keep_contaminants
         };
 
-        let topn_peptides = self.topn_peptides;
+        // `top<N>` is the only spelling of a TopN method, so N comes from the
+        // method name; the pipeline reads it from `topn_peptides`.
+        let QuantMethodArg {
+            method: quantification,
+            topn,
+        } = self.quant_method;
+        let topn_peptides = topn.unwrap_or(DEFAULT_TOPN_PEPTIDES);
+        let (log2fc_threshold, auto_effect_size_gate) = self.de_log2fc_threshold.into_config();
+        let effect_size_gate = self.de_effect_size_gate.or(auto_effect_size_gate);
 
         FeatureToProteinsConfig {
             input: InputConfig {
@@ -608,13 +625,13 @@ impl Features2ProteinsArgs {
                 ion_alignment: self.ion_alignment,
                 force_builtin: false,
             },
-            ibaq: IbaqConfig {
-                enzyme: self.ibaq_enzyme,
-                max_aa: self.ibaq_max_aa,
-                min_shared: self.ibaq_min_shared,
-                families_yaml: self.ibaq_families_yaml,
-                min_anchors: self.ibaq_min_anchors,
-                high_anchor_threshold: self.ibaq_high_anchor_threshold,
+            pibaq: PibaqConfig {
+                enzyme: self.pibaq_enzyme,
+                max_aa: self.pibaq_max_aa,
+                min_shared: self.pibaq_min_shared,
+                families_yaml: self.pibaq_families_yaml,
+                min_anchors: self.pibaq_min_anchors,
+                high_anchor_threshold: self.pibaq_high_anchor_threshold,
             },
             directlfq: DirectLfqConfig {
                 cores: self.directlfq_cores,
@@ -666,7 +683,8 @@ impl Features2ProteinsArgs {
                 method: self.de_method,
                 ensemble_methods: split_ensemble_methods(self.de_ensemble_methods),
                 ensemble_min_k: self.de_ensemble_min_k,
-                log2fc_threshold: self.de_log2fc_threshold,
+                log2fc_threshold,
+                effect_size_gate,
                 fdr_threshold: self.de_fdr_threshold,
                 fdr_method: self.de_fdr_method,
                 output: self.de_output,
@@ -696,37 +714,151 @@ impl From<OutputFormatArg> for OutputFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum QuantMethodArg {
-    Directlfq,
-    Ibaq,
-    Maxlfq,
-    Top3,
-    Topn,
-    Sum,
-    Median,
-    Ratio,
-    Abd,
-    Intensity,
-    #[value(name = "spectral_count")]
-    SpectralCount,
+/// The fixed `--quant-method` names, i.e. every method whose name carries no
+/// parameter. The TopN family is spelled `top<N>` and is not listed here.
+const FIXED_QUANT_METHODS: &str = "directlfq, pibaq, maxlfq, sum, median, ratio, abd, intensity, \
+spectral_count";
+
+/// Default `topn_peptides` for methods outside the TopN family. The pipeline
+/// only reads the field when the method is [`QuantMethod::TopN`], in which case
+/// N always comes from the `top<N>` name, so this value is inert -- it just
+/// keeps the config field populated.
+const DEFAULT_TOPN_PEPTIDES: usize = 3;
+
+/// A fixed fold-change threshold or Python-compatible `auto` estimation.
+#[derive(Debug, Clone, Copy)]
+enum DeLog2FcArg {
+    Fixed(f64),
+    Auto,
 }
 
-impl From<QuantMethodArg> for QuantMethod {
-    fn from(value: QuantMethodArg) -> Self {
-        match value {
-            QuantMethodArg::Directlfq => Self::DirectLfq,
-            QuantMethodArg::Ibaq => Self::Ibaq,
-            QuantMethodArg::Maxlfq => Self::MaxLfq,
-            QuantMethodArg::Top3 | QuantMethodArg::Topn => Self::TopN,
-            QuantMethodArg::Sum => Self::Sum,
-            QuantMethodArg::Median => Self::Median,
-            QuantMethodArg::Ratio => Self::Ratio,
-            QuantMethodArg::Abd => Self::Abd,
-            QuantMethodArg::Intensity => Self::Intensity,
-            QuantMethodArg::SpectralCount => Self::SpectralCount,
+impl DeLog2FcArg {
+    fn into_config(self) -> (f64, Option<String>) {
+        match self {
+            Self::Fixed(value) => (value, None),
+            Self::Auto => (0.5, Some("mixture".to_string())),
         }
     }
+}
+
+impl FromStr for DeLog2FcArg {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        if value.trim().eq_ignore_ascii_case("auto") {
+            return Ok(Self::Auto);
+        }
+        let threshold = value.parse::<f64>().map_err(|_| {
+            format!("invalid log2FC threshold `{value}`: expected `auto` or a non-negative number")
+        })?;
+        if !threshold.is_finite() || threshold < 0.0 {
+            return Err(format!(
+                "invalid log2FC threshold `{value}`: expected `auto` or a finite, non-negative number"
+            ));
+        }
+        Ok(Self::Fixed(threshold))
+    }
+}
+
+fn parse_de_log2fc(value: &str) -> std::result::Result<DeLog2FcArg, String> {
+    DeLog2FcArg::from_str(value)
+}
+
+/// A validated `--quant-method` value: the parsed [`QuantMethod`] plus, for the
+/// `top<N>` family, the N spelled in the name.
+///
+/// This is a plain `FromStr` newtype rather than a clap `ValueEnum` because
+/// `top<N>` is an open-ended family (`top1`, `top3`, `top10`, ...) that no fixed
+/// variant list can express. Parsing here (instead of keeping a raw `String` and
+/// re-parsing later) means an invalid method is rejected by clap at parse time,
+/// with the same exit code as any other bad option.
+#[derive(Debug, Clone, Copy)]
+struct QuantMethodArg {
+    method: QuantMethod,
+    /// `Some(N)` only for the `top<N>` family.
+    topn: Option<usize>,
+}
+
+impl FromStr for QuantMethodArg {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let lowered = value.trim().to_ascii_lowercase();
+        // `topn` keeps the placeholder letter and means the canonical Top3
+        // (Silva 2006), matching what the Python factory does with a `top` name
+        // that carries no digits. Normalizing here keeps `top<digits>` as the
+        // single internal spelling.
+        if lowered == "topn" {
+            return Ok(Self {
+                method: QuantMethod::TopN,
+                topn: Some(3),
+            });
+        }
+        if let Some(topn) = parse_topn_from_method_name(&lowered) {
+            return Ok(Self {
+                method: QuantMethod::TopN,
+                topn: Some(topn),
+            });
+        }
+        // Anything else starting with `top` is a malformed TopN name (`top0`,
+        // `topx`, ...); say so rather than reporting a generic unknown method.
+        if lowered.starts_with("top") {
+            return Err(invalid_topn_message(value));
+        }
+        let method = QuantMethod::from_str(&lowered).map_err(|_| unknown_method_message(value))?;
+        Ok(Self { method, topn: None })
+    }
+}
+
+/// clap `value_parser` for `--quant-method`. A `fn(&str) -> Result<_, String>`
+/// is the form clap accepts directly, and it renders the `String` as the usage
+/// error message.
+fn parse_quant_method(value: &str) -> std::result::Result<QuantMethodArg, String> {
+    QuantMethodArg::from_str(value)
+}
+
+/// Methods `peptides2protein` implements. It runs on an already-summarized
+/// peptide table, so it offers a smaller set than `features2proteins`.
+const PEPTIDES2PROTEIN_METHODS: [&str; 4] = ["pibaq", "maxlfq", "sum", "directlfq"];
+
+/// clap `value_parser` for `peptides2protein --method`.
+///
+/// Applies the same TopN spelling rules as `--quant-method` over this command's
+/// smaller method set, and normalizes bare `topn` to `top<DEFAULT_TOPN_PEPTIDES>`
+/// so the runner only ever matches on `top<digits>`.
+fn parse_peptides2protein_method(value: &str) -> std::result::Result<String, String> {
+    let lowered = value.trim().to_ascii_lowercase();
+    if PEPTIDES2PROTEIN_METHODS.contains(&lowered.as_str()) {
+        return Ok(lowered);
+    }
+    if lowered == "topn" {
+        return Ok(format!("top{DEFAULT_TOPN_PEPTIDES}"));
+    }
+    if parse_topn_from_method_name(&lowered).is_some() {
+        return Ok(lowered);
+    }
+    // A `top`-prefixed name that carries no usable N is a malformed TopN request,
+    // not an unknown method; say which of the two it is.
+    if lowered.starts_with("top") {
+        return Err(invalid_topn_message(value));
+    }
+    Err(format!(
+        "unknown peptides2protein method `{value}`: expected one of {}, or `top<N>` (e.g. `top3`)",
+        PEPTIDES2PROTEIN_METHODS.join(", ")
+    ))
+}
+
+/// Error for a `top`-prefixed name that is not a valid `top<N>` (`top0`, `topx`).
+fn invalid_topn_message(value: &str) -> String {
+    format!(
+        "invalid quantification method `{value}`: a TopN method is spelled `top<N>` with N >= 1 \
+(e.g. `top1`, `top3`, `top5`)"
+    )
+}
+
+/// Error for a name that is neither a fixed method nor a `top<N>`.
+fn unknown_method_message(value: &str) -> String {
+    format!("unknown quantification method `{value}`: expected one of {FIXED_QUANT_METHODS}, or `top<N>` (e.g. `top3`)")
 }
 
 fn split_csv_option(value: Option<String>) -> Option<Vec<String>> {
@@ -754,8 +886,7 @@ fn split_ensemble_methods(value: Option<String>) -> Option<Vec<String>> {
     })
 }
 
-/// Dispatch a fully-built [`Cli`] to its subcommand. Shared by the binary entry
-/// [`run`] and the library entry [`run_from_args`].
+/// Dispatch a fully-built [`Cli`] to its subcommand.
 fn dispatch(cli: Cli) -> mokume_core::Result<()> {
     init_logging(cli.log_level, cli.log_file).and_then(|()| match cli.command {
         Commands::Features2Proteins(args) => dispatch_features_to_proteins(args.into_config()),
@@ -765,21 +896,9 @@ fn dispatch(cli: Cli) -> mokume_core::Result<()> {
     })
 }
 
-/// Binary entry point: parse the process arguments (clap prints help / errors and
-/// exits on its own) and turn the dispatch result into an [`ExitCode`].
-pub fn run() -> ExitCode {
-    match dispatch(Cli::parse()) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-/// Library entry point (used by the `mokume-py` PyO3 bindings): parse an explicit
-/// argument vector and return the dispatch result. Unlike [`run`], a parse error
-/// is returned as `Err` rather than exiting the process, so it never tears down a
+/// Library entry point used by the internal `mokume-py` PyO3 crate: parse an
+/// explicit argument vector and return the dispatch result. A parse error is
+/// returned as `Err` rather than exiting the process, so it never tears down a
 /// hosting Python interpreter.
 pub fn run_from_args<I, T>(args: I) -> mokume_core::Result<()>
 where
@@ -795,8 +914,8 @@ where
 /// Console-script entry point for the `mokume` wheel: parse an explicit argument
 /// vector and return the process exit code WITHOUT calling `process::exit`, so it
 /// never tears down a hosting Python interpreter. clap's help/version are printed
-/// to stdout (exit 0) and usage errors to stderr (exit 2), exactly as the
-/// standalone binary would; a dispatch failure prints the error and returns 1.
+/// to stdout (exit 0) and usage errors to stderr (exit 2); a dispatch failure
+/// prints the error and returns 1.
 pub fn run_cli_from_args<I, T>(args: I) -> i32
 where
     I: IntoIterator<Item = T>,
@@ -1057,10 +1176,10 @@ fn generate_filter_config(path: &Path) -> mokume_core::Result<()> {
     Ok(())
 }
 
-/// Initialize the global tracing subscriber at most once per process. The binary
-/// calls this once; the library entry (`run_from_args`) may be invoked many times
-/// from a hosting Python process, so the `Once` guard keeps repeat calls from
-/// re-attempting initialization and emitting a spurious "already set" warning.
+/// Initialize the global tracing subscriber at most once per process. The
+/// library entry may be invoked many times from a hosting Python process, so the
+/// `Once` guard keeps repeat calls from re-attempting initialization and
+/// emitting a spurious "already set" warning.
 fn init_logging(level: LogLevel, log_file: Option<PathBuf>) -> mokume_core::Result<()> {
     static INIT: std::sync::Once = std::sync::Once::new();
     let mut outcome: mokume_core::Result<()> = Ok(());
@@ -1211,9 +1330,9 @@ mod tests {
 
     #[test]
     fn correct_batches_accepts_short_column_aliases() {
-        // Python's click CLI accepts `-sid`/`-pid`/`-ibaq`; clap cannot express
+        // Python's click CLI accepts `-sid`/`-pid`/`-pibaq`; clap cannot express
         // single-dash multi-character shorts, so these are offered as `--sid` /
-        // `--pid` / `--ibaq` long aliases (closest portable form).
+        // `--pid` / `--pibaq` long aliases (closest portable form).
         let cli = Cli::parse_from([
             "mokume",
             "correct-batches",
@@ -1225,15 +1344,15 @@ mod tests {
             "MySample",
             "--pid",
             "MyProtein",
-            "--ibaq",
-            "MyIbaq",
+            "--pibaq",
+            "MyPibaq",
         ]);
         let Commands::CorrectBatches(args) = cli.command else {
             panic!("expected the correct-batches subcommand");
         };
         assert_eq!(args.sample_id_column, "MySample");
         assert_eq!(args.protein_id_column, "MyProtein");
-        assert_eq!(args.ibaq_raw_column, "MyIbaq");
+        assert_eq!(args.pibaq_raw_column, "MyPibaq");
     }
 
     #[test]
@@ -1316,6 +1435,89 @@ mod tests {
         assert_eq!(config.differential_expression.fdr_method, "ihw");
         assert_eq!(config.runtime.memory.as_deref(), Some("80GB"));
         assert_eq!(config.runtime.threads, Some(24));
+    }
+
+    #[test]
+    fn rejects_removed_ibaq_method_name() {
+        let features = Cli::try_parse_from([
+            "mokume",
+            "features2proteins",
+            "-p",
+            "input.parquet",
+            "-o",
+            "protein.csv",
+            "--quant-method",
+            "ibaq",
+        ]);
+        assert!(features.is_err());
+
+        let peptides = Cli::try_parse_from([
+            "mokume",
+            "peptides2protein",
+            "--peptides",
+            "peptides.csv",
+            "--method",
+            "ibaq",
+        ]);
+        assert!(peptides.is_err());
+    }
+
+    #[test]
+    fn parses_adaptive_de_options() {
+        let cli = Cli::parse_from([
+            "mokume",
+            "features2proteins",
+            "-p",
+            "input.parquet",
+            "-o",
+            "protein.csv",
+            "-s",
+            "input.sdrf.tsv",
+            "--de",
+            "--de-contrasts",
+            "A vs B",
+            "--de-log2fc",
+            "auto",
+            "--de-fdr-method",
+            "storey",
+        ]);
+        let Commands::Features2Proteins(args) = cli.command else {
+            panic!("expected features2proteins command");
+        };
+        let config = args.into_config();
+
+        assert_eq!(config.differential_expression.log2fc_threshold, 0.5);
+        assert_eq!(
+            config.differential_expression.effect_size_gate.as_deref(),
+            Some("mixture")
+        );
+        assert_eq!(config.differential_expression.fdr_method, "storey");
+    }
+
+    #[test]
+    fn explicit_effect_size_method_uses_numeric_threshold_as_fallback() {
+        let cli = Cli::parse_from([
+            "mokume",
+            "features2proteins",
+            "-p",
+            "input.parquet",
+            "-o",
+            "protein.csv",
+            "--de-log2fc",
+            "0.25",
+            "--de-effect-size-gate",
+            "null_quantile",
+        ]);
+        let Commands::Features2Proteins(args) = cli.command else {
+            panic!("expected features2proteins command");
+        };
+        let config = args.into_config();
+
+        assert_eq!(config.differential_expression.log2fc_threshold, 0.25);
+        assert_eq!(
+            config.differential_expression.effect_size_gate.as_deref(),
+            Some("null_quantile")
+        );
     }
 
     #[test]
@@ -1466,7 +1668,6 @@ mod tests {
             "--output",
             "--sdrf",
             "--quant-method",
-            "--topn",
             "--min-aa",
             "--min-unique",
             "--remove-contaminants",
@@ -1476,12 +1677,12 @@ mod tests {
             "--normalization-proteins",
             "--fasta",
             "--ion-alignment",
-            "--ibaq-enzyme",
-            "--ibaq-max-aa",
-            "--ibaq-min-shared",
-            "--ibaq-families",
-            "--ibaq-min-anchors",
-            "--ibaq-high-anchor-threshold",
+            "--pibaq-enzyme",
+            "--pibaq-max-aa",
+            "--pibaq-min-shared",
+            "--pibaq-families",
+            "--pibaq-min-anchors",
+            "--pibaq-high-anchor-threshold",
             "--directlfq-cores",
             "--directlfq-min-nonan",
             "--directlfq-num-samples-quadratic",
@@ -1545,6 +1746,13 @@ mod tests {
                 "removed plotting option `{option}` must not appear in help:\n{help}"
             );
         }
+        // N is spelled in the method name (`top5`), so the companion option is
+        // gone from both CLIs and must stay gone.
+        assert!(
+            !help.contains("--topn"),
+            "removed option `--topn` must not appear in help:\n{help}"
+        );
+        assert!(!help.contains("--ibaq-"));
     }
 
     #[test]
@@ -1607,7 +1815,6 @@ mod tests {
             "--output",
             "--verbose",
             "--qc_report",
-            "--topn_n",
             "--threads",
             "--min_nonan",
             "--families",
@@ -1620,6 +1827,12 @@ mod tests {
                 "missing option `{option}` in help:\n{help}"
             );
         }
+        // N is spelled in the method name (`--method top5`), so the companion
+        // option is gone from both CLIs and must stay gone.
+        assert!(
+            !help.contains("--topn_n"),
+            "removed option `--topn_n` must not appear in help:\n{help}"
+        );
     }
 
     #[test]
@@ -1633,8 +1846,8 @@ mod tests {
             "--output",
             "--sample_id_column",
             "--protein_id_column",
-            "--ibaq_raw_column",
-            "--ibaq_corrected_column",
+            "--pibaq_raw_column",
+            "--pibaq_corrected_column",
             "--export_anndata",
         ] {
             assert!(
@@ -1642,6 +1855,8 @@ mod tests {
                 "missing option `{option}` in help:\n{correct_batches_help}"
             );
         }
+        assert!(!correct_batches_help.contains("--ibaq_"));
+        assert!(!correct_batches_help.contains("--ibaq-"));
     }
 
     #[test]

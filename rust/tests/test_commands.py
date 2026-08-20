@@ -10,7 +10,7 @@ COMMAND_MODULES = [
     "de_plots",
     "interactive_report",
     "peptides2protein_qc",
-    "peptides2protein_ibaq",
+    "peptides2protein_pibaq",
 ]
 
 

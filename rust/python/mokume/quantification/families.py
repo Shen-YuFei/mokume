@@ -7,7 +7,7 @@ share >99% sequence identity), histone variants, tropomyosins, and the
 many UniProt splice isoforms that map onto the same gene.
 
 This module groups such proteins into *families* so that downstream
-quantification (see :mod:`mokume.quantification.ibaq`) can either keep
+quantification (see :mod:`mokume.quantification.pibaq`) can either keep
 per-protein resolution where evidence allows or fall back to a single
 family-level estimate where it does not.
 

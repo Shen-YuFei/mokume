@@ -5,11 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Command line interface for mokume"
-
-[[bin]]
-name = "mokume"
-path = "src/main.rs"
+description = "Command parsing and dispatch for the mokume wheel"
+publish = false
 
 [lints]
 workspace = true
@@ -22,7 +19,7 @@ ndarray = "0.17"
 mokume-core = { path = "../mokume-core" }
 mokume-io = { path = "../mokume-io" }
 mokume-pipeline = { path = "../mokume-pipeline" }
-mokume-stats = { version = "0.1.0", path = "../mokume-stats" }
+mokume-stats = { version = "0.2.0", path = "../mokume-stats" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

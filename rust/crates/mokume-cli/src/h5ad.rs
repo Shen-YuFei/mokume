@@ -11,7 +11,7 @@
 //!     obs=df_matrix.index.to_frame(),   # one column: SampleID
 //!     var=df_matrix.columns.to_frame(), # one column: ProteinName
 //! )
-//! adata.layers["IbaqBec"] = df_layer.to_numpy()
+//! adata.layers["PiBAQBec"] = df_layer.to_numpy()
 //! ```
 //!
 //! The AnnData HDF5 schema we mirror (captured from a reference file produced by
@@ -21,7 +21,7 @@
 //! /                         @encoding-type=anndata   @encoding-version=0.1.0
 //! /X        f8 (obs,var)    @encoding-type=array     @encoding-version=0.2.0
 //! /layers                   @encoding-type=dict      @encoding-version=0.1.0
-//! /layers/IbaqBec  f8       @encoding-type=array     @encoding-version=0.2.0
+//! /layers/PiBAQBec  f8       @encoding-type=array     @encoding-version=0.2.0
 //! /obs                      @encoding-type=dataframe @encoding-version=0.2.0
 //!                           @_index=SampleID         @column-order=[SampleID]
 //! /obs/SampleID  str        @encoding-type=string-array  @encoding-version=0.2.0
@@ -271,7 +271,7 @@ mod tests {
         let var = vec!["P1".to_string(), "P2".to_string(), "P3".to_string()];
         let x = vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]];
         let layer = vec![vec![10.0, 20.0, 30.0], vec![40.0, 50.0, 60.0]];
-        let layers = vec![("IbaqBec".to_string(), layer)];
+        let layers = vec![("PiBAQBec".to_string(), layer)];
         let export = AnnDataExport {
             obs_names: &obs,
             obs_index_name: "SampleID",
@@ -331,7 +331,7 @@ mod tests {
             vec!["P1".to_string(), "P2".to_string(), "P3".to_string()]
         );
 
-        let layer_ds = file.dataset("layers/IbaqBec")?;
+        let layer_ds = file.dataset("layers/PiBAQBec")?;
         let layer_read: Array2<f64> = layer_ds.read_2d()?;
         assert_eq!(
             layer_read,

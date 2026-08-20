@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Pure-Python iBAQ command for digestion enzymes outside the Rust-ported set.
+"""Pure-Python piBAQ command for digestion enzymes outside the Rust-ported set.
 
-The Rust ``peptides2protein`` iBAQ path natively computes the protein table for
+The Rust ``peptides2protein`` piBAQ path natively computes the protein table for
 the enzymes whose pyOpenMS cleavage rules are ported (Trypsin[/P], Lys-C[/P],
 Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA). pyOpenMS knows many
 more proteases (CNBr, V8-DE, unspecific cleavage, ...); for those the Rust kernel
-has no cleavage rule, so the mokume wheel computes the whole iBAQ table here in
-pure Python, calling ``mokume.quantification.ibaq.peptides_to_protein`` exactly
-as the upstream Python CLI ``mokume peptides2protein --method ibaq`` would.
+has no cleavage rule, so the mokume wheel computes the whole piBAQ table here in
+pure Python, calling ``mokume.quantification.pibaq.peptides_to_protein`` exactly
+as the upstream Python CLI ``mokume peptides2protein --method pibaq`` would.
 
 Design (same "copy-py" provenance as ``peptides2protein_qc.py``): no compute is
 duplicated in Rust here -- the command calls the first-class
-``mokume.quantification.ibaq`` and forwards the original argv. The output is ``res.to_csv(output, sep='\t')``
+``mokume.quantification.pibaq`` and forwards the original argv. The output is ``res.to_csv(output, sep='\t')``
 inside ``peptides_to_protein``, i.e. byte-for-byte the same TSV schema the Rust
-native path writes (ProteinName, SampleID, Condition, NormIntensity, Ibaq,
+native path writes (ProteinName, SampleID, Condition, NormIntensity, PiBAQ,
 FamilyId, EvidenceLevel, FamilySize, plus the optional TPA / normalize / ruler
 columns), so a downstream consumer cannot tell which branch produced it.
 
-argv contract (runnable via ``python -m mokume.commands.peptides2protein_ibaq``):
+argv contract (runnable via ``python -m mokume.commands.peptides2protein_pibaq``):
 
-    python -m mokume.commands.peptides2protein_ibaq \
+    python -m mokume.commands.peptides2protein_pibaq \
         --peptides <peptides.csv|.tsv|.parquet> \
         --fasta <proteome.fasta> \
         --enzyme <protease name> \
@@ -30,9 +30,10 @@ argv contract (runnable via ``python -m mokume.commands.peptides2protein_ibaq``)
         [--normalize] [--tpa] [--ruler] [--verbose] \
         [--qc-report <QCprofile.pdf>] [--families <families.yaml>]
 
-The TopN / DirectLFQ knobs (``--topn_n`` / ``--threads`` / ``--min_nonan``) are
-not forwarded: ``peptides_to_protein`` takes no such parameters, and only the
-iBAQ method reaches this command.
+The DirectLFQ knobs (``--threads`` / ``--min_nonan``) are not forwarded:
+``peptides_to_protein`` takes no such parameters, and only the piBAQ method
+reaches this command. TopN needs no knob at all -- its N is spelled in the
+method name (``top5``).
 
 Exit-code convention (see python/README.md):
     0   success
@@ -49,8 +50,8 @@ import sys
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
         description=(
-            "Compute the peptides2protein iBAQ table in pure Python via "
-            "mokume.quantification.ibaq, for enzymes outside the "
+            "Compute the peptides2protein piBAQ table in pure Python via "
+            "mokume.quantification.pibaq, for enzymes outside the "
             "Rust-ported set."
         )
     )
@@ -106,15 +107,15 @@ def main(argv=None):
     # Import lazily so a missing install yields an actionable message (exit 1)
     # rather than an opaque traceback before argparse even runs.
     try:
-        from mokume.quantification.ibaq import peptides_to_protein
+        from mokume.quantification.pibaq import peptides_to_protein
     except ImportError as exc:
         raise SystemExit(
-            "iBAQ command aborted: the mokume package could not be imported "
+            "piBAQ command aborted: the mokume package could not be imported "
             "({0}). Install its third-party dependencies with: "
-            "pip install mokume-rs[ibaq]".format(exc)
+            "pip install mokume[pibaq]".format(exc)
         )
 
-    # Mirror the Python CLI ``peptides2protein`` iBAQ branch exactly: it forwards
+    # Mirror the Python CLI ``peptides2protein`` piBAQ branch exactly: it forwards
     # every option straight into ``peptides_to_protein``. The enzyme validity
     # (and any organism / ruler guard) is enforced inside mokume, so a bad enzyme
     # surfaces here as the same error the Python CLI would raise.
@@ -143,9 +144,9 @@ def main(argv=None):
         # Bad enzyme / organism / ruler-guard failures arrive here. Re-raise as a
         # SystemExit so the caller sees a non-zero exit with a clear
         # message rather than a raw traceback.
-        raise SystemExit("iBAQ command aborted: {0}".format(exc))
+        raise SystemExit("piBAQ command aborted: {0}".format(exc))
 
-    print("iBAQ protein table written to {0}".format(args.output))
+    print("piBAQ protein table written to {0}".format(args.output))
     return 0
 
 

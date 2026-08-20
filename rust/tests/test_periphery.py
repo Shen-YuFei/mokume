@@ -21,7 +21,7 @@ def test_peptides2protein_qc_writes_pdf(tmp_path):
     mokume.peptides2protein_qc(
         protein_table=os.path.join(DATA, "proteins_qc.tsv"),
         qc_report=str(pdf),
-        plot_column="Ibaq",
+        plot_column="PiBAQ",
     )
     assert pdf.exists()
     assert pdf.stat().st_size > 0

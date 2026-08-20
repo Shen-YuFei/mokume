@@ -7,7 +7,7 @@ markers, atlas plots) over a dataset directory. Exposed in-process as
 ``mokume.tissuemap`` and runnable as ``python -m mokume.commands.tissuemap``.
 
 Run requirements: the ``tissuemap`` extra (scanpy, umap-learn, combat, anndata,
-matplotlib, seaborn, ...): ``pip install mokume-rs[tissuemap]``. The
+matplotlib, seaborn, ...): ``pip install mokume[tissuemap]``. The
 ``mokume.imputation`` subpackage that ``tissuemap`` depends on ships in the
 wheel.
 
@@ -134,7 +134,7 @@ def main(argv: list[str]) -> int:
     except ImportError as exc:  # pragma: no cover - environment dependent
         print(
             "error: failed to import mokume tissuemap dependencies: "
-            f"{exc}\nInstall them with: pip install mokume-rs[tissuemap]",
+            f"{exc}\nInstall them with: pip install mokume[tissuemap]",
             file=sys.stderr,
         )
         return 1

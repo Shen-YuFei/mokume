@@ -41,7 +41,7 @@ use mokume_core::stats::lowess_fit;
 use super::correct::bh_adjust;
 use super::limma::{run_limma_moderation, LimmaModeration};
 use super::special::{digamma, trigamma};
-use super::student_t::student_t_sf;
+use super::student_t::{student_t_sf, student_t_two_sided_log_pvalue};
 use super::{classify, DeResult};
 
 /// Minimum number of valid (finite `log_var`, `x`, `df`) proteins required for
@@ -80,7 +80,7 @@ pub fn deqms_two_group(
     fdr_threshold: f64,
     log2fc_threshold: f64,
 ) -> Vec<DeResult> {
-    let (moderations, _df_prior) = run_limma_moderation(rows, n_a, n_b);
+    let (moderations, df_prior) = run_limma_moderation(rows, n_a, n_b);
     if moderations.is_empty() {
         return Vec::new();
     }
@@ -92,7 +92,7 @@ pub fn deqms_two_group(
         .map(|(index, _)| counts.get(*index).copied().unwrap_or(1.0))
         .collect::<Vec<_>>();
 
-    let stats = spectra_count_ebayes(&moderations, &kept_counts);
+    let stats = spectra_count_ebayes(&moderations, &kept_counts, df_prior);
 
     let p_values = stats.iter().map(|stat| stat.sca_pvalue).collect::<Vec<_>>();
     let adjusted = bh_adjust(&p_values);
@@ -113,6 +113,7 @@ pub fn deqms_two_group(
                 protein,
                 log2_fold_change: moderation.log2_fold_change,
                 p_value: stat.sca_pvalue,
+                log_p_value: stat.log_pvalue,
                 adj_p_value,
                 t_statistic: stat.sca_t,
                 // DEqMS emits no AveExpr/B columns, so these limma-only quirks
@@ -137,12 +138,17 @@ pub fn deqms_two_group(
 struct ScaStat {
     sca_t: f64,
     sca_pvalue: f64,
+    log_pvalue: f64,
 }
 
 /// Port of `_spectra_count_ebayes` (deqms.py:43). Applies the count-aware Bayes
 /// moderation to the kept-protein limma fits; falls back to the standard eBayes
 /// statistics (`t_statistic`, `p_value`) when the count path is not exercised.
-fn spectra_count_ebayes(moderations: &[(usize, LimmaModeration)], counts: &[f64]) -> Vec<ScaStat> {
+fn spectra_count_ebayes(
+    moderations: &[(usize, LimmaModeration)],
+    counts: &[f64],
+    df_prior: f64,
+) -> Vec<ScaStat> {
     let n_genes = moderations.len();
     // sigma2 = sigma**2; log_var = log(sigma2); df_valid = df (0 -> NaN).
     let sigma2 = moderations
@@ -186,7 +192,7 @@ fn spectra_count_ebayes(moderations: &[(usize, LimmaModeration)], counts: &[f64]
         .collect::<Vec<_>>();
     let valid_count = valid.iter().filter(|flag| **flag).count();
     if valid_count < MIN_VALID_POINTS {
-        return fallback(moderations);
+        return fallback(moderations, df_prior);
     }
 
     // ptp(x_valid) < 1e-10 -> all counts identical -> fall back.
@@ -196,7 +202,7 @@ fn spectra_count_ebayes(moderations: &[(usize, LimmaModeration)], counts: &[f64]
         .collect::<Vec<_>>();
     let x_range = ptp(&x_valid);
     if x_range < MIN_COUNT_SPREAD {
-        return fallback(moderations);
+        return fallback(moderations, df_prior);
     }
 
     let y_pred = lowess_predict(&log_var, &x, &valid);
@@ -241,19 +247,32 @@ fn spectra_count_ebayes(moderations: &[(usize, LimmaModeration)], counts: &[f64]
             let post_df = d0 + df[i];
             let sca_t = fit.log2_fold_change / (fit.stdev_unscaled * post_var.sqrt());
             let sca_pvalue = 2.0 * student_t_sf(sca_t.abs(), post_df);
-            ScaStat { sca_t, sca_pvalue }
+            let log_pvalue = student_t_two_sided_log_pvalue(sca_t, post_df);
+            ScaStat {
+                sca_t,
+                sca_pvalue,
+                log_pvalue,
+            }
         })
         .collect()
 }
 
 /// The standard-eBayes fallback (deqms.py:72): `sca_t = t_stat`,
 /// `sca_pvalue = p_value`. Used when too few valid points or all-equal counts.
-fn fallback(moderations: &[(usize, LimmaModeration)]) -> Vec<ScaStat> {
+fn fallback(moderations: &[(usize, LimmaModeration)], df_prior: f64) -> Vec<ScaStat> {
+    let df_pooled = moderations
+        .iter()
+        .map(|(_, fit)| fit.df_residual)
+        .sum::<f64>();
     moderations
         .iter()
         .map(|(_, fit)| ScaStat {
             sca_t: fit.t_statistic,
             sca_pvalue: fit.p_value,
+            log_pvalue: student_t_two_sided_log_pvalue(
+                fit.t_statistic,
+                (fit.df_residual + df_prior).min(df_pooled),
+            ),
         })
         .collect()
 }

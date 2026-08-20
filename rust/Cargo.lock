@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "mokume-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "csv",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "mokume-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "thiserror",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "mokume-golden-tests"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrow",
  "csv",
@@ -1000,14 +1000,14 @@ dependencies = [
 
 [[package]]
 name = "mokume-imputation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mokume-core",
 ]
 
 [[package]]
 name = "mokume-io"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrow",
  "csv",
@@ -1019,14 +1019,14 @@ dependencies = [
 
 [[package]]
 name = "mokume-normalization"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mokume-core",
 ]
 
 [[package]]
 name = "mokume-pipeline"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "csv",
  "mokume-core",
@@ -1043,15 +1043,18 @@ dependencies = [
 
 [[package]]
 name = "mokume-py"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mokume-cli",
+ "mokume-core",
+ "mokume-pipeline",
+ "mokume-stats",
  "pyo3",
 ]
 
 [[package]]
 name = "mokume-quant"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mokume-core",
  "rayon",
@@ -1059,10 +1062,11 @@ dependencies = [
 
 [[package]]
 name = "mokume-stats"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libm",
  "mokume-core",
+ "rayon",
 ]
 
 [[package]]

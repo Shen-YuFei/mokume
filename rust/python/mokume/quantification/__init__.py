@@ -1,20 +1,21 @@
 """
 Protein quantification methods for the mokume package.
 
-Only the iBAQ peptide->protein path survives in this self-contained delegate
+Only the piBAQ peptide->protein path survives in this self-contained delegate
 copy: the other quantification methods (Top3/TopN/MaxLFQ/DirectLFQ/AllPeptides/
 Ratio/TMT/SpectralCount) and the ``get_quantification_method`` factory were
-Rust-kernel-redundant and have been removed. The iBAQ symbols are resolved
-lazily so importing the package does not force ``ibaq`` (pyOpenMS) to load until
+Rust-kernel-redundant and have been removed. The piBAQ symbols are resolved
+lazily so importing the package does not force ``pibaq`` (pyOpenMS) to load until
 a symbol is actually accessed.
 """
 
-# The iBAQ public symbols and their defining submodule.
+# The piBAQ public symbols and their defining submodule.
 _LAZY_SUBMODULE = {
-    "peptides_to_protein": "ibaq",
-    "normalize_ibaq": "ibaq",
-    "extract_fasta": "ibaq",
-    "ConcentrationWeightByProteomicRuler": "ibaq",
+    "peptides_to_protein": "pibaq",
+    "compute_pibaq": "pibaq",
+    "normalize_pibaq": "pibaq",
+    "extract_fasta": "pibaq",
+    "ConcentrationWeightByProteomicRuler": "pibaq",
 }
 
 
@@ -31,7 +32,8 @@ def __getattr__(name):
 
 __all__ = [
     "peptides_to_protein",
-    "normalize_ibaq",
+    "compute_pibaq",
+    "normalize_pibaq",
     "extract_fasta",
     "ConcentrationWeightByProteomicRuler",
 ]

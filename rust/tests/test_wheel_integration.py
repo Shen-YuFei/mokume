@@ -73,11 +73,13 @@ class TestPeptides2Protein:
         assert set(df_csv["ProteinName"]) == set(df_pq["ProteinName"])
 
     def test_topn_with_custom_n(self, tmp_path):
+        # N is spelled in the method name. This used to read `method="top3",
+        # topn_n=5` and still produce Top5 -- the digits in the name were inert
+        # and the companion option won. Both spellings of N are gone now.
         output = str(tmp_path / "top5.tsv")
         mokume.peptides2protein(
             peptides=PEPTIDES_CSV,
-            method="top3",
-            topn_n=5,
+            method="top5",
             output=output,
         )
         assert os.path.exists(output)

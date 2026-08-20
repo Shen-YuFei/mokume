@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use csv::WriterBuilder;
 use mokume_core::{
     parse_memory_to_bytes, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig,
-    InputConfig, IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat,
-    MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
+    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
+    IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
+    MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideId, PibaqConfig,
     PreprocessingFilterConfig, ProteinId, QuantMethod, RatioConfig, Result, RunQcFilterConfig,
     RuntimeConfig, SampleId, StringIdRegistry,
 };
@@ -30,6 +30,11 @@ use tracing::{info, warn};
 
 mod de;
 pub mod filters;
+mod matrix;
+mod threading;
+
+pub use de::{differential_expression_matrix, MatrixDifferentialExpressionResults};
+pub use matrix::{impute_matrix, normalize_matrix};
 
 /// `min_nonan` used when `--quant-method maxlfq` delegates to the DirectLFQ-aligned
 /// solver. Matches Python's maxlfq delegation, which uses 2 (the streaming path
@@ -1108,7 +1113,7 @@ enum FeatureAggregation {
     Median(HashMap<CellKey, HashMap<PeptideId, f64>>),
     Abd(HashMap<CellKey, HashMap<PeptideId, f64>>),
     SpectralCount(HashMap<CellKey, HashMap<PeptideId, f64>>),
-    Ibaq(IbaqAggregation),
+    Pibaq(PibaqAggregation),
     Ratio(RatioAggregation),
     TopN {
         topn: usize,
@@ -1135,7 +1140,7 @@ enum FeatureAggregation {
 }
 
 #[derive(Debug)]
-struct IbaqAggregation {
+struct PibaqAggregation {
     accession_peptides: HashMap<String, HashSet<String>>,
     peptide_accessions: HashMap<String, HashSet<String>>,
     families: Vec<ProteinFamily>,
@@ -1144,10 +1149,10 @@ struct IbaqAggregation {
     min_anchors: usize,
     /// piBAQ "high anchor" threshold (Python `--high-anchor-threshold`). Only
     /// affects the `EvidenceLevel` annotation column via [`classify_evidence`],
-    /// never the quantification values (Python `ibaq.py:732`).
+    /// never the quantification values (Python `pibaq.py:732`).
     high_anchor_threshold: usize,
     /// Per-canonical monoisotopic molecular weight, populated only when the
-    /// caller requests TPA (`peptides2protein --tpa`). `None` leaves the iBAQ
+    /// caller requests TPA (`peptides2protein --tpa`). `None` leaves the piBAQ
     /// path untouched for every other consumer.
     mw_map: Option<HashMap<String, f64>>,
 }
@@ -1256,7 +1261,7 @@ impl FeatureAggregation {
             QuantMethod::Median => Ok(Self::Median(HashMap::new())),
             QuantMethod::Abd => Ok(Self::Abd(HashMap::new())),
             QuantMethod::SpectralCount => Ok(Self::SpectralCount(HashMap::new())),
-            QuantMethod::Ibaq => Ok(Self::Ibaq(IbaqAggregation::from_config(config)?)),
+            QuantMethod::Pibaq => Ok(Self::Pibaq(PibaqAggregation::from_config(config)?)),
             QuantMethod::Ratio => Ok(Self::Ratio(RatioAggregation::from_config(config, sdrf)?)),
             QuantMethod::TopN => {
                 if config.topn_peptides == 0 {
@@ -1306,8 +1311,8 @@ impl FeatureAggregation {
             | Self::SpectralCount(cells) => {
                 push_peptide_max(cells, cell, measurement.peptide, measurement.intensity);
             }
-            Self::Ibaq(ibaq) => {
-                ibaq.push(
+            Self::Pibaq(pibaq) => {
+                pibaq.push(
                     measurement.sample,
                     measurement.peptide,
                     measurement.peptide_name,
@@ -1360,7 +1365,7 @@ impl FeatureAggregation {
             | Self::Abd(_)
             | Self::SpectralCount(_)
             | Self::TopN { .. }
-            | Self::Ibaq(_) => true,
+            | Self::Pibaq(_) => true,
             // Built-in MaxLFQ runs dataset normalization on its peptide traces;
             // the DirectLFQ-aligned path (DirectLFQ, or delegated MaxLFQ) does its
             // own internal sample normalization, so mokume must not apply another.
@@ -1373,7 +1378,7 @@ impl FeatureAggregation {
 
     /// Apply a dataset-level sample normalization (one that needs the full
     /// protein x sample matrix, not a per-sample factor). Quantile runs
-    /// on the canonical peptide cells; iBAQ and MaxLFQ support quantile on their
+    /// on the canonical peptide cells; piBAQ and MaxLFQ support quantile on their
     /// own structures. Other dataset methods are gated out before this point.
     fn apply_dataset_normalization(
         &mut self,
@@ -1396,9 +1401,9 @@ impl FeatureAggregation {
                     samples,
                 );
             }
-            Self::Ibaq(ibaq) => {
+            Self::Pibaq(pibaq) => {
                 if method == SampleNormalizationMethod::Quantile {
-                    ibaq.apply_quantile_normalization();
+                    pibaq.apply_quantile_normalization();
                 }
             }
             Self::Lfq {
@@ -1434,12 +1439,12 @@ impl FeatureAggregation {
     }
 
     fn keeps_shared_peptides(&self) -> bool {
-        matches!(self, Self::Ibaq(_))
+        matches!(self, Self::Pibaq(_))
     }
 
     fn peptide_key(&self, feature: &QpxFeatureRecord) -> String {
         match self {
-            Self::Ibaq(_) | Self::Ratio(_) => feature.sequence.clone(),
+            Self::Pibaq(_) | Self::Ratio(_) => feature.sequence.clone(),
             _ => peptide_key(feature),
         }
     }
@@ -1521,7 +1526,7 @@ impl FeatureAggregation {
                     })
                     .collect(),
             ),
-            Self::Ibaq(ibaq) => ProteinValues::Cells(ibaq.finalize(proteins)),
+            Self::Pibaq(pibaq) => ProteinValues::Cells(pibaq.finalize(proteins)),
             Self::Ratio(ratio) => ProteinValues::Cells(ratio.finalize()),
             Self::TopN { topn, cells } => ProteinValues::Cells(
                 cells
@@ -1664,16 +1669,16 @@ impl FeatureAggregation {
     }
 }
 
-impl IbaqAggregation {
+impl PibaqAggregation {
     fn from_config(config: &FeatureToProteinsConfig) -> Result<Self> {
         let accession_peptides = load_fasta_peptides(config)?;
         let peptide_accessions = invert_peptide_index(&accession_peptides);
         let auto_families = discover_families(
             &accession_peptides,
             &peptide_accessions,
-            config.ibaq.min_shared,
+            config.pibaq.min_shared,
         )?;
-        let families = if let Some(path) = config.ibaq.families_yaml.as_deref() {
+        let families = if let Some(path) = config.pibaq.families_yaml.as_deref() {
             merge_family_overrides(auto_families, load_family_overrides(path)?)
         } else {
             auto_families
@@ -1684,8 +1689,8 @@ impl IbaqAggregation {
             families,
             peptide_names: HashMap::new(),
             observations: HashMap::new(),
-            min_anchors: config.ibaq.min_anchors,
-            high_anchor_threshold: config.ibaq.high_anchor_threshold,
+            min_anchors: config.pibaq.min_anchors,
+            high_anchor_threshold: config.pibaq.high_anchor_threshold,
             mw_map: None,
         })
     }
@@ -1721,12 +1726,12 @@ impl IbaqAggregation {
     fn finalize(self, proteins: &mut StringIdRegistry<ProteinId>) -> HashMap<CellKey, f64> {
         self.finalize_detailed(proteins)
             .into_iter()
-            .map(|(key, detail)| (key, detail.cell.ibaq))
+            .map(|(key, detail)| (key, detail.cell.pibaq))
             .collect()
     }
 
     /// Run the full piBAQ allocation and return, per (protein, sample), both the
-    /// iBAQ value and the inputs `peptides2protein` needs to reproduce the
+    /// piBAQ value and the inputs `peptides2protein` needs to reproduce the
     /// Python long-format table (`NormIntensity`, `FamilyId`, `EvidenceLevel`,
     /// `FamilySize`). The allocation math is identical to [`Self::finalize`];
     /// only the captured metadata differs, so there is a single source of truth
@@ -1734,7 +1739,7 @@ impl IbaqAggregation {
     fn finalize_detailed(
         self,
         proteins: &mut StringIdRegistry<ProteinId>,
-    ) -> HashMap<CellKey, IbaqDetailedCell> {
+    ) -> HashMap<CellKey, PibaqDetailedCell> {
         let observations = self
             .observations
             .into_iter()
@@ -1793,66 +1798,38 @@ impl IbaqAggregation {
                 .map(|member| anchor_counts.get(member).copied().unwrap_or(0))
                 .max()
                 .unwrap_or(0);
-            let evidence =
-                classify_evidence(min_anchor, self.min_anchors, self.high_anchor_threshold);
+            let evidence = classify_evidence(
+                min_anchor,
+                max_anchor,
+                self.min_anchors,
+                self.high_anchor_threshold,
+            );
             let family_size = family.members.len();
-            let is_fallback = max_anchor < self.min_anchors;
-            let mut output = HashMap::<CellKey, IbaqCell>::new();
-            if is_fallback {
-                finalize_family_rollup(
-                    &family,
-                    &observations,
-                    &owned_peptides,
-                    proteins,
-                    &mut output,
-                );
-            } else {
-                finalize_family_proportional(
-                    &family,
-                    &observations,
-                    &owned_peptides,
-                    &self.accession_peptides,
-                    &self.peptide_accessions,
-                    proteins,
-                    &mut output,
-                );
-            }
-            // TPA molecular weight per the Python `_attach_tpa` rule. The
-            // fallback branch uses one shared family MW sum (0 -> 1); the
-            // proportional branch uses each member's own MW (0 -> 1). Computed
-            // only when the caller requested TPA (`mw_map` is `Some`).
-            let family_mw = self.mw_map.as_ref().map(|mw_map| {
-                let summed = family
-                    .members
-                    .iter()
-                    .map(|member| mw_map.get(member).copied().unwrap_or(0.0))
-                    .sum::<f64>();
-                if summed <= 0.0 {
-                    1.0
-                } else {
-                    summed
-                }
-            });
+            let output = finalize_family_allocation(
+                &family,
+                &observations,
+                &owned_peptides,
+                &self.accession_peptides,
+                &self.peptide_accessions,
+                evidence == PibaqEvidence::FamilyOnly,
+                proteins,
+            );
             for (key, cell) in output {
                 let molecular_weight = self.mw_map.as_ref().map(|mw_map| {
-                    if is_fallback {
-                        family_mw.unwrap_or(1.0)
+                    let member_mw = proteins
+                        .resolve(key.protein)
+                        .and_then(|member| mw_map.get(member).copied())
+                        .unwrap_or(0.0);
+                    if member_mw == 0.0 {
+                        1.0
                     } else {
-                        let member_mw = proteins
-                            .resolve(key.protein)
-                            .and_then(|member| mw_map.get(member).copied())
-                            .unwrap_or(0.0);
-                        if member_mw == 0.0 {
-                            1.0
-                        } else {
-                            member_mw
-                        }
+                        member_mw
                     }
                 });
                 let tpa = molecular_weight.map(|mw| cell.norm_intensity / mw);
                 detailed.insert(
                     key,
-                    IbaqDetailedCell {
+                    PibaqDetailedCell {
                         cell,
                         family_id: family.family_id.clone(),
                         evidence_level: evidence,
@@ -1869,13 +1846,13 @@ impl IbaqAggregation {
 
 /// Evidence buckets mirroring the Python `_classify_evidence` helper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IbaqEvidence {
+enum PibaqEvidence {
     FamilyOnly,
     Medium,
     High,
 }
 
-impl IbaqEvidence {
+impl PibaqEvidence {
     /// Lowercase label matching the Python `EVIDENCE_*` constants.
     const fn label(self) -> &'static str {
         match self {
@@ -1889,29 +1866,29 @@ impl IbaqEvidence {
 /// Bucket a family's anchor counts, mirroring the Python `_classify_evidence`.
 fn classify_evidence(
     min_anchor: usize,
+    max_anchor: usize,
     min_required: usize,
     high_threshold: usize,
-) -> IbaqEvidence {
-    if min_anchor < min_required {
-        IbaqEvidence::FamilyOnly
+) -> PibaqEvidence {
+    if max_anchor < min_required {
+        PibaqEvidence::FamilyOnly
     } else if min_anchor >= high_threshold {
-        IbaqEvidence::High
+        PibaqEvidence::High
     } else {
-        IbaqEvidence::Medium
+        PibaqEvidence::Medium
     }
 }
 
-/// A fully described iBAQ output cell for `peptides2protein`'s long-format table.
+/// A fully described piBAQ output cell for `peptides2protein`'s long-format table.
 #[derive(Debug, Clone)]
-struct IbaqDetailedCell {
-    cell: IbaqCell,
+struct PibaqDetailedCell {
+    cell: PibaqCell,
     family_id: String,
-    evidence_level: IbaqEvidence,
+    evidence_level: PibaqEvidence,
     family_size: usize,
-    /// Per-protein molecular weight (member MW with 0 -> 1) on the proportional
-    /// branch, or the family MW sum (with 0 -> 1) on the fallback branch.
-    /// Populated only when the caller requested TPA; mirrors the Python
-    /// `_attach_tpa` `MolecularWeight` column.
+    /// Per-protein molecular weight (member MW with 0 -> 1). Populated only
+    /// when the caller requested TPA; mirrors the Python `_attach_tpa`
+    /// `MolecularWeight` column.
     molecular_weight: Option<f64>,
     /// TPA = `NormIntensity / MolecularWeight`, populated alongside
     /// `molecular_weight`.
@@ -3940,13 +3917,12 @@ impl ProteinMatrix {
 
     /// Build the log2-transformed protein x sample matrix over `samples`
     /// (column order preserved) for differential expression. Each cell is
-    /// `log2(value)` when the linear intensity is finite and strictly
-    /// positive, otherwise `NaN` -- reproducing the Python DE step's
-    /// `np.log2(intensity.replace(0, np.nan))` (zero / missing / non-positive
-    /// values become NaN). Rows are emitted for the kept proteins in matrix
-    /// output order (sorted by accession) so protein identity lines up with the
+    /// `log2(value)` when the linear intensity is finite and strictly positive;
+    /// zero, missing, and non-positive values become `NaN`, while infinities
+    /// are rejected. Rows are emitted for the kept proteins in matrix output
+    /// order (sorted by accession) so protein identity lines up with the
     /// returned names.
-    fn log2_rows(&self, samples: &[SampleId]) -> (Vec<String>, Vec<Vec<f64>>) {
+    fn log2_rows(&self, samples: &[SampleId]) -> Result<(Vec<String>, Vec<Vec<f64>>)> {
         let mut proteins = self
             .proteins
             .iter()
@@ -3958,16 +3934,22 @@ impl ProteinMatrix {
         let mut rows = Vec::with_capacity(proteins.len());
         for (protein, accession) in proteins {
             names.push(accession.to_owned());
-            let row = samples
-                .iter()
-                .map(|sample| match self.value(protein, *sample) {
+            let mut row = Vec::with_capacity(samples.len());
+            for sample in samples {
+                let value = match self.value(protein, *sample) {
+                    Some(value) if value.is_infinite() => {
+                        return Err(invalid_input(format!(
+                            "differential-expression matrix contains an infinite intensity for protein `{accession}`"
+                        )));
+                    }
                     Some(value) if value.is_finite() && value > 0.0 => value.log2(),
                     _ => f64::NAN,
-                })
-                .collect::<Vec<_>>();
+                };
+                row.push(value);
+            }
             rows.push(row);
         }
-        (names, rows)
+        Ok((names, rows))
     }
 
     /// Per-protein unique-canonical-peptide counts keyed by the protein NAME
@@ -4196,16 +4178,26 @@ impl ProteinMatrix {
         drop_empty_samples: bool,
     ) -> Result<()> {
         let (proteins, samples) = self.imputation_axes(drop_empty_samples);
+        if proteins.iter().any(|protein| {
+            samples
+                .iter()
+                .any(|sample| self.value(*protein, *sample).is_some_and(f64::is_infinite))
+        }) {
+            return Err(invalid_input(
+                "imputation matrix contains an infinite intensity",
+            ));
+        }
         // Match the Python pipeline, which imputes in log2 space and converts
-        // back to linear: positive finite values are log2-transformed, anything
-        // else is treated as missing, and the returned fills are exponentiated.
+        // back to linear: positive finite values are log2-transformed, missing
+        // and non-positive values stay missing, and infinities are rejected.
         let fills = imputed_values(config, &proteins, &samples, |protein, sample| {
             self.value(protein, sample)
                 .filter(|value| value.is_finite() && *value > 0.0)
                 .map(f64::log2)
         })?;
         for (protein, sample, value) in fills {
-            self.set_value(protein, sample, value.exp2());
+            let intensity = matrix::checked_imputed_intensity(value)?;
+            self.set_value(protein, sample, intensity);
         }
         Ok(())
     }
@@ -4356,7 +4348,7 @@ impl ProteinMatrix {
 }
 
 /// One observed peptide measurement feeding [`run_lfq_from_peptides`]. Unlike the
-/// iBAQ path the protein comes straight from the input table, not a FASTA digest.
+/// piBAQ path the protein comes straight from the input table, not a FASTA digest.
 #[derive(Debug, Clone)]
 pub struct LfqPeptideObservation {
     /// Protein accession the peptide belongs to.
@@ -4458,11 +4450,11 @@ pub fn run_lfq_from_peptides(
     result
 }
 
-/// FASTA-digest parameters for [`run_ibaq_from_peptides`], mirroring the iBAQ
+/// FASTA-digest parameters for [`run_pibaq_from_peptides`], mirroring the piBAQ
 /// knobs the `peptides2protein` CLI exposes. The high-anchor threshold is fixed
 /// at 3 by the existing Rust piBAQ core, so it is not configurable here.
 #[derive(Debug, Clone)]
-pub struct IbaqFromPeptidesParams {
+pub struct PibaqFromPeptidesParams {
     /// Protein database used to compute theoretical peptide counts.
     pub fasta: PathBuf,
     /// Minimum peptide length kept during the FASTA digest.
@@ -4471,10 +4463,10 @@ pub struct IbaqFromPeptidesParams {
     pub max_aa: usize,
     /// Minimum distinct shared peptides for two proteins to join a family.
     pub min_shared: usize,
-    /// Minimum proteotypic anchors a member needs for the proportional branch.
+    /// Anchor threshold; if no member reaches it, shared signal is split equally.
     pub min_anchors: usize,
     /// piBAQ "high anchor" threshold (Python `--high-anchor-threshold`). Only
-    /// affects the `EvidenceLevel` annotation, not the iBAQ values.
+    /// affects the `EvidenceLevel` annotation, not the piBAQ values.
     pub high_anchor_threshold: usize,
     /// Optional YAML overrides for protein-family grouping.
     pub families_yaml: Option<PathBuf>,
@@ -4483,12 +4475,12 @@ pub struct IbaqFromPeptidesParams {
     pub enzyme: String,
     /// Compute the TPA `MolecularWeight` + `TPA` columns (Python `--tpa`). When
     /// `true`, every returned row carries `Some` molecular-weight and TPA
-    /// values; when `false` those fields are `None` and the iBAQ path is
+    /// values; when `false` those fields are `None` and the piBAQ path is
     /// unchanged.
     pub tpa: bool,
 }
 
-/// One observed peptide measurement feeding [`run_ibaq_from_peptides`].
+/// One observed peptide measurement feeding [`run_pibaq_from_peptides`].
 #[derive(Debug, Clone)]
 pub struct PeptideObservation {
     /// Canonical peptide sequence (matched against the FASTA digest).
@@ -4499,48 +4491,48 @@ pub struct PeptideObservation {
     pub intensity: f64,
 }
 
-/// One row of the iBAQ long-format result, matching the columns the Python
+/// One row of the piBAQ long-format result, matching the columns the Python
 /// `peptides_to_protein` writes (minus the optional TPA/ruler extras).
 #[derive(Debug, Clone)]
-pub struct IbaqProteinRow {
+pub struct PibaqProteinRow {
     /// Protein (family member) accession.
     pub protein: String,
     /// Sample identifier.
     pub sample: String,
     /// Allocated, shared-aware numerator intensity.
     pub norm_intensity: f64,
-    /// iBAQ value (numerator divided by the owned theoretical peptide count).
-    pub ibaq: f64,
+    /// piBAQ value (numerator divided by the owned theoretical peptide count).
+    pub pibaq: f64,
     /// Representative family accession.
     pub family_id: String,
     /// Evidence label: `family_only`, `medium`, or `high`.
     pub evidence_level: &'static str,
     /// Number of members in the protein family.
     pub family_size: usize,
-    /// TPA molecular weight (`Some` only when [`IbaqFromPeptidesParams::tpa`] is
+    /// TPA molecular weight (`Some` only when [`PibaqFromPeptidesParams::tpa`] is
     /// set); the Python `MolecularWeight` column.
     pub molecular_weight: Option<f64>,
     /// TPA value `NormIntensity / MolecularWeight` (`Some` only when
-    /// [`IbaqFromPeptidesParams::tpa`] is set); the Python `TPA` column.
+    /// [`PibaqFromPeptidesParams::tpa`] is set); the Python `TPA` column.
     pub tpa: Option<f64>,
 }
 
-/// Compute per-protein iBAQ from a peptide-level table, reusing the existing
-/// piBAQ core (`IbaqAggregation`). This is the engine behind the
-/// `peptides2protein --method ibaq` CLI command. The returned rows carry the
-/// same `NormIntensity` / `Ibaq` / `FamilyId` / `EvidenceLevel` / `FamilySize`
+/// Compute per-protein piBAQ from a peptide-level table, reusing the existing
+/// piBAQ core (`PibaqAggregation`). This is the engine behind the
+/// `peptides2protein --method pibaq` CLI command. The returned rows carry the
+/// same `NormIntensity` / `PiBAQ` / `FamilyId` / `EvidenceLevel` / `FamilySize`
 /// columns that the Python `peptides_to_protein` emits; the TPA / ProteomicRuler
-/// / normalize-ibaq extras are intentionally not computed here.
-pub fn run_ibaq_from_peptides(
+/// / normalize-pibaq extras are intentionally not computed here.
+pub fn run_pibaq_from_peptides(
     observations: &[PeptideObservation],
-    params: &IbaqFromPeptidesParams,
-) -> Result<Vec<IbaqProteinRow>> {
-    // Reuse the exact iBAQ setup `features2proteins` performs by routing through
-    // `IbaqAggregation::from_config`; only the iBAQ-relevant fields matter.
-    let config = ibaq_only_config(params);
-    let mut aggregation = IbaqAggregation::from_config(&config)?;
+    params: &PibaqFromPeptidesParams,
+) -> Result<Vec<PibaqProteinRow>> {
+    // Reuse the exact piBAQ setup `features2proteins` performs by routing through
+    // `PibaqAggregation::from_config`; only the piBAQ-relevant fields matter.
+    let config = pibaq_only_config(params);
+    let mut aggregation = PibaqAggregation::from_config(&config)?;
     // TPA needs per-canonical molecular weights; load them once, only when
-    // requested, so the iBAQ-only path stays untouched.
+    // requested, so the piBAQ-only path stays untouched.
     if params.tpa {
         aggregation.mw_map = Some(load_fasta_mw(&params.fasta)?);
     }
@@ -4566,11 +4558,11 @@ pub fn run_ibaq_from_peptides(
         else {
             continue;
         };
-        rows.push(IbaqProteinRow {
+        rows.push(PibaqProteinRow {
             protein: protein.to_owned(),
             sample: sample.to_owned(),
             norm_intensity: detail.cell.norm_intensity,
-            ibaq: detail.cell.ibaq,
+            pibaq: detail.cell.pibaq,
             family_id: detail.family_id,
             evidence_level: detail.evidence_level.label(),
             family_size: detail.family_size,
@@ -4581,10 +4573,10 @@ pub fn run_ibaq_from_peptides(
     Ok(rows)
 }
 
-/// Build a `FeatureToProteinsConfig` that exercises only the iBAQ digest path.
-/// The non-iBAQ fields use defaults; they are never consumed by
-/// `IbaqAggregation::from_config`.
-fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig {
+/// Build a `FeatureToProteinsConfig` that exercises only the piBAQ digest path.
+/// The non-piBAQ fields use defaults; they are never consumed by
+/// `PibaqAggregation::from_config`.
+fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
             parquet: None,
@@ -4604,10 +4596,10 @@ fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig 
             remove_contaminants: false,
         },
         normalization: NormalizationConfig::default(),
-        quantification: QuantMethod::Ibaq,
+        quantification: QuantMethod::Pibaq,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig {
+        pibaq: PibaqConfig {
             enzyme: params.enzyme.clone(),
             max_aa: params.max_aa,
             min_shared: params.min_shared,
@@ -4630,6 +4622,11 @@ fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig 
 }
 
 pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> {
+    let threads = config.runtime.threads.or(config.directlfq.cores);
+    threading::install(threads, || run_features_to_proteins_inner(config))
+}
+
+fn run_features_to_proteins_inner(config: &FeatureToProteinsConfig) -> Result<()> {
     // Fold `--de-contrasts-file` into the contrast list up front (mirroring
     // Python's CLI) so validation and the DE stage see one resolved list; the
     // owned, expanded config then shadows the borrowed one for the rest of the run.
@@ -4654,8 +4651,6 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
              not apply another. The protein matrix is unchanged by this option."
         );
     }
-    configure_thread_pool(config.runtime.threads.or(config.directlfq.cores));
-
     let sdrf = config
         .input
         .sdrf
@@ -4664,13 +4659,13 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         .transpose()?;
     // The protein pipeline has no custom contaminant patterns; an empty slice
     // makes the median pre-pass fall back to the default `is_contaminant` path.
-    // The median pre-pass keeps shared peptides only for iBAQ (Python
-    // `stages.py:325`: `keep_shared_peptides = method == "ibaq"`).
+    // The median pre-pass keeps shared peptides only for piBAQ (Python
+    // `stages.py:325`: `keep_shared_peptides = method == "pibaq"`).
     let intensity_factors = collect_intensity_factors(
         config,
         sdrf.as_ref(),
         &[],
-        config.quantification == QuantMethod::Ibaq,
+        config.quantification == QuantMethod::Pibaq,
     )?;
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let dataset_normalization = dataset_sample_normalization_method(config)?;
@@ -4689,7 +4684,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         "features2proteins aggregation finished"
     );
 
-    let min_unique_peptides = if config.quantification == QuantMethod::Ibaq {
+    let min_unique_peptides = if config.quantification == QuantMethod::Pibaq {
         0
     } else {
         config.filtering.min_unique_peptides
@@ -4732,7 +4727,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         | QuantMethod::Abd
         | QuantMethod::MaxLfq
         | QuantMethod::Ratio
-        | QuantMethod::Ibaq => None,
+        | QuantMethod::Pibaq => None,
     };
     matrix.write_csv(
         &config.output.protein_matrix,
@@ -5182,7 +5177,7 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
         quantification: QuantMethod::Sum,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
@@ -5197,29 +5192,15 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
     }
 }
 
-fn configure_thread_pool(threads: Option<usize>) {
-    let Some(threads) = threads.filter(|threads| *threads > 0) else {
-        return;
-    };
-    if let Err(error) = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build_global()
-    {
-        warn!(%error, "rayon global thread pool is already configured; reusing existing pool");
-    }
-}
-
 /// Streams QPX features through `consume`, overlapping the parallelizable
 /// decode + flatten work with the serial consumer.
 ///
 /// A background thread reads raw Arrow batches serially (a single Parquet
-/// reader cannot be shared) and flattens each window of batches in parallel
-/// with Rayon. Flattened batches are delivered to `consume` in their original
-/// reader order, and rows within each batch keep their original order, so the
+/// reader cannot be shared) while the calling thread flattens each window with
+/// the invocation-scoped Rayon pool. Batches and rows keep reader order, so the
 /// floating-point accumulation order is identical to a fully serial pass and
-/// the protein matrix stays cell-for-cell identical. The consumer (ID
-/// registration and intensity accumulation) mutates shared state and therefore
-/// stays serial on the calling thread.
+/// the protein matrix stays cell-for-cell identical. The consumer mutates
+/// shared state and therefore stays serial on the calling thread.
 fn stream_qpx_features<F>(mut reader: QpxParquetReader, mut consume: F) -> Result<()>
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
@@ -5235,7 +5216,7 @@ where
     const CHANNEL_CAPACITY: usize = 1;
 
     let (tx, rx) =
-        std::sync::mpsc::sync_channel::<Result<Vec<Vec<QpxFeatureRecord>>>>(CHANNEL_CAPACITY);
+        std::sync::mpsc::sync_channel::<Result<Vec<mokume_io::RecordBatch>>>(CHANNEL_CAPACITY);
 
     std::thread::scope(|scope| -> Result<()> {
         scope.spawn(move || loop {
@@ -5253,17 +5234,17 @@ where
             if window.is_empty() {
                 return;
             }
-            let flattened: Result<Vec<Vec<QpxFeatureRecord>>> = window
-                .into_par_iter()
-                .map(|batch| mokume_io::flatten_qpx_batch(&batch))
-                .collect();
-            if tx.send(flattened).is_err() {
+            if tx.send(Ok(window)).is_err() {
                 return;
             }
         });
 
         for message in &rx {
-            for features in message? {
+            let flattened: Result<Vec<Vec<QpxFeatureRecord>>> = message?
+                .into_par_iter()
+                .map(|batch| mokume_io::flatten_qpx_batch(&batch))
+                .collect();
+            for features in flattened? {
                 for feature in features {
                     consume(feature)?;
                 }
@@ -5309,7 +5290,7 @@ fn required_parquet(input: &InputConfig) -> Result<&Path> {
 /// Quant methods whose aggregation collapses to `(protein, sample)` peptide
 /// cells normalized by [`apply_dataset_norm_to_peptide_cells`]. These share the
 /// dataset-level normalization with the `--export-peptides` path, so the
-/// exported peptides match the protein matrix. iBAQ / LFQ / Ratio normalize
+/// exported peptides match the protein matrix. piBAQ / LFQ / Ratio normalize
 /// through aggregation-specific paths not connected to the peptide export.
 fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
     matches!(
@@ -5404,8 +5385,10 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
             return Err(MokumeError::MissingInput { path: path.clone() });
         }
     }
-    if config.quantification == QuantMethod::Ibaq && config.input.fasta.is_none() {
-        return Err(invalid_input("iBAQ quantification requires --fasta option"));
+    if config.quantification == QuantMethod::Pibaq && config.input.fasta.is_none() {
+        return Err(invalid_input(
+            "piBAQ quantification requires --fasta option",
+        ));
     }
     if config.quantification == QuantMethod::Ratio && config.input.sdrf.is_none() {
         return Err(invalid_input("Ratio quantification requires --sdrf option"));
@@ -5487,8 +5470,8 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
             return unsupported("ion-alignment");
         }
     }
-    if config.quantification == QuantMethod::Ibaq && !supports_ibaq_enzyme(&config.ibaq.enzyme) {
-        return unsupported("ibaq-enzyme");
+    if config.quantification == QuantMethod::Pibaq && !supports_pibaq_enzyme(&config.pibaq.enzyme) {
+        return unsupported("pibaq-enzyme");
     }
 
     match config.quantification {
@@ -5500,7 +5483,7 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         | QuantMethod::Abd
         | QuantMethod::Intensity
         | QuantMethod::SpectralCount
-        | QuantMethod::Ibaq
+        | QuantMethod::Pibaq
         | QuantMethod::Ratio => {}
     }
 
@@ -5589,15 +5572,15 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
                     ));
                 }
             }
-            "mean" | "median" | "constant" | "zero" | "knn" | "seqknn" | "impseq" | "gms"
-            | "bpca" | "impseqrob" | "qrilc" => {}
+            "mean" | "median" | "constant" | "zero" | "most_frequent" | "knn" | "seqknn"
+            | "impseq" | "gms" | "bpca" | "impseqrob" | "qrilc" => {}
             // missforest wraps a scikit-learn RandomForest whose tree internals and
             // RNG cannot be reproduced cross-language; the Rust kernel does not
             // approximate it and the error points at the pure-Python implementation
             // shipped in the wheel.
             "missforest" => {
                 return unsupported(
-                    "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume Python wheel: pip install mokume-rs[analysis]; mokume.impute(matrix, method='missforest')",
+                    "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume wheel: pip install mokume[analysis]; mokume.impute(matrix, method='missforest')",
                 )
             }
             _ => return unsupported("imputation"),
@@ -5610,7 +5593,7 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
 /// Validate the differential-expression subset the Rust port implements.
 ///
 /// The limma, deqms, rots, limrots, proda, and ensemble paths with
-/// Benjamini-Hochberg (or IHW) correction are wired (mirroring
+/// BH, IHW, BKY, or Storey correction are wired (mirroring
 /// `mokume.analysis.differential_expression.DifferentialExpression(method=...)`).
 /// `auto` is accepted and resolved to a concrete method just before the DE stage
 /// (Python's `_resolve_de_method`: directlfq -> deqms, otherwise -> limrots).
@@ -5634,53 +5617,11 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         ));
     }
 
-    // `auto` mirrors Python's `_resolve_de_method` (stages.py:1784): it selects
-    // `deqms` when quantification is directlfq, otherwise `limrots`. Both targets
-    // are ported, so `auto` validates here and is resolved to the concrete method
-    // just before the DE stage (see `resolve_de_method`). `ensemble` IS supported
-    // (it runs member methods and fuses them with the deterministic top-k
-    // consensus combiner).
-    let is_ensemble = matches!(de.method.trim().to_ascii_lowercase().as_str(), "ensemble");
-    match de.method.trim().to_ascii_lowercase().as_str() {
-        "limma" | "deqms" | "rots" | "limrots" | "proda" | "ensemble" | "auto" => {}
-        _ => return Err(invalid_input(format!("unknown DE method `{}`", de.method))),
-    }
+    de::validate_config(de, true)?;
 
-    // Both `bh` (plain Benjamini-Hochberg) and `ihw` (Independent Hypothesis
-    // Weighting, ported in mokume-stats' `ihw_correction` and applied per method
-    // in `de::run_member`) are implemented, mirroring mokume's `fdr_method`
-    // options. Any other value is unsupported.
-    if !matches!(
-        de.fdr_method.trim().to_ascii_lowercase().as_str(),
-        "bh" | "ihw"
-    ) {
-        return Err(MokumeError::NotImplemented {
-            stage: "differential-expression-fdr-method",
-        });
-    }
-    // `--de-ensemble-methods` only has meaning for the ensemble method; reject it
-    // for the single-method paths rather than silently ignoring it. Validate an
-    // ensemble's members and min-k before execution.
-    if de.ensemble_methods.is_some() && !is_ensemble {
-        return Err(invalid_input(
-            "--de-ensemble-methods only applies to --de-method ensemble",
-        ));
-    }
-    if is_ensemble {
-        de::validated_ensemble_member_names(de)?;
-    }
     // `--de-contrasts-file` is expanded into `contrasts` before validation runs
     // (see `expand_de_contrasts_file`), so by here `contrasts_file` is already
     // folded in and the contrasts list below reflects both sources.
-    if !de.log2fc_threshold.is_finite() || de.log2fc_threshold < 0.0 {
-        return Err(invalid_input(
-            "--de-log2fc must be a finite, non-negative value",
-        ));
-    }
-    if !de.fdr_threshold.is_finite() || !(0.0..=1.0).contains(&de.fdr_threshold) {
-        return Err(invalid_input("--de-fdr must be between 0 and 1"));
-    }
-
     match &de.contrasts {
         Some(contrasts) if !contrasts.is_empty() => {}
         _ => {
@@ -6409,10 +6350,10 @@ fn collect_intensity_factors(
     // peptides are kept, the median pre-pass must include non-unique rows so the
     // per-sample median (and the resulting sample/run factors) matches Python.
     // The caller decides the value: the protein path keeps the legacy
-    // `quantification == Ibaq` rule (`stages.py:325`), while the peptide path
+    // `quantification == Pibaq` rule (`stages.py:325`), while the peptide path
     // forwards the `--keep-shared-peptides` flag from `FeatureToPeptidesConfig`,
     // which `peptide_export_config` cannot represent (it pins quantification to
-    // `Sum`, so the old in-function `== Ibaq` derivation always read `false`).
+    // `Sum`, so the old in-function `== Pibaq` derivation always read `false`).
     stream_input_features(&config.input, sdrf, |feature| {
         collector.push(feature, config.filtering, keep_shared_peptides)
     })?;
@@ -6630,9 +6571,9 @@ fn sample_condition(sample: &str, sdrf_record: Option<&SdrfRecord>) -> String {
 }
 
 /// Whether `enzyme` (a pyOpenMS canonical name, case-insensitive) has a ported
-/// cleavage rule for the iBAQ FASTA digest. Shared with the `peptides2protein`
+/// cleavage rule for the piBAQ FASTA digest. Shared with the `peptides2protein`
 /// CLI so it can reject unported enzymes with a stable stage before loading.
-pub fn supports_ibaq_enzyme(enzyme: &str) -> bool {
+pub fn supports_pibaq_enzyme(enzyme: &str) -> bool {
     cleavage_rule(enzyme).is_some()
 }
 
@@ -6825,7 +6766,7 @@ where
         .ok_or_else(|| invalid_input(format!("{namespace} id registry overflow")))
 }
 
-/// Per-canonical monoisotopic molecular weights for the iBAQ TPA column.
+/// Per-canonical monoisotopic molecular weights for the piBAQ TPA column.
 ///
 /// Mirrors `mokume.io.fasta.digest_fasta_full(..., compute_mw=True)`: every
 /// FASTA entry's MW is computed from its non-standard-stripped sequence, then
@@ -6850,16 +6791,18 @@ fn load_fasta_peptides(
     config: &FeatureToProteinsConfig,
 ) -> Result<HashMap<String, HashSet<String>>> {
     let Some(fasta) = &config.input.fasta else {
-        return Err(invalid_input("iBAQ quantification requires --fasta option"));
+        return Err(invalid_input(
+            "piBAQ quantification requires --fasta option",
+        ));
     };
     let contents = read_to_string(fasta).map_err(|source| MokumeError::Io {
         path: fasta.clone(),
         source,
     })?;
-    let rule = cleavage_rule(&config.ibaq.enzyme).ok_or_else(|| {
+    let rule = cleavage_rule(&config.pibaq.enzyme).ok_or_else(|| {
         invalid_input(format!(
-            "iBAQ enzyme `{}` is not supported",
-            config.ibaq.enzyme
+            "piBAQ enzyme `{}` is not supported",
+            config.pibaq.enzyme
         ))
     })?;
     let mut accession_peptides = HashMap::<String, HashSet<String>>::new();
@@ -6869,7 +6812,7 @@ fn load_fasta_peptides(
             &strip_nonstandard_amino_acids(&sequence),
             &rule,
             config.filtering.min_aa,
-            config.ibaq.max_aa,
+            config.pibaq.max_aa,
         );
         if peptides.is_empty() {
             continue;
@@ -6881,7 +6824,7 @@ fn load_fasta_peptides(
     }
     if accession_peptides.is_empty() {
         return Err(invalid_input(format!(
-            "FASTA `{}` did not produce theoretical peptides for iBAQ",
+            "FASTA `{}` did not produce theoretical peptides for piBAQ",
             fasta.display()
         )));
     }
@@ -6942,7 +6885,7 @@ fn canonicalize_isoform(accession: &str) -> String {
 }
 
 /// Cleavage specificity for FASTA digestion, reproducing the pyOpenMS
-/// `ProteaseDigestion` regexes for the enzymes mokume's iBAQ path supports.
+/// `ProteaseDigestion` regexes for the enzymes mokume's piBAQ path supports.
 /// `residues` are the standard amino acids that trigger a cut: the pyOpenMS sets
 /// (e.g. Trypsin `(?<=[KRX])(?!P)`) reduce to these once `_strip_nonstandard_aa`
 /// removes `X`/`B`/`Z`/`J`/`U`/`O` before the digest. `cut_before` cuts on the
@@ -7058,7 +7001,7 @@ const WATER_MONO_MASS: f64 = 18.0105650638;
 
 /// Per-residue monoisotopic masses (the internal residue masses pyOpenMS
 /// returns from `Residue::getMonoWeight(Internal)`), used to reproduce
-/// `AASequence::getMonoWeight` for the iBAQ TPA `MolecularWeight` column.
+/// `AASequence::getMonoWeight` for the piBAQ TPA `MolecularWeight` column.
 /// The full-protein mono weight is `WATER_MONO_MASS + sum(residue masses)`.
 const fn residue_mono_mass(residue: char) -> Option<f64> {
     let mass = match residue {
@@ -7088,7 +7031,7 @@ const fn residue_mono_mass(residue: char) -> Option<f64> {
 }
 
 /// Monoisotopic molecular weight of a protein sequence, matching the pyOpenMS
-/// `AASequence.fromString(seq).getMonoWeight()` value the Python iBAQ TPA path
+/// `AASequence.fromString(seq).getMonoWeight()` value the Python piBAQ TPA path
 /// reads via `digest_fasta_full(..., compute_mw=True)`. The accumulation order
 /// (water first, then residues left to right) mirrors how OpenMS sums the
 /// empirical formula so the result is bit-for-bit comparable within 1e-9 for
@@ -7126,7 +7069,7 @@ fn discover_families(
     min_shared: usize,
 ) -> Result<Vec<ProteinFamily>> {
     if min_shared == 0 {
-        return Err(invalid_input("ibaq-min-shared must be greater than 0"));
+        return Err(invalid_input("pibaq-min-shared must be greater than 0"));
     }
 
     let mut pair_counts = HashMap::<(String, String), usize>::new();
@@ -7386,55 +7329,28 @@ fn invert_peptide_ownership(
     family_peptides
 }
 
-/// One iBAQ output cell: the allocated numerator (`norm_intensity`, the
-/// per-(protein, sample) shared-aware intensity that the piBAQ branches sum)
-/// and the iBAQ value (numerator divided by the owned theoretical peptide
+/// One piBAQ output cell: the allocated numerator (`norm_intensity`, the
+/// per-(protein, sample) shared-aware intensity that the piBAQ allocator sums)
+/// and the piBAQ value (numerator divided by the owned theoretical peptide
 /// count). Keeping both lets `peptides2protein` reproduce the Python
-/// `peptides_to_protein` long-format `NormIntensity` + `Ibaq` columns while
-/// `features2proteins` projects out only the iBAQ value.
+/// `peptides_to_protein` long-format `NormIntensity` + `PiBAQ` columns while
+/// `features2proteins` projects out only the piBAQ value.
 #[derive(Debug, Clone, Copy)]
-struct IbaqCell {
+struct PibaqCell {
     norm_intensity: f64,
-    ibaq: f64,
+    pibaq: f64,
 }
 
-fn finalize_family_rollup(
-    family: &ProteinFamily,
-    observations: &[(String, SampleId, f64)],
-    owned_peptides: &HashSet<String>,
-    proteins: &mut StringIdRegistry<ProteinId>,
-    output: &mut HashMap<CellKey, IbaqCell>,
-) {
-    let denominator = owned_peptides.len().max(1) as f64;
-    let mut by_sample = HashMap::<SampleId, f64>::new();
-    for (_, sample, intensity) in observations {
-        *by_sample.entry(*sample).or_insert(0.0) += *intensity;
-    }
-    for member in &family.members {
-        for (sample, intensity) in &by_sample {
-            insert_ibaq_value(
-                member,
-                *sample,
-                *intensity,
-                *intensity / denominator,
-                proteins,
-                output,
-            );
-        }
-    }
-}
-
-fn finalize_family_proportional(
+fn finalize_family_allocation(
     family: &ProteinFamily,
     observations: &[(String, SampleId, f64)],
     owned_peptides: &HashSet<String>,
     accession_peptides: &HashMap<String, HashSet<String>>,
     peptide_accessions: &HashMap<String, HashSet<String>>,
+    force_equal_shared: bool,
     proteins: &mut StringIdRegistry<ProteinId>,
-    output: &mut HashMap<CellKey, IbaqCell>,
-) {
-    const WEIGHT_FLOOR: f64 = 1e-9;
-
+) -> HashMap<CellKey, PibaqCell> {
+    let mut output = HashMap::new();
     let member_set = family.members.iter().cloned().collect::<HashSet<_>>();
     let mut peptide_members = HashMap::<String, Vec<String>>::new();
     for (peptide, _, _) in observations {
@@ -7481,16 +7397,16 @@ fn finalize_family_proportional(
                     .get(&(member.clone(), *sample))
                     .copied()
                     .unwrap_or(0.0)
-                    + WEIGHT_FLOOR
             })
             .collect::<Vec<_>>();
         let weight_sum = weights.iter().sum::<f64>();
-        if weight_sum <= 0.0 {
-            continue;
-        }
         for (member, weight) in members.iter().zip(weights) {
-            *combined.entry((member.clone(), *sample)).or_insert(0.0) +=
-                *intensity * weight / weight_sum;
+            let allocated = if weight_sum > 0.0 && !force_equal_shared {
+                *intensity * weight / weight_sum
+            } else {
+                *intensity / members.len() as f64
+            };
+            *combined.entry((member.clone(), *sample)).or_insert(0.0) += allocated;
         }
     }
 
@@ -7508,25 +7424,26 @@ fn finalize_family_proportional(
     for ((member, sample), intensity) in combined {
         let denominator = denominators.get(&member).copied().unwrap_or(0);
         if denominator > 0 {
-            insert_ibaq_value(
+            insert_pibaq_value(
                 &member,
                 sample,
                 intensity,
                 intensity / denominator as f64,
                 proteins,
-                output,
+                &mut output,
             );
         }
     }
+    output
 }
 
-fn insert_ibaq_value(
+fn insert_pibaq_value(
     member: &str,
     sample: SampleId,
     norm_intensity: f64,
     value: f64,
     proteins: &mut StringIdRegistry<ProteinId>,
-    output: &mut HashMap<CellKey, IbaqCell>,
+    output: &mut HashMap<CellKey, PibaqCell>,
 ) {
     if !value.is_finite() || value <= 0.0 {
         return;
@@ -7534,9 +7451,9 @@ fn insert_ibaq_value(
     if let Some(protein) = proteins.get_or_insert(member) {
         output.insert(
             CellKey { protein, sample },
-            IbaqCell {
+            PibaqCell {
                 norm_intensity,
-                ibaq: value,
+                pibaq: value,
             },
         );
     }
@@ -7937,12 +7854,16 @@ fn invalid_input(message: impl Into<String>) -> MokumeError {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, fs, path::PathBuf};
+    use std::{
+        collections::{HashMap, HashSet},
+        fs,
+        path::PathBuf,
+    };
 
     use mokume_core::{
         BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-        FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig, InputConfig,
-        IrsConfig, MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat,
+        FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig, IrsConfig,
+        MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PibaqConfig,
         ProteinId, QuantMethod, RatioConfig, RuntimeConfig, SampleId, StringIdRegistry,
     };
     use mokume_io::{QpxFeatureRecord, SdrfRawTable};
@@ -7960,16 +7881,106 @@ mod tests {
     };
 
     #[test]
-    fn rejects_ibaq_without_fasta_before_loading() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("ibaq_without_fasta")?;
+    fn pibaq_shared_allocation_is_exact_and_conservative() {
+        let family = super::ProteinFamily {
+            family_id: "A|B".to_owned(),
+            members: vec!["A".to_owned(), "B".to_owned()],
+        };
+        let sample_anchored = SampleId::new(1);
+        let sample_unanchored = SampleId::new(2);
+        let observations = vec![
+            ("unique_a".to_owned(), sample_anchored, 100.0),
+            ("shared".to_owned(), sample_anchored, 300.0),
+            ("shared".to_owned(), sample_unanchored, 200.0),
+        ];
+        let owned_peptides = HashSet::from(["unique_a".to_owned(), "shared".to_owned()]);
+        let accession_peptides = HashMap::from([
+            (
+                "A".to_owned(),
+                HashSet::from(["unique_a".to_owned(), "shared".to_owned()]),
+            ),
+            ("B".to_owned(), HashSet::from(["shared".to_owned()])),
+        ]);
+        let peptide_accessions = HashMap::from([
+            ("unique_a".to_owned(), HashSet::from(["A".to_owned()])),
+            (
+                "shared".to_owned(),
+                HashSet::from(["A".to_owned(), "B".to_owned()]),
+            ),
+        ]);
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let output = super::finalize_family_allocation(
+            &family,
+            &observations,
+            &owned_peptides,
+            &accession_peptides,
+            &peptide_accessions,
+            false,
+            &mut proteins,
+        );
+
+        let Some(a) = proteins.get("A") else {
+            panic!("A output missing");
+        };
+        let Some(b) = proteins.get("B") else {
+            panic!("B output missing");
+        };
+        let cell = |protein, sample| output.get(&super::CellKey { protein, sample });
+
+        assert!(cell(b, sample_anchored).is_none());
+        assert_eq!(
+            cell(a, sample_anchored).map(|value| value.norm_intensity),
+            Some(400.0)
+        );
+        assert_eq!(
+            cell(a, sample_unanchored).map(|value| value.norm_intensity),
+            Some(100.0)
+        );
+        assert_eq!(
+            cell(b, sample_unanchored).map(|value| value.norm_intensity),
+            Some(100.0)
+        );
+        assert_eq!(
+            super::classify_evidence(0, 1, 1, 3),
+            super::PibaqEvidence::Medium
+        );
+
+        let mut equal_proteins = StringIdRegistry::<ProteinId>::new();
+        let equal_output = super::finalize_family_allocation(
+            &family,
+            &observations,
+            &owned_peptides,
+            &accession_peptides,
+            &peptide_accessions,
+            true,
+            &mut equal_proteins,
+        );
+        let Some(a) = equal_proteins.get("A") else {
+            panic!("A equal output missing");
+        };
+        let Some(b) = equal_proteins.get("B") else {
+            panic!("B equal output missing");
+        };
+        let norm_intensity = |protein, sample| {
+            equal_output
+                .get(&super::CellKey { protein, sample })
+                .map(|value| value.norm_intensity)
+        };
+        assert_eq!(norm_intensity(a, sample_anchored), Some(250.0));
+        assert_eq!(norm_intensity(b, sample_anchored), Some(150.0));
+    }
+
+    #[test]
+    fn rejects_pibaq_without_fasta_before_loading() -> Result<(), Box<dyn std::error::Error>> {
+        let parquet = existing_dummy_path("pibaq_without_fasta")?;
         let mut config = base_config(parquet);
-        config.quantification = QuantMethod::Ibaq;
+        config.quantification = QuantMethod::Pibaq;
 
         let error = validate_features_to_proteins(&config).err();
 
         assert_eq!(
             error.map(|error| error.to_string()).as_deref(),
-            Some("invalid input: iBAQ quantification requires --fasta option")
+            Some("invalid input: piBAQ quantification requires --fasta option")
         );
         Ok(())
     }
@@ -9294,22 +9305,47 @@ mod tests {
     }
 
     #[test]
+    fn accepts_adaptive_fdr_methods() -> Result<(), Box<dyn std::error::Error>> {
+        for method in ["bky", "storey"] {
+            let parquet = existing_dummy_path(&format!("de_{method}"))?;
+            let mut config = base_config(parquet);
+            config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
+            config.differential_expression.enabled = true;
+            config.differential_expression.method = "limma".to_string();
+            config.differential_expression.fdr_method = method.to_string();
+            config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+            validate_implemented_subset(&config)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn rejects_unknown_fdr_method() -> Result<(), Box<dyn std::error::Error>> {
         let parquet = existing_dummy_path("de_unknown_fdr")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
         config.differential_expression.method = "limma".to_string();
-        config.differential_expression.fdr_method = "storey".to_string();
+        config.differential_expression.fdr_method = "unknown".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
 
-        let error = validate_implemented_subset(&config).err();
         assert!(matches!(
-            error,
-            Some(MokumeError::NotImplemented {
+            validate_implemented_subset(&config),
+            Err(MokumeError::NotImplemented {
                 stage: "differential-expression-fdr-method"
             })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_most_frequent_imputation() -> Result<(), Box<dyn std::error::Error>> {
+        let parquet = existing_dummy_path("impute_most_frequent")?;
+        let mut config = base_config(parquet);
+        config.imputation.enabled = true;
+        config.imputation.method = "most_frequent".to_string();
+
+        validate_implemented_subset(&config)?;
         Ok(())
     }
 
@@ -9365,7 +9401,7 @@ mod tests {
             quantification: QuantMethod::MaxLfq,
             topn_peptides: 3,
             maxlfq: MaxLfqConfig::default(),
-            ibaq: IbaqConfig::default(),
+            pibaq: PibaqConfig::default(),
             directlfq: DirectLfqConfig::default(),
             batch: BatchCorrectionConfig::default(),
             irs: IrsConfig::default(),
@@ -9490,7 +9526,7 @@ mod tests {
     }
 
     // Lock the monoisotopic molecular weight against the pyOpenMS
-    // `AASequence.fromString(seq).getMonoWeight()` values that the Python iBAQ
+    // `AASequence.fromString(seq).getMonoWeight()` values that the Python piBAQ
     // TPA path reads via `digest_fasta_full(..., compute_mw=True)`. Captured
     // with `conda run -n Bigbio python -c "from pyopenms import AASequence;
     // print(AASequence.fromString(SEQ).getMonoWeight())"`.

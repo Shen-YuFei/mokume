@@ -1,11 +1,11 @@
 //! `correct-batches` command: parametric ComBat batch-effect correction for
-//! long-format iBAQ TSV files.
+//! long-format piBAQ TSV files.
 //!
 //! This mirrors `mokume.commands.batch_correct.run_batch_correction` in the
 //! Python package. The flow:
 //!   1. glob `folder` for `pattern`, concatenate the long-format TSV files
 //!      (honoring the comment character and the separator);
-//!   2. pivot to a protein (row) x sample (column) matrix of raw iBAQ, filling
+//!   2. pivot to a protein (row) x sample (column) matrix of raw piBAQ, filling
 //!      missing cells with 0.0 (matching `pivot_wider(..., fillna=True)`);
 //!   3. validate sample IDs and derive integer batch labels from the prefix
 //!      before the first '-' using first-seen (`pd.factorize`) order;
@@ -48,7 +48,7 @@ struct LongTable {
     rows: Vec<LongRow>,
     sample_index: usize,
     protein_index: usize,
-    ibaq_index: usize,
+    pibaq_index: usize,
 }
 
 /// Entry point for the `correct-batches` command.
@@ -63,9 +63,9 @@ pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
         comment,
         &args.sample_id_column,
         &args.protein_id_column,
-        &args.ibaq_raw_column,
+        &args.pibaq_raw_column,
     )?;
-    validate_corrected_column(&table.headers, &args.ibaq_corrected_column)?;
+    validate_corrected_column(&table.headers, &args.pibaq_corrected_column)?;
 
     // Sorted, unique proteins (rows) and samples (columns), matching the pandas
     // `pivot_table` ordering the Python code relies on.
@@ -91,7 +91,7 @@ pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
         &args.output,
         &table,
         separator,
-        &args.ibaq_corrected_column,
+        &args.pibaq_corrected_column,
         |row| {
             let sample = cell(row, table.sample_index)?;
             let protein = cell(row, table.protein_index)?;
@@ -124,16 +124,16 @@ pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
 }
 
 /// Write the AnnData `.h5ad` export alongside the TSV, mirroring the Python
-/// `create_anndata(df_ibaq, obs_col=SampleID, var_col=ProteinName,
-/// value_col=Ibaq, layer_cols=[IbaqBec])` path.
+/// `create_anndata(df_pibaq, obs_col=SampleID, var_col=ProteinName,
+/// value_col=PiBAQ, layer_cols=[PiBAQBec])` path.
 ///
 /// The matrices supplied here are protein (row) x sample (column); AnnData wants
 /// observation (sample) x variable (protein), so both are transposed. `X` holds
-/// the raw iBAQ (missing cells already 0 from `build_matrix`). The `IbaqBec`
+/// the raw piBAQ (missing cells already 0 from `build_matrix`). The `PiBAQBec`
 /// layer is built from the *merged long table*: a corrected value only lands in
 /// a cell when that (sample, protein) pair was present in the input; cells that
 /// were absent stay 0 (the Python layer pivot fills them with 0 rather than the
-/// ComBat output, because the absent row never receives an `IbaqBec` value).
+/// ComBat output, because the absent row never receives a `PiBAQBec` value).
 fn export_anndata(
     args: &CorrectBatchesArgs,
     table: &LongTable,
@@ -169,7 +169,7 @@ fn export_anndata(
     }
 
     let output_path = anndata_path(&args.output);
-    let layers = vec![(args.ibaq_corrected_column.clone(), layer)];
+    let layers = vec![(args.pibaq_corrected_column.clone(), layer)];
     let export = crate::h5ad::AnnDataExport {
         obs_names: samples,
         obs_index_name: &args.sample_id_column,
@@ -197,7 +197,7 @@ fn load_long_table(
     comment: Option<u8>,
     sample_column: &str,
     protein_column: &str,
-    ibaq_column: &str,
+    pibaq_column: &str,
 ) -> Result<LongTable> {
     let mut headers: Option<Vec<String>> = None;
     let mut rows = Vec::new();
@@ -228,15 +228,15 @@ fn load_long_table(
     let headers = headers.unwrap_or_default();
     let sample_index = column_index(&headers, sample_column)?;
     let protein_index = column_index(&headers, protein_column)?;
-    let ibaq_index = column_index(&headers, ibaq_column)?;
-    validate_source_columns(sample_column, protein_column, ibaq_column)?;
+    let pibaq_index = column_index(&headers, pibaq_column)?;
+    validate_source_columns(sample_column, protein_column, pibaq_column)?;
 
     Ok(LongTable {
         headers,
         rows,
         sample_index,
         protein_index,
-        ibaq_index,
+        pibaq_index,
     })
 }
 
@@ -270,7 +270,7 @@ fn read_long_file(
     Ok((headers, rows))
 }
 
-/// Build the protein (row) x sample (column) matrix of raw iBAQ values, filling
+/// Build the protein (row) x sample (column) matrix of raw piBAQ values, filling
 /// missing cells with 0.0 (matching `pivot_wider(..., fillna=True)`). Duplicate
 /// (protein, sample) combinations are rejected, matching `pivot_wider`.
 fn build_matrix(
@@ -293,8 +293,8 @@ fn build_matrix(
                 ),
             });
         }
-        let raw = cell(row, table.ibaq_index)?;
-        let value = parse_value(raw, table.ibaq_index)?;
+        let raw = cell(row, table.pibaq_index)?;
+        let value = parse_value(raw, table.pibaq_index)?;
         let (Some(&r), Some(&c)) = (protein_pos.get(protein), sample_pos.get(sample)) else {
             // Unreachable: proteins/samples were derived from these same rows.
             continue;
@@ -436,7 +436,7 @@ fn ensure_batch_sizes(batch: &[usize]) -> Result<()> {
 }
 
 /// Return the matched files for `folder/pattern`, sorted by path. Supports the
-/// shell-style wildcards `*` and `?` used by mokume's default `*ibaq.tsv`.
+/// shell-style wildcards `*` and `?` used by mokume's default `*pibaq.tsv`.
 fn matched_files(folder: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
     let entries = std::fs::read_dir(folder).map_err(|source| MokumeError::Io {
         path: folder.to_path_buf(),
@@ -463,7 +463,7 @@ fn matched_files(folder: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
 }
 
 /// Minimal glob matcher for `*` (any run, including empty) and `?` (single
-/// character). Sufficient for the `*ibaq.tsv` style patterns mokume uses.
+/// character). Sufficient for the `*pibaq.tsv` style patterns mokume uses.
 fn glob_match(pattern: &str, name: &str) -> bool {
     let pattern = pattern.chars().collect::<Vec<_>>();
     let name = name.chars().collect::<Vec<_>>();
@@ -587,12 +587,12 @@ fn validate_unique_headers(path: &Path, headers: &[String]) -> Result<()> {
 fn validate_source_columns(
     sample_column: &str,
     protein_column: &str,
-    ibaq_column: &str,
+    pibaq_column: &str,
 ) -> Result<()> {
     let roles = [
         ("sample", sample_column),
         ("protein", protein_column),
-        ("raw iBAQ", ibaq_column),
+        ("raw piBAQ", pibaq_column),
     ];
     for (left_index, (left_name, left_column)) in roles.iter().enumerate() {
         for (right_name, right_column) in roles.iter().skip(left_index + 1) {
@@ -801,7 +801,7 @@ mod tests {
             .collect::<Vec<_>>();
         let sample_col = column_index(&headers, "SampleID")?;
         let protein_col = column_index(&headers, "ProteinName")?;
-        let corrected_col = column_index(&headers, "IbaqBec")?;
+        let corrected_col = column_index(&headers, "PiBAQBec")?;
         let mut values = HashMap::new();
         for record in reader.records() {
             let record = record?;
@@ -840,9 +840,9 @@ mod tests {
 
     #[test]
     fn glob_match_handles_wildcards() {
-        assert!(glob_match("*ibaq.tsv", "batchA_ibaq.tsv"));
-        assert!(glob_match("*ibaq.tsv", "ibaq.tsv"));
-        assert!(!glob_match("*ibaq.tsv", "proteins.tsv"));
+        assert!(glob_match("*pibaq.tsv", "batchA_pibaq.tsv"));
+        assert!(glob_match("*pibaq.tsv", "pibaq.tsv"));
+        assert!(!glob_match("*pibaq.tsv", "proteins.tsv"));
         assert!(glob_match("sample?.tsv", "sample1.tsv"));
         assert!(!glob_match("sample?.tsv", "sample12.tsv"));
         assert!(glob_match("*", "anything"));
@@ -879,20 +879,20 @@ mod tests {
     fn args_for(folder: &Path, output: &Path) -> CorrectBatchesArgs {
         CorrectBatchesArgs {
             folder: folder.to_path_buf(),
-            pattern: "*ibaq.tsv".to_string(),
+            pattern: "*pibaq.tsv".to_string(),
             comment: "#".to_string(),
             sep: "\t".to_string(),
             output: output.to_path_buf(),
             sample_id_column: "SampleID".to_string(),
             protein_id_column: "ProteinName".to_string(),
-            ibaq_raw_column: "Ibaq".to_string(),
-            ibaq_corrected_column: "IbaqBec".to_string(),
+            pibaq_raw_column: "PiBAQ".to_string(),
+            pibaq_corrected_column: "PiBAQBec".to_string(),
             export_anndata: false,
         }
     }
 
-    const BATCH_A: &str = "# synthetic ibaq fixture for correct-batches golden test\n\
-ProteinName\tSampleID\tCondition\tIbaq\n\
+    const BATCH_A: &str = "# synthetic pibaq fixture for correct-batches golden test\n\
+ProteinName\tSampleID\tCondition\tPiBAQ\n\
 P1\tB1-s1\tctrl\t10.0\n\
 P2\tB1-s1\tctrl\t5.0\n\
 P3\tB1-s1\tctrl\t1.0\n\
@@ -908,8 +908,8 @@ P2\tB1-s3\tcase\t4.0\n\
 P3\tB1-s3\tcase\t1.5\n\
 P4\tB1-s3\tcase\t48.0\n";
 
-    const BATCH_B: &str = "# synthetic ibaq fixture for correct-batches golden test\n\
-ProteinName\tSampleID\tCondition\tIbaq\n\
+    const BATCH_B: &str = "# synthetic pibaq fixture for correct-batches golden test\n\
+ProteinName\tSampleID\tCondition\tPiBAQ\n\
 P1\tB2-s1\tctrl\t20.0\n\
 P2\tB2-s1\tctrl\t8.0\n\
 P3\tB2-s1\tctrl\t3.0\n\
@@ -927,7 +927,7 @@ P4\tB2-s3\tcase\t29.0\n\
 P5\tB2-s3\tcase\t6.5\n";
 
     const DELIMITED_A: &str = r#"# comma-delimited correct-batches fixture
-ProteinName,SampleID,Metadata,Ibaq
+ProteinName,SampleID,Metadata,PiBAQ
 P1,B1-s1,"alpha,beta",10.0
 P2,B1-s1,"line one
 line two",5.0
@@ -936,29 +936,29 @@ P2,B1-s2,plain,6.0
 "#;
 
     const DELIMITED_B: &str = r#"# comma-delimited correct-batches fixture
-ProteinName,SampleID,Metadata,Ibaq
+ProteinName,SampleID,Metadata,PiBAQ
 P1,B2-s1,"quoted ""value""",20.0
 P2,B2-s1,plain,8.0
 P1,B2-s2,plain,21.0
 P2,B2-s2,plain,7.5
 "#;
 
-    const COLLISION_A: &str = "ProteinName\tSampleID\tIbaq\tIbaqBec\n\
+    const COLLISION_A: &str = "ProteinName\tSampleID\tPiBAQ\tPiBAQBec\n\
 P1\tB1-s1\t10.0\told\n\
 P2\tB1-s1\t5.0\told\n\
 P1\tB1-s2\t11.0\told\n\
 P2\tB1-s2\t6.0\told\n";
 
-    const COLLISION_B: &str = "ProteinName\tSampleID\tIbaq\tIbaqBec\n\
+    const COLLISION_B: &str = "ProteinName\tSampleID\tPiBAQ\tPiBAQBec\n\
 P1\tB2-s1\t20.0\told\n\
 P2\tB2-s1\t8.0\told\n\
 P1\tB2-s2\t21.0\told\n\
 P2\tB2-s2\t7.5\told\n";
 
-    // Expected IbaqBec values keyed by (SampleID, ProteinName), captured from the
+    // Expected PiBAQBec values keyed by (SampleID, ProteinName), captured from the
     // Python oracle:
     //   conda run -n Bigbio python -m mokume.mokume_cli correct-batches \
-    //     --folder <fixture-dir> --pattern "*ibaq.tsv" --output <out.tsv>
+    //     --folder <fixture-dir> --pattern "*pibaq.tsv" --output <out.tsv>
     // inmoose 0.9.1 / pandas. B1-s3/P5 is intentionally absent in the input, so
     // it never appears in the output (left-merge miss).
     const EXPECTED: &[(&str, &str, f64)] = &[
@@ -993,14 +993,14 @@ P2\tB2-s2\t7.5\told\n";
         ("B2-s3", "P5", 4.742656799092371),
     ];
 
-    /// Golden test: the Rust command reproduces the Python oracle's IbaqBec
+    /// Golden test: the Rust command reproduces the Python oracle's PiBAQBec
     /// values to relative 1e-6 on a synthetic 2-batch / 6-sample / 5-protein
     /// dataset (one cell intentionally missing).
     #[test]
     fn correct_batches_matches_python_oracle() -> TestResult<()> {
         let dir = temp_dir("oracle")?;
-        write_file(&dir, "batchA_ibaq.tsv", BATCH_A)?;
-        write_file(&dir, "batchB_ibaq.tsv", BATCH_B)?;
+        write_file(&dir, "batchA_pibaq.tsv", BATCH_A)?;
+        write_file(&dir, "batchB_pibaq.tsv", BATCH_B)?;
         let output = dir.join("corrected.tsv");
 
         run_correct_batches(&args_for(&dir, &output))?;
@@ -1028,16 +1028,16 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn reordered_input_columns_preserve_identity() -> TestResult<()> {
         let canonical_dir = temp_dir("canonical-order")?;
-        write_file(&canonical_dir, "batchA_ibaq.tsv", BATCH_A)?;
-        write_file(&canonical_dir, "batchB_ibaq.tsv", BATCH_B)?;
+        write_file(&canonical_dir, "batchA_pibaq.tsv", BATCH_A)?;
+        write_file(&canonical_dir, "batchB_pibaq.tsv", BATCH_B)?;
         let canonical_output = canonical_dir.join("corrected.tsv");
         run_correct_batches(&args_for(&canonical_dir, &canonical_output))?;
 
         let reordered_dir = temp_dir("reordered-order")?;
-        write_file(&reordered_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(&reordered_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(
             &reordered_dir,
-            "batchB_ibaq.tsv",
+            "batchB_pibaq.tsv",
             &reorder_first_two_columns(BATCH_B),
         )?;
         let reordered_output = reordered_dir.join("corrected.tsv");
@@ -1054,11 +1054,11 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn selected_delimiter_and_quoted_fields_round_trip() -> TestResult<()> {
         let dir = temp_dir("delimited-output")?;
-        write_file(&dir, "batchA_ibaq.csv", DELIMITED_A)?;
-        write_file(&dir, "batchB_ibaq.csv", DELIMITED_B)?;
+        write_file(&dir, "batchA_pibaq.csv", DELIMITED_A)?;
+        write_file(&dir, "batchB_pibaq.csv", DELIMITED_B)?;
         let output = dir.join("corrected.csv");
         let mut args = args_for(&dir, &output);
-        args.pattern = "*ibaq.csv".to_string();
+        args.pattern = "*pibaq.csv".to_string();
         args.sep = ",".to_string();
         run_correct_batches(&args)?;
 
@@ -1067,7 +1067,7 @@ P2\tB2-s2\t7.5\told\n";
             .from_path(&output)?;
         assert_eq!(
             reader.headers()?.iter().collect::<Vec<_>>(),
-            vec!["ProteinName", "SampleID", "Metadata", "Ibaq", "IbaqBec"]
+            vec!["ProteinName", "SampleID", "Metadata", "PiBAQ", "PiBAQBec"]
         );
         let mut metadata = HashMap::new();
         for record in reader.records() {
@@ -1101,10 +1101,10 @@ P2\tB2-s2\t7.5\told\n";
         let duplicate_dir = temp_dir("duplicate-header")?;
         write_file(
             &duplicate_dir,
-            "batchA_ibaq.tsv",
-            "ProteinName\tSampleID\tIbaq\tIbaq\nP1\tB1-s1\t10\t10\nP1\tB1-s2\t11\t11\n",
+            "batchA_pibaq.tsv",
+            "ProteinName\tSampleID\tPiBAQ\tPiBAQ\nP1\tB1-s1\t10\t10\nP1\tB1-s2\t11\t11\n",
         )?;
-        write_file(&duplicate_dir, "batchB_ibaq.tsv", BATCH_B)?;
+        write_file(&duplicate_dir, "batchB_pibaq.tsv", BATCH_B)?;
         let duplicate_output = duplicate_dir.join("corrected.tsv");
         let args = args_for(&duplicate_dir, &duplicate_output);
         assert_rejected_without_output(&args, &duplicate_output, "Duplicate columns")
@@ -1113,11 +1113,11 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn extra_schema_column_fails_before_output_creation() -> TestResult<()> {
         let mismatch_dir = temp_dir("schema-mismatch")?;
-        write_file(&mismatch_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(&mismatch_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(
             &mismatch_dir,
-            "batchB_ibaq.tsv",
-            "ProteinName\tSampleID\tIbaq\tExtra\nP1\tB2-s1\t20\textra\nP2\tB2-s1\t8\textra\nP1\tB2-s2\t21\textra\nP2\tB2-s2\t7.5\textra\n",
+            "batchB_pibaq.tsv",
+            "ProteinName\tSampleID\tPiBAQ\tExtra\nP1\tB2-s1\t20\textra\nP2\tB2-s1\t8\textra\nP1\tB2-s2\t21\textra\nP2\tB2-s2\t7.5\textra\n",
         )?;
         let mismatch_output = mismatch_dir.join("corrected.tsv");
         let args = args_for(&mismatch_dir, &mismatch_output);
@@ -1127,10 +1127,10 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn missing_schema_column_fails_before_output_creation() -> TestResult<()> {
         let missing_dir = temp_dir("schema-missing")?;
-        write_file(&missing_dir, "batchA_ibaq.tsv", BATCH_A)?;
+        write_file(&missing_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(
             &missing_dir,
-            "batchB_ibaq.tsv",
+            "batchB_pibaq.tsv",
             "ProteinName\tSampleID\nP1\tB2-s1\nP2\tB2-s1\nP1\tB2-s2\nP2\tB2-s2\n",
         )?;
         let missing_output = missing_dir.join("corrected.tsv");
@@ -1141,8 +1141,8 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn duplicate_source_roles_fail_before_output_creation() -> TestResult<()> {
         let role_dir = temp_dir("source-role")?;
-        write_file(&role_dir, "batchA_ibaq.tsv", BATCH_A)?;
-        write_file(&role_dir, "batchB_ibaq.tsv", BATCH_B)?;
+        write_file(&role_dir, "batchA_pibaq.tsv", BATCH_A)?;
+        write_file(&role_dir, "batchB_pibaq.tsv", BATCH_B)?;
         let role_output = role_dir.join("corrected.tsv");
         let mut role_args = args_for(&role_dir, &role_output);
         role_args.sample_id_column = "ProteinName".to_string();
@@ -1152,8 +1152,8 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn corrected_column_collision_fails_before_output_creation() -> TestResult<()> {
         let collision_dir = temp_dir("corrected-column")?;
-        write_file(&collision_dir, "batchA_ibaq.tsv", COLLISION_A)?;
-        write_file(&collision_dir, "batchB_ibaq.tsv", COLLISION_B)?;
+        write_file(&collision_dir, "batchA_pibaq.tsv", COLLISION_A)?;
+        write_file(&collision_dir, "batchB_pibaq.tsv", COLLISION_B)?;
         let collision_output = collision_dir.join("corrected.tsv");
         let args = args_for(&collision_dir, &collision_output);
         assert_rejected_without_output(&args, &collision_output, "already exists")
@@ -1162,8 +1162,8 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn input_output_collision_does_not_truncate_input() -> TestResult<()> {
         let dir = temp_dir("input-output-collision")?;
-        let input = write_file(&dir, "batchA_ibaq.tsv", BATCH_A)?;
-        write_file(&dir, "batchB_ibaq.tsv", BATCH_B)?;
+        let input = write_file(&dir, "batchA_pibaq.tsv", BATCH_A)?;
+        write_file(&dir, "batchB_pibaq.tsv", BATCH_B)?;
         let before = std::fs::read(&input)?;
         let error = error_message(
             run_correct_batches(&args_for(&dir, &input)),
@@ -1172,9 +1172,9 @@ P2\tB2-s2\t7.5\told\n";
         assert!(error.contains("also an input file"));
         assert_eq!(std::fs::read(&input)?, before);
 
-        let future_output = dir.join("future_ibaq.tsv");
+        let future_output = dir.join("future_pibaq.tsv");
         let mut args = args_for(&dir, &future_output);
-        args.pattern = "*ibaq.tsv".to_string();
+        args.pattern = "*pibaq.tsv".to_string();
         let future_error = error_message(
             run_correct_batches(&args),
             "an output matching the input pattern must be rejected",
@@ -1193,8 +1193,8 @@ P2\tB2-s2\t7.5\told\n";
     #[test]
     fn export_anndata_writes_h5ad_file() -> TestResult<()> {
         let dir = temp_dir("anndata")?;
-        write_file(&dir, "batchA_ibaq.tsv", BATCH_A)?;
-        write_file(&dir, "batchB_ibaq.tsv", BATCH_B)?;
+        write_file(&dir, "batchA_pibaq.tsv", BATCH_A)?;
+        write_file(&dir, "batchB_pibaq.tsv", BATCH_B)?;
         let output = dir.join("corrected.tsv");
         let mut args = args_for(&dir, &output);
         args.export_anndata = true;
@@ -1209,7 +1209,7 @@ P2\tB2-s2\t7.5\told\n";
             h5ad.display()
         );
 
-        // Read X / IbaqBec back with the hdf5 crate and confirm the corrected
+        // Read X / PiBAQBec back with the hdf5 crate and confirm the corrected
         // layer matches the oracle (samples x proteins) and that the absent
         // input cell B1-s3/P5 carries 0 in both X and the layer.
         let file = hdf5_metno::File::open(&h5ad)?;
@@ -1221,7 +1221,7 @@ P2\tB2-s2\t7.5\told\n";
         let var: Vec<String> = var.iter().map(|s| s.as_str().to_string()).collect();
 
         let x: ndarray::Array2<f64> = file.dataset("X")?.read_2d()?;
-        let layer: ndarray::Array2<f64> = file.dataset("layers/IbaqBec")?.read_2d()?;
+        let layer: ndarray::Array2<f64> = file.dataset("layers/PiBAQBec")?.read_2d()?;
         assert_eq!(x.shape(), &[obs.len(), var.len()]);
         assert_eq!(layer.shape(), &[obs.len(), var.len()]);
 
@@ -1242,14 +1242,14 @@ P2\tB2-s2\t7.5\told\n";
         }
 
         // The absent input cell keeps 0 in both X and the layer (it never
-        // received an IbaqBec value in the merged long table).
+        // received a PiBAQBec value in the merged long table).
         let (Some(i), Some(j)) = (obs_idx("B1-s3"), var_idx("P5")) else {
             panic!("missing B1-s3/P5 in AnnData index");
         };
         assert_eq!(x[[i, j]], 0.0, "absent X cell must be 0");
         assert_eq!(layer[[i, j]], 0.0, "absent layer cell must be 0");
 
-        // Raw X reflects the input iBAQ values.
+        // Raw X reflects the input piBAQ values.
         let (Some(i), Some(j)) = (obs_idx("B1-s1"), var_idx("P4")) else {
             panic!("missing B1-s1/P4 in AnnData index");
         };

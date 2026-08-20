@@ -4,10 +4,10 @@
 //! This mirrors `mokume.commands.peptides2protein.peptides2protein` in the
 //! Python package. Two code paths exist:
 //!
-//!   * iBAQ (`--method ibaq`, the default) reuses the existing piBAQ core via
-//!     `mokume_pipeline::run_ibaq_from_peptides`. A FASTA is required to derive
+//!   * piBAQ (`--method pibaq`, the default) reuses the existing piBAQ core via
+//!     `mokume_pipeline::run_pibaq_from_peptides`. A FASTA is required to derive
 //!     theoretical peptide counts. The output is the Python long-format table
-//!     `ProteinName, SampleID, Condition, NormIntensity, Ibaq, FamilyId,
+//!     `ProteinName, SampleID, Condition, NormIntensity, PiBAQ, FamilyId,
 //!     EvidenceLevel, FamilySize`.
 //!
 //!   * The deterministic generic methods `sum`, `top3`, and `topn` are computed
@@ -24,22 +24,22 @@
 //!     `min_nonan = 2` (its `min_peptides`). The output is the same `Intensity`
 //!     long-format table, keeping only `> 0` rows (Python's `_parse_wide_output`).
 //!
-//! iBAQ extras (P3) are computed as deterministic post-processing on the piBAQ
+//! piBAQ extras (P3) are computed as deterministic post-processing on the piBAQ
 //! result, wired into `--tpa`, `--ruler`, and `--normalize` (see the
-//! [`ibaq_extras`] module):
+//! [`pibaq_extras`] module):
 //!   * `--tpa`: Total Protein Approach -- `MolecularWeight` + `TPA` columns.
-//!   * `--normalize`: the Python `normalize_ibaq` PRIDE/ProteomicsDB transforms
-//!     (`IbaqNorm`, `IbaqLog`, `IbaqPpb`).
+//!   * `--normalize`: the Python `normalize_pibaq` PRIDE/ProteomicsDB transforms
+//!     (`PiBAQNorm`, `PiBAQLog`, `PiBAQPpb`).
 //!   * `--ruler`: the ProteomicRuler copy number / moles / weight /
 //!     concentration columns (requires `--tpa`).
 //!
-//! iBAQ digestion computes natively in Rust for the pyOpenMS enzymes whose
+//! piBAQ digestion computes natively in Rust for the pyOpenMS enzymes whose
 //! cleavage rules are ported (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P],
-//! Glu-C, Asp-N, Lys-N, PepsinA, and the other rules `supports_ibaq_enzyme`
+//! Glu-C, Asp-N, Lys-N, PepsinA, and the other rules `supports_pibaq_enzyme`
 //! accepts -- that function is the authoritative ported set), all with zero missed
 //! cleavages; the per-enzyme digests are oracle-locked against pyOpenMS in the
 //! pipeline crate. For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific
-//! cleavage, ...) the Rust kernel has no cleavage rule, so iBAQ for that enzyme is
+//! cleavage, ...) the Rust kernel has no cleavage rule, so piBAQ for that enzyme is
 //! not supported here and the command fails with a clear error pointing to the
 //! Python wheel; the default `Trypsin` path and every other ported enzyme are
 //! never affected.
@@ -48,7 +48,7 @@
 //! tab-separated `.tsv`, or a parquet file (matching Python's `is_parquet`
 //! magic-byte check + `pd.read_parquet`), with at minimum `ProteinName`,
 //! `SampleID`, and `NormIntensity`. The peptide column is `PeptideCanonical`
-//! (preferred) or `PeptideSequence`; it is required for iBAQ. `Condition` is
+//! (preferred) or `PeptideSequence`; it is required for piBAQ. `Condition` is
 //! optional. Parquet `SampleID` / `Condition` columns may be dictionary-encoded
 //! (pandas `Categorical`), as written by `features2peptides --save_parquet`.
 
@@ -57,11 +57,12 @@ use std::fs::File;
 use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::path::Path;
 
+use mokume_core::quant::parse_topn_from_method_name;
 use mokume_core::{MokumeError, Result};
 use mokume_io::read_peptide_parquet;
 use mokume_pipeline::{
-    run_ibaq_from_peptides, run_lfq_from_peptides, supports_ibaq_enzyme, IbaqFromPeptidesParams,
-    LfqPeptideObservation, PeptideObservation,
+    run_lfq_from_peptides, run_pibaq_from_peptides, supports_pibaq_enzyme, LfqPeptideObservation,
+    PeptideObservation, PibaqFromPeptidesParams,
 };
 
 use crate::Peptides2ProteinArgs;
@@ -115,15 +116,19 @@ pub fn run_peptides_to_protein(args: &Peptides2ProteinArgs) -> Result<()> {
     };
 
     // `--verbose` in Python writes the `--qc_report` QC PDF, and this happens
-    // *only* on the iBAQ path (`ibaq.py:969`); the generic / LFQ branches in
+    // *only* on the piBAQ path (`pibaq.py:969`); the generic / LFQ branches in
     // `commands/peptides2protein.py` never touch `verbose`/`qc_report`. The QC
-    // plotting itself moved to the Python wheel, so the iBAQ path prints a pointer
-    // to the wheel command instead of drawing a PDF (see `run_ibaq`); `--verbose`
+    // plotting itself moved to the Python wheel, so the piBAQ path prints a pointer
+    // to the wheel command instead of drawing a PDF (see `run_pibaq`); `--verbose`
     // on any other method stays the same no-op it is in Python.
 
     match method.as_str() {
-        "ibaq" => run_ibaq(args, output),
-        "sum" | "top3" | "topn" => run_generic(args, &method, output),
+        "pibaq" => run_pibaq(args, output),
+        "sum" => run_generic(args, &method, output),
+        // `--method` is validated (and `topn` normalized to `top3`) by
+        // `parse_peptides2protein_method`, so any `top`-prefixed name reaching
+        // here is a well-formed `top<N>`.
+        name if parse_topn_from_method_name(name).is_some() => run_generic(args, &method, output),
         "maxlfq" | "directlfq" => run_lfq(args, &method, output),
         other => Err(MokumeError::InvalidInput {
             message: format!("unknown peptides2protein method '{other}'"),
@@ -208,23 +213,23 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
     )
 }
 
-/// iBAQ path: reuse the existing piBAQ core; emit the Python long-format table
+/// piBAQ path: reuse the existing piBAQ core; emit the Python long-format table
 /// plus any requested extras (`--tpa`, `--normalize`, `--ruler`).
 ///
 /// For an enzyme whose cleavage rule is not ported to Rust (anything outside the
-/// set [`supports_ibaq_enzyme`] accepts), the Rust kernel cannot digest the
-/// proteome, so iBAQ for that enzyme is not supported here: the command fails with
+/// set [`supports_pibaq_enzyme`] accepts), the Rust kernel cannot digest the
+/// proteome, so piBAQ for that enzyme is not supported here: the command fails with
 /// a clear `InvalidInput` that points to the Python wheel. The `--fasta`
 /// precondition is still enforced first, matching the native path. The default
 /// `Trypsin` path and every other ported enzyme stay on the native Rust kernel
 /// below.
-fn run_ibaq(args: &Peptides2ProteinArgs, output: &Path) -> Result<()> {
+fn run_pibaq(args: &Peptides2ProteinArgs, output: &Path) -> Result<()> {
     // Resolve the organism up front (matching Python `OrganismDescription.get`,
     // which raises when the name is unknown). The default is `human`.
     let organism = if args.organism.is_empty() {
         None
     } else {
-        Some(ibaq_extras::resolve_organism(&args.organism)?)
+        Some(pibaq_extras::resolve_organism(&args.organism)?)
     };
 
     // The proteomic ruler requires TPA + non-zero ploidy/cpc + organism, exactly
@@ -240,7 +245,7 @@ fn run_ibaq(args: &Peptides2ProteinArgs, output: &Path) -> Result<()> {
 
     let Some(fasta) = args.fasta.as_ref() else {
         return Err(MokumeError::InvalidInput {
-            message: "the --fasta option is required for the iBAQ method".to_owned(),
+            message: "the --fasta option is required for the piBAQ method".to_owned(),
         });
     };
     if !fasta.exists() {
@@ -250,15 +255,16 @@ fn run_ibaq(args: &Peptides2ProteinArgs, output: &Path) -> Result<()> {
     }
 
     // Enzymes whose cleavage rule is not ported to the Rust kernel cannot be
-    // digested here. Point the user to the Python wheel rather than silently
-    // producing wrong numbers. The `--fasta` precondition above runs first so an
-    // unported enzyme without a FASTA fails on the missing FASTA, as before.
-    if !supports_ibaq_enzyme(&args.enzyme) {
+    // digested here. Point the user to the Python fallback shipped in the wheel
+    // rather than silently producing wrong numbers. The `--fasta` precondition
+    // above runs first so an unported enzyme without a FASTA fails on the missing
+    // FASTA, as before.
+    if !supports_pibaq_enzyme(&args.enzyme) {
         return Err(MokumeError::InvalidInput {
             message: format!(
-                "iBAQ digestion enzyme '{}' is not ported to the Rust kernel. \
-Install the Rust wheel and run it there: pip install mokume-rs[ibaq]; \
-python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
+                "piBAQ digestion enzyme '{}' is not ported to the Rust kernel. \
+Install the piBAQ extra and run the Python fallback: pip install mokume[pibaq]; \
+python -m mokume.commands.peptides2protein_pibaq --enzyme '{}' ...",
                 args.enzyme, args.enzyme
             ),
         });
@@ -268,7 +274,7 @@ python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
     if !table.has_peptide {
         return Err(MokumeError::InvalidInput {
             message: format!(
-                "iBAQ requires a peptide column ('{PEPTIDE_CANONICAL}' or '{PEPTIDE_SEQUENCE}')"
+                "piBAQ requires a peptide column ('{PEPTIDE_CANONICAL}' or '{PEPTIDE_SEQUENCE}')"
             ),
         });
     }
@@ -288,7 +294,7 @@ python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
         });
     }
 
-    let params = IbaqFromPeptidesParams {
+    let params = PibaqFromPeptidesParams {
         fasta: fasta.clone(),
         min_aa: args.min_aa,
         max_aa: args.max_aa,
@@ -299,16 +305,16 @@ python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
         enzyme: args.enzyme.clone(),
         tpa: args.tpa,
     };
-    let rows = run_ibaq_from_peptides(&observations, &params)?;
+    let rows = run_pibaq_from_peptides(&observations, &params)?;
 
     // Lift the piBAQ rows into the extra-aware records, attach the requested
     // post-processing columns, then emit. The piBAQ allocation math is never
-    // re-touched: the extras only read `NormIntensity`, `Ibaq`, and (for
+    // re-touched: the extras only read `NormIntensity`, `PiBAQ`, and (for
     // TPA/ruler) the molecular weight the core already computed.
-    let mut records = ibaq_extras::IbaqExtraRow::lift(rows, &condition_by_sample);
+    let mut records = pibaq_extras::PibaqExtraRow::lift(rows, &condition_by_sample);
 
     if args.normalize {
-        ibaq_extras::normalize_ibaq(&mut records);
+        pibaq_extras::normalize_pibaq(&mut records);
     }
     if args.ruler {
         let Some(organism) = organism.as_ref() else {
@@ -316,7 +322,7 @@ python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
                 message: "the --organism option is required for the proteomic ruler".to_owned(),
             });
         };
-        ibaq_extras::apply_ruler(&mut records, organism, args.ploidy, args.cpc);
+        pibaq_extras::apply_ruler(&mut records, organism, args.ploidy, args.cpc);
     }
 
     // Stable, deterministic output ordering: protein then sample.
@@ -326,7 +332,7 @@ python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
             .then_with(|| left.sample.cmp(&right.sample))
     });
 
-    write_ibaq_output(
+    write_pibaq_output(
         output,
         &records,
         table.has_condition,
@@ -342,7 +348,7 @@ python -m mokume.commands.peptides2protein_ibaq --enzyme '{}' ...",
     if args.verbose {
         eprintln!(
             "note: QC report generation moved to the Python wheel: \
-pip install mokume-rs[plotting]; \
+pip install mokume[plotting]; \
 mokume.peptides2protein_qc(protein_table=\"{}\", qc_report=\"{}\")",
             output.display(),
             args.qc_report.display()
@@ -352,14 +358,22 @@ mokume.peptides2protein_qc(protein_table=\"{}\", qc_report=\"{}\")",
     Ok(())
 }
 
-/// Generic deterministic path (`sum` / `top3` / `topn`): faithful re-creation of
-/// the Python `quantify` group-bys.
+/// Generic deterministic path (`sum` / `top<N>`): faithful re-creation of the
+/// Python `quantify` group-bys.
 fn run_generic(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<()> {
+    // N is spelled in the method name (`top5`), so there is no separate option
+    // to read it from. The caller only routes `sum` and validated `top<N>` here,
+    // but report rather than panic if that ever stops holding.
     let topn = match method {
         "sum" => None,
-        "top3" => Some(3),
-        "topn" => Some(args.topn_n),
-        _ => unreachable!("caller restricts the method set"),
+        name => match parse_topn_from_method_name(name) {
+            Some(n) => Some(n),
+            None => {
+                return Err(MokumeError::InvalidInput {
+                    message: format!("unknown peptides2protein method '{name}'"),
+                })
+            }
+        },
     };
 
     let table = load_peptide_table(&args.peptides)?;
@@ -396,7 +410,7 @@ fn run_generic(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Resu
     });
 
     // `--normalize` divides each protein's intensity by its sample total, the
-    // generic-path transform in the Python command (the iBAQ path is deferred).
+    // generic-path transform in the Python command (the piBAQ path is deferred).
     let norm = if args.normalize {
         let mut totals: HashMap<&str, f64> = HashMap::new();
         for row in &results {
@@ -474,7 +488,7 @@ fn looks_like_parquet(path: &Path) -> Result<bool> {
 /// Load a peptide table from a parquet file, applying the same intensity filter
 /// (`dropna` + `> 0`) and `"Empty"` condition default as the CSV path so both
 /// inputs yield identical [`PeptideTable`]s. Mirrors Python's `pd.read_parquet`
-/// followed by the generic / iBAQ numeric coercion.
+/// followed by the generic / piBAQ numeric coercion.
 fn load_peptide_table_parquet(path: &Path) -> Result<PeptideTable> {
     let raw = read_peptide_parquet(path)?;
     let mut rows = Vec::with_capacity(raw.rows.len());
@@ -508,7 +522,7 @@ fn load_peptide_table_parquet(path: &Path) -> Result<PeptideTable> {
 
 /// Read a peptide-level table from CSV (comma) or `.tsv` (tab). Rows with a
 /// missing or non-positive intensity are dropped, matching the Python
-/// `dropna` + `> 0` filter applied on the iBAQ path and the implicit numeric
+/// `dropna` + `> 0` filter applied on the piBAQ path and the implicit numeric
 /// coercion on the generic path.
 fn load_peptide_table_csv(path: &Path) -> Result<PeptideTable> {
     let delimiter = if path
@@ -581,12 +595,12 @@ fn load_peptide_table_csv(path: &Path) -> Result<PeptideTable> {
     })
 }
 
-/// Write the iBAQ long-format output (tab-separated, matching Python). Columns
+/// Write the piBAQ long-format output (tab-separated, matching Python). Columns
 /// are appended in the Python `peptides_to_protein` order: the base eight, then
 /// the TPA pair, then the normalize triple, then the ruler quartet.
-fn write_ibaq_output(
+fn write_pibaq_output(
     output: &Path,
-    rows: &[ibaq_extras::IbaqExtraRow],
+    rows: &[pibaq_extras::PibaqExtraRow],
     has_condition: bool,
     tpa: bool,
     normalize: bool,
@@ -600,27 +614,27 @@ fn write_ibaq_output(
     }
     header.extend([
         NORM_INTENSITY,
-        "Ibaq",
+        "PiBAQ",
         "FamilyId",
         "EvidenceLevel",
         "FamilySize",
     ]);
     if tpa {
-        header.extend([ibaq_extras::MOLECULAR_WEIGHT, ibaq_extras::TPA]);
+        header.extend([pibaq_extras::MOLECULAR_WEIGHT, pibaq_extras::TPA]);
     }
     if normalize {
         header.extend([
-            ibaq_extras::IBAQ_NORM,
-            ibaq_extras::IBAQ_LOG,
-            ibaq_extras::IBAQ_PPB,
+            pibaq_extras::PIBAQ_NORM,
+            pibaq_extras::PIBAQ_LOG,
+            pibaq_extras::PIBAQ_PPB,
         ]);
     }
     if ruler {
         header.extend([
-            ibaq_extras::COPY_NUMBER,
-            ibaq_extras::MOLES_NMOL,
-            ibaq_extras::WEIGHT_NG,
-            ibaq_extras::CONCENTRATION_NM,
+            pibaq_extras::COPY_NUMBER,
+            pibaq_extras::MOLES_NMOL,
+            pibaq_extras::WEIGHT_NG,
+            pibaq_extras::CONCENTRATION_NM,
         ]);
     }
     write_line(&mut writer, output, &header.join("\t"))?;
@@ -631,7 +645,7 @@ fn write_ibaq_output(
             fields.push(row.condition.clone());
         }
         fields.push(format_float(row.norm_intensity));
-        fields.push(format_float(row.ibaq));
+        fields.push(format_float(row.pibaq));
         fields.push(row.family_id.clone());
         fields.push(row.evidence_level.to_owned());
         fields.push(row.family_size.to_string());
@@ -640,9 +654,9 @@ fn write_ibaq_output(
             fields.push(format_optional(row.tpa));
         }
         if normalize {
-            fields.push(format_optional(row.ibaq_norm));
-            fields.push(format_optional(row.ibaq_log));
-            fields.push(format_optional(row.ibaq_ppb));
+            fields.push(format_optional(row.pibaq_norm));
+            fields.push(format_optional(row.pibaq_log));
+            fields.push(format_optional(row.pibaq_ppb));
         }
         if ruler {
             fields.push(format_optional(row.copy_number));
@@ -769,16 +783,16 @@ fn csv_error(path: &Path, source: csv::Error) -> MokumeError {
     }
 }
 
-/// iBAQ post-processing extras: TPA (carried over from the piBAQ core),
-/// `normalize_ibaq` (rIBAQ / `IbaqLog` / `IbaqPpb`), and the ProteomicRuler
+/// piBAQ post-processing extras: TPA (carried over from the piBAQ core),
+/// `normalize_pibaq` (`PiBAQNorm` / `PiBAQLog` / `PiBAQPpb`), and the ProteomicRuler
 /// copy-number / moles / weight / concentration columns.
 ///
 /// Every transform is a deterministic function of the piBAQ `NormIntensity` /
-/// `Ibaq` (and, for TPA/ruler, the `MolecularWeight`) the verified core already
+/// `PiBAQ` (and, for TPA/ruler, the `MolecularWeight`) the verified core already
 /// produced -- the allocation math is never re-touched. Each formula mirrors
-/// `mokume.quantification.ibaq` exactly so the output cells match the Python
+/// `mokume.quantification.pibaq` exactly so the output cells match the Python
 /// oracle to 1e-9.
-mod ibaq_extras {
+mod pibaq_extras {
     use std::collections::HashMap;
 
     use mokume_core::{MokumeError, Result};
@@ -788,12 +802,12 @@ mod ibaq_extras {
     pub(super) const MOLECULAR_WEIGHT: &str = "MolecularWeight";
     /// `TPA` column header (Python `TPA`).
     pub(super) const TPA: &str = "TPA";
-    /// Relative iBAQ column header (Python `IBAQ_NORMALIZED`).
-    pub(super) const IBAQ_NORM: &str = "IbaqNorm";
-    /// Log-shifted iBAQ column header (Python `IBAQ_LOG`).
-    pub(super) const IBAQ_LOG: &str = "IbaqLog";
-    /// Parts-per-billion iBAQ column header (Python `IBAQ_PPB`).
-    pub(super) const IBAQ_PPB: &str = "IbaqPpb";
+    /// Relative piBAQ column header (Python `PIBAQ_NORMALIZED`).
+    pub(super) const PIBAQ_NORM: &str = "PiBAQNorm";
+    /// Log-shifted piBAQ column header (Python `PIBAQ_LOG`).
+    pub(super) const PIBAQ_LOG: &str = "PiBAQLog";
+    /// Parts-per-billion piBAQ column header (Python `PIBAQ_PPB`).
+    pub(super) const PIBAQ_PPB: &str = "PiBAQPpb";
     /// Copy-number column header (Python `COPYNUMBER`).
     pub(super) const COPY_NUMBER: &str = "CopyNumber";
     /// Moles column header (Python `MOLES_NMOL`).
@@ -809,9 +823,9 @@ mod ibaq_extras {
     /// Average base-pair mass, the Python `AVERAGE_BASE_PAIR_MASS` constant.
     const AVERAGE_BASE_PAIR_MASS: f64 = 617.96;
     /// PRIDE parts-per-billion multiplier (`* 100_000_000`).
-    const IBAQ_PPB_FACTOR: f64 = 100_000_000.0;
-    /// ProteomicsDB log shift (`log10(rIBAQ) + 10`).
-    const IBAQ_LOG_SHIFT: f64 = 10.0;
+    const PIBAQ_PPB_FACTOR: f64 = 100_000_000.0;
+    /// ProteomicsDB log shift (`log10(PiBAQNorm) + 10`).
+    const PIBAQ_LOG_SHIFT: f64 = 10.0;
     /// Nanomole-per-mole scale (`1e9 / AVOGADRO`) used for `Moles[nmol]`.
     const NMOL_PER_MOLE: f64 = 1e9;
     /// Nanogram divisor (`/ 1e-9`) used when deriving the ruler volume.
@@ -821,36 +835,36 @@ mod ibaq_extras {
     /// up genome size and histone entries for the proteomic ruler.
     const ORGANISMS_JSON: &str = include_str!("data/organisms.json");
 
-    /// One iBAQ output row, extended with the optional extra columns. The base
-    /// columns mirror [`mokume_pipeline::IbaqProteinRow`]; the `Option` fields
+    /// One piBAQ output row, extended with the optional extra columns. The base
+    /// columns mirror [`mokume_pipeline::PibaqProteinRow`]; the `Option` fields
     /// are populated by the corresponding post-processing pass.
     #[derive(Debug, Clone)]
-    pub(super) struct IbaqExtraRow {
+    pub(super) struct PibaqExtraRow {
         pub(super) protein: String,
         pub(super) sample: String,
         pub(super) condition: String,
         pub(super) norm_intensity: f64,
-        pub(super) ibaq: f64,
+        pub(super) pibaq: f64,
         pub(super) family_id: String,
         pub(super) evidence_level: &'static str,
         pub(super) family_size: usize,
         pub(super) molecular_weight: Option<f64>,
         pub(super) tpa: Option<f64>,
-        pub(super) ibaq_norm: Option<f64>,
-        pub(super) ibaq_log: Option<f64>,
-        pub(super) ibaq_ppb: Option<f64>,
+        pub(super) pibaq_norm: Option<f64>,
+        pub(super) pibaq_log: Option<f64>,
+        pub(super) pibaq_ppb: Option<f64>,
         pub(super) copy_number: Option<f64>,
         pub(super) moles_nmol: Option<f64>,
         pub(super) weight_ng: Option<f64>,
         pub(super) concentration_nm: Option<f64>,
     }
 
-    impl IbaqExtraRow {
+    impl PibaqExtraRow {
         /// Lift the piBAQ core rows into extra-aware records, resolving each
         /// sample's condition (defaulting to `Empty`, as the Python loader fills
         /// a missing `Condition`).
         pub(super) fn lift(
-            rows: Vec<mokume_pipeline::IbaqProteinRow>,
+            rows: Vec<mokume_pipeline::PibaqProteinRow>,
             condition_by_sample: &HashMap<String, String>,
         ) -> Vec<Self> {
             rows.into_iter()
@@ -864,15 +878,15 @@ mod ibaq_extras {
                         sample: row.sample,
                         condition,
                         norm_intensity: row.norm_intensity,
-                        ibaq: row.ibaq,
+                        pibaq: row.pibaq,
                         family_id: row.family_id,
                         evidence_level: row.evidence_level,
                         family_size: row.family_size,
                         molecular_weight: row.molecular_weight,
                         tpa: row.tpa,
-                        ibaq_norm: None,
-                        ibaq_log: None,
-                        ibaq_ppb: None,
+                        pibaq_norm: None,
+                        pibaq_log: None,
+                        pibaq_ppb: None,
                         copy_number: None,
                         moles_nmol: None,
                         weight_ng: None,
@@ -883,16 +897,16 @@ mod ibaq_extras {
         }
     }
 
-    /// `normalize_ibaq`: per (SampleID, Condition) group, divide each protein's
-    /// iBAQ by the group's total iBAQ (rIBAQ), then derive the ProteomicsDB log
-    /// (`10 + log10(rIBAQ)` where positive, else 0) and the PRIDE parts-per-
-    /// billion (`rIBAQ * 1e8`). Mirrors `mokume.quantification.ibaq.normalize_ibaq`.
-    pub(super) fn normalize_ibaq(rows: &mut [IbaqExtraRow]) {
+    /// `normalize_pibaq`: per (SampleID, Condition) group, divide each protein's
+    /// piBAQ by the group's total piBAQ, then derive the ProteomicsDB log
+    /// (`10 + log10(PiBAQNorm)` where positive, else 0) and the PRIDE parts-per-
+    /// billion (`PiBAQNorm * 1e8`). Mirrors `mokume.quantification.pibaq.normalize_pibaq`.
+    pub(super) fn normalize_pibaq(rows: &mut [PibaqExtraRow]) {
         let mut totals: HashMap<(&str, &str), f64> = HashMap::new();
         for row in rows.iter() {
             *totals
                 .entry((row.sample.as_str(), row.condition.as_str()))
-                .or_insert(0.0) += row.ibaq;
+                .or_insert(0.0) += row.pibaq;
         }
         // Snapshot the totals so the borrow ends before the mutable pass.
         let totals: HashMap<(String, String), f64> = totals
@@ -904,14 +918,14 @@ mod ibaq_extras {
                 .get(&(row.sample.clone(), row.condition.clone()))
                 .copied()
                 .unwrap_or(0.0);
-            let norm = row.ibaq / total;
-            row.ibaq_norm = Some(norm);
-            row.ibaq_log = Some(if norm > 0.0 {
-                norm.log10() + IBAQ_LOG_SHIFT
+            let norm = row.pibaq / total;
+            row.pibaq_norm = Some(norm);
+            row.pibaq_log = Some(if norm > 0.0 {
+                norm.log10() + PIBAQ_LOG_SHIFT
             } else {
                 0.0
             });
-            row.ibaq_ppb = Some(norm * IBAQ_PPB_FACTOR);
+            row.pibaq_ppb = Some(norm * PIBAQ_PPB_FACTOR);
         }
     }
 
@@ -957,7 +971,7 @@ mod ibaq_extras {
     /// `= sum(Weight[ng]) / 1e-9 / cpc` and
     /// `Concentration[nM] = volume * Moles[nmol]`.
     pub(super) fn apply_ruler(
-        rows: &mut [IbaqExtraRow],
+        rows: &mut [PibaqExtraRow],
         organism: &Organism,
         ploidy: i32,
         cpc: f64,
@@ -1039,7 +1053,7 @@ mod tests {
     // (protein, sample, peptide) is unique so the Python generic group-bys and
     // the Rust path coincide exactly. P3's `THIDPECK` is intentionally absent
     // from the FASTA digest (the digest yields `ATHIDPECK`), exercising the
-    // FASTA-driven peptide filtering on the iBAQ path.
+    // FASTA-driven peptide filtering on the piBAQ path.
     const PEPTIDES_CSV: &str = "ProteinName,PeptideCanonical,SampleID,Condition,NormIntensity\n\
 P1,PEPTIDEAK,S1,A,100.0\n\
 P1,APEPTIDECK,S1,A,300.0\n\
@@ -1057,7 +1071,7 @@ P3,THIDPECK,S1,A,900.0\n";
         Peptides2ProteinArgs {
             fasta: None,
             peptides: peptides.to_path_buf(),
-            method: "ibaq".to_owned(),
+            method: "pibaq".to_owned(),
             enzyme: "Trypsin".to_owned(),
             normalize: false,
             min_aa: 7,
@@ -1070,7 +1084,6 @@ P3,THIDPECK,S1,A,900.0\n";
             output: Some(output.to_path_buf()),
             verbose: false,
             qc_report: std::path::PathBuf::from("QCprofile.pdf"),
-            topn_n: 3,
             threads: -1,
             min_nonan: 1,
             families_yaml: None,
@@ -1234,7 +1247,9 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle:
-    //   ... peptides2protein --method topn --topn_n 2 -p peptides.csv -o out.tsv
+    //   ... peptides2protein --method top2 -p peptides.csv -o out.tsv
+    // (the oracle predates the rename and was captured as `--method topn
+    // --topn_n 2`; N moved into the method name, the arithmetic did not change)
     #[test]
     fn peptides2protein_topn_matches_python_oracle() -> TestResult<()> {
         let dir = temp_dir("topn")?;
@@ -1243,8 +1258,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&peptides, PEPTIDES_CSV)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "topn".to_owned();
-        args.topn_n = 2;
+        args.method = "top2".to_owned();
         run_peptides_to_protein(&args)?;
 
         let (headers, rows) = read_table(&output)?;
@@ -1306,11 +1320,11 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle:
-    //   ... peptides2protein --method ibaq -f proteome.fasta -p peptides.csv -o out.tsv
-    // Columns: ProteinName SampleID Condition NormIntensity Ibaq FamilyId EvidenceLevel FamilySize.
+    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv -o out.tsv
+    // Columns: ProteinName SampleID Condition NormIntensity PiBAQ FamilyId EvidenceLevel FamilySize.
     #[test]
-    fn peptides2protein_ibaq_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("ibaq")?;
+    fn peptides2protein_pibaq_matches_python_oracle() -> TestResult<()> {
+        let dir = temp_dir("pibaq")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1318,7 +1332,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&fasta, PROTEOME_FASTA)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "ibaq".to_owned();
+        args.method = "pibaq".to_owned();
         args.fasta = Some(fasta);
         run_peptides_to_protein(&args)?;
 
@@ -1330,20 +1344,20 @@ P3,THIDPECK,S1,A,900.0\n";
                 "SampleID",
                 "Condition",
                 "NormIntensity",
-                "Ibaq",
+                "PiBAQ",
                 "FamilyId",
                 "EvidenceLevel",
                 "FamilySize",
             ]
         );
-        // P1/S1: NormIntensity 450, Ibaq 450/3 = 150 (3 proteotypic peptides).
+        // P1/S1: NormIntensity 450, PiBAQ 450/3 = 150 (3 proteotypic peptides).
         assert_cell_close(&headers, &rows, "P1", "S1", "NormIntensity", 450.0)?;
-        assert_cell_close(&headers, &rows, "P1", "S1", "Ibaq", 150.0)?;
-        assert_cell_close(&headers, &rows, "P1", "S2", "Ibaq", 100.0 / 3.0)?;
-        assert_cell_close(&headers, &rows, "P2", "S1", "Ibaq", 500.0)?;
-        // P3/S1: only THIDPEAK is in the digest, so NormIntensity 700, Ibaq 350.
+        assert_cell_close(&headers, &rows, "P1", "S1", "PiBAQ", 150.0)?;
+        assert_cell_close(&headers, &rows, "P1", "S2", "PiBAQ", 100.0 / 3.0)?;
+        assert_cell_close(&headers, &rows, "P2", "S1", "PiBAQ", 500.0)?;
+        // P3/S1: only THIDPEAK is in the digest, so NormIntensity 700, PiBAQ 350.
         assert_cell_close(&headers, &rows, "P3", "S1", "NormIntensity", 700.0)?;
-        assert_cell_close(&headers, &rows, "P3", "S1", "Ibaq", 350.0)?;
+        assert_cell_close(&headers, &rows, "P3", "S1", "PiBAQ", 350.0)?;
         assert_eq!(cell(&headers, &rows, "P1", "S1", "EvidenceLevel")?, "high");
         assert_eq!(
             cell(&headers, &rows, "P2", "S1", "EvidenceLevel")?,
@@ -1353,12 +1367,12 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // `--high-anchor-threshold` only re-buckets the `EvidenceLevel` annotation
-    // (Python `_classify_evidence`); it must never change the `Ibaq` values.
+    // (Python `_classify_evidence`); it must never change the `PiBAQ` values.
     // P1 has 3 anchors, P2 has 1 (min_anchors stays 1). Lowering the threshold to
     // 1 promotes P2 medium -> high; raising it to 4 demotes P1 high -> medium.
     #[test]
-    fn peptides2protein_ibaq_high_anchor_threshold_only_changes_evidence() -> TestResult<()> {
-        let dir = temp_dir("ibaq-threshold")?;
+    fn peptides2protein_pibaq_high_anchor_threshold_only_changes_evidence() -> TestResult<()> {
+        let dir = temp_dir("pibaq-threshold")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         write_file(&peptides, PEPTIDES_CSV)?;
@@ -1366,7 +1380,7 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let run = |threshold: usize, out: &Path| -> TestResult<()> {
             let mut args = base_args(&peptides, out);
-            args.method = "ibaq".to_owned();
+            args.method = "pibaq".to_owned();
             args.fasta = Some(fasta.clone());
             args.high_anchor_threshold = threshold;
             run_peptides_to_protein(&args)?;
@@ -1405,14 +1419,14 @@ P3,THIDPECK,S1,A,900.0\n";
             ("P2", "S1", 500.0),
             ("P3", "S1", 350.0),
         ] {
-            assert_cell_close(&low_h, &low_rows, protein, sample, "Ibaq", expected)?;
-            assert_cell_close(&high_h, &high_rows, protein, sample, "Ibaq", expected)?;
+            assert_cell_close(&low_h, &low_rows, protein, sample, "PiBAQ", expected)?;
+            assert_cell_close(&high_h, &high_rows, protein, sample, "PiBAQ", expected)?;
         }
         Ok(())
     }
 
     #[test]
-    fn peptides2protein_ibaq_requires_fasta() -> TestResult<()> {
+    fn peptides2protein_pibaq_requires_fasta() -> TestResult<()> {
         let dir = temp_dir("nofasta")?;
         let peptides = dir.join("peptides.csv");
         let output = dir.join("out.tsv");
@@ -1420,20 +1434,20 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let args = base_args(&peptides, &output);
         let Err(error) = run_peptides_to_protein(&args) else {
-            panic!("iBAQ without --fasta must fail");
+            panic!("piBAQ without --fasta must fail");
         };
         assert!(matches!(error, MokumeError::InvalidInput { .. }));
         Ok(())
     }
 
     // Oracle (TPA columns MolecularWeight + TPA appended):
-    //   ... peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
     //       --tpa -o out.tsv
     // MolecularWeight is the pyOpenMS getMonoWeight of the canonical protein;
     // TPA = NormIntensity / MolecularWeight.
     #[test]
-    fn peptides2protein_ibaq_tpa_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("ibaqtpa")?;
+    fn peptides2protein_pibaq_tpa_matches_python_oracle() -> TestResult<()> {
+        let dir = temp_dir("pibaqtpa")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1502,14 +1516,14 @@ P3,THIDPECK,S1,A,900.0\n";
         Ok(())
     }
 
-    // Oracle (normalize_ibaq columns IbaqNorm + IbaqLog + IbaqPpb appended):
-    //   ... peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+    // Oracle (normalize_pibaq columns PiBAQNorm + PiBAQLog + PiBAQPpb appended):
+    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
     //       -n -o out.tsv
-    // rIBAQ = Ibaq / sum(Ibaq per SampleID,Condition);
-    // IbaqLog = 10 + log10(rIBAQ); IbaqPpb = rIBAQ * 1e8.
+    // PiBAQNorm = PiBAQ / sum(PiBAQ per SampleID,Condition);
+    // PiBAQLog = 10 + log10(PiBAQNorm); PiBAQPpb = PiBAQNorm * 1e8.
     #[test]
-    fn peptides2protein_ibaq_normalize_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("ibaqnorm")?;
+    fn peptides2protein_pibaq_normalize_matches_python_oracle() -> TestResult<()> {
+        let dir = temp_dir("pibaqnorm")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1522,36 +1536,36 @@ P3,THIDPECK,S1,A,900.0\n";
         run_peptides_to_protein(&args)?;
 
         let (headers, rows) = read_table(&output)?;
-        assert!(headers.contains(&"IbaqNorm".to_owned()));
-        assert!(headers.contains(&"IbaqLog".to_owned()));
-        assert!(headers.contains(&"IbaqPpb".to_owned()));
-        // Condition A total Ibaq = 150 + 500 + 350 = 1000; Condition B = 33.333...
-        assert_cell_close(&headers, &rows, "P1", "S1", "IbaqNorm", 0.15)?;
-        assert_cell_close(&headers, &rows, "P2", "S1", "IbaqNorm", 0.5)?;
-        assert_cell_close(&headers, &rows, "P3", "S1", "IbaqNorm", 0.35)?;
-        assert_cell_close(&headers, &rows, "P1", "S2", "IbaqNorm", 1.0)?;
+        assert!(headers.contains(&"PiBAQNorm".to_owned()));
+        assert!(headers.contains(&"PiBAQLog".to_owned()));
+        assert!(headers.contains(&"PiBAQPpb".to_owned()));
+        // Condition A total PiBAQ = 150 + 500 + 350 = 1000; Condition B = 33.333...
+        assert_cell_close(&headers, &rows, "P1", "S1", "PiBAQNorm", 0.15)?;
+        assert_cell_close(&headers, &rows, "P2", "S1", "PiBAQNorm", 0.5)?;
+        assert_cell_close(&headers, &rows, "P3", "S1", "PiBAQNorm", 0.35)?;
+        assert_cell_close(&headers, &rows, "P1", "S2", "PiBAQNorm", 1.0)?;
         assert_cell_close(
             &headers,
             &rows,
             "P1",
             "S1",
-            "IbaqLog",
+            "PiBAQLog",
             0.15_f64.log10() + 10.0,
         )?;
-        assert_cell_close(&headers, &rows, "P1", "S2", "IbaqLog", 10.0)?;
-        assert_cell_close(&headers, &rows, "P2", "S1", "IbaqPpb", 50_000_000.0)?;
-        assert_cell_close(&headers, &rows, "P1", "S2", "IbaqPpb", 100_000_000.0)?;
+        assert_cell_close(&headers, &rows, "P1", "S2", "PiBAQLog", 10.0)?;
+        assert_cell_close(&headers, &rows, "P2", "S1", "PiBAQPpb", 50_000_000.0)?;
+        assert_cell_close(&headers, &rows, "P1", "S2", "PiBAQPpb", 100_000_000.0)?;
         Ok(())
     }
 
     // Oracle (ProteomicRuler columns; ruler requires --tpa):
-    //   ... peptides2protein --method ibaq -f proteome.fasta -p peptides.csv \
+    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
     //       --tpa --ruler --organism human --ploidy 2 --cpc 200 -o out.tsv
     // P1/P2/P3 are not human histones, so histone_intensity = max(0, 1) = 1.
     // dna_mass = 2 * 3.22e9 * 617.96 / 6.02214129e23.
     #[test]
-    fn peptides2protein_ibaq_ruler_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("ibaqruler")?;
+    fn peptides2protein_pibaq_ruler_matches_python_oracle() -> TestResult<()> {
+        let dir = temp_dir("pibaqruler")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1669,7 +1683,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // An unknown organism must fail (mirrors the Python KeyError), even when the
-    // ruler is not requested -- the organism is always resolved on the iBAQ path.
+    // ruler is not requested -- the organism is always resolved on the piBAQ path.
     #[test]
     fn peptides2protein_rejects_unknown_organism() -> TestResult<()> {
         let dir = temp_dir("badorg")?;
@@ -1715,9 +1729,9 @@ P3,THIDPECK,S1,A,900.0\n";
     #[test]
     fn peptides2protein_unsupported_enzyme_errors_pointing_to_wheel() -> TestResult<()> {
         // `CNBr` is a real protease pyOpenMS knows but the Rust port has not wired
-        // a cleavage rule for. The iBAQ path does not digest it natively and no
+        // a cleavage rule for. The piBAQ path does not digest it natively and no
         // longer delegates to Python; it fails with a clear `InvalidInput` that
-        // names the enzyme and points to the Python wheel (`mokume-rs[ibaq]`).
+        // names the enzyme and points to the Python fallback (`mokume[pibaq]`).
         // Supported non-Trypsin enzymes (Lys-C, Chymotrypsin, ...) still compute
         // natively in Rust; their digests are oracle-locked in the pipeline crate.
         let dir = temp_dir("enzyme")?;
@@ -1734,7 +1748,7 @@ P3,THIDPECK,S1,A,900.0\n";
         match run_peptides_to_protein(&args) {
             Err(MokumeError::InvalidInput { message }) => {
                 assert!(
-                    message.contains("CNBr") && message.contains("mokume-rs[ibaq]"),
+                    message.contains("CNBr") && message.contains("mokume[pibaq]"),
                     "error must name the enzyme and the wheel: {message}"
                 );
             }
@@ -1746,7 +1760,7 @@ P3,THIDPECK,S1,A,900.0\n";
     #[test]
     fn peptides2protein_unsupported_enzyme_still_requires_fasta() -> TestResult<()> {
         // The unported-enzyme path keeps the same `--fasta` precondition the native
-        // iBAQ path enforces: an unported enzyme without a FASTA still fails with an
+        // piBAQ path enforces: an unported enzyme without a FASTA still fails with an
         // InvalidInput error.
         let dir = temp_dir("enzyme-nofasta")?;
         let peptides = dir.join("peptides.csv");
@@ -1756,7 +1770,7 @@ P3,THIDPECK,S1,A,900.0\n";
         let mut args = base_args(&peptides, &output);
         args.enzyme = "CNBr".to_owned();
         let Err(error) = run_peptides_to_protein(&args) else {
-            panic!("iBAQ with an unported enzyme but no --fasta must fail");
+            panic!("piBAQ with an unported enzyme but no --fasta must fail");
         };
         assert!(matches!(error, MokumeError::InvalidInput { .. }));
         Ok(())
@@ -1764,10 +1778,10 @@ P3,THIDPECK,S1,A,900.0\n";
 
     #[test]
     fn peptides2protein_verbose_writes_table_no_qc_pdf() -> TestResult<()> {
-        // `--verbose` on the iBAQ path computes the protein table in Rust and, since
+        // `--verbose` on the piBAQ path computes the protein table in Rust and, since
         // the QC plotting moved to the Python wheel, writes no QC PDF: it only
         // prints a pointer to the wheel command. The run must still succeed and the
-        // protein table must contain the `Ibaq` column.
+        // protein table must contain the `PiBAQ` column.
         let dir = temp_dir("verbose")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
@@ -1777,15 +1791,15 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&fasta, PROTEOME_FASTA)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "ibaq".to_owned();
+        args.method = "pibaq".to_owned();
         args.fasta = Some(fasta);
         args.verbose = true;
         args.qc_report = qc.clone();
         run_peptides_to_protein(&args)?;
 
-        // The protein table is written and carries the iBAQ column.
+        // The protein table is written and carries the piBAQ column.
         let (headers, rows) = read_table(&output)?;
-        assert!(headers.iter().any(|header| header == "Ibaq"));
+        assert!(headers.iter().any(|header| header == "PiBAQ"));
         assert!(!rows.is_empty(), "the protein table must contain rows");
 
         // No QC PDF is produced; that now lives in the Python wheel.

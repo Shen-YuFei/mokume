@@ -1,70 +1,28 @@
 use std::{
     fs::{create_dir_all, write},
     path::{Path, PathBuf},
-    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[test]
-fn features2proteins_missing_input_exits_with_failure() -> Result<(), Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_mokume"))
-        .args([
-            "features2proteins",
-            "--parquet",
-            "definitely-missing.feature.parquet",
-            "--output",
-            "protein.csv",
-        ])
-        .output()?;
-
-    assert!(
-        !output.status.success(),
-        "command must fail for a missing input"
-    );
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(
-        stderr.contains("input file does not exist: definitely-missing.feature.parquet"),
-        "unexpected stderr:\n{stderr}"
-    );
-    Ok(())
-}
+use mokume_cli::run_from_args;
 
 #[test]
-fn log_file_option_writes_file_and_preserves_command_errors(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let root = temp_root()?;
-    let log_file = root.join("logs").join("mokume.log");
-    let output = Command::new(env!("CARGO_BIN_EXE_mokume"))
-        .args([
-            "--log-file",
-            path_str(&log_file)?,
-            "features2proteins",
-            "--parquet",
-            "definitely-missing.feature.parquet",
-            "--output",
-            "protein.csv",
-        ])
-        .output()?;
-
+fn features2proteins_missing_input_returns_error() {
+    let error = match run(&[
+        "features2proteins",
+        "--parquet",
+        "definitely-missing.feature.parquet",
+        "--output",
+        "protein.csv",
+    ]) {
+        Ok(()) => panic!("command must fail for a missing input"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
     assert!(
-        !output.status.success(),
-        "command must still fail for a missing input"
+        message.contains("input file does not exist: definitely-missing.feature.parquet"),
+        "unexpected error: {message}"
     );
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(
-        stderr.contains("input file does not exist: definitely-missing.feature.parquet"),
-        "unexpected stderr:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("stage `log-file` is not implemented yet"),
-        "log-file option must not block command execution:\n{stderr}"
-    );
-    assert!(
-        log_file.exists(),
-        "log file was not created: {}",
-        log_file.display()
-    );
-    Ok(())
 }
 
 #[test]
@@ -81,23 +39,15 @@ P1,APEPTIDECK,S1,A,300.0\n\
 P2,ALYAAEK,S1,A,500.0\n",
     )?;
 
-    let result = Command::new(env!("CARGO_BIN_EXE_mokume"))
-        .args([
-            "peptides2protein",
-            "--method",
-            "sum",
-            "--peptides",
-            path_str(&peptides)?,
-            "--output",
-            path_str(&output)?,
-        ])
-        .output()?;
-
-    assert!(
-        result.status.success(),
-        "peptides2protein must succeed; stderr:\n{}",
-        String::from_utf8(result.stderr)?
-    );
+    run(&[
+        "peptides2protein",
+        "--method",
+        "sum",
+        "--peptides",
+        path_str(&peptides)?,
+        "--output",
+        path_str(&output)?,
+    ])?;
     let written = std::fs::read_to_string(&output)?;
     let header = written.lines().next().unwrap_or_default();
     assert_eq!(header, "ProteinName\tSampleID\tIntensity\tCondition");
@@ -114,36 +64,28 @@ fn correct_batches_command_writes_corrected_tsv() -> Result<(), Box<dyn std::err
     let input = root.join("input");
     create_dir_all(&input)?;
     write(
-        input.join("batchA_ibaq.tsv"),
-        "# header comment\nProteinName\tSampleID\tIbaq\n\
+        input.join("batchA_pibaq.tsv"),
+        "# header comment\nProteinName\tSampleID\tPiBAQ\n\
 P1\tB1-s1\t10.0\nP2\tB1-s1\t5.0\nP1\tB1-s2\t11.0\nP2\tB1-s2\t6.0\n",
     )?;
     write(
-        input.join("batchB_ibaq.tsv"),
-        "# header comment\nProteinName\tSampleID\tIbaq\n\
+        input.join("batchB_pibaq.tsv"),
+        "# header comment\nProteinName\tSampleID\tPiBAQ\n\
 P1\tB2-s1\t20.0\nP2\tB2-s1\t8.0\nP1\tB2-s2\t21.0\nP2\tB2-s2\t7.5\n",
     )?;
     let output = root.join("corrected.tsv");
 
-    let result = Command::new(env!("CARGO_BIN_EXE_mokume"))
-        .args([
-            "correct-batches",
-            "--folder",
-            path_str(&input)?,
-            "--output",
-            path_str(&output)?,
-        ])
-        .output()?;
-
-    assert!(
-        result.status.success(),
-        "correct-batches must succeed; stderr:\n{}",
-        String::from_utf8(result.stderr)?
-    );
+    run(&[
+        "correct-batches",
+        "--folder",
+        path_str(&input)?,
+        "--output",
+        path_str(&output)?,
+    ])?;
     let written = std::fs::read_to_string(&output)?;
     let header = written.lines().next().unwrap_or_default();
     assert!(
-        header.ends_with("IbaqBec"),
+        header.ends_with("PiBAQBec"),
         "output header must end with the corrected column:\n{header}"
     );
     assert_eq!(
@@ -159,33 +101,32 @@ fn correct_batches_rejects_input_output_collision() -> Result<(), Box<dyn std::e
     let root = temp_root()?;
     let input = root.join("input");
     create_dir_all(&input)?;
-    let input_file = input.join("batchA_ibaq.tsv");
+    let input_file = input.join("batchA_pibaq.tsv");
     write(
         &input_file,
-        "ProteinName\tSampleID\tIbaq\n\
+        "ProteinName\tSampleID\tPiBAQ\n\
 P1\tB1-s1\t10.0\nP1\tB1-s2\t11.0\n",
     )?;
     write(
-        input.join("batchB_ibaq.tsv"),
-        "ProteinName\tSampleID\tIbaq\n\
+        input.join("batchB_pibaq.tsv"),
+        "ProteinName\tSampleID\tPiBAQ\n\
 P1\tB2-s1\t20.0\nP1\tB2-s2\t21.0\n",
     )?;
     let before = std::fs::read(&input_file)?;
 
-    let result = Command::new(env!("CARGO_BIN_EXE_mokume"))
-        .args([
-            "correct-batches",
-            "--folder",
-            path_str(&input)?,
-            "--output",
-            path_str(&input_file)?,
-        ])
-        .output()?;
-
-    assert!(!result.status.success());
+    let error = match run(&[
+        "correct-batches",
+        "--folder",
+        path_str(&input)?,
+        "--output",
+        path_str(&input_file)?,
+    ]) {
+        Ok(()) => panic!("an output/input collision must fail"),
+        Err(error) => error,
+    };
     assert!(
-        String::from_utf8(result.stderr)?.contains("also an input file"),
-        "unexpected stderr"
+        error.to_string().contains("also an input file"),
+        "unexpected error: {error}"
     );
     assert_eq!(std::fs::read(&input_file)?, before);
     Ok(())
@@ -198,35 +139,27 @@ fn correct_batches_export_anndata_writes_h5ad() -> Result<(), Box<dyn std::error
     create_dir_all(&input)?;
     // Two batches (B1, B2) of two samples each, satisfying ComBat's minimum.
     write(
-        input.join("batchA_ibaq.tsv"),
-        "ProteinName\tSampleID\tIbaq\n\
+        input.join("batchA_pibaq.tsv"),
+        "ProteinName\tSampleID\tPiBAQ\n\
 P1\tB1-s1\t10.0\nP2\tB1-s1\t5.0\nP3\tB1-s1\t1.0\n\
 P1\tB1-s2\t11.0\nP2\tB1-s2\t6.0\nP3\tB1-s2\t2.0\n",
     )?;
     write(
-        input.join("batchB_ibaq.tsv"),
-        "ProteinName\tSampleID\tIbaq\n\
+        input.join("batchB_pibaq.tsv"),
+        "ProteinName\tSampleID\tPiBAQ\n\
 P1\tB2-s1\t20.0\nP2\tB2-s1\t8.0\nP3\tB2-s1\t3.0\n\
 P1\tB2-s2\t21.0\nP2\tB2-s2\t7.5\nP3\tB2-s2\t2.5\n",
     )?;
     let output = root.join("corrected.tsv");
 
-    let result = Command::new(env!("CARGO_BIN_EXE_mokume"))
-        .args([
-            "correct-batches",
-            "--folder",
-            path_str(&input)?,
-            "--output",
-            path_str(&output)?,
-            "--export_anndata",
-        ])
-        .output()?;
-
-    assert!(
-        result.status.success(),
-        "correct-batches --export_anndata must succeed; stderr:\n{}",
-        String::from_utf8(result.stderr)?
-    );
+    run(&[
+        "correct-batches",
+        "--folder",
+        path_str(&input)?,
+        "--output",
+        path_str(&output)?,
+        "--export_anndata",
+    ])?;
 
     // The corrected TSV and the AnnData `.h5ad` are both written, the latter at
     // the output path with its extension replaced by `.h5ad`.
@@ -254,21 +187,13 @@ fn features2peptides_generates_filter_config() -> Result<(), Box<dyn std::error:
     write(&parquet, [])?;
 
     for output_path in [&yaml, &json] {
-        let output = Command::new(env!("CARGO_BIN_EXE_mokume"))
-            .args([
-                "features2peptides",
-                "--parquet",
-                path_str(&parquet)?,
-                "--generate-filter-config",
-                path_str(output_path)?,
-            ])
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "features2peptides --generate-filter-config must succeed; stderr:\n{}",
-            String::from_utf8(output.stderr)?
-        );
+        run(&[
+            "features2peptides",
+            "--parquet",
+            path_str(&parquet)?,
+            "--generate-filter-config",
+            path_str(output_path)?,
+        ])?;
     }
 
     let yaml = std::fs::read_to_string(yaml)?;
@@ -300,30 +225,26 @@ fn features2peptides_generate_filter_config_requires_existing_parquet(
     create_dir_all(&root)?;
     let output_path = root.join("filters.yaml");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mokume"))
-        .args([
-            "features2peptides",
-            "--parquet",
-            "missing.parquet",
-            "--generate-filter-config",
-            path_str(&output_path)?,
-        ])
-        .output()?;
-
+    let error = match run(&[
+        "features2peptides",
+        "--parquet",
+        "missing.parquet",
+        "--generate-filter-config",
+        path_str(&output_path)?,
+    ]) {
+        Ok(()) => panic!("generate-filter-config must fail for a missing parquet"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
     assert!(
-        !output.status.success(),
-        "features2peptides --generate-filter-config must fail for missing parquet"
-    );
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(
-        stderr.contains("input file does not exist: missing.parquet"),
-        "unexpected stderr:\n{stderr}"
+        message.contains("input file does not exist: missing.parquet"),
+        "unexpected error: {message}"
     );
     Ok(())
 }
 
 #[test]
-fn unimplemented_features2proteins_options_exit_with_stable_error(
+fn unimplemented_features2proteins_options_return_stable_error(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
@@ -354,12 +275,11 @@ fn unimplemented_features2proteins_options_exit_with_stable_error(
         },
         FeatureToProteinsCase {
             args: &["--impute", "--impute-method", "missforest"],
-            stage: "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume Python wheel: pip install mokume-rs[analysis]; mokume.impute(matrix, method='missforest')",
+            stage: "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume wheel: pip install mokume[analysis]; mokume.impute(matrix, method='missforest')",
         },
         // The `--plot-*` / `--interactive-report` / `--report-output` flags were
-        // removed from the Rust CLI (plotting / reports moved to the Python wheel);
-        // clap now rejects them as unknown arguments, so they are no longer
-        // exercised here.
+        // removed from the Rust command interface (plotting / reports moved to
+        // the Python periphery), so they are no longer exercised here.
         FeatureToProteinsCase {
             args: &[
                 "--quant-method",
@@ -384,20 +304,15 @@ fn unimplemented_features2proteins_options_exit_with_stable_error(
             "protein.csv",
         ];
         args.extend_from_slice(case.args);
-        let output = Command::new(env!("CARGO_BIN_EXE_mokume"))
-            .args(args)
-            .output()?;
-
-        assert!(
-            !output.status.success(),
-            "features2proteins must fail for unimplemented options: {:?}",
-            case.args
-        );
-        let stderr = String::from_utf8(output.stderr)?;
+        let error = match run(&args) {
+            Ok(()) => panic!("unimplemented options must fail"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
         let expected = format!("stage `{}` is not implemented yet", case.stage);
         assert!(
-            stderr.contains(&expected),
-            "unexpected stderr for {:?}:\n{stderr}",
+            message.contains(&expected),
+            "unexpected error for {:?}: {message}",
             case.args
         );
     }
@@ -409,10 +324,17 @@ struct FeatureToProteinsCase<'a> {
     stage: &'a str,
 }
 
+fn run(args: &[&str]) -> mokume_core::Result<()> {
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push("mokume");
+    argv.extend_from_slice(args);
+    run_from_args(argv)
+}
+
 fn temp_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     Ok(tempfile::Builder::new()
-        .prefix(&format!("mokume-cli-test-{timestamp}-"))
+        .prefix(&format!("mokume-command-test-{timestamp}-"))
         .tempdir()?
         .keep())
 }

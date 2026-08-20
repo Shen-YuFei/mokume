@@ -7,7 +7,7 @@ plotting helpers. Exposed in-process as ``mokume.tsne_visualization`` and
 runnable as ``python -m mokume.commands.visualize``.
 
 Run requirements: the ``plotting`` extra (matplotlib + seaborn + scikit-learn):
-``pip install mokume-rs[plotting]``.
+``pip install mokume[plotting]``.
 
 argv contract:
     --folder/-f   PATH   folder that contains the protein files (required)
@@ -79,12 +79,12 @@ def main(argv: list[str]) -> int:
 
         import pandas as pd
 
-        from mokume.core.constants import IBAQ_LOG, PROTEIN_NAME, SAMPLE_ID
+        from mokume.core.constants import PIBAQ_LOG, PROTEIN_NAME, SAMPLE_ID
         from mokume.plotting import is_plotting_available
     except ImportError as exc:  # pragma: no cover - environment dependent
         print(
             "error: failed to import mokume plotting dependencies: "
-            f"{exc}\nInstall them with: pip install mokume-rs[plotting]",
+            f"{exc}\nInstall them with: pip install mokume[plotting]",
             file=sys.stderr,
         )
         return 1
@@ -92,7 +92,7 @@ def main(argv: list[str]) -> int:
     if not is_plotting_available():
         print(
             "error: plotting dependencies (matplotlib, seaborn) are not "
-            "installed. Install them with: pip install mokume-rs[plotting]",
+            "installed. Install them with: pip install mokume[plotting]",
             file=sys.stderr,
         )
         return 1
@@ -113,9 +113,9 @@ def main(argv: list[str]) -> int:
     for f in files:
         reanalysis = (f.split("/")[-1].split("_")[0]).replace("-proteins.tsv", "")
         dfs += [
-            pd.read_csv(f, usecols=[PROTEIN_NAME, SAMPLE_ID, IBAQ_LOG], sep=",").assign(
-                reanalysis=reanalysis
-            )
+            pd.read_csv(
+                f, usecols=[PROTEIN_NAME, SAMPLE_ID, PIBAQ_LOG], sep=","
+            ).assign(reanalysis=reanalysis)
         ]
 
     total_proteins = pd.concat(dfs, ignore_index=True)
@@ -124,7 +124,7 @@ def main(argv: list[str]) -> int:
         total_proteins,
         index=[SAMPLE_ID, "reanalysis"],
         columns=PROTEIN_NAME,
-        values=IBAQ_LOG,
+        values=PIBAQ_LOG,
     )
     normalize_df = normalize_df.fillna(0)
     df_pca = compute_pca_with_plot(normalize_df, n_components=30)

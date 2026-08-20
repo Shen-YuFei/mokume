@@ -189,8 +189,8 @@ def extract_fasta(
     .. note::
         This proteotypic-only count is the **legacy ibaqpy denominator** and
         is symmetric only with a proteotypic-only numerator. The default
-        mokume iBAQ path is now piBAQ
-        (:func:`mokume.quantification.ibaq.compute_pibaq`), which re-allocates
+        Mokume piBAQ path
+        (:func:`mokume.quantification.pibaq.compute_pibaq`), which re-allocates
         shared-peptide intensity into the numerator and therefore uses a
         *total-potential* denominator (proteotypic + shared) derived from
         :func:`digest_fasta_full` instead of this function. The two

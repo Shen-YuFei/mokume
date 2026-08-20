@@ -4,13 +4,18 @@
 //! `rust/python/mokume/` package imports. It is the FFI boundary between the Rust
 //! compute crates and the Python periphery (plotting / tissue maps / reports).
 //!
-//! The compute commands are reached through [`mokume_cli::run_from_args`], the
-//! same clap parsing + dispatch the standalone CLI binary uses, so the flag ->
-//! config mapping stays single-sourced. The Python layer in `rust/python/mokume/`
-//! builds the argument vector from ergonomic keyword arguments.
+//! The compute commands are reached through [`mokume_cli::run_from_args`], so
+//! clap parsing and dispatch stay single-sourced. The Python layer in
+//! `rust/python/mokume/` builds the argument vector from ergonomic keyword arguments.
 
-use pyo3::exceptions::PyRuntimeError;
+use std::collections::HashMap;
+
+use mokume_core::{DifferentialExpressionConfig, ImputationConfig};
+use mokume_pipeline::MatrixDifferentialExpressionResults;
+use mokume_stats::de::{DeResult, EnsembleResult, Significance};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 /// The mokume version string (the crate's compile-time version).
 #[pyfunction]
@@ -38,8 +43,8 @@ fn run(args: Vec<String>) -> PyResult<()> {
 /// This backs the `mokume` console script (`mokume.__main__:main`). Unlike
 /// [`run`], it never raises: clap help/version are printed to stdout (exit code
 /// 0), usage errors to stderr (exit code 2), and a runtime failure prints the
-/// error and returns 1 — exactly as the standalone binary would, but without
-/// exiting the process, so the caller decides via `sys.exit`.
+/// error and returns 1 without exiting the process, so the caller decides via
+/// `sys.exit`.
 #[pyfunction]
 fn run_cli(args: Vec<String>) -> i32 {
     let mut argv = Vec::with_capacity(args.len() + 1);
@@ -48,11 +53,327 @@ fn run_cli(args: Vec<String>) -> i32 {
     mokume_cli::run_cli_from_args(argv)
 }
 
+/// Normalize a row-major linear-intensity matrix with the Rust kernel.
+#[pyfunction(name = "normalize_matrix", signature = (values, method, sample_names=None, threads=None))]
+fn normalize_matrix_py(
+    py: Python<'_>,
+    values: Vec<Vec<Option<f64>>>,
+    method: String,
+    sample_names: Option<Vec<String>>,
+    threads: Option<usize>,
+) -> PyResult<Vec<Vec<Option<f64>>>> {
+    let matrix = decode_matrix(values);
+    let width = matrix.first().map_or(0, Vec::len);
+    let names = sample_names.unwrap_or_else(|| {
+        (0..width)
+            .map(|column| format!("sample_{column}"))
+            .collect()
+    });
+    let normalized =
+        py.detach(move || mokume_pipeline::normalize_matrix(&matrix, &names, &method, threads));
+    normalized
+        .map(encode_matrix)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+#[pyfunction(
+    name = "impute_matrix",
+    signature = (values, method, options=None)
+)]
+/// Impute a row-major linear-intensity matrix with the Rust kernel.
+fn impute_matrix_py(
+    py: Python<'_>,
+    values: Vec<Vec<Option<f64>>>,
+    method: String,
+    options: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Vec<Vec<Option<f64>>>> {
+    let options = ImputationOptions::from_dict(options)?;
+    let matrix = decode_matrix(values);
+    let config = ImputationConfig {
+        enabled: !matches!(method.trim().to_ascii_lowercase().as_str(), "" | "none"),
+        method,
+        quantile: options.quantile,
+        shift: options.shift,
+        scale: options.scale,
+        n_neighbors: options.n_neighbors,
+    };
+    let imputed =
+        py.detach(move || mokume_pipeline::impute_matrix(&matrix, &config, options.threads));
+    imputed
+        .map(encode_matrix)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+struct ImputationOptions {
+    quantile: f64,
+    shift: f64,
+    scale: f64,
+    n_neighbors: usize,
+    threads: Option<usize>,
+}
+
+impl ImputationOptions {
+    fn from_dict(options: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        let mut parsed = Self {
+            quantile: 0.01,
+            shift: 1.6,
+            scale: 0.3,
+            n_neighbors: 5,
+            threads: None,
+        };
+        let Some(options) = options else {
+            return Ok(parsed);
+        };
+        for (key, value) in options.iter() {
+            let key = key.extract::<String>()?;
+            match key.as_str() {
+                "quantile" => parsed.quantile = value.extract()?,
+                "shift" => parsed.shift = value.extract()?,
+                "scale" => parsed.scale = value.extract()?,
+                "n_neighbors" => parsed.n_neighbors = value.extract()?,
+                "threads" => parsed.threads = value.extract()?,
+                _ => {
+                    return Err(PyTypeError::new_err(format!(
+                        "unknown imputation option `{key}`"
+                    )))
+                }
+            }
+        }
+        Ok(parsed)
+    }
+}
+
+#[pyfunction(
+    name = "differential_expression",
+    signature = (proteins, values, n_a, n_b, method, options=None)
+)]
+/// Run one two-group DE comparison on a row-major linear-intensity matrix.
+fn differential_expression_py(
+    py: Python<'_>,
+    proteins: Vec<String>,
+    values: Vec<Vec<Option<f64>>>,
+    n_a: usize,
+    n_b: usize,
+    method: String,
+    options: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let options = DifferentialExpressionOptions::from_dict(options)?;
+    let matrix = decode_matrix(values);
+    let count_by_protein = options.peptide_counts.as_ref().map(|counts| {
+        proteins
+            .iter()
+            .cloned()
+            .zip(counts.iter().copied())
+            .collect::<HashMap<_, _>>()
+    });
+    let config = DifferentialExpressionConfig {
+        enabled: true,
+        contrasts: None,
+        contrasts_file: None,
+        method: method.clone(),
+        ensemble_methods: options.ensemble_methods,
+        ensemble_min_k: options.ensemble_min_k,
+        log2fc_threshold: options.log2fc_threshold,
+        effect_size_gate: options.effect_size_gate,
+        fdr_threshold: options.fdr_threshold,
+        fdr_method: options.fdr_method,
+        output: None,
+    };
+    let peptide_counts = options.peptide_counts;
+    let threads = options.threads;
+    let condition_a = options.condition_a;
+    let condition_b = options.condition_b;
+    let results = py.detach(move || {
+        mokume_pipeline::differential_expression_matrix(
+            &proteins,
+            &matrix,
+            n_a,
+            n_b,
+            peptide_counts.as_deref(),
+            &config,
+            threads,
+        )
+    });
+    match results.map_err(|error| PyRuntimeError::new_err(error.to_string()))? {
+        MatrixDifferentialExpressionResults::Standard(rows) => standard_rows_to_python(
+            py,
+            rows,
+            &method,
+            count_by_protein.as_ref(),
+            &condition_a,
+            &condition_b,
+        ),
+        MatrixDifferentialExpressionResults::Ensemble(rows) => ensemble_rows_to_python(py, rows),
+    }
+}
+
+struct DifferentialExpressionOptions {
+    peptide_counts: Option<Vec<f64>>,
+    ensemble_methods: Option<Vec<String>>,
+    ensemble_min_k: usize,
+    log2fc_threshold: f64,
+    effect_size_gate: Option<String>,
+    fdr_threshold: f64,
+    fdr_method: String,
+    condition_a: String,
+    condition_b: String,
+    threads: Option<usize>,
+}
+
+impl DifferentialExpressionOptions {
+    fn from_dict(options: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        let mut parsed = Self {
+            peptide_counts: None,
+            ensemble_methods: None,
+            ensemble_min_k: 2,
+            log2fc_threshold: 0.5,
+            effect_size_gate: None,
+            fdr_threshold: 0.05,
+            fdr_method: "bh".to_owned(),
+            condition_a: "A".to_owned(),
+            condition_b: "B".to_owned(),
+            threads: None,
+        };
+        let Some(options) = options else {
+            return Ok(parsed);
+        };
+        for (key, value) in options.iter() {
+            let key = key.extract::<String>()?;
+            match key.as_str() {
+                "peptide_counts" => parsed.peptide_counts = value.extract()?,
+                "ensemble_methods" => parsed.ensemble_methods = value.extract()?,
+                "ensemble_min_k" => parsed.ensemble_min_k = value.extract()?,
+                "log2fc_threshold" => parsed.log2fc_threshold = value.extract()?,
+                "effect_size_gate" => parsed.effect_size_gate = value.extract()?,
+                "fdr_threshold" => parsed.fdr_threshold = value.extract()?,
+                "fdr_method" => parsed.fdr_method = value.extract()?,
+                "condition_a" => parsed.condition_a = value.extract()?,
+                "condition_b" => parsed.condition_b = value.extract()?,
+                "threads" => parsed.threads = value.extract()?,
+                _ => {
+                    return Err(PyTypeError::new_err(format!(
+                        "unknown differential-expression option `{key}`"
+                    )))
+                }
+            }
+        }
+        Ok(parsed)
+    }
+}
+
+fn decode_matrix(values: Vec<Vec<Option<f64>>>) -> Vec<Vec<f64>> {
+    values
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|value| value.unwrap_or(f64::NAN))
+                .collect()
+        })
+        .collect()
+}
+
+fn encode_matrix(values: Vec<Vec<f64>>) -> Vec<Vec<Option<f64>>> {
+    values
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|value| value.is_finite().then_some(value))
+                .collect()
+        })
+        .collect()
+}
+
+fn standard_rows_to_python(
+    py: Python<'_>,
+    rows: Vec<DeResult>,
+    method: &str,
+    count_by_protein: Option<&HashMap<String, f64>>,
+    condition_a: &str,
+    condition_b: &str,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let method = method.trim().to_ascii_lowercase();
+    rows.into_iter()
+        .map(|row| {
+            let output = PyDict::new(py);
+            output.set_item("ProteinName", &row.protein)?;
+            output.set_item("log2FC", row.log2_fold_change)?;
+            output.set_item("pvalue", row.p_value)?;
+            output.set_item("adj_pvalue", row.adj_p_value)?;
+            set_standard_method_fields(&output, &row, &method, count_by_protein)?;
+            output.set_item(format!("mean_{condition_a}"), row.mean_a)?;
+            output.set_item(format!("mean_{condition_b}"), row.mean_b)?;
+            output.set_item("n_a", row.n_a)?;
+            output.set_item("n_b", row.n_b)?;
+            output.set_item("significance", significance_label(row.significance))?;
+            Ok(output.unbind())
+        })
+        .collect()
+}
+
+fn set_standard_method_fields(
+    output: &Bound<'_, PyDict>,
+    row: &DeResult,
+    method: &str,
+    count_by_protein: Option<&HashMap<String, f64>>,
+) -> PyResult<()> {
+    match method {
+        "limma" => {
+            output.set_item("t_stat", row.t_statistic)?;
+            output.set_item("AveExpr", row.ave_expr)?;
+            output.set_item("B", row.b)
+        }
+        "deqms" => {
+            output.set_item("sca_t", row.t_statistic)?;
+            output.set_item("sca_pvalue", row.p_value)?;
+            output.set_item("sca_adj_pvalue", row.adj_p_value)?;
+            output.set_item(
+                "peptide_count",
+                count_by_protein
+                    .and_then(|counts| counts.get(&row.protein))
+                    .copied()
+                    .unwrap_or(1.0),
+            )?;
+            output.set_item("log_pvalue", row.log_p_value)
+        }
+        "rots" => output.set_item("d_stat", row.t_statistic),
+        _ => output.set_item("t_stat", row.t_statistic),
+    }
+}
+
+fn ensemble_rows_to_python(py: Python<'_>, rows: Vec<EnsembleResult>) -> PyResult<Vec<Py<PyDict>>> {
+    rows.into_iter()
+        .map(|row| {
+            let output = PyDict::new(py);
+            output.set_item("Protein", row.protein)?;
+            output.set_item("log2FC", row.log2_fold_change)?;
+            output.set_item("pvalue", row.p_value)?;
+            output.set_item("n_methods_up", row.n_methods_up)?;
+            output.set_item("n_methods_down", row.n_methods_down)?;
+            output.set_item("methods_significant", row.methods_significant)?;
+            output.set_item("adj_pvalue", row.adj_p_value)?;
+            output.set_item("significance", significance_label(row.significance))?;
+            Ok(output.unbind())
+        })
+        .collect()
+}
+
+fn significance_label(significance: Significance) -> &'static str {
+    match significance {
+        Significance::Up => "UP",
+        Significance::Down => "DOWN",
+        Significance::Unchanged => "Unchanged",
+        Significance::NotTested => "NotTested",
+    }
+}
+
 /// The `mokume._mokume` extension module.
 #[pymodule]
 fn _mokume(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(version, module)?)?;
     module.add_function(wrap_pyfunction!(run, module)?)?;
     module.add_function(wrap_pyfunction!(run_cli, module)?)?;
+    module.add_function(wrap_pyfunction!(normalize_matrix_py, module)?)?;
+    module.add_function(wrap_pyfunction!(impute_matrix_py, module)?)?;
+    module.add_function(wrap_pyfunction!(differential_expression_py, module)?)?;
     Ok(())
 }

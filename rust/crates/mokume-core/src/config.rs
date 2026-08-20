@@ -13,7 +13,7 @@ pub struct FeatureToProteinsConfig {
     pub quantification: QuantMethod,
     pub topn_peptides: usize,
     pub maxlfq: MaxLfqConfig,
-    pub ibaq: IbaqConfig,
+    pub pibaq: PibaqConfig,
     pub directlfq: DirectLfqConfig,
     pub batch: BatchCorrectionConfig,
     pub irs: IrsConfig,
@@ -371,7 +371,7 @@ pub struct MaxLfqConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IbaqConfig {
+pub struct PibaqConfig {
     pub enzyme: String,
     pub max_aa: usize,
     pub min_shared: usize,
@@ -380,7 +380,7 @@ pub struct IbaqConfig {
     pub high_anchor_threshold: usize,
 }
 
-impl Default for IbaqConfig {
+impl Default for PibaqConfig {
     fn default() -> Self {
         Self {
             enzyme: "Trypsin".to_string(),
@@ -505,6 +505,10 @@ pub struct DifferentialExpressionConfig {
     pub ensemble_methods: Option<Vec<String>>,
     pub ensemble_min_k: usize,
     pub log2fc_threshold: f64,
+    /// Optional data-driven gate method. `None` applies `log2fc_threshold`
+    /// directly; a method uses that value only as its fallback.
+    #[serde(default)]
+    pub effect_size_gate: Option<String>,
     pub fdr_threshold: f64,
     pub fdr_method: String,
     pub output: Option<PathBuf>,
@@ -520,6 +524,7 @@ impl Default for DifferentialExpressionConfig {
             ensemble_methods: None,
             ensemble_min_k: 2,
             log2fc_threshold: 0.5,
+            effect_size_gate: None,
             fdr_threshold: 0.05,
             fdr_method: "bh".to_string(),
             output: None,
