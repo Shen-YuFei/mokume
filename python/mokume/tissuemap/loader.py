@@ -36,6 +36,62 @@ _NON_REFERENCE_POOLED_VALUES = frozenset(
     }
 )
 
+_TMT_FLAT_VIEW_QUERY = """
+    CREATE TEMP VIEW flat_input AS
+    SELECT
+        feature.anchor_protein AS protein,
+        feature.run_file_name,
+        reporter.label AS tmt_label,
+        CAST(reporter.intensity AS DOUBLE) AS intensity
+    FROM feature_input AS feature,
+         UNNEST(feature.intensities) AS reporter_row(reporter)
+    WHERE NOT COALESCE(feature.is_decoy, FALSE)
+      AND reporter.intensity > 0
+"""
+
+_TMT_GIS_AGGREGATION_QUERY = """
+    WITH mapped AS (
+        SELECT
+            flat_input.protein,
+            flat_input.run_file_name,
+            mapping.sample_accession,
+            mapping.is_gis,
+            flat_input.intensity
+        FROM flat_input
+        INNER JOIN tmt_label_map AS mapping
+            USING (run_file_name, tmt_label)
+    ),
+    gis AS (
+        SELECT
+            protein,
+            run_file_name,
+            AVG(intensity) AS gis_intensity
+        FROM mapped
+        WHERE is_gis
+        GROUP BY protein, run_file_name
+    )
+    SELECT
+        mapped.protein,
+        mapped.sample_accession,
+        SUM(mapped.intensity / gis.gis_intensity) AS intensity
+    FROM mapped
+    INNER JOIN gis USING (protein, run_file_name)
+    WHERE NOT mapped.is_gis
+      AND gis.gis_intensity > 0
+    GROUP BY mapped.protein, mapped.sample_accession
+"""
+
+_TMT_RAW_AGGREGATION_QUERY = """
+    SELECT
+        flat_input.protein,
+        mapping.sample_accession,
+        SUM(flat_input.intensity) AS intensity
+    FROM flat_input
+    INNER JOIN tmt_label_map AS mapping
+        USING (run_file_name, tmt_label)
+    GROUP BY flat_input.protein, mapping.sample_accession
+"""
+
 
 @dataclass(frozen=True)
 class TissueLoadOptions:
@@ -272,6 +328,26 @@ def _resolve_gis_accessions(
     return gis_accessions
 
 
+def _execute_tmt_aggregation(
+    parquet_path: Path,
+    label_map: pd.DataFrame,
+    workers: int,
+    use_gis: bool,
+) -> pd.DataFrame:
+    """Execute the bounded DuckDB expansion and aggregation query."""
+    con = duckdb.connect(database=":memory:")
+    try:
+        con.execute(f"SET threads = {workers}")
+        con.execute("SET preserve_insertion_order = false")
+        con.register("tmt_label_map", label_map)
+        con.read_parquet(str(parquet_path)).create_view("feature_input")
+        con.execute(_TMT_FLAT_VIEW_QUERY)
+        query = _TMT_GIS_AGGREGATION_QUERY if use_gis else _TMT_RAW_AGGREGATION_QUERY
+        return con.execute(query).df()
+    finally:
+        con.close()
+
+
 def _aggregate_tmt_with_duckdb(
     ds_dir: Path,
     ds_id: str,
@@ -294,76 +370,14 @@ def _aggregate_tmt_with_duckdb(
     label_map["is_gis"] = label_map["sample_accession"].isin(gis_accessions)
 
     workers = max(1, int(n_jobs))
-    con = duckdb.connect(database=":memory:")
-    try:
-        con.execute(f"SET threads = {workers}")
-        con.execute("SET preserve_insertion_order = false")
-        con.register("tmt_label_map", label_map)
-        con.read_parquet(str(parquet_path)).create_view("feature_input")
-        con.execute(
-            """
-            CREATE TEMP VIEW flat_input AS
-            SELECT
-                feature.anchor_protein AS protein,
-                feature.run_file_name,
-                reporter.label AS tmt_label,
-                CAST(reporter.intensity AS DOUBLE) AS intensity
-            FROM feature_input AS feature,
-                 UNNEST(feature.intensities) AS reporter_row(reporter)
-            WHERE NOT COALESCE(feature.is_decoy, FALSE)
-              AND reporter.intensity > 0
-            """
-        )
-        if gis_accessions:
-            query = """
-                WITH mapped AS (
-                    SELECT
-                        flat_input.protein,
-                        flat_input.run_file_name,
-                        mapping.sample_accession,
-                        mapping.is_gis,
-                        flat_input.intensity
-                    FROM flat_input
-                    INNER JOIN tmt_label_map AS mapping
-                        USING (run_file_name, tmt_label)
-                ),
-                gis AS (
-                    SELECT
-                        protein,
-                        run_file_name,
-                        AVG(intensity) AS gis_intensity
-                    FROM mapped
-                    WHERE is_gis
-                    GROUP BY protein, run_file_name
-                )
-                SELECT
-                    mapped.protein,
-                    mapped.sample_accession,
-                    SUM(mapped.intensity / gis.gis_intensity) AS intensity
-                FROM mapped
-                INNER JOIN gis USING (protein, run_file_name)
-                WHERE NOT mapped.is_gis
-                  AND gis.gis_intensity > 0
-                GROUP BY mapped.protein, mapped.sample_accession
-            """
-        else:
-            logger.warning(
-                "[%s] No GIS data found; aggregating raw TMT intensities", ds_id
-            )
-            query = """
-                SELECT
-                    flat_input.protein,
-                    mapping.sample_accession,
-                    SUM(flat_input.intensity) AS intensity
-                FROM flat_input
-                INNER JOIN tmt_label_map AS mapping
-                    USING (run_file_name, tmt_label)
-                GROUP BY flat_input.protein, mapping.sample_accession
-            """
-
-        aggregated = con.execute(query).df()
-    finally:
-        con.close()
+    if not gis_accessions:
+        logger.warning("[%s] No GIS data found; aggregating raw TMT intensities", ds_id)
+    aggregated = _execute_tmt_aggregation(
+        parquet_path,
+        label_map,
+        workers,
+        bool(gis_accessions),
+    )
 
     if aggregated.empty:
         raise ValueError(

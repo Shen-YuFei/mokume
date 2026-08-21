@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import json
 from typing import Any
 
-from mokume.agentic.contract import (
+from .contract import (
     CONFIDENCE_LEVELS,
     EXECUTABLE_AXES,
     GENERATED_BLOCK_FIELDS,
@@ -14,13 +14,13 @@ from mokume.agentic.contract import (
     method_contract,
     validate_config_values,
 )
-from mokume.agentic.knowledge import (
+from .knowledge import (
     EvidenceRecord,
     KnowledgeGraph,
     load_knowledge_graph,
 )
-from mokume.agentic.policy import Diagnostic, PolicyDecision, evaluate_policy
-from mokume.agentic.profiler import DataProfile
+from .policy import Diagnostic, PolicyDecision, evaluate_policy
+from .profiler import DataProfile
 
 
 @dataclass(frozen=True)

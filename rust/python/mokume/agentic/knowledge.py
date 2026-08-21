@@ -278,47 +278,13 @@ def _parse_evidence(
         raise ValueError("knowledge evidence must be a list")
     records: dict[str, EvidenceRecord] = {}
     for item in items:
-        required = {
-            "id",
-            "source_id",
-            "kind",
-            "status",
-            "confidence",
-            "priority",
-            "eligible_as_prior",
-            "applicability",
-            "pipeline",
-            "metrics",
-            "limitations",
-        }
-        allowed = required | {"reference_profile"}
-        if (
-            not isinstance(item, dict)
-            or not required <= set(item)
-            or set(item) - allowed
-        ):
-            raise ValueError(
-                "knowledge evidence fields must contain exactly the evidence contract"
-            )
-        source_id = str(item["source_id"])
-        if source_id not in sources:
-            raise ValueError(f"Unknown source_id {source_id!r}")
+        source_id, priority, eligible, metrics, limitations = _evidence_metadata(
+            item, sources
+        )
         applicability = Applicability(**item["applicability"])
         reference_profile = _parse_reference_profile(item.get("reference_profile"))
         pipeline = PipelineConfig(**item["pipeline"])
         _validate_pipeline(pipeline)
-        metrics = item.get("metrics", {})
-        limitations = item.get("limitations", [])
-        if not isinstance(metrics, dict):
-            raise ValueError("evidence metrics must be an object")
-        if not isinstance(limitations, list):
-            raise ValueError("evidence limitations must be a list")
-        eligible = item["eligible_as_prior"]
-        priority = item["priority"]
-        if not isinstance(eligible, bool):
-            raise ValueError("eligible_as_prior must be boolean")
-        if isinstance(priority, bool) or not isinstance(priority, int) or priority < 0:
-            raise ValueError("evidence priority must be a non-negative integer")
         record = EvidenceRecord(
             id=str(item["id"]),
             source_id=source_id,
@@ -342,6 +308,47 @@ def _parse_evidence(
         _validate_evidence(record)
         records[record.id] = record
     return records
+
+
+def _evidence_metadata(
+    item: dict[str, Any],
+    sources: dict[str, SourceEnvelope],
+) -> tuple[str, int, bool, dict[str, Any], list[Any]]:
+    """Validate the scalar and collection fields of one evidence item."""
+    required = {
+        "id",
+        "source_id",
+        "kind",
+        "status",
+        "confidence",
+        "priority",
+        "eligible_as_prior",
+        "applicability",
+        "pipeline",
+        "metrics",
+        "limitations",
+    }
+    allowed = required | {"reference_profile"}
+    if not isinstance(item, dict) or not required <= set(item) or set(item) - allowed:
+        raise ValueError(
+            "knowledge evidence fields must contain exactly the evidence contract"
+        )
+    source_id = str(item["source_id"])
+    if source_id not in sources:
+        raise ValueError(f"Unknown source_id {source_id!r}")
+    metrics = item["metrics"]
+    limitations = item["limitations"]
+    if not isinstance(metrics, dict):
+        raise ValueError("evidence metrics must be an object")
+    if not isinstance(limitations, list):
+        raise ValueError("evidence limitations must be a list")
+    eligible = item["eligible_as_prior"]
+    priority = item["priority"]
+    if not isinstance(eligible, bool):
+        raise ValueError("eligible_as_prior must be boolean")
+    if isinstance(priority, bool) or not isinstance(priority, int) or priority < 0:
+        raise ValueError("evidence priority must be a non-negative integer")
+    return source_id, priority, eligible, metrics, limitations
 
 
 def _parse_reference_profile(item: Any) -> ReferenceProfile | None:

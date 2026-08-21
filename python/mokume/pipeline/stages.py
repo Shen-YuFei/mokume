@@ -8,6 +8,7 @@ Each stage handles a distinct phase of the proteomics quantification workflow:
 - PostprocessingStage: Batch correction, DE, plotting, reports
 """
 
+import importlib
 import os
 import re
 from collections import Counter
@@ -1310,6 +1311,33 @@ class QuantificationStage:
 
         return wide_df.reset_index()
 
+    def _pibaq_references(self):
+        """Digest the configured FASTA and resolve piBAQ families lazily."""
+        fasta_module = importlib.import_module("mokume.io.fasta")
+        family_module = importlib.import_module("mokume.quantification.families")
+        quant_cfg = self.config.quantification
+        accession_to_peptides, peptide_to_accessions, _ = getattr(
+            fasta_module, "digest_fasta_full"
+        )(
+            fasta=self.config.input.fasta_file,
+            enzyme=quant_cfg.pibaq_enzyme,
+            min_aa=self.config.filtering.min_aa,
+            max_aa=quant_cfg.pibaq_max_aa,
+            canonicalize_isoforms=True,
+            compute_mw=False,
+        )
+        families = getattr(family_module, "discover_families")(
+            accession_to_peptides,
+            peptide_to_accessions,
+            min_shared=quant_cfg.pibaq_min_shared,
+        )
+        if quant_cfg.pibaq_families_yaml:
+            overrides = getattr(family_module, "load_families_yaml")(
+                Path(quant_cfg.pibaq_families_yaml)
+            )
+            families = getattr(family_module, "merge_overrides")(families, overrides)
+        return accession_to_peptides, peptide_to_accessions, families
+
     def _quantify_pibaq(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
         """Quantify using piBAQ (paralog-aware iBAQ).
 
@@ -1330,12 +1358,9 @@ class QuantificationStage:
         CLI with ``--tpa`` when a TPA table is needed. Accordingly
         ``mw_map`` is left ``None`` here.
         """
-        from mokume.io.fasta import digest_fasta_full
-        from mokume.quantification.pibaq import compute_pibaq
-        from mokume.quantification.families import (
-            discover_families,
-            load_families_yaml,
-            merge_overrides,
+        compute_pibaq = getattr(
+            importlib.import_module("mokume.quantification.pibaq"),
+            "compute_pibaq",
         )
 
         if not self.config.input.fasta_file:
@@ -1353,22 +1378,9 @@ class QuantificationStage:
             quant_cfg.pibaq_min_shared,
         )
 
-        accession_to_peptides, peptide_to_accessions, _ = digest_fasta_full(
-            fasta=self.config.input.fasta_file,
-            enzyme=quant_cfg.pibaq_enzyme,
-            min_aa=self.config.filtering.min_aa,
-            max_aa=quant_cfg.pibaq_max_aa,
-            canonicalize_isoforms=True,
-            compute_mw=False,
+        accession_to_peptides, peptide_to_accessions, families = (
+            self._pibaq_references()
         )
-        families = discover_families(
-            accession_to_peptides,
-            peptide_to_accessions,
-            min_shared=quant_cfg.pibaq_min_shared,
-        )
-        if quant_cfg.pibaq_families_yaml:
-            overrides = load_families_yaml(Path(quant_cfg.pibaq_families_yaml))
-            families = merge_overrides(families, overrides)
 
         long_df = compute_pibaq(
             peptide_df,

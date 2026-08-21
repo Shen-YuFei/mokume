@@ -9,6 +9,11 @@ lazily so importing the package does not force ``pibaq`` (pyOpenMS) to load unti
 a symbol is actually accessed.
 """
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .pibaq import compute_pibaq, normalize_pibaq
+
 # The piBAQ public symbols and their defining submodule.
 _LAZY_SUBMODULE = {
     "peptides_to_protein": "pibaq",

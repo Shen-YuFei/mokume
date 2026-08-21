@@ -56,7 +56,7 @@ use mokume_core::{MokumeError, Result};
 use mokume_io::read_peptide_parquet;
 use mokume_pipeline::{
     run_lfq_from_peptides, run_pibaq_from_peptides, LfqPeptideObservation, PeptideObservation,
-    PibaqDigest, PibaqFromPeptidesParams,
+    PibaqDigest, PibaqFromPeptidesParams, PibaqProteinRow,
 };
 
 use crate::Peptides2ProteinArgs;
@@ -214,41 +214,102 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
 ///
 /// The Python wheel supplies the complete theoretical-peptide map from its
 /// installed pyOpenMS catalog before this Rust aggregation path starts.
-fn run_pibaq(
-    args: &Peptides2ProteinArgs,
-    output: &Path,
-    pibaq_digest: Option<PibaqDigest>,
-) -> Result<()> {
-    // Resolve the organism up front (matching Python `OrganismDescription.get`,
-    // which raises when the name is unknown). The default is `human`.
+fn resolve_pibaq_organism(args: &Peptides2ProteinArgs) -> Result<Option<pibaq_extras::Organism>> {
     let organism = if args.organism.is_empty() {
         None
     } else {
         Some(pibaq_extras::resolve_organism(&args.organism)?)
     };
-
-    // The proteomic ruler requires TPA + non-zero ploidy/cpc + organism, exactly
-    // as the Python `peptides_to_protein` guard demands.
-    if args.ruler && (!args.tpa || args.ploidy == 0 || args.cpc == 0.0 || args.organism.is_empty())
-    {
+    if args.ruler && (!args.tpa || args.ploidy == 0 || args.cpc == 0.0 || organism.is_none()) {
         return Err(MokumeError::InvalidInput {
             message:
                 "`ploidy`, `cpc`, `organism` and `tpa` are required to calculate protein weight and concentration"
                     .to_owned(),
         });
     }
+    Ok(organism)
+}
 
-    let Some(fasta) = args.fasta.as_ref() else {
+fn pibaq_fasta(args: &Peptides2ProteinArgs) -> Result<&Path> {
+    let Some(fasta) = args.fasta.as_deref() else {
         return Err(MokumeError::InvalidInput {
             message: "the --fasta option is required for the piBAQ method".to_owned(),
         });
     };
     if !fasta.exists() {
         return Err(MokumeError::MissingInput {
-            path: fasta.clone(),
+            path: fasta.to_path_buf(),
         });
     }
+    Ok(fasta)
+}
 
+fn pibaq_observations(table: &PeptideTable) -> (HashMap<String, String>, Vec<PeptideObservation>) {
+    let mut conditions = HashMap::new();
+    let observations = table
+        .rows
+        .iter()
+        .map(|row| {
+            conditions
+                .entry(row.sample.clone())
+                .or_insert_with(|| row.condition.clone());
+            PeptideObservation {
+                peptide: row.peptide.clone(),
+                sample: row.sample.clone(),
+                intensity: row.intensity,
+            }
+        })
+        .collect();
+    (conditions, observations)
+}
+
+fn pibaq_params(args: &Peptides2ProteinArgs, fasta: &Path) -> PibaqFromPeptidesParams {
+    PibaqFromPeptidesParams {
+        fasta: fasta.to_path_buf(),
+        min_aa: args.min_aa,
+        max_aa: args.max_aa,
+        min_shared: args.min_shared,
+        min_anchors: args.min_anchors,
+        high_anchor_threshold: args.high_anchor_threshold,
+        families_yaml: args.families_yaml.clone(),
+        enzyme: args.enzyme.clone(),
+        tpa: args.tpa,
+    }
+}
+
+fn prepare_pibaq_records(
+    rows: Vec<PibaqProteinRow>,
+    conditions: &HashMap<String, String>,
+    args: &Peptides2ProteinArgs,
+    organism: Option<&pibaq_extras::Organism>,
+) -> Result<Vec<pibaq_extras::PibaqExtraRow>> {
+    let mut records = pibaq_extras::PibaqExtraRow::lift(rows, conditions);
+    if args.normalize {
+        pibaq_extras::normalize_pibaq(&mut records);
+    }
+    if args.ruler {
+        let Some(organism) = organism else {
+            return Err(MokumeError::InvalidInput {
+                message: "the --organism option is required for the proteomic ruler".to_owned(),
+            });
+        };
+        pibaq_extras::apply_ruler(&mut records, organism, args.ploidy, args.cpc);
+    }
+    records.sort_by(|left, right| {
+        left.protein
+            .cmp(&right.protein)
+            .then_with(|| left.sample.cmp(&right.sample))
+    });
+    Ok(records)
+}
+
+fn run_pibaq(
+    args: &Peptides2ProteinArgs,
+    output: &Path,
+    pibaq_digest: Option<PibaqDigest>,
+) -> Result<()> {
+    let organism = resolve_pibaq_organism(args)?;
+    let fasta = pibaq_fasta(args)?;
     let table = load_peptide_table(&args.peptides)?;
     if !table.has_peptide {
         return Err(MokumeError::InvalidInput {
@@ -258,62 +319,14 @@ fn run_pibaq(
         });
     }
 
-    // The piBAQ core keys on (peptide, sample); carry a condition lookup so the
-    // long-format output can report each sample's condition.
-    let mut condition_by_sample: HashMap<String, String> = HashMap::new();
-    let mut observations = Vec::with_capacity(table.rows.len());
-    for row in &table.rows {
-        condition_by_sample
-            .entry(row.sample.clone())
-            .or_insert_with(|| row.condition.clone());
-        observations.push(PeptideObservation {
-            peptide: row.peptide.clone(),
-            sample: row.sample.clone(),
-            intensity: row.intensity,
-        });
-    }
-
-    let params = PibaqFromPeptidesParams {
-        fasta: fasta.clone(),
-        min_aa: args.min_aa,
-        max_aa: args.max_aa,
-        min_shared: args.min_shared,
-        min_anchors: args.min_anchors,
-        high_anchor_threshold: args.high_anchor_threshold,
-        families_yaml: args.families_yaml.clone(),
-        enzyme: args.enzyme.clone(),
-        tpa: args.tpa,
-    };
+    let (condition_by_sample, observations) = pibaq_observations(&table);
+    let params = pibaq_params(args, fasta);
     let digest = pibaq_digest.ok_or_else(|| MokumeError::InvalidInput {
         message: "piBAQ requires the Python wheel's runtime pyOpenMS FASTA digest".to_owned(),
     })?;
     let rows = run_pibaq_from_peptides(&observations, &params, digest)?;
 
-    // Lift the piBAQ rows into the extra-aware records, attach the requested
-    // post-processing columns, then emit. The piBAQ allocation math is never
-    // re-touched: the extras only read `NormIntensity`, `PiBAQ`, and (for
-    // TPA/ruler) the molecular weight the core already computed.
-    let mut records = pibaq_extras::PibaqExtraRow::lift(rows, &condition_by_sample);
-
-    if args.normalize {
-        pibaq_extras::normalize_pibaq(&mut records);
-    }
-    if args.ruler {
-        let Some(organism) = organism.as_ref() else {
-            return Err(MokumeError::InvalidInput {
-                message: "the --organism option is required for the proteomic ruler".to_owned(),
-            });
-        };
-        pibaq_extras::apply_ruler(&mut records, organism, args.ploidy, args.cpc);
-    }
-
-    // Stable, deterministic output ordering: protein then sample.
-    records.sort_by(|left, right| {
-        left.protein
-            .cmp(&right.protein)
-            .then_with(|| left.sample.cmp(&right.sample))
-    });
-
+    let records = prepare_pibaq_records(rows, &condition_by_sample, args, organism.as_ref())?;
     write_pibaq_output(
         output,
         &records,
@@ -589,7 +602,24 @@ fn write_pibaq_output(
     ruler: bool,
 ) -> Result<()> {
     let mut writer = create_writer(output)?;
+    write_line(
+        &mut writer,
+        output,
+        &pibaq_output_header(has_condition, tpa, normalize, ruler).join("\t"),
+    )?;
+    for row in rows {
+        let fields = pibaq_output_fields(row, has_condition, tpa, normalize, ruler);
+        write_line(&mut writer, output, &fields.join("\t"))?;
+    }
+    flush(&mut writer, output)
+}
 
+fn pibaq_output_header(
+    has_condition: bool,
+    tpa: bool,
+    normalize: bool,
+    ruler: bool,
+) -> Vec<&'static str> {
     let mut header = vec![PROTEIN_NAME, SAMPLE_ID];
     if has_condition {
         header.push(CONDITION);
@@ -619,37 +649,49 @@ fn write_pibaq_output(
             pibaq_extras::CONCENTRATION_NM,
         ]);
     }
-    write_line(&mut writer, output, &header.join("\t"))?;
+    header
+}
 
-    for row in rows {
-        let mut fields = vec![row.protein.clone(), row.sample.clone()];
-        if has_condition {
-            fields.push(row.condition.clone());
-        }
-        fields.push(format_float(row.norm_intensity));
-        fields.push(format_float(row.pibaq));
-        fields.push(row.family_id.clone());
-        fields.push(row.evidence_level.to_owned());
-        fields.push(row.family_size.to_string());
-        if tpa {
-            fields.push(format_optional(row.molecular_weight));
-            fields.push(format_optional(row.tpa));
-        }
-        if normalize {
-            fields.push(format_optional(row.pibaq_norm));
-            fields.push(format_optional(row.pibaq_log));
-            fields.push(format_optional(row.pibaq_ppb));
-        }
-        if ruler {
-            fields.push(format_optional(row.copy_number));
-            fields.push(format_optional(row.moles_nmol));
-            fields.push(format_optional(row.weight_ng));
-            fields.push(format_optional(row.concentration_nm));
-        }
-        write_line(&mut writer, output, &fields.join("\t"))?;
+fn pibaq_output_fields(
+    row: &pibaq_extras::PibaqExtraRow,
+    has_condition: bool,
+    tpa: bool,
+    normalize: bool,
+    ruler: bool,
+) -> Vec<String> {
+    let mut fields = vec![row.protein.clone(), row.sample.clone()];
+    if has_condition {
+        fields.push(row.condition.clone());
     }
-
-    flush(&mut writer, output)
+    fields.extend([
+        format_float(row.norm_intensity),
+        format_float(row.pibaq),
+        row.family_id.clone(),
+        row.evidence_level.to_owned(),
+        row.family_size.to_string(),
+    ]);
+    if tpa {
+        fields.extend([
+            format_optional(row.molecular_weight),
+            format_optional(row.tpa),
+        ]);
+    }
+    if normalize {
+        fields.extend([
+            format_optional(row.pibaq_norm),
+            format_optional(row.pibaq_log),
+            format_optional(row.pibaq_ppb),
+        ]);
+    }
+    if ruler {
+        fields.extend([
+            format_optional(row.copy_number),
+            format_optional(row.moles_nmol),
+            format_optional(row.weight_ng),
+            format_optional(row.concentration_nm),
+        ]);
+    }
+    fields
 }
 
 /// Write the generic-method long-format output (tab-separated, matching Python).
@@ -1171,6 +1213,86 @@ P3,THIDPECK,S1,A,900.0\n";
         Ok(())
     }
 
+    fn assert_threshold_evidence(
+        low_headers: &[String],
+        low_rows: &[Vec<String>],
+        high_headers: &[String],
+        high_rows: &[Vec<String>],
+    ) -> TestResult<()> {
+        for (headers, rows, protein, expected) in [
+            (low_headers, low_rows, "P1", "high"),
+            (low_headers, low_rows, "P2", "high"),
+            (high_headers, high_rows, "P1", "medium"),
+            (high_headers, high_rows, "P2", "medium"),
+        ] {
+            assert_eq!(
+                cell(headers, rows, protein, "S1", "EvidenceLevel")?,
+                expected
+            );
+        }
+        Ok(())
+    }
+
+    fn assert_threshold_pibaq(
+        low_headers: &[String],
+        low_rows: &[Vec<String>],
+        high_headers: &[String],
+        high_rows: &[Vec<String>],
+    ) -> TestResult<()> {
+        for (protein, sample, expected) in [
+            ("P1", "S1", 150.0),
+            ("P2", "S1", 500.0),
+            ("P3", "S1", 350.0),
+        ] {
+            for (headers, rows) in [(low_headers, low_rows), (high_headers, high_rows)] {
+                assert_cell_close(headers, rows, protein, sample, "PiBAQ", expected)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_tpa_oracle(headers: &[String], rows: &[Vec<String>]) -> TestResult<()> {
+        assert!(headers.contains(&"MolecularWeight".to_owned()));
+        assert!(headers.contains(&"TPA".to_owned()));
+        for (protein, sample, column, expected) in [
+            ("P1", "S1", "MolecularWeight", 3143.460508429001),
+            ("P2", "S1", "MolecularWeight", 764.4068587863999),
+            ("P1", "S1", "TPA", 450.0 / 3143.460508429001),
+            ("P1", "S2", "TPA", 100.0 / 3143.460508429001),
+            ("P2", "S1", "TPA", 500.0 / 764.4068587863999),
+            ("P3", "S1", "TPA", 700.0 / 1903.9098218451002),
+        ] {
+            assert_cell_close(headers, rows, protein, sample, column, expected)?;
+        }
+        Ok(())
+    }
+
+    fn assert_ruler_oracle(headers: &[String], rows: &[Vec<String>]) -> TestResult<()> {
+        for column in [
+            "CopyNumber",
+            "Moles[nmol]",
+            "Weight[ng]",
+            "Concentration[nM]",
+        ] {
+            assert!(headers.contains(&column.to_owned()), "missing {column}");
+        }
+        for (protein, sample, column, expected) in [
+            ("P1", "S1", "CopyNumber", 569705926063.9502),
+            ("P2", "S1", "CopyNumber", 2603104848063.672),
+            ("P3", "S1", "CopyNumber", 1463180476321.2395),
+            ("P1", "S2", "CopyNumber", 126601316903.10007),
+            ("P1", "S1", "Moles[nmol]", 0.0009460188637718765),
+            ("P1", "S1", "Weight[ng]", 2.9737729384957685),
+            ("P1", "S1", "Concentration[nM]", 51576.16376717422),
+            ("P2", "S1", "Concentration[nM]", 235662.2176540015),
+            ("P3", "S1", "Concentration[nM]", 132463.49110155678),
+            ("P1", "S2", "Concentration[nM]", 694.6284682447709),
+        ] {
+            assert_cell_close(headers, rows, protein, sample, column, expected)?;
+        }
+        Ok(())
+    }
+
     // Golden oracle (Python), captured with:
     //   conda run -n Bigbio python -m mokume.mokume_cli peptides2protein \
     //     --method sum -p peptides.csv -o out.tsv
@@ -1410,33 +1532,8 @@ P3,THIDPECK,S1,A,900.0\n";
         let (low_h, low_rows) = read_table(&low_out)?;
         let (high_h, high_rows) = read_table(&high_out)?;
 
-        // Evidence re-buckets with the threshold.
-        assert_eq!(
-            cell(&low_h, &low_rows, "P1", "S1", "EvidenceLevel")?,
-            "high"
-        );
-        assert_eq!(
-            cell(&low_h, &low_rows, "P2", "S1", "EvidenceLevel")?,
-            "high"
-        );
-        assert_eq!(
-            cell(&high_h, &high_rows, "P1", "S1", "EvidenceLevel")?,
-            "medium"
-        );
-        assert_eq!(
-            cell(&high_h, &high_rows, "P2", "S1", "EvidenceLevel")?,
-            "medium"
-        );
-
-        // Quantification values are invariant across thresholds.
-        for (protein, sample, expected) in [
-            ("P1", "S1", 150.0),
-            ("P2", "S1", 500.0),
-            ("P3", "S1", 350.0),
-        ] {
-            assert_cell_close(&low_h, &low_rows, protein, sample, "PiBAQ", expected)?;
-            assert_cell_close(&high_h, &high_rows, protein, sample, "PiBAQ", expected)?;
-        }
+        assert_threshold_evidence(&low_h, &low_rows, &high_h, &high_rows)?;
+        assert_threshold_pibaq(&low_h, &low_rows, &high_h, &high_rows)?;
         Ok(())
     }
 
@@ -1475,59 +1572,7 @@ P3,THIDPECK,S1,A,900.0\n";
         run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         let (headers, rows) = read_table(&output)?;
-        assert!(headers.contains(&"MolecularWeight".to_owned()));
-        assert!(headers.contains(&"TPA".to_owned()));
-        // pyOpenMS getMonoWeight: P1=3143.460508429001, P2=764.4068587863999,
-        // P3=1903.9098218451002.
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S1",
-            "MolecularWeight",
-            3143.460508429001,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P2",
-            "S1",
-            "MolecularWeight",
-            764.4068587863999,
-        )?;
-        // TPA = NormIntensity / MolecularWeight.
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S1",
-            "TPA",
-            450.0 / 3143.460508429001,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S2",
-            "TPA",
-            100.0 / 3143.460508429001,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P2",
-            "S1",
-            "TPA",
-            500.0 / 764.4068587863999,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P3",
-            "S1",
-            "TPA",
-            700.0 / 1903.9098218451002,
-        )?;
+        assert_tpa_oracle(&headers, &rows)?;
         Ok(())
     }
 
@@ -1597,82 +1642,7 @@ P3,THIDPECK,S1,A,900.0\n";
         run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         let (headers, rows) = read_table(&output)?;
-        for column in [
-            "CopyNumber",
-            "Moles[nmol]",
-            "Weight[ng]",
-            "Concentration[nM]",
-        ] {
-            assert!(headers.contains(&column.to_owned()), "missing {column}");
-        }
-        // Captured from the Python oracle (see module-level command above).
-        assert_cell_close(&headers, &rows, "P1", "S1", "CopyNumber", 569705926063.9502)?;
-        assert_cell_close(&headers, &rows, "P2", "S1", "CopyNumber", 2603104848063.672)?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P3",
-            "S1",
-            "CopyNumber",
-            1463180476321.2395,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S2",
-            "CopyNumber",
-            126601316903.10007,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S1",
-            "Moles[nmol]",
-            0.0009460188637718765,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S1",
-            "Weight[ng]",
-            2.9737729384957685,
-        )?;
-        // Concentration is a per-Condition volume term; condition A and B differ.
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S1",
-            "Concentration[nM]",
-            51576.16376717422,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P2",
-            "S1",
-            "Concentration[nM]",
-            235662.2176540015,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P3",
-            "S1",
-            "Concentration[nM]",
-            132463.49110155678,
-        )?;
-        assert_cell_close(
-            &headers,
-            &rows,
-            "P1",
-            "S2",
-            "Concentration[nM]",
-            694.6284682447709,
-        )?;
+        assert_ruler_oracle(&headers, &rows)?;
         Ok(())
     }
 

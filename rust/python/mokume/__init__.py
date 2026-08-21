@@ -24,13 +24,12 @@ import importlib.metadata
 import sys
 import warnings
 
-from mokume._mokume import differential_expression as _differential_expression
-from mokume._mokume import impute_matrix as _impute_matrix
-from mokume._mokume import normalize_matrix
-from mokume._mokume import run as _native_run
-from mokume._mokume import version
-
 _NATIVE_EXTENSION = importlib.import_module("mokume._mokume")
+_differential_expression = getattr(_NATIVE_EXTENSION, "differential_expression")
+_impute_matrix = getattr(_NATIVE_EXTENSION, "impute_matrix")
+normalize_matrix = getattr(_NATIVE_EXTENSION, "normalize_matrix")
+_native_run = getattr(_NATIVE_EXTENSION, "run")
+version = getattr(_NATIVE_EXTENSION, "version")
 _pibaq_digest_request = getattr(_NATIVE_EXTENSION, "pibaq_digest_request")
 _native_run_cli = getattr(_NATIVE_EXTENSION, "run_cli")
 _native_run_cli_with_pibaq_digest = getattr(

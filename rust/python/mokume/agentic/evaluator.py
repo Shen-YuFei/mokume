@@ -349,24 +349,10 @@ def de_signed_call_set(
     }
 
 
-def method_sensitivity(
-    candidate_de: dict[str, pd.DataFrame],
-    expected_direction: str | None = None,
-) -> tuple[pd.DataFrame, dict[str, int | bool | str]]:
-    """Describe shared and method-sensitive signed calls without ranking."""
-    columns = [
-        "protein",
-        "direction",
-        "support_count",
-        "candidate_count",
-        "support_fraction",
-        "supporting_candidates",
-        "classification",
-    ]
-    calls = {
-        name: de_signed_call_set(table, expected_direction)
-        for name, table in candidate_de.items()
-    }
+def _method_sensitivity_rows(
+    calls: dict[str, set[tuple[str, str]]],
+) -> list[dict[str, int | float | str]]:
+    """Build one support row for each signed call in the union."""
     candidate_names = list(calls)
     candidate_count = len(candidate_names)
     union = set().union(*calls.values()) if calls else set()
@@ -392,8 +378,15 @@ def method_sensitivity(
                 "classification": classification,
             }
         )
-    table = pd.DataFrame(rows, columns=columns)
-    summary: dict[str, int | bool | str] = {
+    return rows
+
+
+def _method_sensitivity_summary(
+    table: pd.DataFrame,
+    candidate_count: int,
+) -> dict[str, int | bool | str]:
+    """Summarize shared and method-sensitive signed calls."""
+    return {
         "comparison_available": candidate_count >= 2,
         "candidate_count": candidate_count,
         "signed_call_union": len(table),
@@ -406,6 +399,29 @@ def method_sensitivity(
             "evidence of biological truth."
         ),
     }
+
+
+def method_sensitivity(
+    candidate_de: dict[str, pd.DataFrame],
+    expected_direction: str | None = None,
+) -> tuple[pd.DataFrame, dict[str, int | bool | str]]:
+    """Describe shared and method-sensitive signed calls without ranking."""
+    columns = [
+        "protein",
+        "direction",
+        "support_count",
+        "candidate_count",
+        "support_fraction",
+        "supporting_candidates",
+        "classification",
+    ]
+    calls = {
+        name: de_signed_call_set(table, expected_direction)
+        for name, table in candidate_de.items()
+    }
+    candidate_count = len(calls)
+    table = pd.DataFrame(_method_sensitivity_rows(calls), columns=columns)
+    summary = _method_sensitivity_summary(table, candidate_count)
     return table, summary
 
 

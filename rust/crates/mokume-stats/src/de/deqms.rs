@@ -141,6 +141,15 @@ struct ScaStat {
     log_pvalue: f64,
 }
 
+struct SpectraInputs {
+    sigma2: Vec<f64>,
+    log_var: Vec<f64>,
+    df: Vec<f64>,
+    df_valid: Vec<f64>,
+    x: Vec<f64>,
+    valid: Vec<bool>,
+}
+
 /// Port of `_spectra_count_ebayes` (deqms.py:43). Applies the count-aware Bayes
 /// moderation to the kept-protein limma fits; falls back to the standard eBayes
 /// statistics (`t_statistic`, `p_value`) when the count path is not exercised.
@@ -150,7 +159,26 @@ fn spectra_count_ebayes(
     df_prior: f64,
 ) -> Vec<ScaStat> {
     let n_genes = moderations.len();
-    // sigma2 = sigma**2; log_var = log(sigma2); df_valid = df (0 -> NaN).
+    let inputs = spectra_inputs(moderations, counts);
+    let valid_count = inputs.valid.iter().filter(|flag| **flag).count();
+    if valid_count < MIN_VALID_POINTS {
+        return fallback(moderations, df_prior);
+    }
+    let x_valid = (0..n_genes)
+        .filter(|i| inputs.valid[*i])
+        .map(|i| inputs.x[i])
+        .collect::<Vec<_>>();
+    if ptp(&x_valid) < MIN_COUNT_SPREAD {
+        return fallback(moderations, df_prior);
+    }
+
+    let y_pred = lowess_predict(&inputs.log_var, &inputs.x, &inputs.valid);
+    let (egpred, d0) = count_prior(&inputs, &y_pred);
+    moderated_sca_stats(moderations, &inputs, &egpred, d0)
+}
+
+fn spectra_inputs(moderations: &[(usize, LimmaModeration)], counts: &[f64]) -> SpectraInputs {
+    let n_genes = moderations.len();
     let sigma2 = moderations
         .iter()
         .map(|(_, fit)| fit.sigma * fit.sigma)
@@ -185,39 +213,30 @@ fn spectra_count_ebayes(
         .iter()
         .map(|value| value.log2())
         .collect::<Vec<_>>();
-
-    // valid = isfinite(log_var) & isfinite(x) & isfinite(df_valid).
     let valid = (0..n_genes)
         .map(|i| log_var[i].is_finite() && x[i].is_finite() && df_valid[i].is_finite())
         .collect::<Vec<_>>();
-    let valid_count = valid.iter().filter(|flag| **flag).count();
-    if valid_count < MIN_VALID_POINTS {
-        return fallback(moderations, df_prior);
+    SpectraInputs {
+        sigma2,
+        log_var,
+        df,
+        df_valid,
+        x,
+        valid,
     }
+}
 
-    // ptp(x_valid) < 1e-10 -> all counts identical -> fall back.
-    let x_valid = (0..n_genes)
-        .filter(|i| valid[*i])
-        .map(|i| x[i])
-        .collect::<Vec<_>>();
-    let x_range = ptp(&x_valid);
-    if x_range < MIN_COUNT_SPREAD {
-        return fallback(moderations, df_prior);
-    }
-
-    let y_pred = lowess_predict(&log_var, &x, &valid);
-
-    // eg / egpred / myfct / mean_myfct (deqms.py:103-107).
+fn count_prior(inputs: &SpectraInputs, y_pred: &[f64]) -> (Vec<f64>, f64) {
     let mut myfct_sum = 0.0;
     let mut myfct_count = 0usize;
-    let mut egpred = vec![f64::NAN; n_genes];
-    for i in 0..n_genes {
-        if !df_valid[i].is_finite() || !y_pred[i].is_finite() {
+    let mut egpred = vec![f64::NAN; inputs.df.len()];
+    for i in 0..inputs.df.len() {
+        if !inputs.df_valid[i].is_finite() || !y_pred[i].is_finite() {
             continue;
         }
-        let half_df = df_valid[i] / 2.0;
+        let half_df = inputs.df_valid[i] / 2.0;
         let shift = -digamma(half_df) + (half_df).ln();
-        let eg_i = log_var[i] + shift;
+        let eg_i = inputs.log_var[i] + shift;
         let egpred_i = y_pred[i] + shift;
         egpred[i] = egpred_i;
         let residual = eg_i - egpred_i;
@@ -232,10 +251,15 @@ fn spectra_count_ebayes(
     } else {
         f64::NAN
     };
+    (egpred, grid_search_d0(mean_myfct, inputs.df.len()))
+}
 
-    let d0 = grid_search_d0(mean_myfct, n_genes);
-
-    // s02 = exp(egpred + digamma(d0/2) - log(d0/2)); post_var; post_df; sca_t.
+fn moderated_sca_stats(
+    moderations: &[(usize, LimmaModeration)],
+    inputs: &SpectraInputs,
+    egpred: &[f64],
+    d0: f64,
+) -> Vec<ScaStat> {
     let half_d0 = d0 / 2.0;
     let d0_shift = digamma(half_d0) - half_d0.ln();
     moderations
@@ -243,8 +267,8 @@ fn spectra_count_ebayes(
         .enumerate()
         .map(|(i, (_, fit))| {
             let s02 = (egpred[i] + d0_shift).exp();
-            let post_var = (d0 * s02 + df[i] * sigma2[i]) / (d0 + df[i]);
-            let post_df = d0 + df[i];
+            let post_var = (d0 * s02 + inputs.df[i] * inputs.sigma2[i]) / (d0 + inputs.df[i]);
+            let post_df = d0 + inputs.df[i];
             let sca_t = fit.log2_fold_change / (fit.stdev_unscaled * post_var.sqrt());
             let sca_pvalue = 2.0 * student_t_sf(sca_t.abs(), post_df);
             let log_pvalue = student_t_two_sided_log_pvalue(sca_t, post_df);

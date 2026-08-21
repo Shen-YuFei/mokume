@@ -226,26 +226,8 @@ fn differential_expression_py(
 ) -> PyResult<Vec<Py<PyDict>>> {
     let options = DifferentialExpressionOptions::from_dict(options)?;
     let matrix = decode_matrix(values);
-    let count_by_protein = options.peptide_counts.as_ref().map(|counts| {
-        proteins
-            .iter()
-            .cloned()
-            .zip(counts.iter().copied())
-            .collect::<HashMap<_, _>>()
-    });
-    let config = DifferentialExpressionConfig {
-        enabled: true,
-        contrasts: None,
-        contrasts_file: None,
-        method: method.clone(),
-        ensemble_methods: options.ensemble_methods,
-        ensemble_min_k: options.ensemble_min_k,
-        log2fc_threshold: options.log2fc_threshold,
-        effect_size_gate: options.effect_size_gate,
-        fdr_threshold: options.fdr_threshold,
-        fdr_method: options.fdr_method,
-        output: None,
-    };
+    let count_by_protein = peptide_count_map(&proteins, options.peptide_counts.as_deref());
+    let config = differential_expression_config(&method, &options);
     let peptide_counts = options.peptide_counts;
     let threads = options.threads;
     let condition_a = options.condition_a;
@@ -271,6 +253,35 @@ fn differential_expression_py(
             &condition_b,
         ),
         MatrixDifferentialExpressionResults::Ensemble(rows) => ensemble_rows_to_python(py, rows),
+    }
+}
+
+fn peptide_count_map(proteins: &[String], counts: Option<&[f64]>) -> Option<HashMap<String, f64>> {
+    counts.map(|counts| {
+        proteins
+            .iter()
+            .cloned()
+            .zip(counts.iter().copied())
+            .collect()
+    })
+}
+
+fn differential_expression_config(
+    method: &str,
+    options: &DifferentialExpressionOptions,
+) -> DifferentialExpressionConfig {
+    DifferentialExpressionConfig {
+        enabled: true,
+        contrasts: None,
+        contrasts_file: None,
+        method: method.to_owned(),
+        ensemble_methods: options.ensemble_methods.clone(),
+        ensemble_min_k: options.ensemble_min_k,
+        log2fc_threshold: options.log2fc_threshold,
+        effect_size_gate: options.effect_size_gate.clone(),
+        fdr_threshold: options.fdr_threshold,
+        fdr_method: options.fdr_method.clone(),
+        output: None,
     }
 }
 

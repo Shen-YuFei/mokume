@@ -42,6 +42,7 @@ Exit code 0 on success; non-zero (with a message on stderr) otherwise.
 """
 
 import argparse
+import importlib
 import sys
 
 
@@ -104,13 +105,16 @@ def main(argv=None):
     # Import lazily so a missing install yields an actionable message (exit 1)
     # rather than an opaque traceback before argparse even runs.
     try:
-        from mokume.quantification.pibaq import peptides_to_protein
-    except ImportError as exc:
+        peptides_to_protein = getattr(
+            importlib.import_module("mokume.quantification.pibaq"),
+            "peptides_to_protein",
+        )
+    except (ImportError, AttributeError) as exc:
         raise SystemExit(
             "piBAQ command aborted: the mokume package could not be imported "
-            "({0}). Install its third-party dependencies with: "
-            "pip install mokume[all]".format(exc)
-        )
+            f"({exc}). Install its third-party dependencies with: "
+            "pip install mokume[all]"
+        ) from exc
 
     # Mirror the Python CLI ``peptides2protein`` piBAQ branch exactly: it forwards
     # every option straight into ``peptides_to_protein``. The enzyme validity
@@ -141,9 +145,9 @@ def main(argv=None):
         # Bad enzyme / organism / ruler-guard failures arrive here. Re-raise as a
         # SystemExit so the caller sees a non-zero exit with a clear
         # message rather than a raw traceback.
-        raise SystemExit("piBAQ command aborted: {0}".format(exc))
+        raise SystemExit(f"piBAQ command aborted: {exc}") from exc
 
-    print("piBAQ protein table written to {0}".format(args.output))
+    print(f"piBAQ protein table written to {args.output}")
     return 0
 
 

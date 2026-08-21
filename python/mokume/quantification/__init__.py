@@ -9,10 +9,14 @@ DirectLFQ is an optional dependency. Install with:
 """
 
 import re
+from typing import TYPE_CHECKING
 
 from mokume._lazy import module_api
 from mokume.core.registry import PluginRegistry
 from mokume.quantification.base import ProteinQuantificationMethod
+
+if TYPE_CHECKING:
+    from mokume.quantification.pibaq import compute_pibaq, normalize_pibaq
 
 __all__ = [
     # Base class

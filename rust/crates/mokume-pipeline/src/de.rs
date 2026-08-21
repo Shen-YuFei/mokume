@@ -624,6 +624,11 @@ pub(crate) fn validate_config(
     if is_ensemble {
         validated_ensemble_member_names(config)?;
     }
+    validate_de_thresholds(config)?;
+    validate_effect_size_gate(config)
+}
+
+fn validate_de_thresholds(config: &DifferentialExpressionConfig) -> Result<()> {
     if !config.log2fc_threshold.is_finite() || config.log2fc_threshold < 0.0 {
         return Err(invalid_input(
             "--de-log2fc must be a finite, non-negative value",
@@ -632,6 +637,10 @@ pub(crate) fn validate_config(
     if !config.fdr_threshold.is_finite() || !(0.0..=1.0).contains(&config.fdr_threshold) {
         return Err(invalid_input("--de-fdr must be between 0 and 1"));
     }
+    Ok(())
+}
+
+fn validate_effect_size_gate(config: &DifferentialExpressionConfig) -> Result<()> {
     if let Some(gate) = config.effect_size_gate.as_deref() {
         if !matches!(
             gate.trim().to_ascii_lowercase().as_str(),

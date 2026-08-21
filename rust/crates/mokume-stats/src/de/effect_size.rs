@@ -104,6 +104,33 @@ fn mixture_gate(values: &[f64]) -> Option<f64> {
 /// sklearn KMeans(n_clusters=2, n_init=1, random_state=0), specialized to 1D.
 fn kmeans_labels(values: &[f64]) -> Option<Vec<usize>> {
     let mut random = Mt19937::new(0);
+    let mut centers = initial_kmeans_centers(values, &mut random);
+    let tolerance = variance(values) * 1e-4;
+    let mut previous_labels = vec![usize::MAX; values.len()];
+    let mut strict_convergence = false;
+    for _ in 0..300 {
+        let labels = assign_labels(values, centers);
+        let next = kmeans_centers(values, &labels)?;
+        let shift = (next[0] - centers[0]).powi(2) + (next[1] - centers[1]).powi(2);
+        centers = next;
+        if labels == previous_labels {
+            previous_labels = labels;
+            strict_convergence = true;
+            break;
+        }
+        previous_labels = labels;
+        if shift <= tolerance {
+            break;
+        }
+    }
+    if strict_convergence {
+        Some(previous_labels)
+    } else {
+        Some(assign_labels(values, centers))
+    }
+}
+
+fn initial_kmeans_centers(values: &[f64], random: &mut Mt19937) -> [f64; 2] {
     let first = (random.random_f64() * values.len() as f64).floor() as usize;
     let mut centers = [values[first], 0.0];
     let closest = values
@@ -128,39 +155,20 @@ fn kmeans_labels(values: &[f64]) -> Option<Vec<usize>> {
             centers[1] = values[candidate];
         }
     }
+    centers
+}
 
-    let tolerance = variance(values) * 1e-4;
-    let mut previous_labels = vec![usize::MAX; values.len()];
-    let mut strict_convergence = false;
-    for _ in 0..300 {
-        let labels = assign_labels(values, centers);
-        let mut counts = [0usize; 2];
-        let mut sums = [0.0; 2];
-        for (value, label) in values.iter().zip(&labels) {
-            counts[*label] += 1;
-            sums[*label] += value;
-        }
-        if counts.contains(&0) {
-            return None;
-        }
-        let next = [sums[0] / counts[0] as f64, sums[1] / counts[1] as f64];
-        let shift = (next[0] - centers[0]).powi(2) + (next[1] - centers[1]).powi(2);
-        centers = next;
-        if labels == previous_labels {
-            previous_labels = labels;
-            strict_convergence = true;
-            break;
-        }
-        previous_labels = labels;
-        if shift <= tolerance {
-            break;
-        }
+fn kmeans_centers(values: &[f64], labels: &[usize]) -> Option<[f64; 2]> {
+    let mut counts = [0usize; 2];
+    let mut sums = [0.0; 2];
+    for (value, label) in values.iter().zip(labels) {
+        counts[*label] += 1;
+        sums[*label] += value;
     }
-    if strict_convergence {
-        Some(previous_labels)
-    } else {
-        Some(assign_labels(values, centers))
+    if counts.contains(&0) {
+        return None;
     }
+    Some([sums[0] / counts[0] as f64, sums[1] / counts[1] as f64])
 }
 
 fn assign_labels(values: &[f64], centers: [f64; 2]) -> Vec<usize> {
@@ -187,6 +195,13 @@ struct GaussianMixture {
     variances: [f64; 2],
 }
 
+struct Expectation {
+    counts: [f64; 2],
+    weighted_sums: [f64; 2],
+    responsibilities: Vec<[f64; 2]>,
+    lower_bound: f64,
+}
+
 impl GaussianMixture {
     fn from_labels(values: &[f64], labels: &[usize]) -> Option<Self> {
         let mut groups = [Vec::new(), Vec::new()];
@@ -210,53 +225,68 @@ impl GaussianMixture {
     fn fit(&mut self, values: &[f64]) -> Option<()> {
         let mut previous_lower_bound = f64::NEG_INFINITY;
         for _ in 0..100 {
-            let mut counts = [0.0; 2];
-            let mut weighted_sums = [0.0; 2];
-            let mut responsibilities = Vec::with_capacity(values.len());
-            let mut lower_bound = 0.0;
-            for value in values {
-                let log_probabilities = [
-                    self.log_probability(*value, 0),
-                    self.log_probability(*value, 1),
-                ];
-                let normalizer = log_sum_exp(log_probabilities[0], log_probabilities[1]);
-                if !normalizer.is_finite() {
-                    return None;
-                }
-                let responsibility = [
-                    (log_probabilities[0] - normalizer).exp(),
-                    (log_probabilities[1] - normalizer).exp(),
-                ];
-                for component in 0..2 {
-                    counts[component] += responsibility[component];
-                    weighted_sums[component] += responsibility[component] * value;
-                }
-                responsibilities.push(responsibility);
-                lower_bound += normalizer;
-            }
-            lower_bound /= values.len() as f64;
-            for component in 0..2 {
-                if counts[component] <= 0.0 {
-                    return None;
-                }
-                self.weights[component] = counts[component] / values.len() as f64;
-                self.means[component] = weighted_sums[component] / counts[component];
-            }
-            let mut variance_sums = [0.0; 2];
-            for (value, responsibility) in values.iter().zip(&responsibilities) {
-                for component in 0..2 {
-                    let delta = value - self.means[component];
-                    variance_sums[component] += responsibility[component] * delta * delta;
-                }
-            }
-            for component in 0..2 {
-                self.variances[component] =
-                    variance_sums[component] / counts[component] + REGULARIZATION;
-            }
-            if (lower_bound - previous_lower_bound).abs() < 1e-3 {
+            let expectation = self.expectation(values)?;
+            self.maximize(values, &expectation)?;
+            if (expectation.lower_bound - previous_lower_bound).abs() < 1e-3 {
                 break;
             }
-            previous_lower_bound = lower_bound;
+            previous_lower_bound = expectation.lower_bound;
+        }
+        Some(())
+    }
+
+    fn expectation(&self, values: &[f64]) -> Option<Expectation> {
+        let mut counts = [0.0; 2];
+        let mut weighted_sums = [0.0; 2];
+        let mut responsibilities = Vec::with_capacity(values.len());
+        let mut lower_bound = 0.0;
+        for value in values {
+            let log_probabilities = [
+                self.log_probability(*value, 0),
+                self.log_probability(*value, 1),
+            ];
+            let normalizer = log_sum_exp(log_probabilities[0], log_probabilities[1]);
+            if !normalizer.is_finite() {
+                return None;
+            }
+            let responsibility = [
+                (log_probabilities[0] - normalizer).exp(),
+                (log_probabilities[1] - normalizer).exp(),
+            ];
+            for component in 0..2 {
+                counts[component] += responsibility[component];
+                weighted_sums[component] += responsibility[component] * value;
+            }
+            responsibilities.push(responsibility);
+            lower_bound += normalizer;
+        }
+        Some(Expectation {
+            counts,
+            weighted_sums,
+            responsibilities,
+            lower_bound: lower_bound / values.len() as f64,
+        })
+    }
+
+    fn maximize(&mut self, values: &[f64], expectation: &Expectation) -> Option<()> {
+        for component in 0..2 {
+            if expectation.counts[component] <= 0.0 {
+                return None;
+            }
+            self.weights[component] = expectation.counts[component] / values.len() as f64;
+            self.means[component] =
+                expectation.weighted_sums[component] / expectation.counts[component];
+        }
+        let mut variance_sums = [0.0; 2];
+        for (value, responsibility) in values.iter().zip(&expectation.responsibilities) {
+            for component in 0..2 {
+                let delta = value - self.means[component];
+                variance_sums[component] += responsibility[component] * delta * delta;
+            }
+        }
+        for (component, variance_sum) in variance_sums.into_iter().enumerate() {
+            self.variances[component] =
+                variance_sum / expectation.counts[component] + REGULARIZATION;
         }
         Some(())
     }

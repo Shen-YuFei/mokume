@@ -128,6 +128,29 @@ pub fn impute_matrix(
 }
 
 fn impute_inner(values: &[Vec<f64>], config: &ImputationConfig) -> Result<Vec<Vec<f64>>> {
+    let (proteins, samples) = imputation_axes(values)?;
+    let mut output = canonical_imputation_matrix(values);
+    let fills = imputed_values(config, &proteins, &samples, |protein, sample| {
+        let row = usize::try_from(protein.get()).ok()?;
+        let column = usize::try_from(sample.get()).ok()?;
+        output
+            .get(row)?
+            .get(column)
+            .copied()
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(f64::log2)
+    })?;
+    for (protein, sample, value) in fills {
+        let row = usize::try_from(protein.get())
+            .map_err(|_| invalid_input("matrix row index is not representable"))?;
+        let column = usize::try_from(sample.get())
+            .map_err(|_| invalid_input("matrix column index is not representable"))?;
+        output[row][column] = checked_imputed_intensity(value)?;
+    }
+    Ok(output)
+}
+
+fn imputation_axes(values: &[Vec<f64>]) -> Result<(Vec<ProteinId>, Vec<SampleId>)> {
     let width = values.first().map_or(0, Vec::len);
     let proteins = (0..values.len())
         .map(|row| {
@@ -148,8 +171,11 @@ fn impute_inner(values: &[Vec<f64>], config: &ImputationConfig) -> Result<Vec<Ve
                 .map_err(|_| invalid_input("matrix has too many columns"))
         })
         .collect::<Result<Vec<_>>>()?;
+    Ok((proteins, samples))
+}
 
-    let mut output = values
+fn canonical_imputation_matrix(values: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    values
         .iter()
         .map(|row| {
             row.iter()
@@ -162,25 +188,7 @@ fn impute_inner(values: &[Vec<f64>], config: &ImputationConfig) -> Result<Vec<Ve
                 })
                 .collect::<Vec<_>>()
         })
-        .collect::<Vec<_>>();
-    let fills = imputed_values(config, &proteins, &samples, |protein, sample| {
-        let row = usize::try_from(protein.get()).ok()?;
-        let column = usize::try_from(sample.get()).ok()?;
-        output
-            .get(row)?
-            .get(column)
-            .copied()
-            .filter(|value| value.is_finite() && *value > 0.0)
-            .map(f64::log2)
-    })?;
-    for (protein, sample, value) in fills {
-        let row = usize::try_from(protein.get())
-            .map_err(|_| invalid_input("matrix row index is not representable"))?;
-        let column = usize::try_from(sample.get())
-            .map_err(|_| invalid_input("matrix column index is not representable"))?;
-        output[row][column] = checked_imputed_intensity(value)?;
-    }
-    Ok(output)
+        .collect()
 }
 
 pub(crate) fn validate_no_infinite(values: &[Vec<f64>], operation: &str) -> Result<()> {

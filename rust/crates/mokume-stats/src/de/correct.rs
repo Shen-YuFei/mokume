@@ -194,6 +194,21 @@ fn smooth_spline_df(x: &[f64], y: &[f64], target_df: f64) -> Vec<f64> {
     if n <= 3 || target_df >= n as f64 {
         return y.to_vec();
     }
+    let penalty = spline_penalty(x);
+    let (mut low, mut high) = (1e-8_f64, 1e8_f64);
+    for _ in 0..60 {
+        let middle = (low * high).sqrt();
+        if fit_spline(&penalty, y, middle).1 > target_df {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    fit_spline(&penalty, y, (low * high).sqrt()).0
+}
+
+fn spline_penalty(x: &[f64]) -> Vec<Vec<f64>> {
+    let n = x.len();
     let m = n - 2;
     let h = x
         .windows(2)
@@ -225,39 +240,31 @@ fn smooth_spline_df(x: &[f64], y: &[f64], target_df: f64) -> Vec<f64> {
             }
         }
     }
+    penalty
+}
 
-    let fitted_and_df = |lambda: f64| {
-        let mut system = penalty.clone();
-        for (index, row) in system.iter_mut().enumerate() {
-            for value in row.iter_mut() {
-                *value *= lambda;
-            }
-            row[index] += 1.0;
+fn fit_spline(penalty: &[Vec<f64>], y: &[f64], lambda: f64) -> (Vec<f64>, f64) {
+    let mut system = penalty.to_vec();
+    for (index, row) in system.iter_mut().enumerate() {
+        for value in row.iter_mut() {
+            *value *= lambda;
         }
-        let inverse = invert(&system);
-        let fitted = inverse
-            .iter()
-            .map(|row| {
-                row.iter()
-                    .zip(y)
-                    .map(|(weight, value)| weight * value)
-                    .sum()
-            })
-            .collect::<Vec<f64>>();
-        let df = (0..n).map(|index| inverse[index][index]).sum::<f64>();
-        (fitted, df)
-    };
-
-    let (mut low, mut high) = (1e-8_f64, 1e8_f64);
-    for _ in 0..60 {
-        let middle = (low * high).sqrt();
-        if fitted_and_df(middle).1 > target_df {
-            low = middle;
-        } else {
-            high = middle;
-        }
+        row[index] += 1.0;
     }
-    fitted_and_df((low * high).sqrt()).0
+    let inverse = invert(&system);
+    let fitted = inverse
+        .iter()
+        .map(|row| {
+            row.iter()
+                .zip(y)
+                .map(|(weight, value)| weight * value)
+                .sum()
+        })
+        .collect::<Vec<f64>>();
+    let df = (0..inverse.len())
+        .map(|index| inverse[index][index])
+        .sum::<f64>();
+    (fitted, df)
 }
 
 fn invert(matrix: &[Vec<f64>]) -> Vec<Vec<f64>> {
