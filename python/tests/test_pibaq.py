@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import inspect
 import textwrap
 from pathlib import Path
 from typing import Dict, Set
@@ -68,6 +69,29 @@ class _NonIterableContainer:
 
     def __iter__(self):
         raise AssertionError("membership filtering must not materialize the container")
+
+
+def test_compute_pibaq_preserves_public_signature():
+    """The static-analysis refactor must not narrow the public call contract."""
+    parameters = inspect.signature(compute_pibaq).parameters
+    assert tuple(parameters) == (
+        "peptide_df",
+        "accession_to_peptides",
+        "peptide_to_accessions",
+        "families",
+        "mw_map",
+        "min_anchors",
+        "high_anchor_threshold",
+        "extra_group_cols",
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        for parameter in tuple(parameters.values())[:4]
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in tuple(parameters.values())[4:]
+    )
 
 
 def test_membership_mask_probes_observed_values_without_iterating_container():
@@ -662,20 +686,20 @@ def test_peptides_to_protein_pibaq_default_routes_to_compute_pibaq(
 
     output_tsv = tmp_path / "out.tsv"
     peptides_to_protein(
-        fasta=str(pibaq_fasta),
-        peptides=str(peptide_table),
-        enzyme="Trypsin",
-        normalize=False,
-        min_aa=7,
-        max_aa=40,
-        tpa=False,
-        ruler=False,
-        ploidy=0,
-        cpc=0.0,
-        organism="",
-        output=str(output_tsv),
-        verbose=False,
-        qc_report=str(tmp_path / "qc.pdf"),
+        str(pibaq_fasta),
+        str(peptide_table),
+        "Trypsin",
+        False,
+        7,
+        40,
+        False,
+        False,
+        0,
+        0.0,
+        "",
+        str(output_tsv),
+        False,
+        str(tmp_path / "qc.pdf"),
     )
     result = pd.read_csv(output_tsv, sep="\t")
     by_acc = result.set_index(PROTEIN_NAME)

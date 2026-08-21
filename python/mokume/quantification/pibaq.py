@@ -23,14 +23,18 @@ numerator and denominator symmetric.
 
 """
 
+import importlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import (
     List,
     Mapping,
     Optional,
     Sequence,
     Set,
+    Tuple,
 )
 
 import numpy as np
@@ -56,10 +60,7 @@ from mokume.core.constants import (
     is_parquet,
 )
 from mokume.core.logger import get_logger, log_execution_time, log_function_call
-from mokume.io.fasta import (
-    digest_fasta_full,
-)
-from mokume.io.fasta import extract_fasta as _extract_fasta_io
+from mokume.io.fasta import digest_fasta_full, extract_fasta as _extract_fasta_io
 from mokume.model.organism import OrganismDescription
 from mokume.plotting import is_plotting_available
 from mokume.quantification._pibaq_allocation import (
@@ -89,6 +90,38 @@ AVERAGE_BASE_PAIR_MASS: float = 617.96
 
 # Get a logger for this module
 logger = get_logger("mokume.quantification.pibaq")
+
+
+def _bind_arguments(
+    function_name: str,
+    args: Sequence[object],
+    kwargs: Mapping[str, object],
+    positional_names: Sequence[str],
+    defaults: Mapping[str, object],
+) -> dict[str, object]:
+    """Bind a legacy call without changing its accepted argument forms."""
+    if len(args) > len(positional_names):
+        raise TypeError(
+            f"{function_name}() takes {len(positional_names)} positional arguments "
+            f"but {len(args)} were given"
+        )
+    values = dict(zip(positional_names, args))
+    duplicate = next((name for name in values if name in kwargs), None)
+    if duplicate is not None:
+        raise TypeError(f"{function_name}() got multiple values for '{duplicate}'")
+    allowed = set(positional_names) | set(defaults)
+    unexpected = next((name for name in kwargs if name not in allowed), None)
+    if unexpected is not None:
+        raise TypeError(
+            f"{function_name}() got an unexpected keyword argument '{unexpected}'"
+        )
+    values.update(kwargs)
+    missing = [name for name in positional_names if name not in values]
+    if missing:
+        raise TypeError(f"{function_name}() missing required argument: '{missing[0]}'")
+    for name, default in defaults.items():
+        values.setdefault(name, default)
+    return values
 
 
 @log_function_call(logger)
@@ -147,10 +180,18 @@ def handle_nonstandard_aa(aa_seq: str):
     return nonstandard_aa_lst, considered_seq
 
 
+_EXTRACT_FASTA_ARGUMENTS = (
+    "fasta",
+    "enzyme",
+    "proteins",
+    "min_aa",
+    "max_aa",
+    "tpa",
+)
+
+
 @log_function_call(logger)
-def extract_fasta(
-    fasta: str, enzyme: str, proteins: List, min_aa: int, max_aa: int, tpa: bool
-):
+def extract_fasta(*args: object, **kwargs: object):
     """Forward to :func:`mokume.io.fasta.extract_fasta`.
 
     Kept as a thin wrapper so existing callers can keep importing
@@ -174,7 +215,8 @@ def extract_fasta(
         are each only correct alongside their matching numerator. Retained
         for direct API consumers; prefer ``compute_pibaq`` for new code.
     """
-    return _extract_fasta_io(fasta, enzyme, proteins, min_aa, max_aa, tpa)
+    bound = _bind_arguments("extract_fasta", args, kwargs, _EXTRACT_FASTA_ARGUMENTS, {})
+    return _extract_fasta_io(**bound)
 
 
 class ConcentrationWeightByProteomicRuler:
@@ -202,6 +244,7 @@ class ConcentrationWeightByProteomicRuler:
         )
 
     def total_histone_intensities(self, protein_intensities: pd.DataFrame) -> float:
+        """Return the summed intensity of accession- or entry-matched histones."""
         # ``ProteinName`` carries UniProt accessions (from ``pg_accessions`` in the
         # quantms feature files), so match against ``histone_proteins`` (accessions)
         # in addition to ``histone_entries`` (entry names). Matching only entry
@@ -218,6 +261,7 @@ class ConcentrationWeightByProteomicRuler:
         return histone_intensities
 
     def apply_ruler(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
+        """Calculate copy number, amount, weight, and concentration columns."""
         protein_intensities = protein_intensities.copy()
         histone_intensity = self.total_histone_intensities(protein_intensities)
 
@@ -243,9 +287,11 @@ class ConcentrationWeightByProteomicRuler:
         return protein_intensities
 
     def __call__(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
+        """Apply the proteomic ruler to one condition's protein rows."""
         return self.apply_ruler(protein_intensities)
 
     def apply_by_condition(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
+        """Apply the proteomic ruler independently within each condition."""
         # Apply the ruler independently per condition. pandas 3.0 excludes the
         # grouping column from ``apply``'s result, silently dropping
         # ``Condition`` from the output table; older pandas kept it. We keep the
@@ -267,17 +313,48 @@ class ConcentrationWeightByProteomicRuler:
 # ---------------------------------------------------------------------------
 
 
-def compute_pibaq(
-    peptide_df: DataFrame,
-    accession_to_peptides: Mapping[str, Set[str]],
-    peptide_to_accessions: Mapping[str, Set[str]],
-    families: Sequence[Family],
-    *,
-    mw_map: Optional[Mapping[str, float]] = None,
-    min_anchors: int = 1,
-    high_anchor_threshold: int = 3,
-    extra_group_cols: Optional[Sequence[str]] = None,
-) -> DataFrame:
+_COMPUTE_PIBAQ_ARGUMENTS = (
+    "peptide_df",
+    "accession_to_peptides",
+    "peptide_to_accessions",
+    "families",
+)
+_COMPUTE_PIBAQ_DEFAULTS = {
+    "mw_map": None,
+    "min_anchors": 1,
+    "high_anchor_threshold": 3,
+    "extra_group_cols": None,
+}
+
+
+@dataclass(frozen=True)
+class _ComputePibaqOptions:
+    mw_map: Optional[Mapping[str, float]]
+    min_anchors: int
+    high_anchor_threshold: int
+    extra_group_cols: Optional[Sequence[str]]
+
+
+@dataclass(frozen=True)
+class _ComputePibaqRequest:
+    peptide_df: DataFrame
+    accession_to_peptides: Mapping[str, Set[str]]
+    peptide_to_accessions: Mapping[str, Set[str]]
+    families: Sequence[Family]
+    options: _ComputePibaqOptions
+
+
+@dataclass(frozen=True)
+class _PreparedPibaq:
+    peptide_column: str
+    group_columns: List[str]
+    working: DataFrame
+    anchor_counts: Mapping[str, int]
+    family_to_peptides: Mapping[str, Set[str]]
+    observed_peptides: Set[str]
+
+
+def compute_pibaq(*args: object, **kwargs: object) -> DataFrame:
     """Compute per-protein piBAQ with exact shared-peptide allocation.
 
     Parameters
@@ -318,86 +395,157 @@ def compute_pibaq(
         metadata columns, and :data:`MOLECULARWEIGHT` + :data:`TPA` when
         ``mw_map`` is supplied.
     """
-    if peptide_df.empty or not families:
-        include_tpa = mw_map is not None
-        group_cols = _resolve_group_cols(peptide_df, extra_group_cols)
-        return _empty_pibaq_frame(group_cols, include_tpa)
+    bound = _bind_arguments(
+        "compute_pibaq",
+        args,
+        kwargs,
+        _COMPUTE_PIBAQ_ARGUMENTS,
+        _COMPUTE_PIBAQ_DEFAULTS,
+    )
+    options = _ComputePibaqOptions(
+        mw_map=bound.pop("mw_map"),
+        min_anchors=bound.pop("min_anchors"),
+        high_anchor_threshold=bound.pop("high_anchor_threshold"),
+        extra_group_cols=bound.pop("extra_group_cols"),
+    )
+    return _run_compute_pibaq(_ComputePibaqRequest(options=options, **bound))
 
-    pep_col = _detect_peptide_column(peptide_df)
-    group_cols = _resolve_group_cols(peptide_df, extra_group_cols)
 
-    # Keep only peptides present in the FASTA digest; matching is driven by
-    # the peptide-sequence column against the digest index, not by the
-    # per-row protein-name strings.
-    working = peptide_df[_membership_mask(peptide_df[pep_col], peptide_to_accessions)]
+setattr(
+    compute_pibaq,
+    "__text_signature__",
+    "(peptide_df, accession_to_peptides, peptide_to_accessions, families, *, "
+    "mw_map=None, min_anchors=1, high_anchor_threshold=3, extra_group_cols=None)",
+)
+
+
+def _empty_compute_result(
+    request: _ComputePibaqRequest, group_columns: Sequence[str]
+) -> DataFrame:
+    """Return the empty output schema for a computation request."""
+    return _empty_pibaq_frame(group_columns, request.options.mw_map is not None)
+
+
+def _prepare_pibaq(
+    request: _ComputePibaqRequest, group_columns: List[str]
+) -> Optional[_PreparedPibaq]:
+    """Filter observed peptides and build family ownership indices."""
+    peptide_column = _detect_peptide_column(request.peptide_df)
+    working = request.peptide_df[
+        _membership_mask(
+            request.peptide_df[peptide_column], request.peptide_to_accessions
+        )
+    ]
     if working.empty:
-        include_tpa = mw_map is not None
-        return _empty_pibaq_frame(group_cols, include_tpa)
-
-    anchor_counts = _count_unique_anchors(working, peptide_to_accessions, pep_col)
+        return None
+    anchor_counts = _count_unique_anchors(
+        working, request.peptide_to_accessions, peptide_column
+    )
     peptide_owner = _assign_peptides_to_owning_family(
-        families, peptide_to_accessions, anchor_counts
+        request.families, request.peptide_to_accessions, anchor_counts
     )
     family_to_peptides = _invert_peptide_ownership(peptide_owner)
-    # Restrict to peptides that any family claims, then further to families
-    # with at least one observed peptide. On a 25k-protein human FASTA the
-    # vast majority of families are isolated singletons with no detection,
-    # so iterating only the subset with data drops the per-call hot loop
-    # from O(|families|) to O(|families with data|).
-    working = working[_membership_mask(working[pep_col], peptide_owner)]
-    observed_peptides = set(working[pep_col].dropna().unique())
+    working = working[_membership_mask(working[peptide_column], peptide_owner)]
+    return _PreparedPibaq(
+        peptide_column=peptide_column,
+        group_columns=group_columns,
+        working=working,
+        anchor_counts=anchor_counts,
+        family_to_peptides=family_to_peptides,
+        observed_peptides=set(working[peptide_column].dropna().unique()),
+    )
 
+
+def _family_evidence(
+    request: _ComputePibaqRequest,
+    prepared: _PreparedPibaq,
+    family: Family,
+) -> str:
+    """Classify one family from its observed unique-anchor counts."""
+    anchors = [prepared.anchor_counts.get(member, 0) for member in family.members]
+    return _classify_evidence(
+        min(anchors),
+        max(anchors),
+        request.options.min_anchors,
+        request.options.high_anchor_threshold,
+    )
+
+
+def _quantify_prepared_family(
+    request: _ComputePibaqRequest,
+    prepared: _PreparedPibaq,
+    family: Family,
+) -> Optional[Tuple[DataFrame, str]]:
+    """Compute and annotate one observed family's piBAQ block."""
+    owned = prepared.family_to_peptides.get(family.family_id, set())
+    if not owned & prepared.observed_peptides:
+        return None
+    family_input = _assemble_family_input(
+        prepared.working,
+        family,
+        prepared.family_to_peptides,
+        prepared.peptide_column,
+    )
+    if family_input.empty:
+        return None
+    evidence = _family_evidence(request, prepared, family)
+    block = _allocate_family(
+        _FamilyAllocationInputs(
+            family=family,
+            peptide_to_accessions=request.peptide_to_accessions,
+            accession_to_peptides=request.accession_to_peptides,
+            owned_peptides=owned,
+            force_equal_shared=evidence == EVIDENCE_FAMILY_ONLY,
+        ),
+        family_input,
+        prepared.peptide_column,
+        prepared.group_columns,
+    )
+    if block.empty:
+        return None
+    return _annotate_family_metadata(block, family, evidence), evidence
+
+
+def _collect_family_results(
+    request: _ComputePibaqRequest, prepared: _PreparedPibaq
+) -> Tuple[List[DataFrame], int]:
+    """Collect non-empty family blocks and count family-only results."""
     results: List[DataFrame] = []
-    n_family_only = 0
-    for family in families:
-        owned = family_to_peptides.get(family.family_id, set())
-        if not owned & observed_peptides:
+    family_only = 0
+    for family in request.families:
+        quantified = _quantify_prepared_family(request, prepared, family)
+        if quantified is None:
             continue
-        family_input = _assemble_family_input(
-            working, family, family_to_peptides, pep_col
-        )
-        if family_input.empty:
-            continue
-        anchors_in_family = {m: anchor_counts.get(m, 0) for m in family.members}
-        min_anchor = min(anchors_in_family.values())
-        max_anchor = max(anchors_in_family.values())
-        evidence = _classify_evidence(
-            min_anchor, max_anchor, min_anchors, high_anchor_threshold
-        )
-        block = _allocate_family(
-            _FamilyAllocationInputs(
-                family=family,
-                peptide_to_accessions=peptide_to_accessions,
-                accession_to_peptides=accession_to_peptides,
-                owned_peptides=owned,
-                force_equal_shared=evidence == EVIDENCE_FAMILY_ONLY,
-            ),
-            family_input,
-            pep_col,
-            group_cols,
-        )
-        if block.empty:
-            continue
-        if evidence == EVIDENCE_FAMILY_ONLY:
-            n_family_only += 1
-        block = _annotate_family_metadata(block, family, evidence)
+        block, evidence = quantified
         results.append(block)
+        family_only += evidence == EVIDENCE_FAMILY_ONLY
+    return results, family_only
 
+
+def _run_compute_pibaq(request: _ComputePibaqRequest) -> DataFrame:
+    """Execute the unchanged piBAQ calculation for a bound request."""
+    group_columns = _resolve_group_cols(
+        request.peptide_df, request.options.extra_group_cols
+    )
+    if request.peptide_df.empty or not request.families:
+        return _empty_compute_result(request, group_columns)
+    prepared = _prepare_pibaq(request, group_columns)
+    if prepared is None:
+        return _empty_compute_result(request, group_columns)
+    results, family_only = _collect_family_results(request, prepared)
     if not results:
-        include_tpa = mw_map is not None
-        return _empty_pibaq_frame(group_cols, include_tpa)
-
-    out = pd.concat(results, ignore_index=True)
-    if mw_map is not None:
-        out = _finalize_tpa(out, mw_map)
-    n_processed = len(results)
+        return _empty_compute_result(request, group_columns)
+    output = pd.concat(results, ignore_index=True)
+    if request.options.mw_map is not None:
+        output = _finalize_tpa(output, request.options.mw_map)
+    processed = len(results)
     logger.info(
         "piBAQ: %d families processed (%d family-only, %d member-resolving)",
-        n_processed,
-        n_family_only,
-        n_processed - n_family_only,
+        processed,
+        family_only,
+        processed - family_only,
     )
-    return out
+    return output
 
 
 def _resolve_group_cols(
@@ -415,292 +563,342 @@ def _resolve_group_cols(
     return cols
 
 
+@dataclass(frozen=True)
+class _PibaqDigestRequest:
+    fasta: str
+    enzyme: str
+    min_aa: int
+    max_aa: int
+    tpa: bool
+
+
+@dataclass(frozen=True)
+class _PibaqFamilyRequest:
+    families_yaml: Optional[Path]
+    min_shared: int
+    min_anchors: int
+    high_anchor_threshold: int
+
+
+@dataclass(frozen=True)
+class _PibaqTableRequest:
+    digest: _PibaqDigestRequest
+    family: _PibaqFamilyRequest
+
+
+@dataclass(frozen=True)
+class _PeptideInputRequest:
+    fasta: str
+    peptides: str
+    enzyme: str
+    min_aa: int
+    max_aa: int
+
+
+@dataclass(frozen=True)
+class _PibaqPostprocessRequest:
+    normalize: bool
+    tpa: bool
+    ruler: bool
+    ploidy: int
+    cpc: float
+    organism: str
+
+
+@dataclass(frozen=True)
+class _PibaqOutputRequest:
+    output: str
+    verbose: bool
+    qc_report: str
+
+
+@dataclass(frozen=True)
+class _CommandFamilyRequest:
+    families_yaml: Optional[str]
+    min_shared: int
+    min_anchors: int
+    high_anchor_threshold: int
+
+
+@dataclass(frozen=True)
+class _PeptidesToProteinRequest:
+    source: _PeptideInputRequest
+    postprocess: _PibaqPostprocessRequest
+    output: _PibaqOutputRequest
+    family: _CommandFamilyRequest
+
+
+@dataclass(frozen=True)
+class _PlotContext:
+    data: DataFrame
+    plotting: ModuleType
+    pdf: object
+    width: float
+
+
 def _resolve_families(
-    accession_to_peptides: Mapping[str, Set[str]],
-    peptide_to_accessions: Mapping[str, Set[str]],
-    *,
+    accession_to_peptides,
+    peptide_to_accessions,
     families_yaml: Optional[Path],
     min_shared: int,
-) -> List[Family]:
-    """Combine automatic CC discovery with optional YAML overrides."""
-    auto = discover_families(
+) -> list[Family]:
+    """Combine automatic connected components with optional YAML overrides."""
+    automatic = discover_families(
         accession_to_peptides, peptide_to_accessions, min_shared=min_shared
     )
     if families_yaml is None:
-        return auto
-    overrides = load_families_yaml(Path(families_yaml))
-    return merge_overrides(auto, overrides)
+        return automatic
+    overrides = load_families_yaml(families_yaml)
+    return merge_overrides(automatic, overrides)
 
 
-def _compute_pibaq_table(
-    data: DataFrame,
-    fasta: str,
-    enzyme: str,
-    min_aa: int,
-    max_aa: int,
-    tpa: bool,
-    *,
-    families_yaml: Optional[Path],
-    min_shared: int,
-    min_anchors: int = 1,
-    high_anchor_threshold: int = 3,
-) -> DataFrame:
-    """piBAQ (paralog-aware iBAQ) driver -- the default code path.
-
-    Digests the FASTA once (with UniProt isoform collapse), discovers
-    families on the shared-peptide graph, merges in any YAML overrides,
-    then dispatches to :func:`compute_pibaq`. Returns a long-format
-    table with the new ``FamilyId`` / ``EvidenceLevel`` / ``FamilySize``
-    metadata columns appended.
-
-    Unlike the legacy baseline this driver does NOT pre-strip
-    ``unique != 1`` rows: piBAQ allocates shared-peptide intensity from the
-    FASTA digest. Razor-mirror rows that list the same peptide observation
-    under multiple proteins are de-duplicated inside the family allocator via
-    ``groupby(peptide, *group_cols).max``.
-    """
+def _compute_pibaq_table(data: DataFrame, request: _PibaqTableRequest) -> DataFrame:
+    """Digest FASTA, resolve families, and dispatch to the piBAQ core."""
+    digest = request.digest
+    family_request = request.family
     accession_to_peptides, peptide_to_accessions, accession_to_mw = digest_fasta_full(
-        fasta,
-        enzyme,
-        min_aa,
-        max_aa,
+        digest.fasta,
+        digest.enzyme,
+        digest.min_aa,
+        digest.max_aa,
         canonicalize_isoforms=True,
-        compute_mw=tpa,
+        compute_mw=digest.tpa,
     )
-
     families = _resolve_families(
         accession_to_peptides,
         peptide_to_accessions,
-        families_yaml=families_yaml,
-        min_shared=min_shared,
+        family_request.families_yaml,
+        family_request.min_shared,
     )
-
-    mw_map: Optional[Mapping[str, float]] = accession_to_mw if tpa else None
-    res = compute_pibaq(
+    mw_map: Optional[Mapping[str, float]] = accession_to_mw if digest.tpa else None
+    return compute_pibaq(
         data,
         accession_to_peptides,
         peptide_to_accessions,
         families,
         mw_map=mw_map,
-        min_anchors=min_anchors,
-        high_anchor_threshold=high_anchor_threshold,
+        min_anchors=family_request.min_anchors,
+        high_anchor_threshold=family_request.high_anchor_threshold,
     )
-    return res
+
+
+_PEPTIDES_TO_PROTEIN_ARGUMENTS = (
+    "fasta",
+    "peptides",
+    "enzyme",
+    "normalize",
+    "min_aa",
+    "max_aa",
+    "tpa",
+    "ruler",
+    "ploidy",
+    "cpc",
+    "organism",
+    "output",
+    "verbose",
+    "qc_report",
+)
+_PEPTIDES_TO_PROTEIN_DEFAULTS = {
+    "families_yaml": None,
+    "min_shared": 2,
+    "min_anchors": 1,
+    "high_anchor_threshold": 3,
+}
 
 
 @log_execution_time(logger)
-def peptides_to_protein(
-    fasta: str,
-    peptides: str,
-    enzyme: str,
-    normalize: bool,
-    min_aa: int,
-    max_aa: int,
-    tpa: bool,
-    ruler: bool,
-    ploidy: int,
-    cpc: float,
-    organism: str,
-    output: str,
-    verbose: bool,
-    qc_report: str,
-    *,
-    families_yaml: Optional[str] = None,
-    min_shared: int = 2,
-    min_anchors: int = 1,
-    high_anchor_threshold: int = 3,
-) -> None:
+def peptides_to_protein(*args: object, **kwargs: object) -> None:
+    """Compute file-oriented piBAQ output with the legacy public arguments.
+
+    The first fourteen parameters retain their positional-or-keyword contract:
+    ``fasta``, ``peptides``, ``enzyme``, ``normalize``, ``min_aa``, ``max_aa``,
+    ``tpa``, ``ruler``, ``ploidy``, ``cpc``, ``organism``, ``output``,
+    ``verbose``, and ``qc_report``. ``families_yaml``, ``min_shared``,
+    ``min_anchors``, and ``high_anchor_threshold`` remain keyword-only with
+    their historical defaults.
     """
-    Compute piBAQ values for peptides and generate a QC report.
+    bound = _bind_arguments(
+        "peptides_to_protein",
+        args,
+        kwargs,
+        _PEPTIDES_TO_PROTEIN_ARGUMENTS,
+        _PEPTIDES_TO_PROTEIN_DEFAULTS,
+    )
+    _run_peptides_to_protein(_build_peptides_request(bound))
 
-    Parameters
-    ----------
-    fasta : str
-        Fasta file used to perform the peptide identification.
-    peptides : str
-        Peptide intensity file.
-    enzyme : str
-        Enzyme used to digest the protein sample.
-    normalize : bool
-        Use normalization steps.
-    min_aa : int
-        Minimum number of amino acids to consider a peptide.
-    max_aa : int
-        Maximum number of amino acids to consider a peptide.
-    tpa : bool
-        Calculate TPA values.
-    ruler : bool
-        Calculate protein weight and concentration using a proteomic ruler approach.
-    ploidy : int
-        Ploidy of the organism.
-    cpc : float
-        Concentration per cell.
-    organism : str
-        Organism name.
-    output : str
-        Output file path.
-    verbose : bool
-        Print additional information.
-    qc_report : str
-        PDF file to store multiple QC images.
-    families_yaml : str, optional
-        Path to a YAML file declaring explicit family overrides used by
-        :func:`mokume.quantification.families.load_families_yaml`. When
-        ``None`` (default) family discovery is purely data-driven.
-    min_shared : int, optional
-        Minimum number of distinct peptides two proteins must share to be
-        placed in the same automatically discovered family. Defaults to 2.
-    min_anchors : int, optional
-        Unique-anchor threshold. If no family member reaches it, shared signal
-        is split equally and evidence is ``family_only``. Defaults to 1.
-    high_anchor_threshold : int, optional
-        Minimum anchor count (of the weakest member) for a family to be
-        labelled ``EvidenceLevel == "high"``. Defaults to 3.
-    """
-    if organism:
-        organism_descr = OrganismDescription.get(organism)
-        if organism_descr is None:
-            raise KeyError(f"Could not resolve organism description for {organism}")
-    else:
-        organism_descr = None
 
-    if ruler:
-        if not ploidy or not cpc or not organism or not tpa:
-            raise ValueError(
-                "Arguments `ploidy`, `cpc`, `organism` and `tpa` are required for calculate protein weight(ng) and concentration(nM)"
-            )
-
-    # load data
-    if is_parquet(peptides):
-        data = pd.read_parquet(peptides)
-    else:
-        data = pd.read_csv(peptides)
-    data[NORM_INTENSITY] = data[NORM_INTENSITY].astype(float)
-    data = data.dropna(subset=[NORM_INTENSITY])
-    data = data[data[NORM_INTENSITY] > 0]
-
-    res = _compute_pibaq_table(
-        data,
-        fasta,
-        enzyme,
-        min_aa,
-        max_aa,
-        tpa,
-        families_yaml=Path(families_yaml) if families_yaml else None,
-        min_shared=min_shared,
-        min_anchors=min_anchors,
-        high_anchor_threshold=high_anchor_threshold,
+def _build_peptides_request(
+    bound: Mapping[str, object],
+) -> _PeptidesToProteinRequest:
+    """Group the bound legacy arguments into focused immutable requests."""
+    return _PeptidesToProteinRequest(
+        source=_PeptideInputRequest(
+            fasta=bound["fasta"],
+            peptides=bound["peptides"],
+            enzyme=bound["enzyme"],
+            min_aa=bound["min_aa"],
+            max_aa=bound["max_aa"],
+        ),
+        postprocess=_PibaqPostprocessRequest(
+            normalize=bound["normalize"],
+            tpa=bound["tpa"],
+            ruler=bound["ruler"],
+            ploidy=bound["ploidy"],
+            cpc=bound["cpc"],
+            organism=bound["organism"],
+        ),
+        output=_PibaqOutputRequest(
+            output=bound["output"],
+            verbose=bound["verbose"],
+            qc_report=bound["qc_report"],
+        ),
+        family=_CommandFamilyRequest(
+            families_yaml=bound["families_yaml"],
+            min_shared=bound["min_shared"],
+            min_anchors=bound["min_anchors"],
+            high_anchor_threshold=bound["high_anchor_threshold"],
+        ),
     )
 
-    # Normalize piBAQ.
-    if normalize:
-        res = normalize_pibaq(res)
-        res = res.dropna(subset=[PIBAQ_NORMALIZED])
+
+def _resolve_organism(name: str) -> Optional[OrganismDescription]:
+    """Resolve an optional organism name with the legacy error contract."""
+    if not name:
+        return None
+    description = OrganismDescription.get(name)
+    if description is None:
+        raise KeyError(f"Could not resolve organism description for {name}")
+    return description
+
+
+def _validate_ruler_request(request: _PeptidesToProteinRequest) -> None:
+    """Validate the four inputs required by the proteomic ruler."""
+    options = request.postprocess
+    if options.ruler and not all(
+        (options.ploidy, options.cpc, options.organism, options.tpa)
+    ):
+        raise ValueError(
+            "Arguments `ploidy`, `cpc`, `organism` and `tpa` are required "
+            "for calculate protein weight(ng) and concentration(nM)"
+        )
+
+
+def _load_peptide_data(path: str) -> DataFrame:
+    """Load and retain positive finite peptide intensities."""
+    data = pd.read_parquet(path) if is_parquet(path) else pd.read_csv(path)
+    data[NORM_INTENSITY] = data[NORM_INTENSITY].astype(float)
+    data = data.dropna(subset=[NORM_INTENSITY])
+    return data[data[NORM_INTENSITY] > 0]
+
+
+def _table_request(request: _PeptidesToProteinRequest) -> _PibaqTableRequest:
+    """Project public command options onto the piBAQ table calculation."""
+    source = request.source
+    family = request.family
+    return _PibaqTableRequest(
+        digest=_PibaqDigestRequest(
+            fasta=source.fasta,
+            enzyme=source.enzyme,
+            min_aa=source.min_aa,
+            max_aa=source.max_aa,
+            tpa=request.postprocess.tpa,
+        ),
+        family=_PibaqFamilyRequest(
+            families_yaml=Path(family.families_yaml) if family.families_yaml else None,
+            min_shared=family.min_shared,
+            min_anchors=family.min_anchors,
+            high_anchor_threshold=family.high_anchor_threshold,
+        ),
+    )
+
+
+def _postprocess_pibaq(
+    data: DataFrame,
+    request: _PeptidesToProteinRequest,
+    organism: Optional[OrganismDescription],
+) -> Tuple[DataFrame, str]:
+    """Apply the legacy normalization and optional ruler post-processing."""
+    options = request.postprocess
+    if options.normalize:
+        data = normalize_pibaq(data).dropna(subset=[PIBAQ_NORMALIZED])
         plot_column = PIBAQ_PPB
     else:
-        res = res.dropna(subset=[PIBAQ])
+        data = data.dropna(subset=[PIBAQ])
         plot_column = PIBAQ
-
-    res = res.reset_index(drop=True)
-
-    # calculate protein weight and concentration
-    if ruler:
-        concentration_by_ruler = ConcentrationWeightByProteomicRuler(
-            organism_descr, ploidy, cpc
+    data = data.reset_index(drop=True)
+    if options.ruler:
+        ruler = ConcentrationWeightByProteomicRuler(
+            organism, options.ploidy, options.cpc
         )
-        res = concentration_by_ruler.apply_by_condition(res)
+        data = ruler.apply_by_condition(data)
+    return data, plot_column
 
-    # Plot the distribution of the protein piBAQ values.
-    if verbose:
-        if not is_plotting_available():
-            logger.warning(
-                "QC report skipped: plotting dependencies not installed. "
-                "Install: pip install mokume-py[plotting] (pure Python) or "
-                "pip install mokume[plotting] (Rust wheel)"
-            )
-        else:
-            from mokume.plotting import PdfPages, plot_box_plot, plot_distributions
 
-            plot_width = len(set(res[SAMPLE_ID])) * 0.5 + 10
-            pdf = PdfPages(qc_report)
-            density1 = plot_distributions(
-                res,
-                plot_column,
-                SAMPLE_ID,
-                log2=True,
-                width=plot_width,
-                title="{} Distribution".format(plot_column),
-            )
-            box1 = plot_box_plot(
-                res,
-                plot_column,
-                SAMPLE_ID,
-                log2=True,
-                width=plot_width,
-                title="{} Distribution".format(plot_column),
-                violin=False,
-            )
-            pdf.savefig(density1, bbox_inches="tight")
-            pdf.savefig(box1, bbox_inches="tight")
-            if tpa:
-                density2 = plot_distributions(
-                    res,
-                    TPA,
-                    SAMPLE_ID,
-                    log2=True,
-                    width=plot_width,
-                    title="TPA Distribution",
-                )
-                box2 = plot_box_plot(
-                    res,
-                    TPA,
-                    SAMPLE_ID,
-                    log2=True,
-                    width=plot_width,
-                    title="{} Distribution".format(TPA),
-                    violin=False,
-                )
-                pdf.savefig(density2, bbox_inches="tight")
-                pdf.savefig(box2, bbox_inches="tight")
-            if ruler:
-                density3 = plot_distributions(
-                    res,
-                    COPYNUMBER,
-                    SAMPLE_ID,
-                    width=plot_width,
-                    log2=True,
-                    title="{} Distribution".format(COPYNUMBER),
-                )
-                box3 = plot_box_plot(
-                    res,
-                    COPYNUMBER,
-                    SAMPLE_ID,
-                    width=plot_width,
-                    log2=True,
-                    title="{} Distribution".format(COPYNUMBER),
-                    violin=False,
-                )
-                pdf.savefig(density3, bbox_inches="tight")
-                pdf.savefig(box3, bbox_inches="tight")
-                density4 = plot_distributions(
-                    res,
-                    CONCENTRATION_NM,
-                    SAMPLE_ID,
-                    width=plot_width,
-                    log2=True,
-                    title="{} Distribution".format(CONCENTRATION_NM),
-                )
-                box4 = plot_box_plot(
-                    res,
-                    CONCENTRATION_NM,
-                    SAMPLE_ID,
-                    width=plot_width,
-                    log2=True,
-                    title="{} Distribution".format(CONCENTRATION_NM),
-                    violin=False,
-                )
-                pdf.savefig(density4, bbox_inches="tight")
-                pdf.savefig(box4, bbox_inches="tight")
-            pdf.close()
+def _plot_metric_pair(context: _PlotContext, column: str) -> None:
+    """Write density and box plots for one piBAQ-derived metric."""
+    title = f"{column} Distribution"
+    distributions = getattr(context.plotting, "plot_distributions")
+    box_plot = getattr(context.plotting, "plot_box_plot")
+    plot_options = {
+        "log2": True,
+        "width": context.width,
+        "title": title,
+    }
+    density = distributions(
+        context.data,
+        column,
+        SAMPLE_ID,
+        **plot_options,
+    )
+    box = box_plot(
+        context.data,
+        column,
+        SAMPLE_ID,
+        violin=False,
+        **plot_options,
+    )
+    savefig = getattr(context.pdf, "savefig")
+    savefig(density, bbox_inches="tight")
+    savefig(box, bbox_inches="tight")
 
-    res.to_csv(output, sep="\t", index=False)
+
+def _plot_pibaq_report(
+    data: DataFrame, plot_column: str, request: _PeptidesToProteinRequest
+) -> None:
+    """Render the optional QC report without importing plotting eagerly."""
+    if not request.output.verbose:
+        return
+    if not is_plotting_available():
+        logger.warning(
+            "QC report skipped: plotting dependencies not installed. "
+            "Install: pip install mokume-py[plotting] (pure Python) or "
+            "pip install mokume[plotting] (Rust wheel)"
+        )
+        return
+    plotting = importlib.import_module("mokume.plotting")
+    pdf = getattr(plotting, "PdfPages")(request.output.qc_report)
+    context = _PlotContext(
+        data=data,
+        plotting=plotting,
+        pdf=pdf,
+        width=len(set(data[SAMPLE_ID])) * 0.5 + 10,
+    )
+    columns = [plot_column]
+    if request.postprocess.tpa:
+        columns.append(TPA)
+    if request.postprocess.ruler:
+        columns.extend((COPYNUMBER, CONCENTRATION_NM))
+    for column in columns:
+        _plot_metric_pair(context, column)
+    getattr(pdf, "close")()
+
+
+def _run_peptides_to_protein(request: _PeptidesToProteinRequest) -> None:
+    """Execute the legacy driver after binding its public arguments."""
+    organism = _resolve_organism(request.postprocess.organism)
+    _validate_ruler_request(request)
+    data = _load_peptide_data(request.source.peptides)
+    result = _compute_pibaq_table(data, _table_request(request))
+    result, plot_column = _postprocess_pibaq(result, request, organism)
+    _plot_pibaq_report(result, plot_column, request)
+    result.to_csv(request.output.output, sep="\t", index=False)

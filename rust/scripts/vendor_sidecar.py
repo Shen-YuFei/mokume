@@ -255,6 +255,7 @@ def _check() -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Apply or verify the explicit canonical-to-sidecar file mapping."""
     parser = argparse.ArgumentParser(
         prog="vendor_sidecar.py",
         description=(

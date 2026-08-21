@@ -8,15 +8,33 @@ DirectLFQ is an optional dependency. Install with:
     pip install mokume-py[directlfq]
 """
 
+import importlib
 import re
 from typing import TYPE_CHECKING
 
 from mokume._lazy import module_api
-from mokume.core.registry import PluginRegistry
 from mokume.quantification.base import ProteinQuantificationMethod
 
 if TYPE_CHECKING:
-    from mokume.quantification.pibaq import compute_pibaq, normalize_pibaq
+    from mokume.quantification.all_peptides import AllPeptidesQuantification
+    from mokume.quantification.directlfq import (
+        DirectLFQQuantification,
+        is_directlfq_available,
+    )
+    from mokume.quantification.maxlfq import MaxLFQQuantification
+    from mokume.quantification.pibaq import (
+        ConcentrationWeightByProteomicRuler,
+        compute_pibaq,
+        extract_fasta,
+        normalize_pibaq,
+        peptides_to_protein,
+    )
+    from mokume.quantification.ratio import RatioQuantification
+    from mokume.quantification.spectral_count import SpectralCountQuantification
+    from mokume.quantification.tmt_abundance import TMTAbundanceQuantification
+    from mokume.quantification.tmt_reporter import TMTReporterIntensityQuantification
+    from mokume.quantification.top3 import Top3Quantification
+    from mokume.quantification.topn import TopNQuantification
 
 __all__ = [
     # Base class
@@ -179,7 +197,9 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     method_lower = method.lower()
 
     if method_lower == "pibaq":
-        return PluginRegistry.get("quantification", "pibaq", **kwargs)
+        registry_module = importlib.import_module("mokume.core.registry")
+        registry = getattr(registry_module, "PluginRegistry")
+        return registry.get("quantification", "pibaq", **kwargs)
 
     # Handle topN methods (top3, top5, top10, etc.)
     if method_lower.startswith("top"):
@@ -190,14 +210,14 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
             n = kwargs.get("n", 3)
         return __getattr__("TopNQuantification")(n=n)
 
-    elif method_lower == "maxlfq":
+    if method_lower == "maxlfq":
         return __getattr__("MaxLFQQuantification")(
             min_peptides=kwargs.get("min_peptides", 2),
             threads=kwargs.get("n_jobs", -1),
             verbose=kwargs.get("verbose", 0),
         )
 
-    elif method_lower == "directlfq":
+    if method_lower == "directlfq":
         return __getattr__("DirectLFQQuantification")(
             min_nonan=kwargs.get("min_nonan", 1),
             num_cores=kwargs.get("num_cores", None),
