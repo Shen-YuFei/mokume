@@ -28,18 +28,23 @@ def create_server(knowledge: str):
     def inspect_dataset(
         protein_matrix: str,
         sdrf: str,
-        input_scale: str,
-        peptide_counts: str | None = None,
-        metadata: dict[str, str | None] | None = None,
+        contrast: list[str],
+        options: dict[str, str | None],
     ) -> dict[str, Any]:
         """Profile a protein matrix and return policy-filtered Mokume evidence."""
+        inspection_options = dict(options)
+        input_scale = inspection_options.pop("input_scale", None)
+        if not isinstance(input_scale, str) or not input_scale:
+            raise ValueError("options.input_scale must be a non-empty string")
+        peptide_counts = inspection_options.pop("peptide_counts", None)
         return service.inspect_dataset(
             inspection_type(
                 protein_matrix,
                 sdrf,
                 input_scale,
+                contrast,
                 peptide_counts,
-                metadata,
+                inspection_options,
             )
         )
 

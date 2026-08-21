@@ -106,9 +106,10 @@ bundle contains one skill, automatic local MCP configuration, and a committed
 knowledge snapshot. Its MCP process is provided by `mokume[agentic]` in the
 default Rust-backed wheel.
 
-The host model reads the skill and calls `mokume.inspect_dataset` to receive a
-typed profile, deterministic diagnostics, compatible evidence, and a bounded
-generation contract. It returns an exact recommendation block to
+The host model reads the skill and calls `mokume.inspect_dataset` with a
+two-condition contrast to receive a contrast-scoped typed profile, deterministic
+diagnostics, compatible evidence, and a bounded generation contract. It returns
+an exact recommendation block to
 `mokume.evaluate_recommendation`, which validates the block before running the
 Rust matrix APIs. Mokume never receives the host's model API key.
 

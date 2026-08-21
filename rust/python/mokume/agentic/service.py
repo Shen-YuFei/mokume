@@ -80,6 +80,7 @@ class InspectionRequest:
     protein_matrix: str
     sdrf: str
     input_scale: str
+    contrast: list[str]
     peptide_counts: str | None = None
     metadata: dict[str, str | None] | None = None
 
@@ -145,16 +146,20 @@ class RecommendationService:
         _require_file(request.protein_matrix, "protein_matrix")
         _require_file(request.sdrf, "sdrf")
         _validate_input_scale(request.input_scale, "input_scale")
-        frame = _read_matrix(request.protein_matrix)
+        contrast = _parse_contrast(request.contrast)
+        frame = _canonicalize_missing(
+            _read_matrix(request.protein_matrix), request.input_scale
+        )
         counts = _load_peptide_counts(request.peptide_counts, frame)
-        profile, _, context = self._profile(
+        profile, _, context, _ = self._profile(
             ProfileInputs(
                 frame,
                 request.sdrf,
                 _parse_dataset_metadata(request.metadata),
                 request.input_scale,
                 counts,
-            )
+            ),
+            contrast,
         )
         return {
             "profile": profile.to_dict(),
@@ -223,18 +228,20 @@ class RecommendationService:
         if runtime.ground_truth is not None:
             _require_file(runtime.ground_truth, "ground_truth")
         destination = _output_path(request.output_dir)
-        frame = _read_matrix(request.protein_matrix)
+        frame = _canonicalize_missing(
+            _read_matrix(request.protein_matrix), runtime.input_scale
+        )
         peptide_counts = _load_peptide_counts(runtime.peptide_counts, frame)
-        _, conditions, context = self._profile(
+        _, conditions, context, frame = self._profile(
             ProfileInputs(
                 frame,
                 request.sdrf,
                 runtime.metadata,
                 runtime.input_scale,
                 peptide_counts,
-            )
+            ),
+            contrast,
         )
-        _validate_contrast_samples(frame, conditions, contrast)
         generated = validate_generated_recommendation(
             request.recommendation,
             context,
@@ -261,7 +268,8 @@ class RecommendationService:
     def _profile(
         self,
         inputs: ProfileInputs,
-    ) -> tuple[DataProfile, dict[str, str], BoundContext]:
+        contrast: tuple[str, str],
+    ) -> tuple[DataProfile, dict[str, str], BoundContext, pd.DataFrame]:
         """Build the shared profile and policy context for one request."""
         conditions = detect_condition_from_sdrf(
             inputs.sdrf,
@@ -277,14 +285,16 @@ class RecommendationService:
                 "Protein-matrix samples are missing from the SDRF mapping: "
                 + ", ".join(missing)
             )
+        _validate_contrast_samples(inputs.frame, conditions, contrast)
+        frame, conditions = _scope_contrast(inputs.frame, conditions, contrast)
         profile = profile_data(
-            inputs.frame,
+            frame,
             conditions,
             inputs.peptide_counts,
             input_scale=inputs.input_scale,
             metadata=inputs.metadata.acquisition,
         )
-        return profile, conditions, bind_context(profile, self._graph)
+        return profile, conditions, bind_context(profile, self._graph), frame
 
 
 def _abstention_payload(
@@ -608,6 +618,20 @@ def _read_matrix(path: str) -> pd.DataFrame:
     return frame
 
 
+def _canonicalize_missing(frame: pd.DataFrame, input_scale: str) -> pd.DataFrame:
+    """Use the Rust kernel's missing-value semantics at the service boundary."""
+    if input_scale == "log2":
+        return frame
+    canonical = frame.copy()
+    sample_columns = canonical.columns[1:]
+    canonical[sample_columns] = canonical[sample_columns].mask(
+        canonical[sample_columns] <= 0.0
+    )
+    if not np.isfinite(canonical[sample_columns].to_numpy(dtype=float)).any():
+        raise ValueError("Linear protein matrix contains no positive intensities")
+    return canonical
+
+
 def _load_peptide_counts(
     path: str | None,
     protein_df: pd.DataFrame,
@@ -710,6 +734,20 @@ def _validate_contrast_samples(
             "Contrast requires at least two matrix samples per condition: "
             + ", ".join(f"{condition}={count}" for condition, count in counts.items())
         )
+
+
+def _scope_contrast(
+    frame: pd.DataFrame,
+    conditions: dict[str, str],
+    contrast: tuple[str, str],
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Restrict profiling and evaluation to the requested two conditions."""
+    selected = [
+        sample for sample in frame.columns[1:] if conditions[str(sample)] in contrast
+    ]
+    scoped = frame[[frame.columns[0], *selected]].copy()
+    scoped_conditions = {str(sample): conditions[str(sample)] for sample in selected}
+    return scoped, scoped_conditions
 
 
 def _as_linear(

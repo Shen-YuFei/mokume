@@ -21,11 +21,11 @@ different Mokume CLI path.
    not identify it; do not infer either fact from intensity magnitude or sample
    count.
 2. Call `mokume.inspect_dataset` before recommending or running anything. Put
-   the explicit `input_scale` and optional `peptide_counts` path at the tool's
-   top level. Put declared acquisition facts and any SDRF factor override in its
-   `metadata` object. Treat the keys returned in
-   `profile.samples_per_condition` as the canonical condition labels for
-   subsequent contrasts.
+   the exact two-item SDRF contrast at the tool's top level. Put the explicit
+   `input_scale`, optional `peptide_counts` path, declared acquisition facts, and
+   any SDRF factor override in its `options` object. Inspection profiles only
+   those two conditions; repeat the canonical labels returned in
+   `profile.samples_per_condition` during evaluation.
 3. Read every returned diagnostic. If policy disallows generation because the data
    type is `unknown`, ask for a supported declaration and inspect again. For any
    other policy error, report the abstention and do not manufacture a configuration.
@@ -35,14 +35,14 @@ different Mokume CLI path.
    peptide-count sidecar, do not add `deqms` or an ensemble containing `deqms`;
    deterministic policy omits those candidates.
 5. Call `mokume.evaluate_recommendation` with exactly two canonical condition
-   labels returned by inspection. Do not substitute longer raw SDRF values when
-   inspection normalized them. Put a new absolute `output_dir` and all runtime
-   settings in its `options` object. Include the same peptide-count sidecar path,
-   input scale, declared acquisition metadata, and factor override used during
-   inspection in that object. The sidecar is mandatory when any candidate uses
-   `deqms` directly or through an ensemble; evaluation rejects the whole round
-   when it is absent. Keep `threads=24` unless the user explicitly chooses another
-   value.
+   labels returned by inspection and in the same order used for inspection. Do
+   not substitute longer raw SDRF values when inspection normalized them. Put a
+   new absolute `output_dir` and all runtime settings in its `options` object.
+   Include the same peptide-count sidecar path, input scale, declared acquisition
+   metadata, and factor override used during inspection in that object. The
+   sidecar is mandatory when any candidate uses `deqms` directly or through an
+   ensemble; evaluation rejects the whole round when it is absent. Keep
+   `threads=24` unless the user explicitly chooses another value.
 6. Compare results. With ground truth, use the returned Score A ranking. Without
    ground truth, inspect `method_sensitivity.tsv` and report shared versus
    method-sensitive signed calls without selecting or implying a winner. For a
@@ -65,6 +65,9 @@ different Mokume CLI path.
   threshold inside a candidate recommendation.
 - Never use `input_scale=auto`; evaluation requires an explicit `linear` or
   `log2` declaration.
+- For `input_scale=linear`, Mokume treats non-positive values as missing to match
+  the Rust normalization, imputation, and DE kernels. For `input_scale=log2`,
+  finite zero and negative values remain valid observations.
 - Preserve evidence IDs and required limitations verbatim. Do not cite knowledge
   records outside the `allowed_evidence_refs` returned by `inspect_dataset`.
 - Treat an inferred data type, unknown quantification, incompatible upstream engine,

@@ -61,6 +61,7 @@ Ask Codex to use `$mokume:analyze-proteomics`, or invoke
 
 - an absolute protein-matrix path;
 - an absolute SDRF path;
+- an exact two-condition contrast from the selected SDRF factor;
 - the explicit protein-matrix scale (`linear` or `log2`);
 - an absolute peptide-count sidecar when testing DEqMS directly or in an ensemble;
 - the contrast and, when known, `LFQ`, `DIA`, or `TMT` data type;
@@ -68,24 +69,28 @@ Ask Codex to use `$mokume:analyze-proteomics`, or invoke
 - an absolute output directory; and
 - optionally, a ground-truth protein list for a spike-in benchmark.
 
-The workflow first calls `inspect_dataset`. This profiles the matrix and binds
-only compatible evidence into typed context blocks. The host may then propose
-at most five configurations under the returned contract and pass the exact
-block to `evaluate_recommendation`.
+The workflow first calls `inspect_dataset` with that contrast. This profiles only
+the two requested conditions and binds compatible evidence into typed context
+blocks; unrelated SDRF conditions do not affect diagnostics or preprocessing.
+The host may then propose at most five configurations under the returned contract
+and pass the exact block to `evaluate_recommendation`.
 
 The comma- or tab-delimited protein matrix must use its first column for
 non-empty, unique protein identifiers and provide at least two numeric sample
 columns. Column names must be non-empty and unique, every sample column must map
 to the SDRF, and sample cells may contain finite values or missing values (`NaN`)
-but not positive or negative infinity. At least one finite intensity is required.
-The declared `input_scale` states whether all intensities are `linear` or `log2`.
+but not positive or negative infinity. A linear matrix requires at least one
+positive finite intensity and treats non-positive cells as missing. A log2 matrix
+requires at least one finite intensity and preserves finite zero and negative
+values as observations. The declared `input_scale` selects these semantics.
 
-The MCP schema keeps file paths and the generated recommendation explicit while
-grouping declared acquisition facts in `metadata` and runtime controls in
-`options`; evaluation also places its required `output_dir` in `options`.
+The MCP schema keeps file paths, contrast, and the generated recommendation
+explicit while grouping the scale, optional sidecar, declared acquisition facts,
+and runtime controls in `options`; evaluation also places its required
+`output_dir` in `options`.
 `input_scale` must be explicitly declared as `linear` or `log2`; Mokume does not
-guess it from intensity magnitude. The peptide-count sidecar is supplied at the
-inspection top level and as `options.peptide_counts` during evaluation. It
+guess it from intensity magnitude. The peptide-count sidecar is supplied as
+`options.peptide_counts` during both inspection and evaluation. It
 contains exactly two comma- or tab-delimited columns named `protein` and
 `peptide_count`. Protein IDs are unique, counts are positive integers, and at
 least one ID must match the matrix's first column. It is optional for
@@ -100,9 +105,11 @@ the profile returns `unknown`, policy abstains, and the host must ask for a supp
 declaration. Engine aliases are normalized to the knowledge catalog, so `DIANN`,
 `DIA NN`, and `DIA-NN` all bind as `DIA-NN`.
 
-The contrast is a two-item list using the canonical condition labels returned in
-`profile.samples_per_condition`, not longer raw SDRF values that inspection may
-have normalized. Unknown object fields are rejected rather than silently ignored.
+Inspection requires a two-item list using the canonical condition labels derived
+from the selected SDRF factor. Reuse the returned
+`profile.samples_per_condition` keys, in the same order, for evaluation; do not
+replace them with longer raw SDRF values. Unknown object fields are rejected
+rather than silently ignored.
 The output path must be absolute and must not already exist; Mokume never
 overwrites a previous evaluation round. Artifacts are written to a sibling staging
 directory and the requested path appears only after the full round succeeds. A

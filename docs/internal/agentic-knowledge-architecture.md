@@ -49,8 +49,9 @@ applicability but cannot silently become executable candidate fields.
 
 ## Policy and scoped generation
 
-`inspect_dataset` profiles the matrix and SDRF before the host recommends
-anything. `policy.py` checks replicate count, evidence applicability, known
+`inspect_dataset` profiles only the requested two-condition contrast before the
+host recommends anything, so unrelated SDRF groups cannot change its diagnostics.
+`policy.py` checks replicate count, evidence applicability, known
 quantification or engine mismatch, provisional presets, held-out transfer,
 DEqMS count fallback, and relevant controls. Stable diagnostic codes make these
 decisions auditable outside natural-language prompting.

@@ -1,15 +1,17 @@
 # MCP input contract
 
-Call `mokume.inspect_dataset` with the absolute matrix and SDRF paths, an explicit
-input scale, and optional peptide-count and metadata inputs:
+Call `mokume.inspect_dataset` with the absolute matrix and SDRF paths, an exact
+two-condition contrast, an explicit input scale, and optional peptide-count and
+acquisition inputs:
 
 ```json
 {
   "protein_matrix": "/absolute/proteins.tsv",
   "sdrf": "/absolute/project.sdrf.tsv",
-  "input_scale": "linear",
-  "peptide_counts": "/absolute/peptide_counts.tsv",
-  "metadata": {
+  "contrast": ["control", "treated"],
+  "options": {
+    "input_scale": "linear",
+    "peptide_counts": "/absolute/peptide_counts.tsv",
     "data_type": "LFQ",
     "quantification": "directlfq",
     "upstream_engine": "quantms",
@@ -25,11 +27,18 @@ requirements:
 - At least two later columns contain samples; all sample cells are numeric or
   missing (`NaN`). Positive and negative infinity are rejected.
 - Column names are non-empty and unique, and every sample column maps to the SDRF.
-- The matrix contains at least one finite intensity.
+- A linear matrix contains at least one positive finite intensity; a log2 matrix
+  contains at least one finite intensity.
 
-`input_scale` is required and must declare whether those intensities are `linear`
-or `log2`; `auto` is not supported. The metadata fields are optional.
-`peptide_counts` is optional only for count-independent candidates; do not invent
+`options.input_scale` is required and must declare whether those intensities are
+`linear`
+or `log2`; `auto` is not supported. In a linear matrix, non-positive cells are
+canonicalized to missing before profiling and evaluation. In a log2 matrix,
+finite zero and negative cells remain observed. `contrast` is required, contains
+exactly two distinct SDRF factor labels, and scopes both profiling and evaluation
+to those matrix columns; unrelated conditions cannot affect diagnostics or
+preprocessing. The remaining options fields are optional.
+`options.peptide_counts` is optional only for count-independent candidates; do not invent
 values that were not supplied or supported by the inputs. Without a declared
 `data_type`, Mokume only infers `LFQ`, `DIA`, or `TMT` from explicit sample-name
 markers. Generic names such as `S1` or `sample-01` produce `unknown`, force an
@@ -79,10 +88,11 @@ recommendation block, and an execution-options object:
 }
 ```
 
-The options object accepts only the fields shown above. Build `contrast` from two
-keys in the inspection result's `profile.samples_per_condition`; do not replace
-those canonical labels with longer raw SDRF values. `ground_truth`, when present,
-must be an absolute path to a one-protein-per-line file and requires
+The options object accepts only the fields shown above. Repeat the same two
+contrast labels accepted by inspection, using the canonical keys returned in
+`profile.samples_per_condition`; do not replace those labels with longer raw SDRF
+values. `ground_truth`, when present, must be an absolute path to a
+one-protein-per-line file and requires
 `expected_direction` to be `UP` or `DOWN`. When `ground_truth` is null,
 `expected_direction` must also be null and carries no biological meaning.
 `options.output_dir` must be an absolute path that does not already exist.

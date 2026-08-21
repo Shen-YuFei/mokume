@@ -203,8 +203,9 @@ then ask the host to use `$mokume:analyze-proteomics`. Provide absolute paths
 for the protein matrix, SDRF, and output directory plus the contrast and known
 acquisition metadata.
 
-The plugin first calls `mokume.inspect_dataset`. It returns a typed profile,
-policy diagnostics, compatible benchmark evidence, and a candidate contract.
+The plugin first calls `mokume.inspect_dataset` with the requested two-condition
+contrast. It returns a typed profile scoped to those conditions, policy
+diagnostics, compatible benchmark evidence, and a candidate contract.
 The host then sends an exact recommendation block to
 `mokume.evaluate_recommendation`, which validates it and runs the Rust-backed
 normalization, imputation, and DE methods.

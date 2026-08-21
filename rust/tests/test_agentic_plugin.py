@@ -87,6 +87,7 @@ def _inspect(inputs: dict[str, Path]) -> dict:
             str(inputs["matrix"]),
             str(inputs["sdrf"]),
             "linear",
+            ["A", "B"],
             None,
             {
                 "data_type": "LFQ",
@@ -182,6 +183,7 @@ def test_peptide_count_sidecar_reaches_deqms(
             str(lfq_inputs["matrix"]),
             str(lfq_inputs["sdrf"]),
             "linear",
+            ["A", "B"],
             str(lfq_inputs["peptide_counts"]),
             metadata,
         )
@@ -298,6 +300,7 @@ def test_log2_inspection_computes_cv_on_linear_intensities(
             str(lfq_inputs["matrix"]),
             str(lfq_inputs["sdrf"]),
             "linear",
+            ["A", "B"],
             None,
             metadata,
         )
@@ -312,6 +315,7 @@ def test_log2_inspection_computes_cv_on_linear_intensities(
             str(log2_matrix),
             str(lfq_inputs["sdrf"]),
             "log2",
+            ["A", "B"],
             None,
             metadata,
         )
@@ -322,6 +326,125 @@ def test_log2_inspection_computes_cv_on_linear_intensities(
     assert log2_profile["per_condition_median_cv"] == pytest.approx(
         linear["per_condition_median_cv"]
     )
+
+
+def test_linear_zero_values_share_missing_semantics_with_evaluation(
+    lfq_inputs: dict[str, Path],
+    tmp_path: Path,
+) -> None:
+    """Linear zeros are missing throughout; log2 zeros remain observed."""
+    frame = pd.read_csv(lfq_inputs["matrix"], sep="\t")
+    frame.loc[0, "A1"] = 0.0
+    frame.loc[1, "B1"] = 0.0
+    frame.to_csv(lfq_inputs["matrix"], sep="\t", index=False)
+
+    inspected = _inspect(lfq_inputs)
+    expected_missing = 2 / (len(frame) * (len(frame.columns) - 1))
+    assert inspected["profile"]["missing_rate"] == round(expected_missing, 4)
+    assert inspected["profile"]["intensity_range"][0] > 0.0
+
+    recommendation = inspected["policy_recommendation"]
+    recommendation["configs"] = [
+        config
+        for config in recommendation["configs"]
+        if config["de_method"] == "limma" and config["imputation"] == "none"
+    ][:1]
+    assert len(recommendation["configs"]) == 1
+    evaluated = SERVICE.evaluate_recommendation(
+        EvaluationRequest(
+            str(lfq_inputs["matrix"]),
+            str(lfq_inputs["sdrf"]),
+            ["A", "B"],
+            recommendation,
+            str(tmp_path / "linear-zero-missing"),
+            {
+                "data_type": "LFQ",
+                "quantification": "directlfq",
+                "upstream_engine": "quantms",
+                "input_scale": "linear",
+                "threads": 24,
+            },
+        )
+    )
+    assert evaluated["results"][0]["missing_rate"] == pytest.approx(expected_missing)
+
+    log2_frame = frame.copy()
+    values = log2_frame.iloc[:, 1:].mask(log2_frame.iloc[:, 1:] == 0.0, 1.0)
+    log2_frame.iloc[:, 1:] = np.log2(values)
+    log2_matrix = tmp_path / "zero-valid-log2.tsv"
+    log2_frame.to_csv(log2_matrix, sep="\t", index=False)
+    log2_profile = SERVICE.inspect_dataset(
+        InspectionRequest(
+            str(log2_matrix),
+            str(lfq_inputs["sdrf"]),
+            "log2",
+            ["A", "B"],
+            metadata={
+                "data_type": "LFQ",
+                "quantification": "directlfq",
+                "upstream_engine": "quantms",
+            },
+        )
+    )["profile"]
+    assert log2_profile["missing_rate"] == 0.0
+    assert log2_profile["intensity_range"][0] == 0.0
+
+
+def test_inspection_and_evaluation_scope_to_requested_contrast(
+    lfq_inputs: dict[str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unrelated singleton conditions cannot block or influence a contrast."""
+    frame = pd.read_csv(lfq_inputs["matrix"], sep="\t")
+    frame["C1"] = np.linspace(50.0, 80.0, len(frame))
+    frame.to_csv(lfq_inputs["matrix"], sep="\t", index=False)
+    sdrf = pd.read_csv(lfq_inputs["sdrf"], sep="\t")
+    sdrf.loc[len(sdrf)] = ["C1", "C"]
+    sdrf.to_csv(lfq_inputs["sdrf"], sep="\t", index=False)
+
+    inspected = _inspect(lfq_inputs)
+    profile = inspected["profile"]
+    assert profile["n_samples"] == 6
+    assert profile["n_conditions"] == 2
+    assert profile["samples_per_condition"] == {"A": 3, "B": 3}
+    assert set(profile["pairwise_median_abs_log2fc"]) == {"A_vs_B"}
+    diagnostics = next(
+        block["content"]
+        for block in inspected["context"]["blocks"]
+        if block["id"] == "diagnostics"
+    )
+    assert "INSUFFICIENT_REPLICATES" not in {
+        diagnostic["code"] for diagnostic in diagnostics
+    }
+
+    recommendation = inspected["policy_recommendation"]
+    recommendation["configs"] = recommendation["configs"][:1]
+    original = service_module.run_experiment
+    observed_columns: list[str] = []
+
+    def record_columns(*args, **kwargs):
+        observed_columns.extend(str(column) for column in args[1].columns)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "run_experiment", record_columns)
+    SERVICE.evaluate_recommendation(
+        EvaluationRequest(
+            str(lfq_inputs["matrix"]),
+            str(lfq_inputs["sdrf"]),
+            ["A", "B"],
+            recommendation,
+            str(tmp_path / "contrast-scoped"),
+            {
+                "data_type": "LFQ",
+                "quantification": "directlfq",
+                "upstream_engine": "quantms",
+                "input_scale": "linear",
+                "threads": 24,
+            },
+        )
+    )
+    assert observed_columns == ["ProteinName", "A1", "A2", "A3", "B1", "B2", "B3"]
 
 
 def test_method_sensitivity_reports_signed_call_agreement() -> None:
@@ -488,6 +611,7 @@ def test_generic_sample_names_require_declared_data_type(
             str(lfq_inputs["matrix"]),
             str(lfq_inputs["sdrf"]),
             "linear",
+            ["A", "B"],
         )
     )
 
@@ -516,6 +640,7 @@ def test_upstream_engine_alias_matches_catalog_evidence(
             str(lfq_inputs["matrix"]),
             str(lfq_inputs["sdrf"]),
             "linear",
+            ["A", "B"],
             metadata={"data_type": "DIA", "upstream_engine": alias},
         )
     )
@@ -732,6 +857,7 @@ def test_input_scale_must_be_explicit(
                 str(lfq_inputs["matrix"]),
                 str(lfq_inputs["sdrf"]),
                 "auto",
+                ["A", "B"],
             )
         )
 
@@ -757,10 +883,10 @@ def test_input_scale_must_be_explicit(
     assert not output_dir.exists()
 
 
-def test_inspection_abstains_without_two_conditions(
+def test_inspection_rejects_contrast_without_two_conditions(
     lfq_inputs: dict[str, Path],
 ) -> None:
-    """A one-condition SDRF cannot produce a DEA recommendation."""
+    """A one-condition SDRF cannot satisfy a two-condition inspection."""
     pd.DataFrame(
         {
             "source name": ["A1", "A2", "A3", "B1", "B2", "B3"],
@@ -768,18 +894,11 @@ def test_inspection_abstains_without_two_conditions(
         }
     ).to_csv(lfq_inputs["sdrf"], sep="\t", index=False)
 
-    inspected = _inspect(lfq_inputs)
-
-    assert inspected["policy_recommendation"]["configs"] == []
-    assert inspected["policy_recommendation"]["abstain_reason"]
-    diagnostics = next(
-        block["content"]
-        for block in inspected["context"]["blocks"]
-        if block["id"] == "diagnostics"
-    )
-    assert "INSUFFICIENT_CONDITIONS" in {
-        diagnostic["code"] for diagnostic in diagnostics
-    }
+    with pytest.raises(
+        ValueError,
+        match="Contrast requires at least two matrix samples per condition: A=6, B=0",
+    ):
+        _inspect(lfq_inputs)
 
 
 def test_plugin_manifests_share_one_skill_and_knowledge_tree() -> None:
@@ -849,14 +968,14 @@ def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -
     assert set(inspection_schema["properties"]) == {
         "protein_matrix",
         "sdrf",
-        "input_scale",
-        "peptide_counts",
-        "metadata",
+        "contrast",
+        "options",
     }
     assert set(inspection_schema["required"]) == {
         "protein_matrix",
         "sdrf",
-        "input_scale",
+        "contrast",
+        "options",
     }
     evaluation_schema = tools[1].inputSchema
     assert set(evaluation_schema["properties"]) == {
