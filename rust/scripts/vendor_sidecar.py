@@ -51,6 +51,10 @@ allow-list:
       Trimmed package inits: only the surviving vendored submodules are re-exported
       (FASTA / IRS / piBAQ respectively), via lazy ``__getattr__``; the Rust-ported
       methods and non-vendored submodules are dropped on purpose.
+  quantification/pibaq.py
+      Rust-wheel compatibility entrypoints adapt DataFrames and legacy arguments
+      to the native piBAQ core; the pure-Python calculation and file workflow are
+      intentionally not vendored.
   imputation/censored.py
   imputation/methods.py
   imputation/missforest.py
@@ -119,7 +123,6 @@ SHARED_FILES: tuple[str, ...] = (
     "plotting/pca.py",
     "quantification/_pibaq_allocation.py",
     "quantification/families.py",
-    "quantification/pibaq.py",
     "reports/__init__.py",
     "reports/interactive.py",
     "reports/qc_report.py",
@@ -156,6 +159,7 @@ INTENTIONALLY_EXCLUDED: tuple[str, ...] = (
     "io/__init__.py",
     "normalization/__init__.py",
     "quantification/__init__.py",
+    "quantification/pibaq.py",
 )
 
 

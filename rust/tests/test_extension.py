@@ -1,6 +1,9 @@
 """Binding-level tests: the compiled extension loads and the CLI entry behaves."""
 
 import csv
+import functools
+import importlib.util
+import inspect
 import sys
 from pathlib import Path
 
@@ -12,13 +15,34 @@ import mokume
 from mokume.__main__ import main as console_main
 from mokume._mokume import run_cli
 from mokume._pibaq_digest import build_pibaq_digest
+from mokume.model.organism import OrganismDescription
+from mokume.quantification.families import discover_families
 from mokume.quantification.pibaq import (
-    peptides_to_protein as python_peptides_to_protein,
+    ConcentrationWeightByProteomicRuler,
+    compute_pibaq,
+    normalize_pibaq,
+    peptides_to_protein as compatibility_peptides_to_protein,
 )
 
 ProteaseDB = getattr(pyopenms, "ProteaseDB")
 FEATURE_PARQUET = Path(__file__).parent / "example" / "feature_wide.parquet"
 RUNTIME_PROTEASES = [entry["name"] for entry in mokume.protease_catalog()]
+
+
+@functools.cache
+def _reference_pibaq_module():
+    """Load the canonical Python implementation under an isolated module name."""
+    source = (
+        Path(__file__).parents[2] / "python" / "mokume" / "quantification" / "pibaq.py"
+    )
+    name = "_mokume_canonical_pibaq_reference"
+    spec = importlib.util.spec_from_file_location(name, source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load canonical piBAQ reference from {source}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _pyopenms_text(value):
@@ -28,6 +52,70 @@ def _pyopenms_text(value):
 def test_version_is_nonempty():
     assert mokume.version()
     assert mokume.__version__ == mokume.version()
+
+
+def test_native_compute_pibaq_preserves_public_signature():
+    parameters = list(inspect.signature(compute_pibaq).parameters.values())
+    expected_names = (
+        "peptide_df accession_to_peptides peptide_to_accessions families mw_map "
+        "min_anchors high_anchor_threshold extra_group_cols"
+    ).split()
+    assert [parameter.name for parameter in parameters] == expected_names
+    assert {parameter.kind for parameter in parameters[:4]} == {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD
+    }
+    assert {parameter.kind for parameter in parameters[4:]} == {
+        inspect.Parameter.KEYWORD_ONLY
+    }
+
+
+def test_pibaq_compatibility_wrapper_dispatches_native(monkeypatch, tmp_path):
+    """The legacy Python call shape maps losslessly onto the native command."""
+    captured = {}
+    monkeypatch.setattr(
+        mokume, "peptides2protein", lambda **kwargs: captured.update(kwargs)
+    )
+
+    compatibility_peptides_to_protein(
+        "proteome.fasta",
+        "peptides.csv",
+        "Trypsin",
+        False,
+        7,
+        30,
+        False,
+        False,
+        0,
+        0.0,
+        "",
+        str(tmp_path / "proteins.tsv"),
+        False,
+        str(tmp_path / "qc.pdf"),
+        families_yaml="families.yaml",
+        min_shared=2,
+        min_anchors=1,
+        high_anchor_threshold=3,
+    )
+
+    assert captured == {
+        "method": "pibaq",
+        "fasta": "proteome.fasta",
+        "peptides": "peptides.csv",
+        "enzyme": "Trypsin",
+        "normalize": False,
+        "min_aa": 7,
+        "max_aa": 30,
+        "tpa": False,
+        "ruler": False,
+        "ploidy": 0,
+        "cpc": 0.0,
+        "organism": "",
+        "output": str(tmp_path / "proteins.tsv"),
+        "min_shared": 2,
+        "min_anchors": 1,
+        "high_anchor_threshold": 3,
+        "families": "families.yaml",
+    }
 
 
 def test_compute_wrapper_rejects_bad_method(tmp_path):
@@ -122,11 +210,8 @@ def test_runtime_digest_preserves_fasta_accession_contract(tmp_path):
     }
 
 
-@pytest.mark.parametrize(
-    "enzyme",
-    RUNTIME_PROTEASES,
-)
-def test_rust_pibaq_matches_python_for_runtime_catalog(tmp_path, enzyme):
+def _runtime_catalog_case(tmp_path, enzyme):
+    """Build a two-sample table from one runtime pyOpenMS digest."""
     fasta = tmp_path / "proteome.fasta"
     fasta.write_text(
         ">sp|P10001|ALPHA\nAKPRAKRDDEFLPMSTY\n"
@@ -135,11 +220,12 @@ def test_rust_pibaq_matches_python_for_runtime_catalog(tmp_path, enzyme):
         encoding="utf-8",
     )
     mapping, _ = build_pibaq_digest((str(fasta), enzyme, 1, 1000, 0))
+    peptide_to_accessions = {}
     peptide_owners = {}
     for protein in sorted(mapping):
         for peptide in sorted(mapping[protein]):
+            peptide_to_accessions.setdefault(peptide, set()).add(protein)
             peptide_owners.setdefault(peptide, protein)
-
     observations = []
     for index, peptide in enumerate(sorted(peptide_owners), start=1):
         protein = peptide_owners[peptide]
@@ -160,27 +246,42 @@ def test_rust_pibaq_matches_python_for_runtime_catalog(tmp_path, enzyme):
             "NormIntensity",
         ],
     ).to_csv(peptide_table, index=False)
-    rust_output = tmp_path / "rust.tsv"
-    python_output = tmp_path / "python.tsv"
+    return fasta, mapping, peptide_to_accessions, peptide_table
 
-    python_peptides_to_protein(
-        fasta=str(fasta),
-        peptides=str(peptide_table),
-        enzyme=enzyme,
-        normalize=False,
-        min_aa=1,
-        max_aa=1000,
-        tpa=False,
-        ruler=False,
-        ploidy=0,
-        cpc=0.0,
-        organism="",
-        output=str(python_output),
-        verbose=False,
-        qc_report=str(tmp_path / "unused.pdf"),
-        min_shared=2,
-        min_anchors=1,
-        high_anchor_threshold=3,
+
+def _assert_pibaq_equal(actual, expected, extra_sort=()):
+    """Compare public piBAQ columns after deterministic row sorting."""
+    columns = list(expected.columns)
+    sort_by = ["ProteinName", "SampleID", "Condition", *extra_sort]
+    actual = actual.sort_values(sort_by).reset_index(drop=True)
+    expected = expected.sort_values(sort_by).reset_index(drop=True)
+    pd.testing.assert_frame_equal(
+        actual[columns],
+        expected[columns],
+        check_dtype=False,
+        check_exact=False,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    "enzyme",
+    RUNTIME_PROTEASES,
+)
+def test_rust_pibaq_matches_python_for_runtime_catalog(tmp_path, enzyme):
+    fasta, mapping, peptide_to_accessions, peptide_table = _runtime_catalog_case(
+        tmp_path, enzyme
+    )
+    rust_output = tmp_path / "rust.tsv"
+    families = discover_families(mapping, peptide_to_accessions, min_shared=2)
+    peptide_df = pd.read_csv(peptide_table)
+    options = {"min_anchors": 1, "high_anchor_threshold": 3}
+    expected = _reference_pibaq_module().compute_pibaq(
+        peptide_df, mapping, peptide_to_accessions, families, **options
+    )
+    compatibility = compute_pibaq(
+        peptide_df, mapping, peptide_to_accessions, families, **options
     )
     mokume.peptides2protein(
         method="pibaq",
@@ -194,32 +295,102 @@ def test_rust_pibaq_matches_python_for_runtime_catalog(tmp_path, enzyme):
         high_anchor_threshold=3,
         output=str(rust_output),
     )
+    _assert_pibaq_equal(compatibility, expected)
+    _assert_pibaq_equal(pd.read_csv(rust_output, sep="\t"), expected)
 
-    columns = [
-        "ProteinName",
-        "SampleID",
-        "Condition",
-        "NormIntensity",
-        "PiBAQ",
-        "FamilyId",
-        "EvidenceLevel",
-        "FamilySize",
-    ]
-    sort_by = ["ProteinName", "SampleID"]
-    actual = (
-        pd.read_csv(rust_output, sep="\t").sort_values(sort_by).reset_index(drop=True)
+
+def _tpa_extra_group_case():
+    """Build a two-fraction shared-peptide case with molecular weights."""
+    mapping = {
+        "A": {"ua", "shared"},
+        "B": {"ub", "shared"},
+    }
+    peptide_to_accessions = {
+        "ua": {"A"},
+        "ub": {"B"},
+        "shared": {"A", "B"},
+    }
+    families = discover_families(mapping, peptide_to_accessions, min_shared=1)
+    peptide_df = pd.DataFrame(
+        [
+            ("A", "ua", "S1", "C1", "F1", 100.0),
+            ("B", "ub", "S1", "C1", "F1", 300.0),
+            ("A", "shared", "S1", "C1", "F1", 400.0),
+            ("A", "ua", "S1", "C1", "F2", 200.0),
+            ("B", "ub", "S1", "C1", "F2", 200.0),
+            ("B", "shared", "S1", "C1", "F2", 600.0),
+        ],
+        columns=[
+            "ProteinName",
+            "PeptideCanonical",
+            "SampleID",
+            "Condition",
+            "Fraction",
+            "NormIntensity",
+        ],
     )
-    expected = (
-        pd.read_csv(python_output, sep="\t").sort_values(sort_by).reset_index(drop=True)
+    options = {
+        "mw_map": {"A": 50.0, "B": 25.0},
+        "extra_group_cols": ["Fraction"],
+    }
+    return peptide_df, mapping, peptide_to_accessions, families, options
+
+
+def test_native_compute_pibaq_matches_reference_with_tpa_and_extra_groups():
+    peptide_df, mapping, peptide_to_accessions, families, options = (
+        _tpa_extra_group_case()
     )
-    pd.testing.assert_frame_equal(
-        actual[columns],
-        expected[columns],
-        check_dtype=False,
-        check_exact=False,
-        rtol=1e-12,
-        atol=1e-12,
+    expected = _reference_pibaq_module().compute_pibaq(
+        peptide_df,
+        mapping,
+        peptide_to_accessions,
+        families,
+        **options,
     )
+    actual = compute_pibaq(
+        peptide_df,
+        mapping,
+        peptide_to_accessions,
+        families,
+        **options,
+    )
+    _assert_pibaq_equal(actual, expected, extra_sort=("Fraction",))
+
+
+def test_rust_python_pibaq_periphery_matches_canonical_reference():
+    reference = _reference_pibaq_module()
+    normalization_input = pd.DataFrame(
+        {
+            "SampleID": ["S1", "S1", "S2", "S2"],
+            "Condition": ["C1", "C1", "C2", "C2"],
+            "PiBAQ": [1.0, 3.0, 2.0, 2.0],
+        }
+    )
+    expected_normalized = reference.normalize_pibaq(normalization_input.copy())
+    actual_normalized = normalize_pibaq(normalization_input.copy())
+    pd.testing.assert_frame_equal(actual_normalized, expected_normalized)
+
+    organism = OrganismDescription(
+        name="pibaq-parity",
+        genome_size=1,
+        histone_proteins=["H1"],
+        histone_entries=["HISTONE_ONE"],
+    )
+    ruler_input = pd.DataFrame(
+        {
+            "ProteinName": ["H1", "P1", "HISTONE_ONE", "P2"],
+            "Condition": ["C1", "C1", "C2", "C2"],
+            "NormIntensity": [20.0, 5.0, 30.0, 10.0],
+            "MolecularWeight": [10.0, 20.0, 15.0, 25.0],
+        }
+    )
+    expected_ruler = reference.ConcentrationWeightByProteomicRuler(
+        organism, 2, 1.0
+    ).apply_by_condition(ruler_input)
+    actual_ruler = ConcentrationWeightByProteomicRuler(
+        organism, 2, 1.0
+    ).apply_by_condition(ruler_input)
+    pd.testing.assert_frame_equal(actual_ruler, expected_ruler)
 
 
 def test_features2proteins_pibaq_uses_runtime_digest(tmp_path):

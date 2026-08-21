@@ -1,41 +1,14 @@
-"""Paralog-aware intensity-Based Absolute Quantification (piBAQ).
+"""Rust-backed piBAQ compatibility APIs.
 
-piBAQ retains the theoretical-peptide scaling of iBAQ while making shared
-peptide handling explicit and auditable.
-
-The quantification path is **piBAQ** (paralog-aware iBAQ;
-:func:`compute_pibaq`). For each sample/condition group independently,
-every shared peptide's intensity is distributed across the family members
-it maps to using the gpGrouper area rule (Saltzman et al. 2018 *Mol Cell
-Proteomics*):
-
-- when at least one mapped member has proteotypic (unique-peptide)
-  intensity, allocation is proportional to those per-group intensities;
-  a member with zero proteotypic intensity receives exactly zero;
-- when every mapped member has zero proteotypic intensity, the shared
-  intensity is split equally among them.
-
-The allocation conserves each observed shared-peptide intensity. Each
-member's (proteotypic + allocated-shared) intensity is then divided by the
-number of theoretically observable peptides the family owns for that
-member under the cross-family razor (proteotypic AND shared), keeping the
-numerator and denominator symmetric.
-
+The wheel keeps the established DataFrame and file-oriented Python entrypoints,
+but shared-peptide allocation, theoretical-peptide denominators, evidence
+classification, and TPA are computed by the same native core as the CLI.
 """
 
 import importlib
-import logging
-from dataclasses import dataclass
-from pathlib import Path
+import inspect
 from types import ModuleType
-from typing import (
-    List,
-    Mapping,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-)
+from typing import Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -46,192 +19,90 @@ from mokume.core.constants import (
     CONDITION,
     COPYNUMBER,
     EVIDENCE_FAMILY_ONLY,
+    EVIDENCE_LEVEL,
+    FAMILY_ID,
+    FAMILY_SIZE,
+    MOLECULARWEIGHT,
+    MOLES_NMOL,
+    NORM_INTENSITY,
     PIBAQ,
     PIBAQ_LOG,
     PIBAQ_NORMALIZED,
     PIBAQ_PPB,
-    MOLECULARWEIGHT,
-    MOLES_NMOL,
-    NORM_INTENSITY,
     PROTEIN_NAME,
     SAMPLE_ID,
     TPA,
     WEIGHT_NG,
-    is_parquet,
 )
-from mokume.core.logger import get_logger, log_execution_time, log_function_call
-from mokume.io.fasta import digest_fasta_full, extract_fasta as _extract_fasta_io
+from mokume.core.logger import get_logger, log_execution_time
+from mokume.io.fasta import extract_fasta as _extract_fasta
 from mokume.model.organism import OrganismDescription
 from mokume.plotting import is_plotting_available
 from mokume.quantification._pibaq_allocation import (
-    _allocate_family,
-    _annotate_family_metadata,
-    _assemble_family_input,
-    _assign_peptides_to_owning_family,
-    _classify_evidence,
-    _count_unique_anchors,
     _detect_peptide_column,
     _empty_pibaq_frame,
-    _FamilyAllocationInputs,
-    _finalize_tpa,
-    _invert_peptide_ownership,
     _membership_mask,
 )
-from mokume.quantification.families import (
-    Family,
-    discover_families,
-    load_families_yaml,
-    merge_overrides,
-)
+from mokume.quantification.families import Family
 
-# Proteomic Ruler constants
-AVAGADRO: float = 6.02214129e23
-AVERAGE_BASE_PAIR_MASS: float = 617.96
+AVAGADRO = 6.02214129e23
+AVERAGE_BASE_PAIR_MASS = 617.96
 
-# Get a logger for this module
 logger = get_logger("mokume.quantification.pibaq")
+extract_fasta = _extract_fasta
 
 
-def _bind_arguments(
-    function_name: str,
+def _public_signature(
+    positional_names: Sequence[str], defaults: Mapping[str, object]
+) -> inspect.Signature:
+    """Build an inspectable signature for a static-analysis-friendly wrapper."""
+    parameters = [
+        inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        for name in positional_names
+    ]
+    parameters.extend(
+        inspect.Parameter(
+            name,
+            inspect.Parameter.KEYWORD_ONLY,
+            default=default,
+        )
+        for name, default in defaults.items()
+    )
+    return inspect.Signature(parameters)
+
+
+def _bind(
+    signature: inspect.Signature,
     args: Sequence[object],
     kwargs: Mapping[str, object],
-    positional_names: Sequence[str],
-    defaults: Mapping[str, object],
 ) -> dict[str, object]:
-    """Bind a legacy call without changing its accepted argument forms."""
-    if len(args) > len(positional_names):
-        raise TypeError(
-            f"{function_name}() takes {len(positional_names)} positional arguments "
-            f"but {len(args)} were given"
-        )
-    values = dict(zip(positional_names, args))
-    duplicate = next((name for name in values if name in kwargs), None)
-    if duplicate is not None:
-        raise TypeError(f"{function_name}() got multiple values for '{duplicate}'")
-    allowed = set(positional_names) | set(defaults)
-    unexpected = next((name for name in kwargs if name not in allowed), None)
-    if unexpected is not None:
-        raise TypeError(
-            f"{function_name}() got an unexpected keyword argument '{unexpected}'"
-        )
-    values.update(kwargs)
-    missing = [name for name in positional_names if name not in values]
-    if missing:
-        raise TypeError(f"{function_name}() missing required argument: '{missing[0]}'")
-    for name, default in defaults.items():
-        values.setdefault(name, default)
-    return values
+    """Validate a compatibility call and materialize its defaults."""
+    bound = signature.bind(*args, **kwargs)
+    bound.apply_defaults()
+    return dict(bound.arguments)
 
 
-@log_function_call(logger)
-def normalize_pibaq(res: DataFrame) -> DataFrame:
-    """Normalize piBAQ values by the per-sample piBAQ total.
-
-    The resulting relative piBAQ values are then multiplied by 100'000'000
-    (PRIDE database normalization) for the piBAQ ppb and log10 shifted
-    by 10 (ProteomicsDB).
-
-    Parameters
-    ----------
-    res : pd.DataFrame
-        Input DataFrame with a :data:`PIBAQ` column.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with normalized piBAQ values.
-    """
-    # Relative piBAQ: divide each protein's value by its group total.
-    # ``groupby(...).transform`` is the vectorised, future-proof equivalent of
-    # the per-group ``apply(normalize)`` it replaces (no DeprecationWarning,
-    # no implicit grouping-column handling).
-    group_totals = res.groupby([SAMPLE_ID, CONDITION], observed=True)[PIBAQ].transform(
+def normalize_pibaq(result: DataFrame) -> DataFrame:
+    """Normalize piBAQ within each sample and condition."""
+    totals = result.groupby([SAMPLE_ID, CONDITION], observed=True)[PIBAQ].transform(
         "sum"
     )
-    res[PIBAQ_NORMALIZED] = res[PIBAQ] / group_totals
-    # Normalization method used by ProteomicsDB: 10 + log10(piBAQ / total piBAQ).
-    res[PIBAQ_LOG] = np.where(
-        res[PIBAQ_NORMALIZED] > 0, np.log10(res[PIBAQ_NORMALIZED]) + 10, 0
-    )
-    # PRIDE normalization (no log transform): piBAQ / total piBAQ * 100'000'000.
-    res[PIBAQ_PPB] = res[PIBAQ_NORMALIZED] * 100_000_000
-    return res
+    relative = result[PIBAQ].divide(totals)
+    result.loc[:, PIBAQ_NORMALIZED] = relative
+    result.loc[:, PIBAQ_LOG] = np.where(relative.gt(0), np.log10(relative) + 10, 0)
+    result.loc[:, PIBAQ_PPB] = relative.multiply(100_000_000)
+    return result
 
 
-@log_function_call(logger, level=logging.DEBUG)
 def handle_nonstandard_aa(aa_seq: str):
-    """
-    Remove any nonstandard amino acid from the sequence.
-
-    Parameters
-    ----------
-    aa_seq : str
-        Protein sequence from database.
-
-    Returns
-    -------
-    tuple
-        A tuple containing a list of nonstandard amino acids and the cleaned sequence.
-    """
-    standard_aa = "ARNDBCEQZGHILKMFPSTWYV"
-    nonstandard_aa_lst = [aa for aa in aa_seq if aa not in standard_aa]
-    considered_seq = "".join([aa for aa in aa_seq if aa in standard_aa])
-    return nonstandard_aa_lst, considered_seq
-
-
-_EXTRACT_FASTA_ARGUMENTS = (
-    "fasta",
-    "enzyme",
-    "proteins",
-    "min_aa",
-    "max_aa",
-    "tpa",
-)
-
-
-@log_function_call(logger)
-def extract_fasta(*args: object, **kwargs: object):
-    """Forward to :func:`mokume.io.fasta.extract_fasta`.
-
-    Kept as a thin wrapper so existing callers can keep importing
-    ``extract_fasta`` from :mod:`mokume.quantification.pibaq`. All the
-    digestion, uniqueness, and MW logic — including the cross-protein unique
-    peptide counting — lives in a single implementation in
-    :mod:`mokume.io.fasta` to avoid drift between the two public entry points.
-    See that function's docstring for the full contract.
-
-    .. note::
-        This is the **legacy ibaqpy-style** denominator helper. It returns a
-        *proteotypic-only* (cross-protein unique) theoretical peptide count,
-        which is symmetric with a *proteotypic-only numerator* (shared
-        peptides discarded). It is **not** used by the default piBAQ path
-        (:func:`compute_pibaq` / :func:`peptides_to_protein` /
-        ``features2proteins --quant-method pibaq``), which instead pairs a
-        *shared-aware numerator* (proportional shared-peptide reallocation)
-        with a *total-potential* denominator (proteotypic + shared) via
-        :func:`mokume.io.fasta.digest_fasta_full`. Do not mix the two
-        conventions: the proteotypic-only and total-potential denominators
-        are each only correct alongside their matching numerator. Retained
-        for direct API consumers; prefer ``compute_pibaq`` for new code.
-    """
-    bound = _bind_arguments("extract_fasta", args, kwargs, _EXTRACT_FASTA_ARGUMENTS, {})
-    return _extract_fasta_io(**bound)
+    """Return removed residues and a sequence containing standard residues."""
+    standard = frozenset("ARNDBCEQZGHILKMFPSTWYV")
+    removed = [residue for residue in aa_seq if residue not in standard]
+    return removed, "".join(residue for residue in aa_seq if residue in standard)
 
 
 class ConcentrationWeightByProteomicRuler:
-    """
-    Calculate protein copy number, moles, weight, and concentration using proteomic ruler.
-
-    This uses a proteomic ruler approach to estimate the copy number, moles,
-    and weight of proteins in a dataset based on their normalized intensity and molecular
-    weight.
-    """
-
-    organism: OrganismDescription
-    ploidy: int
-    concentration_per_cell: float
-    dna_mass: float
+    """Estimate protein abundance measurements with the proteomic ruler."""
 
     def __init__(
         self, organism: OrganismDescription, ploidy: int, concentration_per_cell: float
@@ -240,665 +111,267 @@ class ConcentrationWeightByProteomicRuler:
         self.ploidy = ploidy
         self.concentration_per_cell = concentration_per_cell
         self.dna_mass = (
-            self.ploidy * self.organism.genome_size * AVERAGE_BASE_PAIR_MASS / AVAGADRO
+            ploidy * organism.genome_size * AVERAGE_BASE_PAIR_MASS / AVAGADRO
         )
 
-    def total_histone_intensities(self, protein_intensities: pd.DataFrame) -> float:
+    def total_histone_intensities(self, protein_intensities: DataFrame) -> float:
         """Return the summed intensity of accession- or entry-matched histones."""
-        # ``ProteinName`` carries UniProt accessions (from ``pg_accessions`` in the
-        # quantms feature files), so match against ``histone_proteins`` (accessions)
-        # in addition to ``histone_entries`` (entry names). Matching only entry
-        # names found no histones in an accession-keyed table, so the intensity fell
-        # back to 1.0 and inflated CopyNumber. The two id forms never collide, so the
-        # union is safe whichever form ``ProteinName`` uses. See issue #19.
-        histones = set(self.organism.histone_proteins) | set(
-            self.organism.histone_entries
-        )
-        is_histone_mask = protein_intensities[PROTEIN_NAME].isin(histones)
-        histone_intensities = max(
-            protein_intensities[is_histone_mask][NORM_INTENSITY].sum(), 1.0
-        )
-        return histone_intensities
+        identifiers = self.organism.histone_proteins + self.organism.histone_entries
+        matched = protein_intensities.loc[
+            protein_intensities[PROTEIN_NAME].isin(identifiers), NORM_INTENSITY
+        ]
+        return max(matched.sum(), 1.0)
 
-    def apply_ruler(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
+    def apply_ruler(self, protein_intensities: DataFrame) -> DataFrame:
         """Calculate copy number, amount, weight, and concentration columns."""
-        protein_intensities = protein_intensities.copy()
-        histone_intensity = self.total_histone_intensities(protein_intensities)
-
-        protein_intensities[COPYNUMBER] = (
-            protein_intensities[NORM_INTENSITY]
-            / histone_intensity
-            * self.dna_mass
-            * AVAGADRO
-            / protein_intensities[MOLECULARWEIGHT]
-        )
-
-        protein_intensities[MOLES_NMOL] = protein_intensities[COPYNUMBER] * (
-            1e9 / AVAGADRO
-        )
-        protein_intensities[WEIGHT_NG] = (
-            protein_intensities[MOLES_NMOL] * protein_intensities[MOLECULARWEIGHT]
-        )
-
-        volume = (
-            protein_intensities[WEIGHT_NG].sum() / 1e-9 / self.concentration_per_cell
-        )
-        protein_intensities[CONCENTRATION_NM] = volume * protein_intensities[MOLES_NMOL]
-        return protein_intensities
-
-    def __call__(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
-        """Apply the proteomic ruler to one condition's protein rows."""
-        return self.apply_ruler(protein_intensities)
-
-    def apply_by_condition(self, protein_intensities: pd.DataFrame) -> pd.DataFrame:
-        """Apply the proteomic ruler independently within each condition."""
-        # Apply the ruler independently per condition. pandas 3.0 excludes the
-        # grouping column from ``apply``'s result, silently dropping
-        # ``Condition`` from the output table; older pandas kept it. We keep the
-        # original per-condition computation unchanged and only realign the
-        # label when it is missing. ``group_keys=False`` preserves the original
-        # row index, so the assignment maps each row to its own condition; we
-        # then restore the original column order (pandas 3.0 appends the
-        # re-added column) so the output schema matches across pandas versions.
-        result = protein_intensities.groupby([CONDITION], group_keys=False).apply(self)
-        if CONDITION not in result.columns:
-            result[CONDITION] = protein_intensities[CONDITION]
-            added = [c for c in result.columns if c not in protein_intensities.columns]
-            result = result[list(protein_intensities.columns) + added]
+        result = protein_intensities.copy()
+        histone_total = self.total_histone_intensities(result)
+        copy_number = result[NORM_INTENSITY] / histone_total
+        copy_number *= self.dna_mass
+        copy_number *= AVAGADRO
+        copy_number /= result[MOLECULARWEIGHT]
+        result[COPYNUMBER] = copy_number
+        result[MOLES_NMOL] = result[COPYNUMBER] * (1e9 / AVAGADRO)
+        result[WEIGHT_NG] = result[MOLES_NMOL] * result[MOLECULARWEIGHT]
+        volume = result[WEIGHT_NG].sum() / 1e-9
+        volume /= self.concentration_per_cell
+        result[CONCENTRATION_NM] = volume * result[MOLES_NMOL]
         return result
 
+    def __call__(self, protein_intensities: DataFrame) -> DataFrame:
+        """Apply the ruler to one condition's protein rows."""
+        return self.apply_ruler(protein_intensities)
 
-# ---------------------------------------------------------------------------
-# piBAQ (paralog-aware iBAQ) -- exact gpGrouper-style shared allocation
-# ---------------------------------------------------------------------------
+    def apply_by_condition(self, protein_intensities: DataFrame) -> DataFrame:
+        """Apply the ruler independently within each condition."""
+        if protein_intensities.empty:
+            return protein_intensities.copy()
+        original_columns = list(protein_intensities.columns)
+        groups = protein_intensities.groupby([CONDITION], sort=True)
+        result = pd.concat(
+            (self.apply_ruler(group) for _, group in groups),
+            axis=0,
+        )
+        additions = [column for column in result if column not in original_columns]
+        return result[original_columns + additions]
 
 
-_COMPUTE_PIBAQ_ARGUMENTS = (
-    "peptide_df",
-    "accession_to_peptides",
-    "peptide_to_accessions",
-    "families",
+_COMPUTE_SIGNATURE = _public_signature(
+    (
+        "peptide_df",
+        "accession_to_peptides",
+        "peptide_to_accessions",
+        "families",
+    ),
+    {
+        "mw_map": None,
+        "min_anchors": 1,
+        "high_anchor_threshold": 3,
+        "extra_group_cols": None,
+    },
 )
-_COMPUTE_PIBAQ_DEFAULTS = {
-    "mw_map": None,
-    "min_anchors": 1,
-    "high_anchor_threshold": 3,
-    "extra_group_cols": None,
-}
+
+_GROUP_ID = "_mokume_group_id"
+_FAMILY_ORDER = "_mokume_family_order"
+_NATIVE_COLUMNS = [
+    PROTEIN_NAME,
+    _GROUP_ID,
+    NORM_INTENSITY,
+    PIBAQ,
+    FAMILY_ID,
+    EVIDENCE_LEVEL,
+    FAMILY_SIZE,
+    MOLECULARWEIGHT,
+    TPA,
+]
 
 
-@dataclass(frozen=True)
-class _ComputePibaqOptions:
-    mw_map: Optional[Mapping[str, float]]
-    min_anchors: int
-    high_anchor_threshold: int
-    extra_group_cols: Optional[Sequence[str]]
+def _group_columns(
+    peptide_df: DataFrame, extra_group_cols: Optional[Sequence[str]]
+) -> list[str]:
+    """Resolve the sample, condition, and caller-supplied grouping columns."""
+    optional = (CONDITION, *(extra_group_cols or ()))
+    retained = dict.fromkeys(
+        column
+        for column in optional
+        if column in peptide_df.columns and column != SAMPLE_ID
+    )
+    return [SAMPLE_ID, *retained]
 
 
-@dataclass(frozen=True)
-class _ComputePibaqRequest:
-    peptide_df: DataFrame
-    accession_to_peptides: Mapping[str, Set[str]]
-    peptide_to_accessions: Mapping[str, Set[str]]
-    families: Sequence[Family]
-    options: _ComputePibaqOptions
+def _native_observations(
+    peptide_df: DataFrame,
+    peptide_column: str,
+    group_columns: Sequence[str],
+) -> tuple[list[tuple[str, str, float]], DataFrame]:
+    """Encode arbitrary DataFrame groups as native sample identifiers."""
+    working = peptide_df.copy()
+    group_ids = working.groupby(
+        list(group_columns), dropna=False, observed=True
+    ).ngroup()
+    working[_GROUP_ID] = group_ids.astype("int64").astype(str)
+    observations = [
+        (str(peptide), str(group_id), float(intensity))
+        for peptide, group_id, intensity in working[
+            [peptide_column, _GROUP_ID, NORM_INTENSITY]
+        ].itertuples(index=False, name=None)
+    ]
+    group_frame = working[[_GROUP_ID, *group_columns]].drop_duplicates(_GROUP_ID)
+    return observations, group_frame
 
 
-@dataclass(frozen=True)
-class _PreparedPibaq:
-    peptide_column: str
-    group_columns: List[str]
-    working: DataFrame
-    anchor_counts: Mapping[str, int]
-    family_to_peptides: Mapping[str, Set[str]]
-    observed_peptides: Set[str]
+def _native_result(
+    rows: Sequence[tuple],
+    groups: DataFrame,
+    group_columns: Sequence[str],
+    families: Sequence[Family],
+    include_tpa: bool,
+) -> DataFrame:
+    """Restore DataFrame grouping columns and canonical output ordering."""
+    if not rows:
+        return _empty_pibaq_frame(group_columns, include_tpa)
+    result = DataFrame.from_records(rows, columns=_NATIVE_COLUMNS)
+    result = result.merge(groups, on=_GROUP_ID, how="left", validate="many_to_one")
+    family_order = {family.family_id: order for order, family in enumerate(families)}
+    result[_FAMILY_ORDER] = result[FAMILY_ID].map(family_order)
+    result[_GROUP_ID] = result[_GROUP_ID].astype("int64")
+    result = result.sort_values(
+        [_FAMILY_ORDER, PROTEIN_NAME, _GROUP_ID], kind="stable"
+    ).reset_index(drop=True)
+    columns = [
+        PROTEIN_NAME,
+        *group_columns,
+        NORM_INTENSITY,
+        PIBAQ,
+        FAMILY_ID,
+        EVIDENCE_LEVEL,
+        FAMILY_SIZE,
+    ]
+    if include_tpa:
+        columns.extend((MOLECULARWEIGHT, TPA))
+    return result[columns]
+
+
+def _run_native_core(
+    options: Mapping[str, object],
+    families: Sequence[Family],
+    observed: DataFrame,
+    peptide_column: str,
+    group_columns: Sequence[str],
+) -> tuple[Sequence[tuple], DataFrame]:
+    """Call the extension and retain the encoded group lookup."""
+    observations, groups = _native_observations(observed, peptide_column, group_columns)
+    native_compute = getattr(importlib.import_module("mokume._mokume"), "compute_pibaq")
+    rows = native_compute(
+        observations,
+        dict(options["accession_to_peptides"]),
+        dict(options["peptide_to_accessions"]),
+        [(family.family_id, list(family.members)) for family in families],
+        (
+            dict(options["mw_map"]) if options["mw_map"] is not None else None,
+            options["min_anchors"],
+            options["high_anchor_threshold"],
+        ),
+    )
+    return rows, groups
+
+
+def _log_pibaq_summary(result: DataFrame) -> None:
+    """Report family resolution counts for the compatibility API."""
+    processed = result[FAMILY_ID].nunique() if not result.empty else 0
+    unresolved = (
+        result.loc[result[EVIDENCE_LEVEL] == EVIDENCE_FAMILY_ONLY, FAMILY_ID].nunique()
+        if processed
+        else 0
+    )
+    logger.info(
+        "native piBAQ resolved %d families: %d family-only and %d member-resolving",
+        processed,
+        unresolved,
+        processed - unresolved,
+    )
 
 
 def compute_pibaq(*args: object, **kwargs: object) -> DataFrame:
-    """Compute per-protein piBAQ with exact shared-peptide allocation.
+    """Compute paralog-aware iBAQ through the native Rust allocation core."""
+    options = _bind(_COMPUTE_SIGNATURE, args, kwargs)
+    peptide_df = options["peptide_df"]
+    families = list(options["families"])
+    group_columns = _group_columns(peptide_df, options["extra_group_cols"])
+    include_tpa = options["mw_map"] is not None
+    if peptide_df.empty or not families:
+        return _empty_pibaq_frame(group_columns, include_tpa)
 
-    Parameters
-    ----------
-    peptide_df : DataFrame
-        Long-format peptide table with at minimum the columns
-        :data:`PROTEIN_NAME`, :data:`SAMPLE_ID`, :data:`NORM_INTENSITY`,
-        and one of (:data:`PEPTIDE_CANONICAL`, ``'sequence'``,
-        :data:`PEPTIDE_SEQUENCE`). :data:`CONDITION` is honoured when
-        present; additional grouping columns may be requested via
-        ``extra_group_cols``.
-    accession_to_peptides, peptide_to_accessions : Mapping
-        FASTA digest indices, typically produced by
-        :func:`mokume.io.fasta.digest_fasta_full`.
-    families : Sequence[Family]
-        Output of :func:`mokume.quantification.families.discover_families`
-        (optionally post-processed by
-        :func:`mokume.quantification.families.merge_overrides`).
-    mw_map : Mapping[str, float], optional
-        Per-canonical molecular weight (only consumed when callers request
-        TPA via :func:`peptides_to_protein` ``tpa=True``).
-    min_anchors : int, optional
-        Unique-anchor threshold. If no family member reaches it, shared signal
-        is split equally and evidence is ``family_only``. Defaults to 1.
-    high_anchor_threshold : int, optional
-        Threshold (in unique anchors of the *weakest* family member) at
-        which ``EvidenceLevel`` is reported as ``high``. Defaults to 3.
-    extra_group_cols : Sequence[str], optional
-        Additional dataframe columns to retain in the groupby keys, on
-        top of (SampleID, Condition).
-
-    Returns
-    -------
-    DataFrame
-        Long-format result containing positive per-member estimates for
-        ``(member, SampleID, Condition, *extra_group_cols)``. Includes the
-        :data:`FAMILY_ID`, :data:`EVIDENCE_LEVEL`, :data:`FAMILY_SIZE`
-        metadata columns, and :data:`MOLECULARWEIGHT` + :data:`TPA` when
-        ``mw_map`` is supplied.
-    """
-    bound = _bind_arguments(
-        "compute_pibaq",
-        args,
-        kwargs,
-        _COMPUTE_PIBAQ_ARGUMENTS,
-        _COMPUTE_PIBAQ_DEFAULTS,
-    )
-    options = _ComputePibaqOptions(
-        mw_map=bound.pop("mw_map"),
-        min_anchors=bound.pop("min_anchors"),
-        high_anchor_threshold=bound.pop("high_anchor_threshold"),
-        extra_group_cols=bound.pop("extra_group_cols"),
-    )
-    return _run_compute_pibaq(_ComputePibaqRequest(options=options, **bound))
-
-
-setattr(
-    compute_pibaq,
-    "__text_signature__",
-    "(peptide_df, accession_to_peptides, peptide_to_accessions, families, *, "
-    "mw_map=None, min_anchors=1, high_anchor_threshold=3, extra_group_cols=None)",
-)
-
-
-def _empty_compute_result(
-    request: _ComputePibaqRequest, group_columns: Sequence[str]
-) -> DataFrame:
-    """Return the empty output schema for a computation request."""
-    return _empty_pibaq_frame(group_columns, request.options.mw_map is not None)
-
-
-def _prepare_pibaq(
-    request: _ComputePibaqRequest, group_columns: List[str]
-) -> Optional[_PreparedPibaq]:
-    """Filter observed peptides and build family ownership indices."""
-    peptide_column = _detect_peptide_column(request.peptide_df)
-    working = request.peptide_df[
-        _membership_mask(
-            request.peptide_df[peptide_column], request.peptide_to_accessions
-        )
+    peptide_column = _detect_peptide_column(peptide_df)
+    peptide_to_accessions = options["peptide_to_accessions"]
+    observed = peptide_df[
+        _membership_mask(peptide_df[peptide_column], peptide_to_accessions)
     ]
-    if working.empty:
-        return None
-    anchor_counts = _count_unique_anchors(
-        working, request.peptide_to_accessions, peptide_column
+    if observed.empty:
+        return _empty_pibaq_frame(group_columns, include_tpa)
+    rows, groups = _run_native_core(
+        options, families, observed, peptide_column, group_columns
     )
-    peptide_owner = _assign_peptides_to_owning_family(
-        request.families, request.peptide_to_accessions, anchor_counts
-    )
-    family_to_peptides = _invert_peptide_ownership(peptide_owner)
-    working = working[_membership_mask(working[peptide_column], peptide_owner)]
-    return _PreparedPibaq(
-        peptide_column=peptide_column,
-        group_columns=group_columns,
-        working=working,
-        anchor_counts=anchor_counts,
-        family_to_peptides=family_to_peptides,
-        observed_peptides=set(working[peptide_column].dropna().unique()),
-    )
+    result = _native_result(rows, groups, group_columns, families, include_tpa)
+    _log_pibaq_summary(result)
+    return result
 
 
-def _family_evidence(
-    request: _ComputePibaqRequest,
-    prepared: _PreparedPibaq,
-    family: Family,
-) -> str:
-    """Classify one family from its observed unique-anchor counts."""
-    anchors = [prepared.anchor_counts.get(member, 0) for member in family.members]
-    return _classify_evidence(
-        min(anchors),
-        max(anchors),
-        request.options.min_anchors,
-        request.options.high_anchor_threshold,
-    )
+compute_pibaq.__signature__ = _COMPUTE_SIGNATURE
 
 
-def _quantify_prepared_family(
-    request: _ComputePibaqRequest,
-    prepared: _PreparedPibaq,
-    family: Family,
-) -> Optional[Tuple[DataFrame, str]]:
-    """Compute and annotate one observed family's piBAQ block."""
-    owned = prepared.family_to_peptides.get(family.family_id, set())
-    if not owned & prepared.observed_peptides:
-        return None
-    family_input = _assemble_family_input(
-        prepared.working,
-        family,
-        prepared.family_to_peptides,
-        prepared.peptide_column,
-    )
-    if family_input.empty:
-        return None
-    evidence = _family_evidence(request, prepared, family)
-    block = _allocate_family(
-        _FamilyAllocationInputs(
-            family=family,
-            peptide_to_accessions=request.peptide_to_accessions,
-            accession_to_peptides=request.accession_to_peptides,
-            owned_peptides=owned,
-            force_equal_shared=evidence == EVIDENCE_FAMILY_ONLY,
-        ),
-        family_input,
-        prepared.peptide_column,
-        prepared.group_columns,
-    )
-    if block.empty:
-        return None
-    return _annotate_family_metadata(block, family, evidence), evidence
-
-
-def _collect_family_results(
-    request: _ComputePibaqRequest, prepared: _PreparedPibaq
-) -> Tuple[List[DataFrame], int]:
-    """Collect non-empty family blocks and count family-only results."""
-    results: List[DataFrame] = []
-    family_only = 0
-    for family in request.families:
-        quantified = _quantify_prepared_family(request, prepared, family)
-        if quantified is None:
-            continue
-        block, evidence = quantified
-        results.append(block)
-        family_only += evidence == EVIDENCE_FAMILY_ONLY
-    return results, family_only
-
-
-def _run_compute_pibaq(request: _ComputePibaqRequest) -> DataFrame:
-    """Execute the unchanged piBAQ calculation for a bound request."""
-    group_columns = _resolve_group_cols(
-        request.peptide_df, request.options.extra_group_cols
-    )
-    if request.peptide_df.empty or not request.families:
-        return _empty_compute_result(request, group_columns)
-    prepared = _prepare_pibaq(request, group_columns)
-    if prepared is None:
-        return _empty_compute_result(request, group_columns)
-    results, family_only = _collect_family_results(request, prepared)
-    if not results:
-        return _empty_compute_result(request, group_columns)
-    output = pd.concat(results, ignore_index=True)
-    if request.options.mw_map is not None:
-        output = _finalize_tpa(output, request.options.mw_map)
-    processed = len(results)
-    logger.info(
-        "piBAQ: %d families processed (%d family-only, %d member-resolving)",
-        processed,
-        family_only,
-        processed - family_only,
-    )
-    return output
-
-
-def _resolve_group_cols(
-    peptide_df: DataFrame,
-    extra_group_cols: Optional[Sequence[str]],
-) -> List[str]:
-    """Build the canonical groupby key list, dropping absent columns."""
-    cols: List[str] = [SAMPLE_ID]
-    if CONDITION in peptide_df.columns:
-        cols.append(CONDITION)
-    if extra_group_cols:
-        for col in extra_group_cols:
-            if col in peptide_df.columns and col not in cols:
-                cols.append(col)
-    return cols
-
-
-@dataclass(frozen=True)
-class _PibaqDigestRequest:
-    fasta: str
-    enzyme: str
-    min_aa: int
-    max_aa: int
-    tpa: bool
-
-
-@dataclass(frozen=True)
-class _PibaqFamilyRequest:
-    families_yaml: Optional[Path]
-    min_shared: int
-    min_anchors: int
-    high_anchor_threshold: int
-
-
-@dataclass(frozen=True)
-class _PibaqTableRequest:
-    digest: _PibaqDigestRequest
-    family: _PibaqFamilyRequest
-
-
-@dataclass(frozen=True)
-class _PeptideInputRequest:
-    fasta: str
-    peptides: str
-    enzyme: str
-    min_aa: int
-    max_aa: int
-
-
-@dataclass(frozen=True)
-class _PibaqPostprocessRequest:
-    normalize: bool
-    tpa: bool
-    ruler: bool
-    ploidy: int
-    cpc: float
-    organism: str
-
-
-@dataclass(frozen=True)
-class _PibaqOutputRequest:
-    output: str
-    verbose: bool
-    qc_report: str
-
-
-@dataclass(frozen=True)
-class _CommandFamilyRequest:
-    families_yaml: Optional[str]
-    min_shared: int
-    min_anchors: int
-    high_anchor_threshold: int
-
-
-@dataclass(frozen=True)
-class _PeptidesToProteinRequest:
-    source: _PeptideInputRequest
-    postprocess: _PibaqPostprocessRequest
-    output: _PibaqOutputRequest
-    family: _CommandFamilyRequest
-
-
-@dataclass(frozen=True)
-class _PlotContext:
-    data: DataFrame
-    plotting: ModuleType
-    pdf: object
-    width: float
-
-
-def _resolve_families(
-    accession_to_peptides,
-    peptide_to_accessions,
-    families_yaml: Optional[Path],
-    min_shared: int,
-) -> list[Family]:
-    """Combine automatic connected components with optional YAML overrides."""
-    automatic = discover_families(
-        accession_to_peptides, peptide_to_accessions, min_shared=min_shared
-    )
-    if families_yaml is None:
-        return automatic
-    overrides = load_families_yaml(families_yaml)
-    return merge_overrides(automatic, overrides)
-
-
-def _compute_pibaq_table(data: DataFrame, request: _PibaqTableRequest) -> DataFrame:
-    """Digest FASTA, resolve families, and dispatch to the piBAQ core."""
-    digest = request.digest
-    family_request = request.family
-    accession_to_peptides, peptide_to_accessions, accession_to_mw = digest_fasta_full(
-        digest.fasta,
-        digest.enzyme,
-        digest.min_aa,
-        digest.max_aa,
-        canonicalize_isoforms=True,
-        compute_mw=digest.tpa,
-    )
-    families = _resolve_families(
-        accession_to_peptides,
-        peptide_to_accessions,
-        family_request.families_yaml,
-        family_request.min_shared,
-    )
-    mw_map: Optional[Mapping[str, float]] = accession_to_mw if digest.tpa else None
-    return compute_pibaq(
-        data,
-        accession_to_peptides,
-        peptide_to_accessions,
-        families,
-        mw_map=mw_map,
-        min_anchors=family_request.min_anchors,
-        high_anchor_threshold=family_request.high_anchor_threshold,
-    )
-
-
-_PEPTIDES_TO_PROTEIN_ARGUMENTS = (
-    "fasta",
-    "peptides",
-    "enzyme",
-    "normalize",
-    "min_aa",
-    "max_aa",
-    "tpa",
-    "ruler",
-    "ploidy",
-    "cpc",
-    "organism",
-    "output",
-    "verbose",
-    "qc_report",
+_PEPTIDES_SIGNATURE = _public_signature(
+    "fasta peptides enzyme normalize min_aa max_aa tpa ruler ploidy cpc "
+    "organism output verbose qc_report".split(),
+    {
+        "families_yaml": None,
+        "min_shared": 2,
+        "min_anchors": 1,
+        "high_anchor_threshold": 3,
+    },
 )
-_PEPTIDES_TO_PROTEIN_DEFAULTS = {
-    "families_yaml": None,
-    "min_shared": 2,
-    "min_anchors": 1,
-    "high_anchor_threshold": 3,
-}
 
 
-@log_execution_time(logger)
-def peptides_to_protein(*args: object, **kwargs: object) -> None:
-    """Compute file-oriented piBAQ output with the legacy public arguments.
-
-    The first fourteen parameters retain their positional-or-keyword contract:
-    ``fasta``, ``peptides``, ``enzyme``, ``normalize``, ``min_aa``, ``max_aa``,
-    ``tpa``, ``ruler``, ``ploidy``, ``cpc``, ``organism``, ``output``,
-    ``verbose``, and ``qc_report``. ``families_yaml``, ``min_shared``,
-    ``min_anchors``, and ``high_anchor_threshold`` remain keyword-only with
-    their historical defaults.
-    """
-    bound = _bind_arguments(
-        "peptides_to_protein",
-        args,
-        kwargs,
-        _PEPTIDES_TO_PROTEIN_ARGUMENTS,
-        _PEPTIDES_TO_PROTEIN_DEFAULTS,
-    )
-    _run_peptides_to_protein(_build_peptides_request(bound))
+def _native_pibaq_options(bound: Mapping[str, object]) -> dict[str, object]:
+    """Translate the legacy Python call into native command options."""
+    names = (
+        "fasta peptides enzyme normalize min_aa max_aa tpa ruler ploidy cpc "
+        "organism output min_shared min_anchors high_anchor_threshold"
+    ).split()
+    options = {name: bound[name] for name in names}
+    options["method"] = "pibaq"
+    if bound["families_yaml"] is not None:
+        options["families"] = bound["families_yaml"]
+    return options
 
 
-def _build_peptides_request(
-    bound: Mapping[str, object],
-) -> _PeptidesToProteinRequest:
-    """Group the bound legacy arguments into focused immutable requests."""
-    return _PeptidesToProteinRequest(
-        source=_PeptideInputRequest(
-            fasta=bound["fasta"],
-            peptides=bound["peptides"],
-            enzyme=bound["enzyme"],
-            min_aa=bound["min_aa"],
-            max_aa=bound["max_aa"],
-        ),
-        postprocess=_PibaqPostprocessRequest(
-            normalize=bound["normalize"],
-            tpa=bound["tpa"],
-            ruler=bound["ruler"],
-            ploidy=bound["ploidy"],
-            cpc=bound["cpc"],
-            organism=bound["organism"],
-        ),
-        output=_PibaqOutputRequest(
-            output=bound["output"],
-            verbose=bound["verbose"],
-            qc_report=bound["qc_report"],
-        ),
-        family=_CommandFamilyRequest(
-            families_yaml=bound["families_yaml"],
-            min_shared=bound["min_shared"],
-            min_anchors=bound["min_anchors"],
-            high_anchor_threshold=bound["high_anchor_threshold"],
-        ),
-    )
-
-
-def _resolve_organism(name: str) -> Optional[OrganismDescription]:
-    """Resolve an optional organism name with the legacy error contract."""
-    if not name:
-        return None
-    description = OrganismDescription.get(name)
-    if description is None:
-        raise KeyError(f"Could not resolve organism description for {name}")
-    return description
-
-
-def _validate_ruler_request(request: _PeptidesToProteinRequest) -> None:
-    """Validate the four inputs required by the proteomic ruler."""
-    options = request.postprocess
-    if options.ruler and not all(
-        (options.ploidy, options.cpc, options.organism, options.tpa)
-    ):
-        raise ValueError(
-            "Arguments `ploidy`, `cpc`, `organism` and `tpa` are required "
-            "for calculate protein weight(ng) and concentration(nM)"
-        )
-
-
-def _load_peptide_data(path: str) -> DataFrame:
-    """Load and retain positive finite peptide intensities."""
-    data = pd.read_parquet(path) if is_parquet(path) else pd.read_csv(path)
-    data[NORM_INTENSITY] = data[NORM_INTENSITY].astype(float)
-    data = data.dropna(subset=[NORM_INTENSITY])
-    return data[data[NORM_INTENSITY] > 0]
-
-
-def _table_request(request: _PeptidesToProteinRequest) -> _PibaqTableRequest:
-    """Project public command options onto the piBAQ table calculation."""
-    source = request.source
-    family = request.family
-    return _PibaqTableRequest(
-        digest=_PibaqDigestRequest(
-            fasta=source.fasta,
-            enzyme=source.enzyme,
-            min_aa=source.min_aa,
-            max_aa=source.max_aa,
-            tpa=request.postprocess.tpa,
-        ),
-        family=_PibaqFamilyRequest(
-            families_yaml=Path(family.families_yaml) if family.families_yaml else None,
-            min_shared=family.min_shared,
-            min_anchors=family.min_anchors,
-            high_anchor_threshold=family.high_anchor_threshold,
-        ),
-    )
-
-
-def _postprocess_pibaq(
-    data: DataFrame,
-    request: _PeptidesToProteinRequest,
-    organism: Optional[OrganismDescription],
-) -> Tuple[DataFrame, str]:
-    """Apply the legacy normalization and optional ruler post-processing."""
-    options = request.postprocess
-    if options.normalize:
-        data = normalize_pibaq(data).dropna(subset=[PIBAQ_NORMALIZED])
-        plot_column = PIBAQ_PPB
-    else:
-        data = data.dropna(subset=[PIBAQ])
-        plot_column = PIBAQ
-    data = data.reset_index(drop=True)
-    if options.ruler:
-        ruler = ConcentrationWeightByProteomicRuler(
-            organism, options.ploidy, options.cpc
-        )
-        data = ruler.apply_by_condition(data)
-    return data, plot_column
-
-
-def _plot_metric_pair(context: _PlotContext, column: str) -> None:
-    """Write density and box plots for one piBAQ-derived metric."""
-    title = f"{column} Distribution"
-    distributions = getattr(context.plotting, "plot_distributions")
-    box_plot = getattr(context.plotting, "plot_box_plot")
-    plot_options = {
-        "log2": True,
-        "width": context.width,
-        "title": title,
-    }
-    density = distributions(
-        context.data,
-        column,
-        SAMPLE_ID,
-        **plot_options,
-    )
-    box = box_plot(
-        context.data,
-        column,
-        SAMPLE_ID,
-        violin=False,
-        **plot_options,
-    )
-    savefig = getattr(context.pdf, "savefig")
-    savefig(density, bbox_inches="tight")
-    savefig(box, bbox_inches="tight")
-
-
-def _plot_pibaq_report(
-    data: DataFrame, plot_column: str, request: _PeptidesToProteinRequest
-) -> None:
-    """Render the optional QC report without importing plotting eagerly."""
-    if not request.output.verbose:
+def _render_native_qc(module: ModuleType, bound: Mapping[str, object]) -> None:
+    """Render the legacy verbose report from the native result table."""
+    if not bound["verbose"]:
         return
     if not is_plotting_available():
         logger.warning(
             "QC report skipped: plotting dependencies not installed. "
-            "Install: pip install mokume-py[plotting] (pure Python) or "
-            "pip install mokume[plotting] (Rust wheel)"
+            "Install: pip install mokume[plotting]"
         )
         return
-    plotting = importlib.import_module("mokume.plotting")
-    pdf = getattr(plotting, "PdfPages")(request.output.qc_report)
-    context = _PlotContext(
-        data=data,
-        plotting=plotting,
-        pdf=pdf,
-        width=len(set(data[SAMPLE_ID])) * 0.5 + 10,
+    qc_report = getattr(module, "peptides2protein_qc")
+    qc_report(
+        protein_table=bound["output"],
+        qc_report=bound["qc_report"],
+        plot_column=PIBAQ_PPB if bound["normalize"] else PIBAQ,
+        tpa=bound["tpa"],
+        ruler=bound["ruler"],
     )
-    columns = [plot_column]
-    if request.postprocess.tpa:
-        columns.append(TPA)
-    if request.postprocess.ruler:
-        columns.extend((COPYNUMBER, CONCENTRATION_NM))
-    for column in columns:
-        _plot_metric_pair(context, column)
-    getattr(pdf, "close")()
 
 
-def _run_peptides_to_protein(request: _PeptidesToProteinRequest) -> None:
-    """Execute the legacy driver after binding its public arguments."""
-    organism = _resolve_organism(request.postprocess.organism)
-    _validate_ruler_request(request)
-    data = _load_peptide_data(request.source.peptides)
-    result = _compute_pibaq_table(data, _table_request(request))
-    result, plot_column = _postprocess_pibaq(result, request, organism)
-    _plot_pibaq_report(result, plot_column, request)
-    result.to_csv(request.output.output, sep="\t", index=False)
+@log_execution_time(logger)
+def peptides_to_protein(*args: object, **kwargs: object) -> None:
+    """Run the legacy file-oriented entrypoint through native Rust piBAQ."""
+    bound = _bind(_PEPTIDES_SIGNATURE, args, kwargs)
+    module = importlib.import_module("mokume")
+    getattr(module, "peptides2protein")(**_native_pibaq_options(bound))
+    _render_native_qc(module, bound)
+
+
+peptides_to_protein.__signature__ = _PEPTIDES_SIGNATURE

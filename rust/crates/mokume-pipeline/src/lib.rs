@@ -4576,10 +4576,49 @@ pub fn run_pibaq_from_peptides(
         aggregation.mw_map = Some(load_fasta_mw(&params.fasta)?);
     }
 
+    finalize_pibaq_observations(observations, aggregation, true)
+}
+
+/// Compute piBAQ from caller-provided theoretical mappings and protein families.
+///
+/// This is the in-memory counterpart of [`run_pibaq_from_peptides`]. It lets the
+/// Python compatibility API retain its DataFrame/group-column contract while
+/// sharing the same Rust allocation, denominator, evidence, and TPA core used by
+/// the file-oriented command.
+pub fn run_pibaq_from_mapping(
+    observations: &[PeptideObservation],
+    accession_peptides: HashMap<String, HashSet<String>>,
+    peptide_accessions: HashMap<String, HashSet<String>>,
+    families: Vec<(String, Vec<String>)>,
+    min_anchors: usize,
+    high_anchor_threshold: usize,
+    mw_map: Option<HashMap<String, f64>>,
+) -> Result<Vec<PibaqProteinRow>> {
+    let aggregation = PibaqAggregation {
+        accession_peptides,
+        peptide_accessions,
+        families: families
+            .into_iter()
+            .map(|(family_id, members)| ProteinFamily { family_id, members })
+            .collect(),
+        peptide_names: HashMap::new(),
+        observations: HashMap::new(),
+        min_anchors,
+        high_anchor_threshold,
+        mw_map,
+    };
+    finalize_pibaq_observations(observations, aggregation, false)
+}
+
+fn finalize_pibaq_observations(
+    observations: &[PeptideObservation],
+    mut aggregation: PibaqAggregation,
+    positive_only: bool,
+) -> Result<Vec<PibaqProteinRow>> {
     let mut samples = StringIdRegistry::<SampleId>::new();
     let mut peptides = StringIdRegistry::<PeptideId>::new();
     for observation in observations {
-        if !observation.intensity.is_finite() || observation.intensity <= 0.0 {
+        if !observation.intensity.is_finite() || (positive_only && observation.intensity <= 0.0) {
             continue;
         }
         let sample = register_id(&mut samples, &observation.sample, "sample")?;

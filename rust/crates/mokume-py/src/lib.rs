@@ -12,7 +12,9 @@ use std::collections::{HashMap, HashSet};
 
 use mokume_core::{DifferentialExpressionConfig, ImputationConfig};
 use mokume_pipeline::MatrixDifferentialExpressionResults;
-use mokume_pipeline::{PibaqDigest, PibaqDigestProvenance};
+use mokume_pipeline::{
+    run_pibaq_from_mapping, PeptideObservation, PibaqDigest, PibaqDigestProvenance,
+};
 use mokume_stats::de::{DeResult, EnsembleResult, Significance};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
@@ -118,6 +120,71 @@ fn run_cli_with_pibaq_digest(
     argv.extend(args);
     let digest = runtime_pibaq_digest(accession_peptides, provenance);
     mokume_command::run_cli_from_args_with_pibaq_digest(argv, digest)
+}
+
+type PibaqObservationTuple = (String, String, f64);
+type PibaqFamilyTuple = (String, Vec<String>);
+type PibaqOptionsTuple = (Option<HashMap<String, f64>>, usize, usize);
+type PibaqRowTuple = (
+    String,
+    String,
+    f64,
+    f64,
+    String,
+    String,
+    usize,
+    Option<f64>,
+    Option<f64>,
+);
+
+/// Compute in-memory piBAQ rows with the native shared-peptide allocator.
+#[pyfunction(name = "compute_pibaq")]
+fn compute_pibaq_py(
+    py: Python<'_>,
+    observations: Vec<PibaqObservationTuple>,
+    accession_peptides: HashMap<String, HashSet<String>>,
+    peptide_accessions: HashMap<String, HashSet<String>>,
+    families: Vec<PibaqFamilyTuple>,
+    options: PibaqOptionsTuple,
+) -> PyResult<Vec<PibaqRowTuple>> {
+    let (mw_map, min_anchors, high_anchor_threshold) = options;
+    let observations = observations
+        .into_iter()
+        .map(|(peptide, sample, intensity)| PeptideObservation {
+            peptide,
+            sample,
+            intensity,
+        })
+        .collect::<Vec<_>>();
+    let rows = py.detach(move || {
+        run_pibaq_from_mapping(
+            &observations,
+            accession_peptides,
+            peptide_accessions,
+            families,
+            min_anchors,
+            high_anchor_threshold,
+            mw_map,
+        )
+    });
+    rows.map(|rows| {
+        rows.into_iter()
+            .map(|row| {
+                (
+                    row.protein,
+                    row.sample,
+                    row.norm_intensity,
+                    row.pibaq,
+                    row.family_id,
+                    row.evidence_level.to_owned(),
+                    row.family_size,
+                    row.molecular_weight,
+                    row.tpa,
+                )
+            })
+            .collect()
+    })
+    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 /// Normalize a row-major linear-intensity matrix with the Rust kernel.
@@ -448,6 +515,7 @@ fn register_pibaq_functions(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(pibaq_digest_request, module)?)?;
     module.add_function(wrap_pyfunction!(run_with_pibaq_digest, module)?)?;
     module.add_function(wrap_pyfunction!(run_cli_with_pibaq_digest, module)?)?;
+    module.add_function(wrap_pyfunction!(compute_pibaq_py, module)?)?;
     Ok(())
 }
 
