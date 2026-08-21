@@ -279,15 +279,16 @@ class DifferentialExpression:
         control. The estimator logs a warning if it had to fall back to its
         fixed default because the null was not estimable.
         """
-        thr = self.log2fc_threshold
-        if isinstance(thr, str) and thr.lower() == "auto":
-            from mokume.analysis.effect_size_gate import (  # pylint: disable=import-outside-toplevel
-                estimate_effect_size_gate,
-            )
+        thr: float | str = self.log2fc_threshold
+        if isinstance(thr, str):
+            if thr.lower() == "auto":
+                from mokume.analysis.effect_size_gate import (  # pylint: disable=import-outside-toplevel
+                    estimate_effect_size_gate,
+                )
 
-            gate = estimate_effect_size_gate(de_df["log2FC"].to_numpy(dtype=float))
-            logger.info("Auto effect-size gate estimated from data: %.3f", gate)
-            return gate
+                gate = estimate_effect_size_gate(de_df["log2FC"].to_numpy(dtype=float))
+                logger.info("Auto effect-size gate estimated from data: %.3f", gate)
+                return gate
         return float(thr)
 
     def _classify_and_sort(self, de_df: pd.DataFrame) -> pd.DataFrame:

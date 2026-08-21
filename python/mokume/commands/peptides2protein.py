@@ -58,7 +58,7 @@ class QuantMethodParam(click.ParamType):
     def __init__(self, methods):
         self.methods = [m.lower() for m in methods]
 
-    def get_metavar(self, *args, **kwargs):
+    def get_metavar(self, *_args, **_kwargs):
         return "[" + "|".join([*self.methods, "top<N>"]) + "]"
 
     def convert(self, value, param, ctx):

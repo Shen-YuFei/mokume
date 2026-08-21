@@ -7,6 +7,7 @@ for internal-standard normalization.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import re
 from pathlib import Path
@@ -34,6 +35,15 @@ _NON_REFERENCE_POOLED_VALUES = frozenset(
         "n/a",
     }
 )
+
+
+@dataclass(frozen=True)
+class TissueLoadOptions:
+    """Options applied while loading one tissue dataset."""
+
+    min_samples: int = 1
+    warning_threshold: int = 3
+    n_jobs: int = 8
 
 
 def _parse_samples_col(samples_val) -> list[dict]:
@@ -494,9 +504,7 @@ def load_dataset(
     *,
     is_tmt: bool | None = None,
     feature_prefix: str | None = None,
-    min_tissue_samples: int = 1,
-    low_sample_warning_threshold: int = 3,
-    n_jobs: int = 8,
+    options: TissueLoadOptions = TissueLoadOptions(),
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load a single QPX dataset and return (mat, meta).
 
@@ -510,10 +518,8 @@ def load_dataset(
         Force TMT mode.  ``None`` = auto-detect from labels.
     feature_prefix : str | None
         Prefix for feature parquet (defaults to *ds_id*).
-    min_tissue_samples : int
-        Tissues with fewer samples are dropped.
-    n_jobs : int
-        Threads used for streaming TMT aggregation.
+    options : TissueLoadOptions
+        Sample-count thresholds and threads used for streaming TMT aggregation.
 
     Returns
     -------
@@ -533,7 +539,7 @@ def load_dataset(
             ds_id,
             feature_prefix,
             run_map,
-            n_jobs,
+            options.n_jobs,
         )
     else:
         long = _read_and_explode_features(ds_dir, ds_id, feature_prefix)
@@ -547,8 +553,8 @@ def load_dataset(
         mat,
         tissue_meta,
         ds_id,
-        min_tissue_samples,
-        low_sample_warning_threshold,
+        options.min_samples,
+        options.warning_threshold,
     )
 
     logger.info(

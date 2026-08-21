@@ -262,10 +262,10 @@ def _pi0_bootstrap(p: np.ndarray, lambdas: np.ndarray, n_boot: int = 100) -> flo
     pi0_lam = _pi0_curve(p, lambdas)
     min_pi0 = np.quantile(pi0_lam, 0.1)
     m = p.size
-    rng = np.random.RandomState(0)
+    rng = np.random.default_rng(0)
     mse = np.zeros(lambdas.size)
     for _ in range(n_boot):
-        boot = p[rng.randint(0, m, m)]
+        boot = p[rng.integers(0, m, m)]
         pi0_boot = _pi0_curve(boot, lambdas)
         mse += (pi0_boot - min_pi0) ** 2
     return float(pi0_lam[int(np.argmin(mse))])

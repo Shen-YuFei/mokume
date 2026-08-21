@@ -10,6 +10,7 @@ from mokume.tissuemap.loader import (
     _detect_gis_accessions as detect_gis_accessions,
     _normalize_tmt as normalize_tmt,
     _tmt_label_aliases as tmt_label_aliases,
+    TissueLoadOptions,
     load_dataset,
 )
 
@@ -312,7 +313,9 @@ def test_load_dataset_lfq_stays_on_existing_path(tmp_path, monkeypatch):
         "_aggregate_tmt_with_duckdb",
         fail_if_tmt_path_is_used,
     )
-    matrix, metadata = load_dataset(tmp_path, "TEST", n_jobs=24)
+    matrix, metadata = load_dataset(
+        tmp_path, "TEST", options=TissueLoadOptions(n_jobs=24)
+    )
 
     assert matrix.loc["P1", "sample-a"] == 10.0
     assert matrix.loc["P1", "sample-b"] == 20.0
