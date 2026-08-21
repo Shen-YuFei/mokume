@@ -14,6 +14,7 @@ def create_server(knowledge: str):
         fast_mcp = getattr(importlib.import_module("mcp.server.fastmcp"), "FastMCP")
         service_module = importlib.import_module("mokume.agentic.service")
         service_type = getattr(service_module, "RecommendationService")
+        inspection_type = getattr(service_module, "InspectionRequest")
         request_type = getattr(service_module, "EvaluationRequest")
     except ImportError as exc:
         raise RuntimeError(
@@ -27,13 +28,19 @@ def create_server(knowledge: str):
     def inspect_dataset(
         protein_matrix: str,
         sdrf: str,
+        input_scale: str,
+        peptide_counts: str | None = None,
         metadata: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         """Profile a protein matrix and return policy-filtered Mokume evidence."""
         return service.inspect_dataset(
-            protein_matrix,
-            sdrf,
-            metadata,
+            inspection_type(
+                protein_matrix,
+                sdrf,
+                input_scale,
+                peptide_counts,
+                metadata,
+            )
         )
 
     @server.tool()

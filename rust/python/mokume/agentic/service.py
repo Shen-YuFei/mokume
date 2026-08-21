@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import shutil
+import tempfile
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -18,7 +22,7 @@ from mokume.agentic.context import (
     bind_context,
     validate_generated_recommendation,
 )
-from mokume.agentic.contract import GENERATED_CONFIG_FIELDS
+from mokume.agentic.contract import GENERATED_CONFIG_FIELDS, requires_peptide_counts
 from mokume.agentic.evaluator import (
     compute_score_ground_truth,
     evaluate,
@@ -43,6 +47,7 @@ _OPTION_FIELDS = _METADATA_FIELDS | {
     "expected_direction",
     "fdr_threshold",
     "input_scale",
+    "peptide_counts",
     "threads",
 }
 
@@ -60,11 +65,23 @@ class EvaluationOptions:
     """Validated optional settings for one recommendation round."""
 
     metadata: DatasetMetadata
+    input_scale: str
+    peptide_counts: str | None = None
     ground_truth: str | None = None
     expected_direction: str | None = None
     fdr_threshold: float = 0.05
-    input_scale: str = "auto"
     threads: int = 24
+
+
+@dataclass(frozen=True)
+class InspectionRequest:
+    """Inputs for one dataset-inspection tool call."""
+
+    protein_matrix: str
+    sdrf: str
+    input_scale: str
+    peptide_counts: str | None = None
+    metadata: dict[str, str | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -96,10 +113,20 @@ class PreparedEvaluation(NamedTuple):
     contrast: tuple[str, str]
     destination: Path
     frame: pd.DataFrame
-    profile: DataProfile
     conditions: dict[str, str]
+    peptide_counts: pd.Series | None
     context: BoundContext
     generated: GeneratedRecommendationBlock
+
+
+class ProfileInputs(NamedTuple):
+    """Inputs shared by inspection and evaluation profiling."""
+
+    frame: pd.DataFrame
+    sdrf: str
+    metadata: DatasetMetadata
+    input_scale: str
+    peptide_counts: pd.Series | None
 
 
 class RecommendationService:
@@ -112,18 +139,22 @@ class RecommendationService:
 
     def inspect_dataset(
         self,
-        protein_matrix: str,
-        sdrf: str,
-        metadata: dict[str, str | None] | None = None,
+        request: InspectionRequest,
     ) -> dict[str, Any]:
         """Profile a matrix and bind only compatible, traceable evidence."""
-        _require_file(protein_matrix, "protein_matrix")
-        _require_file(sdrf, "sdrf")
-        frame = _read_matrix(protein_matrix)
+        _require_file(request.protein_matrix, "protein_matrix")
+        _require_file(request.sdrf, "sdrf")
+        _validate_input_scale(request.input_scale, "input_scale")
+        frame = _read_matrix(request.protein_matrix)
+        counts = _load_peptide_counts(request.peptide_counts, frame)
         profile, _, context = self._profile(
-            frame,
-            sdrf,
-            _parse_dataset_metadata(metadata),
+            ProfileInputs(
+                frame,
+                request.sdrf,
+                _parse_dataset_metadata(request.metadata),
+                request.input_scale,
+                counts,
+            )
         )
         return {
             "profile": profile.to_dict(),
@@ -139,41 +170,46 @@ class RecommendationService:
         """Validate and evaluate one host-generated recommendation block."""
         prepared = self._prepare_evaluation(request)
         if prepared.generated.abstain_reason is not None:
-            return _write_evaluation(
-                prepared.destination,
-                _abstention_payload(self._graph, prepared),
-            )
+            with _atomic_output_dir(prepared.destination) as output_dir:
+                payload = _write_evaluation(
+                    output_dir,
+                    _abstention_payload(self._graph, prepared),
+                )
+            return payload
 
         linear_frame, resolved_scale = _as_linear(
             prepared.frame,
             prepared.runtime.input_scale,
-            prepared.profile.is_log_transformed,
         )
         experiment = ExperimentContext(
             sample_to_condition=prepared.conditions,
             contrast=prepared.contrast,
+            peptide_counts=prepared.peptide_counts,
             threads=prepared.runtime.threads,
         )
-        run = EvaluationRun(
-            experiment=experiment,
-            ground_truth=_load_ground_truth(prepared.runtime.ground_truth),
-            expected_direction=prepared.runtime.expected_direction,
-            output_dir=prepared.destination,
-        )
+        ground_truth = _load_ground_truth(prepared.runtime.ground_truth)
         candidates = [
             _candidate(item, prepared.generated, prepared.runtime.fdr_threshold)
             for item in prepared.generated.configs
         ]
-        payload = _run_candidates(candidates, linear_frame, run)
-        payload.update(
-            _audit_fields(
-                self._graph,
-                prepared.generated,
-                prepared.context,
-                input_scale=resolved_scale,
+        with _atomic_output_dir(prepared.destination) as output_dir:
+            run = EvaluationRun(
+                experiment=experiment,
+                ground_truth=ground_truth,
+                expected_direction=prepared.runtime.expected_direction,
+                output_dir=output_dir,
             )
-        )
-        return _write_evaluation(prepared.destination, payload)
+            payload = _run_candidates(candidates, linear_frame, run)
+            payload.update(
+                _audit_fields(
+                    self._graph,
+                    prepared.generated,
+                    prepared.context,
+                    input_scale=resolved_scale,
+                )
+            )
+            safe_payload = _write_evaluation(output_dir, payload)
+        return safe_payload
 
     def _prepare_evaluation(
         self,
@@ -188,44 +224,66 @@ class RecommendationService:
             _require_file(runtime.ground_truth, "ground_truth")
         destination = _output_path(request.output_dir)
         frame = _read_matrix(request.protein_matrix)
-        profile, conditions, context = self._profile(
-            frame,
-            request.sdrf,
-            runtime.metadata,
+        peptide_counts = _load_peptide_counts(runtime.peptide_counts, frame)
+        _, conditions, context = self._profile(
+            ProfileInputs(
+                frame,
+                request.sdrf,
+                runtime.metadata,
+                runtime.input_scale,
+                peptide_counts,
+            )
         )
         _validate_contrast_samples(frame, conditions, contrast)
         generated = validate_generated_recommendation(
             request.recommendation,
             context,
         )
+        if peptide_counts is None and any(
+            requires_peptide_counts(item["de_method"], item["ensemble"])
+            for item in generated.configs
+        ):
+            raise ValueError(
+                "options.peptide_counts is required for DEqMS and ensembles "
+                "containing DEqMS"
+            )
         return PreparedEvaluation(
             runtime,
             contrast,
             destination,
             frame,
-            profile,
             conditions,
+            peptide_counts,
             context,
             generated,
         )
 
     def _profile(
         self,
-        frame: pd.DataFrame,
-        sdrf: str,
-        metadata: DatasetMetadata,
+        inputs: ProfileInputs,
     ) -> tuple[DataProfile, dict[str, str], BoundContext]:
         """Build the shared profile and policy context for one request."""
-        conditions = detect_condition_from_sdrf(sdrf, metadata.factor_column)
+        conditions = detect_condition_from_sdrf(
+            inputs.sdrf,
+            inputs.metadata.factor_column,
+        )
         missing = [
-            str(sample) for sample in frame.columns[1:] if str(sample) not in conditions
+            str(sample)
+            for sample in inputs.frame.columns[1:]
+            if str(sample) not in conditions
         ]
         if missing:
             raise ValueError(
                 "Protein-matrix samples are missing from the SDRF mapping: "
                 + ", ".join(missing)
             )
-        profile = profile_data(frame, conditions, metadata=metadata.acquisition)
+        profile = profile_data(
+            inputs.frame,
+            conditions,
+            inputs.peptide_counts,
+            input_scale=inputs.input_scale,
+            metadata=inputs.metadata.acquisition,
+        )
         return profile, conditions, bind_context(profile, self._graph)
 
 
@@ -454,7 +512,14 @@ def _parse_evaluation_options(
         raise ValueError("options.ground_truth must be a string or null")
     expected_direction = values.get("expected_direction")
     fdr_threshold = values.get("fdr_threshold", 0.05)
-    input_scale = values.get("input_scale", "auto")
+    if "input_scale" not in values:
+        raise ValueError("options.input_scale is required")
+    input_scale = values["input_scale"]
+    peptide_counts = values.get("peptide_counts")
+    if peptide_counts is not None and (
+        not isinstance(peptide_counts, str) or not peptide_counts.strip()
+    ):
+        raise ValueError("options.peptide_counts must be a non-empty string or null")
     threads = values.get("threads", 24)
     if isinstance(fdr_threshold, bool) or not isinstance(fdr_threshold, (int, float)):
         raise ValueError("options.fdr_threshold must be numeric")
@@ -474,10 +539,11 @@ def _parse_evaluation_options(
         )
     return EvaluationOptions(
         metadata=metadata,
+        input_scale=input_scale,
+        peptide_counts=peptide_counts,
         ground_truth=ground_truth,
         expected_direction=expected_direction,
         fdr_threshold=float(fdr_threshold),
-        input_scale=input_scale,
         threads=threads,
     )
 
@@ -542,6 +608,49 @@ def _read_matrix(path: str) -> pd.DataFrame:
     return frame
 
 
+def _load_peptide_counts(
+    path: str | None,
+    protein_df: pd.DataFrame,
+) -> pd.Series | None:
+    """Read positive integer peptide counts keyed by protein identifier."""
+    if path is None:
+        return None
+    if not isinstance(path, str):
+        raise ValueError("peptide_counts must be a string or null")
+    _require_file(path, "peptide_counts")
+    count_path = Path(path).expanduser().resolve()
+    with count_path.open(encoding="utf-8-sig") as handle:
+        header = handle.readline()
+    separator = "\t" if header.count("\t") > header.count(",") else ","
+    columns = next(csv.reader([header], delimiter=separator))
+    if columns != ["protein", "peptide_count"]:
+        raise ValueError(
+            "Peptide-count sidecar columns must be protein and peptide_count"
+        )
+    frame = pd.read_csv(count_path, sep=separator)
+    if frame.empty:
+        raise ValueError("Peptide-count sidecar contains no proteins")
+    proteins = frame["protein"]
+    if proteins.isna().any() or proteins.astype(str).str.strip().eq("").any():
+        raise ValueError("Peptide-count protein identifiers must be non-empty")
+    proteins = proteins.astype(str)
+    if proteins.duplicated().any():
+        raise ValueError("Peptide-count protein identifiers must be unique")
+    counts = pd.to_numeric(frame["peptide_count"], errors="raise")
+    values = counts.to_numpy(dtype=float)
+    if not np.isfinite(values).all() or (values < 1).any():
+        raise ValueError("Peptide counts must be finite positive integers")
+    if not np.equal(values, np.floor(values)).all():
+        raise ValueError("Peptide counts must be finite positive integers")
+    series = pd.Series(values.astype(int), index=proteins)
+    matrix_proteins = set(protein_df.iloc[:, 0].astype(str))
+    if matrix_proteins.isdisjoint(series.index):
+        raise ValueError(
+            "Peptide-count sidecar has no protein identifiers in the matrix"
+        )
+    return series
+
+
 def _require_file(path: str, name: str) -> None:
     """Require absolute file paths at the MCP boundary."""
     candidate = Path(path).expanduser()
@@ -560,6 +669,28 @@ def _output_path(path: str) -> Path:
     if destination.exists():
         raise FileExistsError(f"output_dir already exists: {destination}")
     return destination
+
+
+@contextmanager
+def _atomic_output_dir(destination: Path) -> Iterator[Path]:
+    """Publish a complete evaluation directory or leave no target behind."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{destination.name}.",
+            dir=destination.parent,
+        )
+    )
+    committed = False
+    try:
+        yield staging
+        if destination.exists():
+            raise FileExistsError(f"output_dir already exists: {destination}")
+        staging.rename(destination)
+        committed = True
+    finally:
+        if not committed and staging.exists():
+            shutil.rmtree(staging)
 
 
 def _validate_contrast_samples(
@@ -584,17 +715,14 @@ def _validate_contrast_samples(
 def _as_linear(
     frame: pd.DataFrame,
     requested: str,
-    inferred_log2: bool,
 ) -> tuple[pd.DataFrame, str]:
     """Return the linear-intensity representation required by the Rust kernel."""
-    resolved = "log2" if requested == "auto" and inferred_log2 else requested
-    resolved = "linear" if resolved == "auto" else resolved
-    if resolved == "linear":
-        return frame, resolved
+    if requested == "linear":
+        return frame, requested
     converted = frame.copy()
     with np.errstate(over="raise", invalid="raise"):
         converted.iloc[:, 1:] = np.exp2(converted.iloc[:, 1:].astype(float))
-    return converted, resolved
+    return converted, requested
 
 
 def _load_ground_truth(path: str | None) -> set[str] | None:
@@ -620,14 +748,19 @@ def _validate_runtime_options(
     """Validate user-controlled execution options before writing output."""
     if not 0.0 < fdr_threshold <= 1.0:
         raise ValueError("options.fdr_threshold must be in (0, 1]")
-    if input_scale not in {"auto", "linear", "log2"}:
-        raise ValueError("options.input_scale must be auto, linear, or log2")
+    _validate_input_scale(input_scale, "options.input_scale")
     if isinstance(threads, bool) or not isinstance(threads, int):
         raise ValueError("options.threads must be an integer between 1 and 256")
     if not 1 <= threads <= 256:
         raise ValueError("options.threads must be an integer between 1 and 256")
     if expected_direction is not None and expected_direction not in {"UP", "DOWN"}:
         raise ValueError("options.expected_direction must be UP, DOWN, or null")
+
+
+def _validate_input_scale(value: Any, name: str) -> None:
+    """Require an explicit matrix scale at both public MCP boundaries."""
+    if not isinstance(value, str) or value not in {"linear", "log2"}:
+        raise ValueError(f"{name} must be linear or log2")
 
 
 def _audit_fields(

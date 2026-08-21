@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from mokume.agentic.contract import is_supported_quantification
+from mokume.agentic.contract import (
+    is_supported_quantification,
+    requires_peptide_counts,
+)
 from mokume.agentic.knowledge import (
     EvidenceRecord,
     KnowledgeGraph,
@@ -102,13 +105,20 @@ def _profile_diagnostics(profile: DataProfile) -> list[Diagnostic]:
             )
         )
     if profile.data_type_source == "inferred":
+        unknown = profile.data_type == "unknown"
         diagnostics.append(
             Diagnostic(
                 code="PROFILE_DATA_TYPE_INFERRED",
-                severity="warning",
+                severity="error" if unknown else "warning",
                 message=(
-                    f"Data type {profile.data_type!r} was inferred from sample names; "
-                    "declare it explicitly when using setting-specific evidence."
+                    "Data type could not be inferred from sample names; declare "
+                    "metadata.data_type as LFQ, DIA, or TMT."
+                    if unknown
+                    else (
+                        f"Data type {profile.data_type!r} was inferred from sample "
+                        "names; declare it explicitly when using setting-specific "
+                        "evidence."
+                    )
                 ),
             )
         )
@@ -267,15 +277,22 @@ def _source_quality_diagnostics(
             )
         )
     diagnostics.extend(_transfer_diagnostics(selected))
-    deqms = tuple(item.id for item in selected if item.pipeline.de_method == "deqms")
+    deqms = tuple(
+        item.id
+        for item in selected
+        if requires_peptide_counts(
+            item.pipeline.de_method,
+            item.pipeline.ensemble,
+        )
+    )
     if deqms and not profile.has_peptide_counts:
         diagnostics.append(
             Diagnostic(
-                code="DEQMS_COUNT_FALLBACK",
+                code="DEQMS_COUNTS_REQUIRED",
                 severity="warning",
                 message=(
-                    "DEqMS evidence is available, but peptide counts are absent; Mokume "
-                    "will fall back to count=1 and lose count-dependent moderation."
+                    "DEqMS evidence is available, but peptide counts are absent; DEqMS "
+                    "and ensembles containing DEqMS require a peptide-count sidecar."
                 ),
                 evidence_refs=deqms,
             )

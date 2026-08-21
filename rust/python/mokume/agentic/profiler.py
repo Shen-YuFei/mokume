@@ -1,6 +1,7 @@
 """Data profiling for agentic analysis."""
 
 from dataclasses import dataclass
+import re
 from typing import NamedTuple
 
 import numpy as np
@@ -10,6 +11,14 @@ from sklearn.decomposition import PCA
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.agentic.profiler")
+
+_UPSTREAM_ENGINE_ALIASES = {
+    "diann": "DIA-NN",
+    "fragpipe": "FragPipe",
+    "maxquant": "MaxQuant",
+    "quantms": "quantms",
+    "spectronaut": "Spectronaut",
+}
 
 
 @dataclass(frozen=True)
@@ -74,14 +83,6 @@ class DataProfile(NamedTuple):
         }
 
 
-def _detect_log_transformed(values: np.ndarray) -> bool:
-    """Heuristic: if max < 40 and median < 30, likely log2-transformed."""
-    finite = values[np.isfinite(values)]
-    if len(finite) == 0:
-        return False
-    return float(np.nanmax(finite)) < 40 and float(np.nanmedian(finite)) < 30
-
-
 def compute_median_cv(
     matrix: pd.DataFrame,
     sample_to_condition: dict[str, str],
@@ -99,6 +100,15 @@ def compute_median_cv(
         cv = row_std / row_mean.replace(0, np.nan)
         all_cvs.extend(cv.dropna().tolist())
     return float(np.median(all_cvs)) if all_cvs else None
+
+
+def _linear_cv_matrix(matrix: pd.DataFrame, input_scale: str) -> pd.DataFrame:
+    """Return linear intensities for coefficient-of-variation diagnostics."""
+    if input_scale == "linear":
+        return matrix
+    with np.errstate(over="raise", invalid="raise"):
+        values = np.exp2(matrix.to_numpy(dtype=float))
+    return pd.DataFrame(values, index=matrix.index, columns=matrix.columns)
 
 
 def _compute_per_condition_cv(
@@ -184,18 +194,28 @@ def _pairwise_log2fc(
 
 def _detect_data_type(
     sample_to_condition: dict[str, str],
-    n_samples: int,
 ) -> str:
     """Heuristic data type detection from sample naming patterns."""
-    sample_names = list(sample_to_condition.keys())
-    joined = " ".join(sample_names).lower()
-    if "tmt" in joined or "plex" in joined:
+    joined = " ".join(sample_to_condition).casefold()
+    tokens = re.sub(r"[^a-z0-9]+", " ", joined).split()
+    if any(
+        re.fullmatch(r"(?:tmt\d*(?:plex)?|\d+plex|plex)", token) for token in tokens
+    ):
         return "TMT"
-    if "dia" in joined or "diann" in joined:
+    if "dia" in tokens or "diann" in tokens:
         return "DIA"
-    if n_samples <= 100:
+    if "lfq" in tokens:
         return "LFQ"
     return "unknown"
+
+
+def _canonicalize_upstream_engine(value: str | None) -> str | None:
+    """Return the catalog spelling for a declared upstream engine."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    key = re.sub(r"[^a-z0-9]+", "", stripped.casefold())
+    return _UPSTREAM_ENGINE_ALIASES.get(key, stripped)
 
 
 def _detect_batch_fields(sample_ids: list[str]) -> list[str]:
@@ -239,9 +259,12 @@ def profile_data(
     sample_to_condition: dict[str, str],
     peptide_counts: pd.Series | None = None,
     *,
+    input_scale: str,
     metadata: AcquisitionMetadata | None = None,
 ) -> DataProfile:
     """Profile a protein intensity matrix for agentic method selection."""
+    if input_scale not in {"linear", "log2"}:
+        raise ValueError("input_scale must be linear or log2")
     metadata = metadata or AcquisitionMetadata()
     protein_col = protein_df.columns[0]
     sample_cols = [c for c in protein_df.columns if c != protein_col]
@@ -250,11 +273,12 @@ def profile_data(
     values = matrix.values.astype(float)
     cond_counts = _condition_counts(sample_cols, sample_to_condition)
     missing_rate, missing_per_sample = _missingness(matrix)
-    is_log = _detect_log_transformed(values)
+    is_log = input_scale == "log2"
+    cv_matrix = _linear_cv_matrix(matrix, input_scale)
     resolved_data_type = (
-        metadata.data_type.upper()
+        metadata.data_type.strip().upper()
         if metadata.data_type is not None
-        else _detect_data_type(sample_to_condition, len(sample_cols))
+        else _detect_data_type(sample_to_condition)
     )
     return DataProfile(
         n_proteins=len(matrix),
@@ -263,20 +287,22 @@ def profile_data(
         samples_per_condition=cond_counts,
         missing_rate=missing_rate,
         missing_per_sample=missing_per_sample,
-        median_cv=compute_median_cv(matrix, sample_to_condition),
+        median_cv=compute_median_cv(cv_matrix, sample_to_condition),
         has_peptide_counts=peptide_counts is not None,
         data_type=resolved_data_type,
         batch_fields=_detect_batch_fields(sample_cols),
         intensity_range=_intensity_range(values),
         is_log_transformed=is_log,
         pca_explained_variance=_compute_pca_evr(matrix),
-        per_condition_median_cv=_compute_per_condition_cv(matrix, sample_to_condition),
+        per_condition_median_cv=_compute_per_condition_cv(
+            cv_matrix, sample_to_condition
+        ),
         pairwise_median_abs_log2fc=_compute_pairwise_log2fc(
             matrix, sample_to_condition, is_log
         ),
         data_type_source=("declared" if metadata.data_type is not None else "inferred"),
         quantification=(
-            metadata.quantification.lower() if metadata.quantification else None
+            metadata.quantification.strip().lower() if metadata.quantification else None
         ),
-        upstream_engine=metadata.upstream_engine,
+        upstream_engine=_canonicalize_upstream_engine(metadata.upstream_engine),
     )

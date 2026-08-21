@@ -8,12 +8,18 @@ import json
 from pathlib import Path
 import shutil
 
+import numpy as np
 import pandas as pd
 import pytest
 
+import mokume.agentic.service as service_module
 from mokume.agentic.evaluator import evaluate, method_sensitivity
 from mokume.agentic.knowledge import load_knowledge_graph
-from mokume.agentic.service import EvaluationRequest, RecommendationService
+from mokume.agentic.service import (
+    EvaluationRequest,
+    InspectionRequest,
+    RecommendationService,
+)
 from mokume.agentic.state import CandidateConfig
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -60,18 +66,34 @@ def _lfq_inputs(tmp_path: Path) -> dict[str, Path]:
     ).to_csv(sdrf, sep="\t", index=False)
     truth = tmp_path / "truth.txt"
     truth.write_text("\n".join(proteins[:5]) + "\n", encoding="utf-8")
-    return {"matrix": protein_matrix, "sdrf": sdrf, "truth": truth}
+    peptide_counts = tmp_path / "peptide_counts.tsv"
+    pd.DataFrame(
+        {
+            "protein": proteins,
+            "peptide_count": [index % 9 + 1 for index in range(30)],
+        }
+    ).to_csv(peptide_counts, sep="\t", index=False)
+    return {
+        "matrix": protein_matrix,
+        "sdrf": sdrf,
+        "truth": truth,
+        "peptide_counts": peptide_counts,
+    }
 
 
 def _inspect(inputs: dict[str, Path]) -> dict:
     return SERVICE.inspect_dataset(
-        str(inputs["matrix"]),
-        str(inputs["sdrf"]),
-        {
-            "data_type": "LFQ",
-            "quantification": "directlfq",
-            "upstream_engine": "quantms",
-        },
+        InspectionRequest(
+            str(inputs["matrix"]),
+            str(inputs["sdrf"]),
+            "linear",
+            None,
+            {
+                "data_type": "LFQ",
+                "quantification": "directlfq",
+                "upstream_engine": "quantms",
+            },
+        )
     )
 
 
@@ -107,6 +129,7 @@ def test_service_ranks_only_with_ground_truth(
                 "data_type": "LFQ",
                 "quantification": "directlfq",
                 "upstream_engine": "quantms",
+                "input_scale": "linear",
                 "threads": 24,
             },
         )
@@ -128,6 +151,7 @@ def test_service_ranks_only_with_ground_truth(
                 "data_type": "LFQ",
                 "quantification": "directlfq",
                 "upstream_engine": "quantms",
+                "input_scale": "linear",
                 "threads": 24,
             },
         )
@@ -141,6 +165,163 @@ def test_service_ranks_only_with_ground_truth(
     assert exploratory["method_sensitivity_artifact"] == "method_sensitivity.tsv"
     assert "stability" not in exploratory
     assert (tmp_path / "exploratory" / "method_sensitivity.tsv").is_file()
+
+
+def test_peptide_count_sidecar_reaches_deqms(
+    lfq_inputs: dict[str, Path],
+    tmp_path: Path,
+) -> None:
+    """The public sidecar contract enables count-aware DEqMS execution."""
+    metadata = {
+        "data_type": "LFQ",
+        "quantification": "directlfq",
+        "upstream_engine": "quantms",
+    }
+    inspected = SERVICE.inspect_dataset(
+        InspectionRequest(
+            str(lfq_inputs["matrix"]),
+            str(lfq_inputs["sdrf"]),
+            "linear",
+            str(lfq_inputs["peptide_counts"]),
+            metadata,
+        )
+    )
+    assert inspected["profile"]["has_peptide_counts"] is True
+    diagnostics = next(
+        block["content"]
+        for block in inspected["context"]["blocks"]
+        if block["id"] == "diagnostics"
+    )
+    assert "DEQMS_COUNTS_REQUIRED" not in {
+        diagnostic["code"] for diagnostic in diagnostics
+    }
+    recommendation = inspected["policy_recommendation"]
+    recommendation["configs"] = [
+        config for config in recommendation["configs"] if config["de_method"] == "deqms"
+    ][:1]
+    assert len(recommendation["configs"]) == 1
+    output_dir = tmp_path / "count-aware-deqms"
+
+    SERVICE.evaluate_recommendation(
+        EvaluationRequest(
+            str(lfq_inputs["matrix"]),
+            str(lfq_inputs["sdrf"]),
+            ["A", "B"],
+            recommendation,
+            str(output_dir),
+            {
+                **metadata,
+                "input_scale": "linear",
+                "peptide_counts": str(lfq_inputs["peptide_counts"]),
+                "threads": 24,
+            },
+        )
+    )
+
+    de_table = pd.read_csv(next(output_dir.glob("*.de.tsv")), sep="\t")
+    expected = pd.read_csv(lfq_inputs["peptide_counts"], sep="\t").set_index("protein")[
+        "peptide_count"
+    ]
+    observed = de_table.set_index(de_table.columns[0])["peptide_count"].astype(int)
+    assert observed.to_dict() == expected.reindex(observed.index).to_dict()
+
+
+@pytest.mark.parametrize(
+    ("de_method", "ensemble"),
+    [("deqms", "none"), ("ensemble", "limma,deqms,proda")],
+)
+def test_deqms_candidates_require_peptide_count_sidecar(
+    lfq_inputs: dict[str, Path],
+    tmp_path: Path,
+    de_method: str,
+    ensemble: str,
+) -> None:
+    """DEqMS cannot run directly or in an ensemble without peptide counts."""
+    inspected = _inspect(lfq_inputs)
+    diagnostics = next(
+        block["content"]
+        for block in inspected["context"]["blocks"]
+        if block["id"] == "diagnostics"
+    )
+    assert "DEQMS_COUNTS_REQUIRED" in {diagnostic["code"] for diagnostic in diagnostics}
+    recommendation = inspected["policy_recommendation"]
+    assert all(
+        config["de_method"] != "deqms" and "deqms" not in config["ensemble"].split(",")
+        for config in recommendation["configs"]
+    )
+    config = dict(recommendation["configs"][0])
+    config.update(
+        name=f"missing-counts-{de_method}",
+        de_method=de_method,
+        ensemble=ensemble,
+        ensemble_k=2,
+    )
+    recommendation["configs"] = [config]
+    output_dir = tmp_path / f"missing-counts-{de_method}"
+
+    with pytest.raises(
+        ValueError,
+        match="options.peptide_counts is required for DEqMS",
+    ):
+        SERVICE.evaluate_recommendation(
+            EvaluationRequest(
+                str(lfq_inputs["matrix"]),
+                str(lfq_inputs["sdrf"]),
+                ["A", "B"],
+                recommendation,
+                str(output_dir),
+                {
+                    "data_type": "LFQ",
+                    "quantification": "directlfq",
+                    "upstream_engine": "quantms",
+                    "input_scale": "linear",
+                    "threads": 24,
+                },
+            )
+        )
+
+    assert not output_dir.exists()
+
+
+def test_log2_inspection_computes_cv_on_linear_intensities(
+    lfq_inputs: dict[str, Path],
+    tmp_path: Path,
+) -> None:
+    """Declared log2 matrices report the same CV as their linear source."""
+    metadata = {
+        "data_type": "LFQ",
+        "quantification": "directlfq",
+        "upstream_engine": "quantms",
+    }
+    linear = SERVICE.inspect_dataset(
+        InspectionRequest(
+            str(lfq_inputs["matrix"]),
+            str(lfq_inputs["sdrf"]),
+            "linear",
+            None,
+            metadata,
+        )
+    )["profile"]
+    log2_matrix = tmp_path / "proteins_log2.tsv"
+    frame = pd.read_csv(lfq_inputs["matrix"], sep="\t")
+    frame.iloc[:, 1:] = np.log2(frame.iloc[:, 1:].astype(float))
+    frame.to_csv(log2_matrix, sep="\t", index=False)
+
+    log2_profile = SERVICE.inspect_dataset(
+        InspectionRequest(
+            str(log2_matrix),
+            str(lfq_inputs["sdrf"]),
+            "log2",
+            None,
+            metadata,
+        )
+    )["profile"]
+
+    assert log2_profile["is_log_transformed"] is True
+    assert log2_profile["median_cv"] == pytest.approx(linear["median_cv"])
+    assert log2_profile["per_condition_median_cv"] == pytest.approx(
+        linear["per_condition_median_cv"]
+    )
 
 
 def test_method_sensitivity_reports_signed_call_agreement() -> None:
@@ -243,10 +424,107 @@ def test_evaluation_refuses_to_overwrite_existing_output(
                     "data_type": "LFQ",
                     "quantification": "directlfq",
                     "upstream_engine": "quantms",
+                    "input_scale": "linear",
                     "threads": 24,
                 },
             )
         )
+
+
+def test_candidate_failure_leaves_no_partial_output(
+    lfq_inputs: dict[str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed round can retry the same target without partial artifacts."""
+    recommendation = _inspect(lfq_inputs)["policy_recommendation"]
+    recommendation["configs"] = recommendation["configs"][:2]
+    assert len(recommendation["configs"]) == 2
+    output = tmp_path / "atomic-evaluation"
+    original = service_module.run_experiment
+    calls = 0
+
+    def fail_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("injected candidate failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "run_experiment", fail_second)
+    request = EvaluationRequest(
+        str(lfq_inputs["matrix"]),
+        str(lfq_inputs["sdrf"]),
+        ["A", "B"],
+        recommendation,
+        str(output),
+        {
+            "data_type": "LFQ",
+            "quantification": "directlfq",
+            "upstream_engine": "quantms",
+            "input_scale": "linear",
+            "threads": 24,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="injected candidate failure"):
+        SERVICE.evaluate_recommendation(request)
+
+    assert not output.exists()
+    assert not list(tmp_path.glob(f".{output.name}.*"))
+
+    monkeypatch.setattr(service_module, "run_experiment", original)
+    recommendation["configs"] = recommendation["configs"][:1]
+    SERVICE.evaluate_recommendation(request)
+    assert (output / "evaluation.json").is_file()
+
+
+def test_generic_sample_names_require_declared_data_type(
+    lfq_inputs: dict[str, Path],
+) -> None:
+    """Generic sample IDs abstain instead of being guessed as LFQ."""
+    inspected = SERVICE.inspect_dataset(
+        InspectionRequest(
+            str(lfq_inputs["matrix"]),
+            str(lfq_inputs["sdrf"]),
+            "linear",
+        )
+    )
+
+    assert inspected["profile"]["data_type"] == "unknown"
+    assert inspected["profile"]["data_type_source"] == "inferred"
+    assert inspected["policy_recommendation"]["configs"] == []
+    diagnostics = next(
+        block["content"]
+        for block in inspected["context"]["blocks"]
+        if block["id"] == "diagnostics"
+    )
+    data_type = next(
+        item for item in diagnostics if item["code"] == "PROFILE_DATA_TYPE_INFERRED"
+    )
+    assert data_type["severity"] == "error"
+
+
+@pytest.mark.parametrize("alias", ["DIANN", "DIA NN", "DIA-NN"])
+def test_upstream_engine_alias_matches_catalog_evidence(
+    lfq_inputs: dict[str, Path],
+    alias: str,
+) -> None:
+    """Common DIA-NN spellings bind to the catalog's canonical engine."""
+    inspected = SERVICE.inspect_dataset(
+        InspectionRequest(
+            str(lfq_inputs["matrix"]),
+            str(lfq_inputs["sdrf"]),
+            "linear",
+            metadata={"data_type": "DIA", "upstream_engine": alias},
+        )
+    )
+
+    assert inspected["profile"]["upstream_engine"] == "DIA-NN"
+    assert (
+        "opdea-diann-dia"
+        in inspected["context"]["generation_scope"]["allowed_evidence_refs"]
+    )
 
 
 def test_inspection_rejects_matrix_samples_absent_from_sdrf(
@@ -284,6 +562,7 @@ def test_generated_recommendation_requires_complete_unique_configs(
                     "data_type": "LFQ",
                     "quantification": "directlfq",
                     "upstream_engine": "quantms",
+                    "input_scale": "linear",
                     "threads": 24,
                 },
             )
@@ -308,6 +587,7 @@ def test_generated_recommendation_requires_complete_unique_configs(
                     "data_type": "LFQ",
                     "quantification": "directlfq",
                     "upstream_engine": "quantms",
+                    "input_scale": "linear",
                     "threads": 24,
                 },
             )
@@ -342,6 +622,7 @@ def test_abstention_contract_is_unambiguous(
                     "data_type": "LFQ",
                     "quantification": "directlfq",
                     "upstream_engine": "quantms",
+                    "input_scale": "linear",
                     "threads": 24,
                 },
             )
@@ -401,6 +682,7 @@ def test_ground_truth_requires_expected_direction(
                     "data_type": "LFQ",
                     "quantification": "directlfq",
                     "upstream_engine": "quantms",
+                    "input_scale": "linear",
                     "threads": 24,
                 },
             )
@@ -430,11 +712,48 @@ def test_expected_direction_requires_ground_truth(
                     "data_type": "LFQ",
                     "quantification": "directlfq",
                     "upstream_engine": "quantms",
+                    "input_scale": "linear",
                     "threads": 24,
                 },
             )
         )
 
+    assert not output_dir.exists()
+
+
+def test_input_scale_must_be_explicit(
+    lfq_inputs: dict[str, Path],
+    tmp_path: Path,
+) -> None:
+    """Inspection and evaluation reject the removed auto-scale contract."""
+    with pytest.raises(ValueError, match="input_scale must be linear or log2"):
+        SERVICE.inspect_dataset(
+            InspectionRequest(
+                str(lfq_inputs["matrix"]),
+                str(lfq_inputs["sdrf"]),
+                "auto",
+            )
+        )
+
+    recommendation = _inspect(lfq_inputs)["policy_recommendation"]
+    recommendation["configs"] = recommendation["configs"][:1]
+    output_dir = tmp_path / "missing-input-scale"
+    with pytest.raises(ValueError, match="options.input_scale is required"):
+        SERVICE.evaluate_recommendation(
+            EvaluationRequest(
+                str(lfq_inputs["matrix"]),
+                str(lfq_inputs["sdrf"]),
+                ["A", "B"],
+                recommendation,
+                str(output_dir),
+                {
+                    "data_type": "LFQ",
+                    "quantification": "directlfq",
+                    "upstream_engine": "quantms",
+                    "threads": 24,
+                },
+            )
+        )
     assert not output_dir.exists()
 
 
@@ -526,6 +845,19 @@ def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -
         "inspect_dataset",
         "evaluate_recommendation",
     ]
+    inspection_schema = tools[0].inputSchema
+    assert set(inspection_schema["properties"]) == {
+        "protein_matrix",
+        "sdrf",
+        "input_scale",
+        "peptide_counts",
+        "metadata",
+    }
+    assert set(inspection_schema["required"]) == {
+        "protein_matrix",
+        "sdrf",
+        "input_scale",
+    }
     evaluation_schema = tools[1].inputSchema
     assert set(evaluation_schema["properties"]) == {
         "protein_matrix",
@@ -534,4 +866,10 @@ def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -
         "recommendation",
         "options",
     }
-    assert set(evaluation_schema["required"]) == set(evaluation_schema["properties"])
+    assert set(evaluation_schema["required"]) == {
+        "protein_matrix",
+        "sdrf",
+        "contrast",
+        "recommendation",
+        "options",
+    }

@@ -117,6 +117,13 @@ def is_supported_quantification(value: str) -> bool:
     return value in QUANTIFICATION_METHODS or bool(re.fullmatch(r"top[1-9]\d*", value))
 
 
+def requires_peptide_counts(de_method: str, ensemble: str) -> bool:
+    """Return whether a differential-expression setting requires peptide counts."""
+    return de_method == "deqms" or (
+        de_method == "ensemble" and "deqms" in ensemble.split(",")
+    )
+
+
 def validate_config_values(item: Mapping[str, Any]) -> None:
     """Reject a generated configuration that violates the runtime contract."""
     _require_member(item, "de_method", DE_METHODS)

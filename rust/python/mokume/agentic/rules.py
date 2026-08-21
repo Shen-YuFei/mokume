@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mokume.agentic.context import BoundContext, bind_context, required_limitations
+from mokume.agentic.contract import requires_peptide_counts
 from mokume.agentic.knowledge import EvidenceRecord
 from mokume.agentic.profiler import DataProfile
 from mokume.agentic.state import CandidateConfig
@@ -37,6 +38,12 @@ def rule_propose(
     _append_no_imputation_control(configs, diagnostic_codes)
     _append_deqms_control(configs, diagnostic_codes)
 
+    if not profile.has_peptide_counts:
+        configs = [
+            config
+            for config in configs
+            if not requires_peptide_counts(config.de_method, config.ensemble)
+        ]
     result = configs[:MAX_RULE_CANDIDATES]
     logger.info("Policy generated %d traceable candidate configs", len(result))
     return result
@@ -110,7 +117,7 @@ def _append_deqms_control(
     """Add a count-independent control when DEqMS lacks peptide counts."""
     if (
         configs
-        and "DEQMS_COUNT_FALLBACK" in diagnostic_codes
+        and "DEQMS_COUNTS_REQUIRED" in diagnostic_codes
         and configs[0].de_method == "deqms"
     ):
         source = configs[0]
@@ -124,7 +131,9 @@ def _append_deqms_control(
                 imputation=source.imputation,
                 log2fc_threshold=source.log2fc_threshold,
                 reasoning="Count-independent control because peptide counts are unavailable.",
-                expected_outcome="Separates DEqMS count fallback from preprocessing effects.",
+                expected_outcome=(
+                    "Tests the same preprocessing settings with count-independent limma."
+                ),
                 evidence_refs=list(source.evidence_refs),
                 confidence="low",
                 limitations=[

@@ -1,12 +1,14 @@
 # MCP input contract
 
-Call `mokume.inspect_dataset` with the two absolute input paths and one optional
-metadata object:
+Call `mokume.inspect_dataset` with the absolute matrix and SDRF paths, an explicit
+input scale, and optional peptide-count and metadata inputs:
 
 ```json
 {
   "protein_matrix": "/absolute/proteins.tsv",
   "sdrf": "/absolute/project.sdrf.tsv",
+  "input_scale": "linear",
+  "peptide_counts": "/absolute/peptide_counts.tsv",
   "metadata": {
     "data_type": "LFQ",
     "quantification": "directlfq",
@@ -16,8 +18,41 @@ metadata object:
 }
 ```
 
-The metadata fields are optional; do not invent values that were not supplied or
-supported by the inputs.
+The protein matrix may be comma- or tab-delimited and must satisfy all of these
+requirements:
+
+- The first column contains non-empty, unique protein identifiers.
+- At least two later columns contain samples; all sample cells are numeric or
+  missing (`NaN`). Positive and negative infinity are rejected.
+- Column names are non-empty and unique, and every sample column maps to the SDRF.
+- The matrix contains at least one finite intensity.
+
+`input_scale` is required and must declare whether those intensities are `linear`
+or `log2`; `auto` is not supported. The metadata fields are optional.
+`peptide_counts` is optional only for count-independent candidates; do not invent
+values that were not supplied or supported by the inputs. Without a declared
+`data_type`, Mokume only infers `LFQ`, `DIA`, or `TMT` from explicit sample-name
+markers. Generic names such as `S1` or `sample-01` produce `unknown`, force an
+abstention, and require a supported declaration before reinspection. Known engine
+aliases are normalized to the catalog spelling; for example, `DIANN`, `DIA NN`,
+and `DIA-NN` all become `DIA-NN`.
+
+The peptide-count sidecar may be comma- or tab-delimited and must have exactly
+these columns:
+
+```text
+protein\tpeptide_count
+P12345\t7
+P67890\t3
+```
+
+Protein identifiers must be unique and match the protein-matrix identifier
+values. Counts are positive integers representing unique peptides per protein.
+The sidecar may include proteins outside the matrix, but at least one identifier
+must overlap. A sidecar is mandatory for `deqms` and every ensemble containing
+`deqms`; without it, deterministic policy omits those candidates and evaluation
+rejects a host-added candidate. Individual matrix proteins absent from a supplied
+sidecar use a count of one.
 
 Call `mokume.evaluate_recommendation` with a two-item contrast, the generated
 recommendation block, and an execution-options object:
@@ -37,7 +72,8 @@ recommendation block, and an execution-options object:
     "upstream_engine": "quantms",
     "factor_column": null,
     "fdr_threshold": 0.05,
-    "input_scale": "auto",
+    "input_scale": "linear",
+    "peptide_counts": "/absolute/peptide_counts.tsv",
     "threads": 24
   }
 }
@@ -49,10 +85,15 @@ those canonical labels with longer raw SDRF values. `ground_truth`, when present
 must be an absolute path to a one-protein-per-line file and requires
 `expected_direction` to be `UP` or `DOWN`. When `ground_truth` is null,
 `expected_direction` must also be null and carries no biological meaning.
-`options.output_dir` must be an absolute path that does not already exist. Repeat
-the same declared `data_type`, `quantification`, `upstream_engine`, and
+`options.output_dir` must be an absolute path that does not already exist.
+`options.input_scale` is required and must be `linear` or `log2`. When inspection
+used a peptide-count sidecar, repeat it in `options.peptide_counts`, together with
+the declared scale, `data_type`, `quantification`, `upstream_engine`, and
 `factor_column` values used for `inspect_dataset` so evaluation rebinds the same
-policy context.
+policy context. `options.peptide_counts` is required if any candidate uses
+`deqms` directly or through an ensemble. Mokume writes the round to a sibling
+staging directory and publishes `output_dir` only after every artifact succeeds;
+on failure, the target remains absent and may be retried.
 
 For a Score A result, calculate each candidate's tested-universe size as
 `TP + FP + FN + TN` and report it with the ranking. Unequal totals mean that the
@@ -94,8 +135,9 @@ Normalization supports `none`, `median`, `quantile`, `mean`, `rlr`, and
 
 For `de_method="ensemble"`, choose one returned ensemble preset and set
 `ensemble_k` no higher than its member count. For every other DE method,
-`ensemble` must be `none`. `log2fc_threshold` is either a number from 0 to 10 or
-`auto`.
+`ensemble` must be `none`. DEqMS and every ensemble preset containing DEqMS
+require `options.peptide_counts`. `log2fc_threshold` is either a number from 0 to
+10 or `auto`.
 
 When abstaining, pass an empty `configs` list, no evidence references, low
 confidence, and a non-empty `abstain_reason`. Do not add fields to either the
