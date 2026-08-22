@@ -276,7 +276,7 @@ def peptides2protein_qc(**kwargs):
 
 
 def peptides2protein_pibaq(**kwargs):
-    """Run the legacy full-Python piBAQ reference path (``all`` extra)."""
+    """Run the native-backed piBAQ compatibility command."""
     _run_command("peptides2protein_pibaq", _flags(kwargs))
 
 

@@ -144,7 +144,9 @@ pip install ./rust
 
 ## Requirements
 
-- Python >= 3.9
+- Python >= 3.9 for the default Rust-backed ``mokume`` distribution
+- Python >= 3.10 for ``mokume-py`` and the optional ``mokume[agentic]``
+  Plugin/MCP workflow
 - Both distributions declare pyOpenMS as a base dependency. In the default
   Rust-backed wheel, piBAQ reads every protease registered by the installed
   runtime, digests the FASTA in Python, and passes the complete theoretical-

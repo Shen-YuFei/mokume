@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Legacy full-Python piBAQ reference command.
+"""Native-backed piBAQ compatibility command.
 
 The normal Rust-backed ``peptides2protein`` and ``features2proteins`` piBAQ paths
 support every protease registered in the installed pyOpenMS ``ProteaseDB``.
-This module retains the upstream full-Python implementation as a reference path;
-it is not an enzyme fallback.
+This module preserves the established file-oriented Python command contract and
+forwards it through ``mokume.quantification.pibaq.peptides_to_protein``. That
+compatibility API delegates shared-peptide allocation, theoretical denominators,
+evidence classification, TPA, and output generation to the same native Rust core
+as ``mokume peptides2protein``; it is neither an enzyme fallback nor a separate
+full-Python implementation.
 
-Design (same "copy-py" provenance as ``peptides2protein_qc.py``): no compute is
-duplicated in Rust here -- the command calls the first-class
-``mokume.quantification.pibaq`` and forwards the original argv. The output is
-``res.to_csv(output, sep='\t')`` inside ``peptides_to_protein``, i.e.
-byte-for-byte the same TSV schema the Rust native path writes (ProteinName,
-SampleID, Condition, NormIntensity, PiBAQ,
-FamilyId, EvidenceLevel, FamilySize, plus the optional TPA / normalize / ruler
-columns), so a downstream consumer cannot tell which branch produced it.
+The output uses the native command's TSV schema, so downstream consumers see the
+same contract through either entry point.
 
 argv contract (runnable via ``python -m mokume.commands.peptides2protein_pibaq``):
 
@@ -48,10 +46,7 @@ import sys
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
-        description=(
-            "Compute the peptides2protein piBAQ table through the legacy "
-            "full-Python reference implementation."
-        )
+        description="Compute piBAQ through the native-backed compatibility API."
     )
     parser.add_argument(
         "--peptides",
@@ -112,8 +107,7 @@ def main(argv=None):
     except (ImportError, AttributeError) as exc:
         raise SystemExit(
             "piBAQ command aborted: the mokume package could not be imported "
-            f"({exc}). Install its third-party dependencies with: "
-            "pip install mokume[all]"
+            f"({exc}). Install the Rust-backed distribution with: pip install mokume"
         ) from exc
 
     # Mirror the Python CLI ``peptides2protein`` piBAQ branch exactly: it forwards
