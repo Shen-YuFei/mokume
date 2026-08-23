@@ -455,7 +455,7 @@ pub fn normalize_file_key(value: &str) -> String {
 pub fn normalize_label_key(value: &str) -> String {
     let key = extract_label_value(value).trim().to_ascii_lowercase();
     match key.as_str() {
-        "lfq" | "label-free" | "label free sample" => "label free sample".to_owned(),
+        "lfq" | "label-free" | "label free sample" | "raw" => "label free sample".to_owned(),
         _ => key,
     }
 }
@@ -610,7 +610,12 @@ mod tests {
                 "key for {name}"
             );
         }
-        for label in ["LFQ", "label-free", "AC=MS:1002038;NT=label free sample"] {
+        for label in [
+            "LFQ",
+            "label-free",
+            "AC=MS:1002038;NT=label free sample",
+            "raw",
+        ] {
             assert_eq!(normalize_label_key(label), "label free sample");
         }
         assert_eq!(normalize_file_key("foo.raw.bar.raw"), "foo.raw.bar");
@@ -762,6 +767,10 @@ mod tests {
 
         assert!(error.to_string().contains("has no reporter label"));
         assert_eq!(lfq.lookup("run", None)?.sample_accession, "sample-lfq");
+        assert_eq!(
+            lfq.lookup("run", Some("raw"))?.sample_accession,
+            "sample-lfq"
+        );
         Ok(())
     }
 }
