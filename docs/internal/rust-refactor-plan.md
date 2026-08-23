@@ -906,11 +906,12 @@ Then extend to:
   matrix stays cell-for-cell identical to a serial pass. The serial consumer is
   the remaining wall-clock floor (~40% of CPU work); parallelizing it would
   require sharded accumulation and is deferred.
-- Measured on PXD003539 / PXD004701 (`sum`, 24 threads, output bit-identical to
-  the Python baseline): wall time is ~1.5x faster than the Python/DuckDB flow
-  (6.7s vs 10.3s; 12.3s vs 19.4s) while peak memory stays ~7x lower (0.83 GB vs
-  5.5 GB; 1.2 GB vs 8.9 GB). The serial port was ~1.4x slower than Python before
-  this change because the main path ran single-threaded.
+- Measured on 2026-08-23 with PXD003539 / PXD004701 (`sum`, 24 threads, one
+  warm-up, median of three measured runs): Rust/Python wall times are
+  8.95/7.17 seconds and 17.84/13.99 seconds, while peak memory is 0.86/4.25 GiB
+  and 1.29/8.02 GiB. Protein sets, sample sets, and all 390,540/544,008 matrix
+  cells are exact. The Rust path is currently about 1.25-1.28x slower and
+  4.9-6.2x lower-memory for this workload.
 - Parquet reading is streaming by batch, but many aggregations are still held in
   HashMap/HashSet.
 - Enabling normalization first scans parquet once, then runs the main

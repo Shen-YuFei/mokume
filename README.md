@@ -52,10 +52,10 @@ mokume/
 Both expose the same four computation command names, with different support
 levels. **mokume is Rust-first**: new computation lands in the Rust kernel, and
 overlapping supported paths are parity-tested where coverage exists. See
-[Maintenance scope](#maintenance-scope) below. Its measured advantage is
-bounded: on `sum` (PXD003539 / PXD004701, 24 threads, bit-identical output) it
-is ~1.5× faster wall-clock with ~7× lower peak memory. See
-[docs/architecture.md](docs/architecture.md) for the numbers.
+[Maintenance scope](#maintenance-scope) below. The measured runtime/memory
+trade-off is workload-specific: on the current `sum` parity benchmark the Rust
+path is about 1.25–1.28× slower, while using about 4.9–6.2× less peak memory.
+See [docs/architecture.md](docs/architecture.md) for the measured values.
 
 ## Installation
 
@@ -282,12 +282,12 @@ skill, a traceable knowledge snapshot, and automatic local MCP configuration;
 the MCP tools call the default wheel's Rust-backed matrix APIs.
 
 The wheel's Python API and console command share one compiled kernel, so a
-result computed through either interface is identical. Where the kernel does
-apply, its measured advantage is bounded rather than unbounded: on `sum`
-(PXD003539 / PXD004701, 24 threads, bit-identical output) it is ~1.5× faster
-wall-clock (6.7s vs 10.3s; 12.3s vs 19.4s) with ~7× lower peak memory (0.83 vs
-5.5 GB; 1.2 vs 8.9 GB). For the full design, see
-[docs/architecture.md](docs/architecture.md).
+result computed through either interface is identical. On the 2026-08-23
+`sum` parity rerun (24 threads, one warm-up, median of three measured runs),
+Rust/Python wall times were 8.95/7.17 seconds on PXD003539 and 17.84/13.99
+seconds on PXD004701. Peak memory was 0.86/4.25 GiB and 1.29/8.02 GiB,
+respectively. Protein sets, sample sets, and all 390,540/544,008 matrix cells
+were exact. For the full design, see [docs/architecture.md](docs/architecture.md).
 
 ## Maintenance scope
 
