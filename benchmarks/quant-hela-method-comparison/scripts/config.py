@@ -1,8 +1,8 @@
 """
 HeLa Benchmark Configuration
 
-Configuration for benchmarking protein quantification methods across datasets.
-All datasets from ibaqpy-research FTP with verified file names.
+Configuration for benchmarking Rust protein quantification methods across datasets.
+All datasets use public PRIDE resources with verified file names.
 """
 
 from pathlib import Path
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Dict
 
 # Base directories
-BENCHMARK_DIR = Path(__file__).parent
+BENCHMARK_DIR = Path(__file__).resolve().parent.parent
 RAW_DATA_DIR = BENCHMARK_DIR / "data" / "raw"
 PROCESSED_DIR = BENCHMARK_DIR / "data" / "processed"
 PROTEIN_QUANT_DIR = BENCHMARK_DIR / "data" / "protein_quant"
@@ -21,17 +21,20 @@ PLOTS_DIR = BENCHMARK_DIR / "figures"
 for d in [RAW_DATA_DIR, PROCESSED_DIR, PROTEIN_QUANT_DIR, ANALYSIS_DIR, PLOTS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# FASTA file for iBAQ calculations
-# Download from: https://www.uniprot.org/uniprotkb?query=Human+AND+reviewed%3Atrue
-FASTA_FILE = Path(__file__).parent.parent.parent / "uniprotkb_Human_AND_reviewed_true_AND_m_2026_01_26.fasta.gz"
+# FASTA is passed explicitly to the current Rust refresh script.
+FASTA_FILE = BENCHMARK_DIR / "data" / "human-reviewed.fasta"
 
 # PRIDE FTP base URL
-PRIDE_IBAQPY_FTP = "https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/proteomes/ibaqpy-research"
+PRIDE_IBAQPY_FTP = (
+    "https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/proteomes/"
+    "ibaqpy-research"
+)
 
 
 @dataclass
 class DatasetInfo:
     """Information about a proteomics dataset."""
+
     project_id: str
     name: str
     acquisition_method: str
@@ -39,6 +42,7 @@ class DatasetInfo:
     feature_file: str
     description: str = ""
     file_format: str = "parquet"
+    enzyme: str = "Trypsin"
 
     @property
     def feature_url(self) -> str:
@@ -77,6 +81,7 @@ IBAQPY_DATASETS: Dict[str, DatasetInfo] = {
         ftp_base=PRIDE_IBAQPY_FTP + "/PMID22068331.2",
         feature_file="PMID22068331-093b1d91-2dd0-487f-b116-66968b82931b.feature.parquet",
         description="HeLa deep proteome - replicate 2 (Nagaraj et al.)",
+        enzyme="Lys-C",
     ),
     "PMID22068331.3": DatasetInfo(
         project_id="PMID22068331.3",
@@ -85,8 +90,8 @@ IBAQPY_DATASETS: Dict[str, DatasetInfo] = {
         ftp_base=PRIDE_IBAQPY_FTP + "/PMID22068331.3",
         feature_file="PMID22068331-0dc35a39-5ab2-45e5-923b-165e7253c549.feature.parquet",
         description="HeLa deep proteome - replicate 3 (Nagaraj et al.)",
+        enzyme="Glu-C",
     ),
-
     # PXD datasets
     "PXD000269": DatasetInfo(
         project_id="PXD000269",
@@ -235,8 +240,11 @@ TMT_LFQ_DATASETS: Dict[str, DatasetInfo] = {
         project_id="PXD007683-TMT",
         name="HeLa TMT Benchmark",
         acquisition_method="TMT",
-        ftp_base="",  # Local file
-        feature_file="PXD007683-TMT_feature.csv",
+        ftp_base=(
+            "https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/"
+            "proteomes/quantms-benchmark-old/PXD007683-TMT/msstatsconverter"
+        ),
+        feature_file="PXD007683-TMT.sdrf_openms_design_msstats_in.csv",
         description="HeLa benchmark - TMT labeling",
         file_format="msstats_csv",
     ),
@@ -244,8 +252,11 @@ TMT_LFQ_DATASETS: Dict[str, DatasetInfo] = {
         project_id="PXD007683-LFQ",
         name="HeLa LFQ Benchmark",
         acquisition_method="DDA-LFQ",
-        ftp_base="",  # Local file
-        feature_file="PXD007683-LFQ_feature.csv",
+        ftp_base=(
+            "https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/"
+            "proteomes/quantms-benchmark-old/PXD007683-LFQ/proteomicslfq"
+        ),
+        feature_file="PXD007683-LFQ.sdrf_openms_design_msstats_in.csv",
         description="HeLa benchmark - Label-free",
         file_format="msstats_csv",
     ),
@@ -255,9 +266,13 @@ TMT_LFQ_DATASETS: Dict[str, DatasetInfo] = {
 ALL_DATASETS = {**IBAQPY_DATASETS, **TMT_LFQ_DATASETS}
 
 # HeLa-specific datasets (subset)
-HELA_DATASETS = {k: v for k, v in IBAQPY_DATASETS.items()
-                 if "hela" in v.name.lower() or "hela" in v.description.lower()
-                 or k.startswith("PMID22068331")}
+HELA_DATASETS = {
+    k: v
+    for k, v in IBAQPY_DATASETS.items()
+    if "hela" in v.name.lower()
+    or "hela" in v.description.lower()
+    or k.startswith("PMID22068331")
+}
 
 # TMT/LFQ comparison alias
 TMT_LFQ_COMPARISON = TMT_LFQ_DATASETS
@@ -269,12 +284,12 @@ TMT_LFQ_COMPARISON = TMT_LFQ_DATASETS
 
 # Quantification methods to benchmark
 QUANTIFICATION_METHODS = [
-    "ibaq",      # iBAQ (IbaqLog) - log-transformed iBAQ (computed by library)
-    "ibaq_raw",  # iBAQ raw (Ibaq) - raw iBAQ values (not log-transformed)
-    "directlfq", # DirectLFQ
-    "top3",      # Top 3 peptides
-    "topn",      # Top N peptides (configurable)
-    "sum",       # Sum of all peptides
+    "pibaq",
+    "maxlfq",
+    "directlfq",
+    "top3",
+    "top10",
+    "sum",
 ]
 
 # Top N configurations
@@ -304,13 +319,17 @@ PROTEINS_OF_INTEREST = [
     "P16401",  # HIST1H1B - Histone H1.5
 ]
 
-# iBAQ parameters
-IBAQ_PARAMS = {
+# piBAQ parameters
+PIBAQ_PARAMS = {
     "enzyme": "Trypsin",
     "min_aa": 7,
     "max_aa": 50,
     "missed_cleavages": 0,
 }
+
+# Backward-compatible name for the legacy phase scripts. The current refresh
+# uses PIBAQ_PARAMS directly.
+IBAQ_PARAMS = PIBAQ_PARAMS
 
 # Normalization settings
 NORMALIZATION_METHOD = "median"

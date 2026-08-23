@@ -1,181 +1,93 @@
-# Batch Effect Correction Benchmark - Quartet Multi-Lab
+# Quartet Multi-Lab Batch Benchmark
 
-Benchmarking mokume's quantification methods and batch effect correction against the Quartet reference materials multi-lab dataset (6 labs, 72 samples, 4 sample types).
+This benchmark recomputes protein quantification and batch correction with the
+current Rust-backed `mokume` distribution. The balanced design contains 72
+samples from four laboratories (APT, BGI, FDU, and NVG), six acquisition/lab
+batches, four Quartet sample types (D5, D6, F7, and M8), and three replicates of
+each sample type per batch.
 
-## Summary
+## Scope and interpretation
 
-**Key Findings:**
-1. **DirectLFQ outperforms** other methods in all reliability metrics
-2. **ComBat batch correction is essential** - improves all methods significantly
-3. **~40% missing values** indicate need for imputation strategies
-4. **~15% lab-specific variance** persists after correction
-
-**Recommendation:** DirectLFQ + ComBat provides the most reliable quantification for multi-lab studies.
-
----
+- Quantification methods: piBAQ, MaxLFQ, DirectLFQ, and Top3.
+- Batch correction: native Rust ComBat.
+- Raw matrices retain each method's available proteins. ComBat is fitted only
+  to proteins complete across all 72 samples; no missing value is imputed.
+- Cross-method diagnostics use the same 53 proteins that are complete for all
+  four methods. This matched universe supports a fair diagnostic comparison,
+  but it is not a basis for declaring one universal winner.
 
 ## Results
 
-### Batch Effect Diagnosis
+### Batch effect diagnosis
 
-![Batch Effect Diagnosis](figures/batch_effect_diagnosis.png)
+The original two-panel chart type is retained. It shows per-sample median
+MaxLFQ intensity before and after Rust ComBat, with bars colored by batch.
 
-### Inter-Lab Correlation
+![Batch effect diagnosis](figures/batch_effect_diagnosis.png)
 
-| Method | Raw Correlation | After ComBat |
-|--------|-----------------|--------------|
-| **DirectLFQ** | **0.816** | **0.977** |
-| MaxLFQ | 0.780 | 0.980 |
-| iBAQ | 0.771 | 0.971 |
-| Top3 | 0.753 | 0.973 |
+Across the matched 53-protein universe, ComBat improved every method:
 
-**Observations:**
-- Raw inter-lab correlations are moderate (0.75-0.82), indicating significant batch effects
-- ComBat improves correlations to >0.97
-- DirectLFQ shows best raw correlation due to built-in normalization
+- piBAQ: inter-batch correlation 0.9151 to 0.9822; batch RMSE 1.6561 to 0.1739.
+- MaxLFQ: inter-batch correlation 0.9355 to 0.9889; batch RMSE 0.3024 to 0.0957.
+- DirectLFQ: inter-batch correlation 0.9355 to 0.9889; batch RMSE 0.3024 to 0.0956.
+- Top3: inter-batch correlation 0.8159 to 0.9584; batch RMSE 1.6060 to 0.1783.
 
-### PCA Before/After Batch Correction
+The CV and SNR metrics in `results/benchmark_metrics.csv` move in the same
+direction. Their absolute values are specific to this complete, matched protein
+universe and should not be compared with metrics calculated after imputation or
+on method-specific protein sets.
 
-![PCA Comparison](figures/pca_comparison.png)
+### PCA before and after correction
 
-### Batch Effect Magnitude
+The original before/after PCA layout is retained. Color represents Quartet
+sample type and marker shape represents DDA or DIA acquisition.
 
-| Method | Raw Batch Effect % | After ComBat |
-|--------|-------------------|--------------|
-| **DirectLFQ** | **49.7%** | **0.16%** |
-| MaxLFQ | 102.5% | 0.17% |
-| Top3 | 106.4% | 0.14% |
-| iBAQ | 105.1% | 0.10% |
+![PCA comparison](figures/pca_comparison.png)
 
-DirectLFQ raw data already has lower batch effect (~50% vs >100% for others).
+The corrected projections show stronger sample-type separation, while DDA and
+DIA observations remain visible rather than being silently pooled.
 
-### Protein Coverage
+### Protein coverage
 
-| Method | Total Proteins | Core Proteome | Core % |
-|--------|---------------|---------------|--------|
-| MaxLFQ | 2,227 | 562 | 25.2% |
-| Top3 | 2,227 | 562 | 25.2% |
-| iBAQ | 2,227 | 562 | 25.2% |
-| DirectLFQ | 2,075 | 558 | 26.9% |
+Coverage differs substantially by method:
 
-Only ~25-27% of proteins form the "core proteome" detected across all labs.
+- piBAQ: 1,569 observed proteins; 121 complete across all samples.
+- MaxLFQ: 1,016 observed proteins; 56 complete across all samples.
+- DirectLFQ: 2,163 observed proteins; 153 complete across all samples.
+- Top3: 2,167 observed proteins; 154 complete across all samples.
 
----
+Coverage, batch RMSE, correlation, CV, and SNR answer different questions, so
+the benchmark reports them separately and does not collapse them into a single
+method ranking.
 
-## Conclusions
+## Reproduction
 
-### Method Recommendations
+Clone the source benchmark and obtain its Git LFS data:
 
-| Use Case | Recommended Method |
-|----------|-------------------|
-| Multi-lab studies | DirectLFQ + ComBat |
-| Single-lab analysis | Any method + median normalization |
-| Absolute quantification | iBAQ (with FASTA) |
+```bash
+git clone https://github.com/qiaochuchen/proteomics-batch-effect-correction-benchmarking.git
+cd proteomics-batch-effect-correction-benchmarking
+git lfs pull
+```
 
-### Limitations Identified
+Run the current refresh from this benchmark directory. Keep `--work-dir`
+outside the repository if the intermediates should remain disposable.
 
-1. **~40% missing values** - problematic for downstream analysis
-2. **~15% lab-specific variance** persists after correction
-3. **~10% DE calls are lab-dependent** - requires careful validation
+```bash
+python scripts/refresh_rust.py \
+  --source-dir /path/to/proteomics-batch-effect-correction-benchmarking/data/rawfiles/MaxQuant \
+  --fasta /path/to/Homo-sapiens-uniprot-reviewed.fasta \
+  --work-dir /tmp/mokume-quartet \
+  --threads 24 \
+  --force
+```
 
-### Development Priorities
-
-**High Priority:**
-- Implement ratio-based batch correction
-- Add covariate support to ComBat
-- Reduce missing values via match-between-runs
-
-**Medium Priority:**
-- Native DirectLFQ-style normalization
-- Adaptive TopN based on peptide coverage
-
----
+The script validates the six `evidence.txt` inputs, reconstructs the balanced
+72-sample design, quantifies all four methods with the Rust kernel, runs native
+Rust ComBat, writes the result CSV files, and redraws the two existing PNG
+figures. It does not use the historical `inmoose` or median-fill path.
 
 ## Reference
 
-> Chen Q, et al. (2025) **"Protein-level batch-effect correction enhances robustness in MS-based proteomics"** *Nature Communications*.
-> PMID: 41188254
-
----
-
-<details>
-<summary><strong>Methodology & Reproduction</strong></summary>
-
-### Dataset
-
-**Quartet Reference Materials:**
-- **6 laboratories** running the same samples
-- **72 samples total** (12 per lab)
-- **4 sample types**: D5, D6, F7, M8
-- **3 replicates** per sample type per lab
-
-### Data Source
-
-Clone the benchmark repository:
-```bash
-git clone https://github.com/qiaochuchen/proteomics-batch-effect-correction-benchmarking.git
-```
-
-Place in `data/proteomics-batch-effect-correction-benchmarking/`
-
-### Methods Evaluated
-
-| Method | Implementation |
-|--------|----------------|
-| MaxLFQ | `mokume.quantification.MaxLFQQuantification` |
-| Top3 | `mokume.quantification.TopNQuantification` |
-| iBAQ | `mokume.quantification.IBAQQuantification` |
-| DirectLFQ | `mokume.quantification.DirectLFQQuantification` |
-
-**Batch Correction:** ComBat via `mokume.postprocessing.apply_batch_correction`
-
-### Evaluation Metrics
-
-1. **Coefficient of Variation (CV)** - Technical reproducibility
-2. **Signal-to-Noise Ratio (SNR)** - PCA-based separation
-3. **Inter-Lab Correlation** - Agreement between laboratories
-4. **DE Concordance** - Agreement on differential expression calls
-5. **Batch Effect Magnitude** - Variance explained by batch vs biology
-
-### Running the Benchmark
-
-```bash
-cd benchmarks/batch-quartet-multilab
-
-# Run complete benchmark
-python scripts/run_benchmark.py
-
-# Generate analysis and plots
-python scripts/comprehensive_analysis.py
-python scripts/plot_results.py
-```
-
-### Output Structure
-
-```
-batch-quartet-multilab/
-├── README.md
-├── scripts/
-│   ├── run_benchmark.py
-│   ├── comprehensive_analysis.py
-│   └── plot_results.py
-├── data/               # GIT-IGNORED
-├── results/            # CSV metrics
-└── figures/            # PNG plots
-```
-
-### Requirements
-
-```bash
-pip install mokume-py[directlfq]
-pip install inmoose        # For ComBat
-pip install matplotlib seaborn
-```
-
-### References
-
-- Quartet Reference Materials: https://www.chinesequartet.org/
-- ComBat: Johnson WE, et al. (2007) Biostatistics
-- DirectLFQ: Mann Labs implementation
-
-</details>
+Chen Q, et al. *Protein-level batch-effect correction enhances robustness in
+MS-based proteomics*. Nature Communications (2025). PMID: 41188254.
