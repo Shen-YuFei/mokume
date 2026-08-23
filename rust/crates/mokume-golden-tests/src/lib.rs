@@ -35,6 +35,58 @@ fn features2proteins_sum_matches_synthetic_golden_matrix() -> Result<(), Box<dyn
 }
 
 #[test]
+fn features2proteins_preserves_biological_replicate_peptide_rows() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("bioreplicate.features.parquet");
+    let sdrf = root.join("bioreplicate.sdrf.tsv");
+
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new("PEPTIDEAK", "run1.raw", 100.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run1.raw", 200.0, &["P1"]),
+            QpxRow::new("PEPTIDEAK", "run2.raw", 300.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run2.raw", 400.0, &["P1"]),
+        ],
+    )?;
+    std::fs::write(
+        &sdrf,
+        concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\tcharacteristics[biological replicate]\tfactor value[cell line]\n",
+            "sample-1\trun 1\trun1.raw\tAC=MS:1002038;NT=label free sample\t1\tA\n",
+            "sample-1\trun 2\trun2.raw\tAC=MS:1002038;NT=label free sample\t2\tA\n",
+        ),
+    )?;
+
+    for (method, expected) in [
+        (QuantMethod::Sum, 1000.0),
+        (QuantMethod::Median, 250.0),
+        (QuantMethod::TopN, 300.0),
+        (QuantMethod::SpectralCount, 4.0),
+    ] {
+        let output = root.join(format!("{}.csv", method.as_str()));
+        let mut config = default_sum_config(parquet.clone(), sdrf.clone(), output.clone());
+        config.quantification = method;
+        config.topn_peptides = 3;
+        run_features_to_proteins(&config)?;
+        let table = read_csv(&output)?;
+        let actual = table
+            .rows
+            .first()
+            .and_then(|row| row.get(1))
+            .ok_or("missing protein matrix value")?
+            .parse::<f64>()?;
+        assert!(
+            (actual - expected).abs() <= 1e-12,
+            "{} collapsed biological-replicate peptide rows: {actual} != {expected}",
+            method.as_str()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn features2proteins_exports_python_compatible_peptide_intermediates() -> Result<(), Box<dyn Error>>
 {
     let root = temp_root()?;

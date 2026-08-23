@@ -69,8 +69,13 @@ struct FeatureToProteinState {
     proteins: StringIdRegistry<ProteinId>,
     peptides: StringIdRegistry<PeptideId>,
     canonical_peptides: StringIdRegistry<PeptideId>,
+    conditions: StringIdRegistry<u32>,
+    loading_contexts: HashMap<(u32, u32), u32>,
+    contextual_peptides: HashMap<(PeptideId, u32), PeptideId>,
+    contextual_canonical_peptides: HashMap<(PeptideId, u32), PeptideId>,
     samples: StringIdRegistry<SampleId>,
     peptide_to_canonical: HashMap<PeptideId, PeptideId>,
+    peptide_to_contextual_canonical: HashMap<PeptideId, PeptideId>,
     unique_peptides: HashMap<CellKey, HashSet<PeptideId>>,
     export_rows: IntermediateExports,
     aggregation: FeatureAggregation,
@@ -145,8 +150,13 @@ impl FeatureToProteinState {
             proteins: StringIdRegistry::new(),
             peptides: StringIdRegistry::new(),
             canonical_peptides: StringIdRegistry::new(),
+            conditions: StringIdRegistry::new(),
+            loading_contexts: HashMap::new(),
+            contextual_peptides: HashMap::new(),
+            contextual_canonical_peptides: HashMap::new(),
             samples: StringIdRegistry::new(),
             peptide_to_canonical: HashMap::new(),
+            peptide_to_contextual_canonical: HashMap::new(),
             unique_peptides: HashMap::new(),
             export_rows: IntermediateExports::new(config),
             aggregation: FeatureAggregation::from_config(config, sdrf, pibaq_digest)?,
@@ -256,15 +266,51 @@ impl FeatureToProteinState {
         }
         let sample = register_id(&mut self.samples, &sample_name, "sample")?;
         let peptide_key = self.aggregation.peptide_key(feature);
-        let peptide = register_id(&mut self.peptides, &peptide_key, "peptide")?;
+        let base_peptide = register_id(&mut self.peptides, &peptide_key, "peptide")?;
         let canonical_peptide = register_id(
             &mut self.canonical_peptides,
             &feature.sequence,
             "canonical peptide",
         )?;
+        let biological_replicate = sdrf_record
+            .and_then(|record| record.biological_replicate)
+            .unwrap_or(1);
+        let condition = sample_condition(&sample_name, sdrf_record);
+        let (peptide, contextual_canonical_peptide) = if self.aggregation.preserves_loading_rows() {
+            let condition_id = self
+                .conditions
+                .get_or_insert(&condition)
+                .ok_or_else(|| invalid_input("condition id registry overflow"))?;
+            let context = register_loading_context(
+                &mut self.loading_contexts,
+                (biological_replicate, condition_id),
+            )?;
+            let peptide = register_contextual_peptide(
+                &mut self.contextual_peptides,
+                (base_peptide, context),
+                "peptide",
+            )?;
+            let contextual_canonical = if self.aggregation.preserves_contextual_canonical_rows() {
+                register_contextual_peptide(
+                    &mut self.contextual_canonical_peptides,
+                    (canonical_peptide, context),
+                    "contextual canonical peptide",
+                )?
+            } else {
+                canonical_peptide
+            };
+            (peptide, contextual_canonical)
+        } else {
+            (base_peptide, canonical_peptide)
+        };
         self.peptide_to_canonical
             .entry(peptide)
             .or_insert(canonical_peptide);
+        if self.aggregation.preserves_contextual_canonical_rows() {
+            self.peptide_to_contextual_canonical
+                .entry(peptide)
+                .or_insert(contextual_canonical_peptide);
+        }
         let protein = register_id(&mut self.proteins, &protein_group, "protein")?;
         let cell = CellKey { protein, sample };
 
@@ -457,10 +503,18 @@ impl FeatureToProteinState {
                 );
             }
         }
+        let empty_mapping = HashMap::new();
+        let collapse_mapping = if dataset_normalization.is_some()
+            && self.aggregation.applies_dataset_normalization()
+        {
+            &empty_mapping
+        } else {
+            &self.peptide_to_contextual_canonical
+        };
         let values = self.aggregation.finalize(
             &allowed_cells,
             &mut self.proteins,
-            &self.peptide_to_canonical,
+            collapse_mapping,
             &self.canonical_peptides,
         );
         let allowed_proteins = values.protein_ids();
@@ -1453,6 +1507,24 @@ impl FeatureAggregation {
 
     fn keeps_shared_peptides(&self) -> bool {
         matches!(self, Self::Pibaq(_))
+    }
+
+    fn preserves_loading_rows(&self) -> bool {
+        matches!(
+            self,
+            Self::Sum(_)
+                | Self::Median(_)
+                | Self::Abd(_)
+                | Self::SpectralCount(_)
+                | Self::TopN { .. }
+        )
+    }
+
+    fn preserves_contextual_canonical_rows(&self) -> bool {
+        matches!(
+            self,
+            Self::Median(_) | Self::Abd(_) | Self::SpectralCount(_) | Self::TopN { .. }
+        )
     }
 
     fn peptide_key(&self, feature: &QpxFeatureRecord) -> String {
@@ -6851,6 +6923,35 @@ where
     registry
         .get_or_insert(value)
         .ok_or_else(|| invalid_input(format!("{namespace} id registry overflow")))
+}
+
+fn register_loading_context(
+    registry: &mut HashMap<(u32, u32), u32>,
+    key: (u32, u32),
+) -> Result<u32> {
+    if let Some(id) = registry.get(&key) {
+        return Ok(*id);
+    }
+    let id = u32::try_from(registry.len())
+        .map_err(|_| invalid_input("loading context id registry overflow"))?;
+    registry.insert(key, id);
+    Ok(id)
+}
+
+fn register_contextual_peptide(
+    registry: &mut HashMap<(PeptideId, u32), PeptideId>,
+    key: (PeptideId, u32),
+    namespace: &str,
+) -> Result<PeptideId> {
+    if let Some(id) = registry.get(&key) {
+        return Ok(*id);
+    }
+    let id = PeptideId::new(
+        u32::try_from(registry.len())
+            .map_err(|_| invalid_input(format!("{namespace} id registry overflow")))?,
+    );
+    registry.insert(key, id);
+    Ok(id)
 }
 
 /// Per-canonical monoisotopic molecular weights for the piBAQ TPA column.
