@@ -1,7 +1,7 @@
 # Examples
 
-Worked, copy-pasteable examples for each kind of analysis mokume supports. Every
-command and snippet on these pages is run against the small fixtures shipped in
+Worked, copy-pasteable examples for each kind of analysis mokume supports. Most
+commands and snippets on these pages run against the small fixtures shipped in
 the repository (`python/tests/example/`), so you can reproduce them without your
 own data:
 
@@ -49,3 +49,16 @@ Wire quantification, normalization, imputation, batch correction, IRS, and DE
 into one `PipelineConfig` and run it through `run_pipeline` /
 `QuantificationPipeline.run_dataset`. Shows the `QpxDataset` result API and how
 to choose between the separate Python and Rust distributions.
+
+### [CPTAC UCEC total proteome](cptac-ucec.md)
+
+Run a full PDC000125 analysis on 4.13 million QPX feature rows: construct an
+API-validated SDRF, quantify TMT reporter abundance, apply global-median and IRS
+normalization with condition-wise coverage filtering, run limma, and reproduce
+the three six-panel README composites.
+
+### [PXD030304 cancer cell-line atlas](pxd030304-cell-lines.md)
+
+Run native Rust DirectLFQ on 178.45 million DIA-NN QPX feature rows from 949
+cell lines, then reproduce the README overview and tissue-biology composites
+from the written matrix.

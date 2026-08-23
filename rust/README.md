@@ -155,34 +155,29 @@ evaluation services; the agent host owns the model and credentials. See the
 
 ## Example
 
-A full run on real data: **PXD030304**, a 949-cell-line proteomic panel
-(178 M feature rows). mokume's tissue-proteome command (`mokume.tissuemap`)
-quantifies the cell lines, scores AdaTiSS tissue specificity, embeds the
-samples, and finds tissue markers. Every figure below is rendered by mokume's
-**own** visualization on the Rust build — no external plotting code:
+A full run on real data: **PXD030304**, 178.45 million DIA-NN QPX feature rows
+from 5,798 label-free runs representing 949 cancer cell lines. Native Rust
+DirectLFQ writes the 8,930 × 949 protein matrix; Mokume's Python periphery reads
+that result to embed the samples, inspect detection depth, score AdaTiSS tissue
+specificity, and find tissue markers.
 
 <p align="center">
-  <img src="../docs/assets/pxd030304_tissue_atlas.png" alt="Tissue atlas: the cell-line proteomes embedded and grouped by tissue of origin" width="100%">
+  <img src="../docs/assets/pxd030304_rust_overview.png" alt="Six-panel PXD030304 Rust DirectLFQ overview with PCA, t-SNE, tissue representation, detection depth, and variance panels" width="100%">
 </p>
 
-*Tissue atlas — the 949 cell-line proteomes embedded and grouped by their tissue
-of origin (`mokume.tissuemap`).*
+*All 949 cell lines: PCA and t-SNE by tissue of origin, tissue representation,
+technical-run depth versus protein detection, detection across major tissues,
+and the PCA variance profile. PC1 explains 20.7% and PC2 6.9% of the variance.*
 
 <p align="center">
-  <img src="../docs/assets/pxd030304_marker_tsne.png" alt="t-SNE panels of the cell-line proteomes coloured by top tissue-marker expression" width="100%">
+  <img src="../docs/assets/pxd030304_rust_biology.png" alt="Six-panel PXD030304 tissue-specificity and marker showcase" width="100%">
 </p>
 
-*t-SNE of the same proteomes, each panel coloured by a top tissue-marker's
-expression.*
-
-<p align="center">
-  <img src="../docs/assets/pxd030304_ts_distribution.png" alt="AdaTiSS tissue-specificity score distribution and tissue-specific protein counts" width="100%">
-</p>
-
-*AdaTiSS tissue-specificity score distribution (with the GMM-fitted
-specific / enriched / housekeeping thresholds) and the tissue-specific protein
-count per tissue. `mokume.tissuemap` also emits marker heatmaps, dotplots, and
-dendrograms — see [`docs/periphery/tissuemap.md`](../docs/periphery/tissuemap.md).*
+*Biological panels use the 790 cell lines in the 30 tissues with at least five
+samples: Wilcoxon marker profiles, AdaTiSS scores, tissue-specific protein
+counts, and three marker-expression maps. The complete Rust command, renderer,
+result interpretation, and numerical comparison with the previous run are in
+[`docs/examples/pxd030304-cell-lines.md`](../docs/examples/pxd030304-cell-lines.md).*
 
 ## Documentation
 

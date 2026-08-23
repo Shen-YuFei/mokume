@@ -192,7 +192,9 @@ proteins = run_pipeline(config).get_level("proteins")  # proteins x samples matr
 Runnable examples per analysis: [quantification methods](docs/examples/quantification.md)
 · [absolute expression / piBAQ](docs/examples/absolute-expression.md)
 · [differential expression](docs/examples/differential-expression.md)
-· [full Python pipeline](docs/examples/pipeline.md).
+· [full Python pipeline](docs/examples/pipeline.md)
+· [CPTAC UCEC total proteome](docs/examples/cptac-ucec.md)
+· [PXD030304 cell-line atlas](docs/examples/pxd030304-cell-lines.md).
 
 ## Commands
 
@@ -324,33 +326,69 @@ Rust-backed wheel, rather than as a second computation backend. Full policy:
 
 ## Example: a tissue proteome atlas
 
-A full run on real data: **PXD030304**, a 949-cell-line proteomic panel
-(178 M feature rows). mokume's tissue-proteome pipeline (`mokume.tissuemap`)
-quantifies the cell lines, scores AdaTiSS tissue specificity, embeds the
-samples, and finds tissue markers — every figure below is rendered by mokume's
-own visualization:
+A full run on real data: **PXD030304**, 178.45 million DIA-NN QPX feature rows
+from 5,798 label-free runs representing 949 cancer cell lines. Native Rust
+DirectLFQ writes the 8,930 × 949 protein matrix; Mokume's Python periphery reads
+that result to embed the samples, inspect detection depth, score AdaTiSS tissue
+specificity, and find tissue markers.
 
 <p align="center">
-  <img src="docs/assets/pxd030304_tissue_atlas.png" alt="Tissue atlas: the cell-line proteomes embedded and grouped by tissue of origin" width="100%">
+  <img src="docs/assets/pxd030304_rust_overview.png" alt="Six-panel PXD030304 Rust DirectLFQ overview with PCA, t-SNE, tissue representation, detection depth, and variance panels" width="100%">
 </p>
 
-*Tissue atlas — the 949 cell-line proteomes embedded and grouped by their tissue
-of origin (`mokume.tissuemap`).*
+*All 949 cell lines: PCA and t-SNE by tissue of origin, tissue representation,
+technical-run depth versus protein detection, detection across major tissues,
+and the PCA variance profile. PC1 explains 20.7% and PC2 6.9% of the variance.*
 
 <p align="center">
-  <img src="docs/assets/pxd030304_marker_tsne.png" alt="t-SNE panels of the cell-line proteomes coloured by top tissue-marker expression" width="100%">
+  <img src="docs/assets/pxd030304_rust_biology.png" alt="Six-panel PXD030304 tissue-specificity and marker showcase" width="100%">
 </p>
 
-*t-SNE of the same proteomes, each panel coloured by a top tissue-marker's
-expression.*
+*Biological panels use the 790 cell lines in the 30 tissues with at least five
+samples: Wilcoxon marker profiles, AdaTiSS scores, tissue-specific protein
+counts, and three marker-expression maps. The complete Rust command, renderer,
+result interpretation, and numerical comparison with the previous run are in
+[docs/examples/pxd030304-cell-lines.md](docs/examples/pxd030304-cell-lines.md).*
+
+## Example: CPTAC UCEC total proteome
+
+A real multi-plex TMT run on
+**[PDC000125](https://pdc.cancer.gov/pdc/study/PDC000125)**: 4.13 million QPX
+feature rows from 408 fractions across 17 plexes. mokume sums linear reporter
+abundance, corrects sample-wide loading shifts with global-median normalization,
+aligns plexes through their pooled reference channels with IRS, and applies a
+65% condition-wise coverage gate. The final matrix contains 4,665 proteins
+across 104 primary tumors and 49 solid-tissue normals.
 
 <p align="center">
-  <img src="docs/assets/pxd030304_ts_distribution.png" alt="AdaTiSS tissue-specificity score distribution and tissue-specific protein counts" width="100%">
+  <img src="docs/assets/cptac_ucec_overview.png" alt="Six-panel CPTAC UCEC Rust Mokume overview with PCA, cohort composition, completeness, detection, and variance panels" width="100%">
 </p>
 
-*AdaTiSS tissue-specificity score distribution (with the GMM-fitted
-specific / enriched / housekeeping thresholds) and the tissue-specific protein
-count per tissue. See [docs/periphery/tissuemap.md](docs/periphery/tissuemap.md).*
+*The same overview grammar as the cell-line atlas: biological PCA, secondary
+design structure, cohort composition, technical completeness, group-level
+detection, and the PCA variance profile. PC1 explains 31.0% and PC2 explains
+7.6% of the variance; the normal-only plex 17 remains visible as a study-design
+limitation.*
+
+<p align="center">
+  <img src="docs/assets/cptac_ucec_performance.png" alt="Six-panel CPTAC UCEC Rust Mokume computational QC and performance figure with sample correlations, normalization, IRS, pooled-reference CV, method concordance, runtime, and memory" width="100%">
+</p>
+
+*The computational layer uses four fresh Rust runs on the same QPX input:
+sample correlation, the Raw → GlobalMedian → IRS intensity trajectory, PCA
+before and after IRS, pooled-reference alignment, intensity-versus-ratio effect
+concordance, and a transparent single-workstation execution profile. The
+timing panel is a local 24-thread measurement, not a cross-machine benchmark.*
+
+<p align="center">
+  <img src="docs/assets/cptac_ucec_biology.png" alt="Six-panel CPTAC UCEC differential-expression showcase with heatmap, volcano, MA, and representative protein panels" width="100%">
+</p>
+
+*The matching biological layer: strongest DE profiles, limma volcano and MA
+plots, plus observed expression for three representative proteins. There are
+611 up-regulated, 640 down-regulated, and 3,414 unchanged proteins at BH
+FDR < 0.05 and |log2FC| > 0.5. The complete, copy-pasteable workflow is in
+[docs/examples/cptac-ucec.md](docs/examples/cptac-ucec.md).*
 
 ## Documentation
 
