@@ -140,7 +140,7 @@ def _generate_volcano_plots(pd, contrasts, plot_dir, args):
         else None
     )
     for key, _cond_a, _cond_b, de_csv in contrasts:
-        de_df = pd.read_csv(de_csv)
+        de_df = pd.read_csv(de_csv, float_precision="round_trip")
         output_file = str(plot_dir / "volcano_{0}.png".format(key))
         plot_volcano(
             de_df,
@@ -161,7 +161,7 @@ def _generate_heatmap_plots(
 
     protein_col = protein_df.columns[0]
     for key, cond_a, cond_b, de_csv in contrasts:
-        de_df = pd.read_csv(de_csv)
+        de_df = pd.read_csv(de_csv, float_precision="round_trip")
         sig = _significant_de_proteins(de_df, args.log2fc_threshold, args.fdr_threshold)
         if sig.empty:
             print("Heatmap skipped for {0}: no significant proteins".format(key))

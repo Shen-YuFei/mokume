@@ -4,6 +4,7 @@ Skipped unless the ``plotting`` extra (matplotlib + pandas) is installed.
 """
 
 import glob
+import importlib
 import os
 
 import pytest
@@ -44,3 +45,42 @@ def test_de_plots_writes_volcano_png(tmp_path):
         ]
     )
     assert glob.glob(str(plot_dir / "*.png"))
+
+
+def test_de_plots_preserves_tiny_kernel_pvalues(tmp_path, monkeypatch):
+    de_csv = tmp_path / "de.csv"
+    de_csv.write_text(
+        "ProteinName,log2FC,adj_pvalue,significance\n"
+        "P1,1.0,0.00000000000000000000000000009010904590617499,UP\n",
+        encoding="utf-8",
+    )
+    observed = {}
+
+    def capture_volcano(de_results, **_kwargs):
+        observed["adj_pvalue"] = de_results.loc[0, "adj_pvalue"]
+
+    plotting = importlib.import_module("mokume.plotting.differential_expression")
+    monkeypatch.setattr(plotting, "plot_volcano", capture_volcano)
+
+    de_plots = importlib.import_module("mokume.commands.de_plots")
+    assert (
+        de_plots.main(
+            [
+                "--protein-matrix",
+                os.path.join(DATA, "proteins_matrix.csv"),
+                "--plot-dir",
+                str(tmp_path / "plots"),
+                "--volcano",
+                "--contrast",
+                "c1",
+                "CondA",
+                "CondB",
+                str(de_csv),
+            ]
+        )
+        == 0
+    )
+    assert observed["adj_pvalue"] > 0.0
+    assert observed["adj_pvalue"] == pytest.approx(
+        9.010904590617499e-29, rel=1e-15, abs=0.0
+    )

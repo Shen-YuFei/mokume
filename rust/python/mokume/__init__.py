@@ -326,7 +326,9 @@ def qc_report(
         from mokume.normalization.irs import detect_condition_from_sdrf
 
         sample_to_condition = detect_condition_from_sdrf(sdrf)
-    de_df = pd.read_csv(de_results) if de_results else None
+    de_df = (
+        pd.read_csv(de_results, float_precision="round_trip") if de_results else None
+    )
     return generate_qc_report(
         protein_df,
         sample_to_condition,
@@ -367,7 +369,7 @@ def workflow_comparison(
             entry["de_results"] = (
                 de_results
                 if hasattr(de_results, "columns")
-                else pd.read_csv(de_results)
+                else pd.read_csv(de_results, float_precision="round_trip")
             )
         condition = workflow.get("sample_to_condition")
         if condition is None and workflow.get("sdrf"):

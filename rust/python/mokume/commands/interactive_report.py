@@ -157,7 +157,7 @@ def main(argv=None):
 
     n_contrasts = len(args.contrast)
     for key, _cond_a, _cond_b, de_csv in args.contrast:
-        de_df = pd.read_csv(de_csv)
+        de_df = pd.read_csv(de_csv, float_precision="round_trip")
         output_html = _resolve_output_html(
             args.report_output, args.plot_dir, key, n_contrasts
         )
