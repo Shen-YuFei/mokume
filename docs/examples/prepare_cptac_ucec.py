@@ -87,6 +87,7 @@ SDRF_COLUMNS = (
 
 
 def query_pdc(query: str) -> list[dict[str, object]]:
+    """Execute one PDC GraphQL query and return its sole result collection."""
     response = requests.post(PDC_GRAPHQL, json={"query": query}, timeout=120)
     response.raise_for_status()
     payload = response.json()
@@ -96,6 +97,7 @@ def query_pdc(query: str) -> list[dict[str, object]]:
 
 
 def qpx_runs(path: Path, threads: int) -> dict[int, list[tuple[int, str]]]:
+    """Group validated QPX run names by plex and fraction."""
     pa.set_cpu_count(threads)
     pa.set_io_thread_count(threads)
     runs: set[str] = set()
@@ -118,6 +120,7 @@ def qpx_runs(path: Path, threads: int) -> dict[int, list[tuple[int, str]]]:
 
 
 def design_by_plex(rows: list[dict[str, object]]) -> dict[int, dict[str, object]]:
+    """Index validated PDC experimental-design records by plex number."""
     result = {}
     for row in rows:
         name = str(row["plex_dataset_name"])
@@ -131,6 +134,7 @@ def design_by_plex(rows: list[dict[str, object]]) -> dict[int, dict[str, object]
 def biological_fields(
     channel: dict[str, str], biospecimens: dict[str, dict[str, str]]
 ) -> tuple[dict[str, str], str]:
+    """Translate one TMT channel assignment into SDRF biological fields."""
     if channel["aliquot_submitter_id"] == "Ref":
         return (
             {
@@ -165,11 +169,57 @@ def biological_fields(
     )
 
 
+def channel_assignment(
+    design: dict[str, object], channel_key: str, plex: int
+) -> dict[str, str]:
+    """Return the single PDC assignment for one plex channel."""
+    assignments = design[channel_key]
+    if not isinstance(assignments, list) or len(assignments) != 1:
+        raise ValueError(f"plex {plex:02d} has invalid {channel_key} assignment")
+    return assignments[0]
+
+
+def build_plex_rows(
+    plex: int,
+    plex_runs: list[tuple[int, str]],
+    design: dict[str, object],
+    biospecimens: dict[str, dict[str, str]],
+) -> tuple[list[dict[str, str]], dict[str, str]]:
+    """Build every fraction/channel SDRF row for one validated plex."""
+    if len(plex_runs) != int(str(design["number_of_fractions"])):
+        raise ValueError(
+            f"plex {plex:02d} has {len(plex_runs)} QPX runs; "
+            f"PDC declares {design['number_of_fractions']}"
+        )
+    rows = []
+    conditions = {}
+    for channel_index, (channel_key, label) in enumerate(CHANNELS, start=1):
+        channel = channel_assignment(design, channel_key, plex)
+        fields, condition = biological_fields(channel, biospecimens)
+        source_name = f"PDC000125-p{plex:02d}_{channel_index}"
+        conditions[source_name] = condition
+        rows.extend(
+            {
+                "source name": source_name,
+                **fields,
+                "assay name": run,
+                "technology type": "proteomic profiling by mass spectrometry",
+                "comment[data file]": f"{run}.raw",
+                "comment[fraction identifier]": str(fraction),
+                "comment[label]": label,
+                "factor value[condition]": condition,
+            }
+            for fraction, run in plex_runs
+        )
+    return rows, conditions
+
+
 def build_rows(
     runs: dict[int, list[tuple[int, str]]],
     designs: dict[int, dict[str, object]],
     biospecimens: dict[str, dict[str, str]],
 ) -> list[dict[str, str]]:
+    """Build and validate the complete PDC000125 analysis SDRF."""
     if set(runs) != set(designs):
         raise ValueError(
             f"QPX/API plex mismatch: QPX={sorted(runs)}, PDC={sorted(designs)}"
@@ -178,37 +228,11 @@ def build_rows(
     rows = []
     sample_conditions = {}
     for plex in sorted(runs):
-        design = designs[plex]
-        if len(runs[plex]) != int(str(design["number_of_fractions"])):
-            raise ValueError(
-                f"plex {plex:02d} has {len(runs[plex])} QPX runs; "
-                f"PDC declares {design['number_of_fractions']}"
-            )
-
-        for channel_index, (channel_key, label) in enumerate(CHANNELS, start=1):
-            assignments = design[channel_key]
-            if not isinstance(assignments, list) or len(assignments) != 1:
-                raise ValueError(
-                    f"plex {plex:02d} has invalid {channel_key} assignment"
-                )
-            channel = assignments[0]
-            fields, condition = biological_fields(channel, biospecimens)
-            source_name = f"PDC000125-p{plex:02d}_{channel_index}"
-            sample_conditions[source_name] = condition
-
-            for fraction, run in runs[plex]:
-                rows.append(
-                    {
-                        "source name": source_name,
-                        **fields,
-                        "assay name": run,
-                        "technology type": "proteomic profiling by mass spectrometry",
-                        "comment[data file]": f"{run}.raw",
-                        "comment[fraction identifier]": str(fraction),
-                        "comment[label]": label,
-                        "factor value[condition]": condition,
-                    }
-                )
+        plex_rows, plex_conditions = build_plex_rows(
+            plex, runs[plex], designs[plex], biospecimens
+        )
+        rows.extend(plex_rows)
+        sample_conditions.update(plex_conditions)
 
     observed = Counter(sample_conditions.values())
     if observed != EXPECTED_CONDITIONS:
@@ -219,6 +243,7 @@ def build_rows(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the QPX source and destination SDRF paths."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("feature_parquet", type=Path)
     parser.add_argument("output_sdrf", type=Path)
@@ -227,6 +252,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Fetch PDC metadata and write the validated analysis SDRF."""
     args = parse_args()
     runs = qpx_runs(args.feature_parquet, args.threads)
     designs = design_by_plex(query_pdc(EXPERIMENTAL_DESIGN_QUERY))

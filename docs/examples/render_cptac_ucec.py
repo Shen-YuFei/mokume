@@ -23,6 +23,7 @@ CONDITION_COLORS = {
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the Rust outputs and destination figure directory."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("protein_matrix", type=Path)
     parser.add_argument("sdrf", type=Path)
@@ -35,6 +36,7 @@ def parse_args() -> argparse.Namespace:
 def load_inputs(
     matrix_path: Path, sdrf_path: Path, de_path: Path
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load and align the protein matrix, SDRF, and DE result table."""
     proteins = pd.read_csv(matrix_path).set_index("ProteinName")
     proteins = proteins.apply(pd.to_numeric, errors="coerce")
     log2_matrix = np.log2(proteins.where(proteins > 0))
@@ -56,6 +58,7 @@ def load_inputs(
 
 
 def pca_coordinates(matrix: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
+    """Compute sample PCA coordinates and explained-variance percentages."""
     complete = matrix.dropna(axis=0)
     if complete.shape[0] < 2:
         raise ValueError("PCA requires at least two complete proteins")
@@ -74,6 +77,7 @@ def plot_pca_condition(
     variance: np.ndarray,
     metadata: pd.DataFrame,
 ) -> None:
+    """Plot sample PCA colored by tumor or normal condition."""
     for condition, color in CONDITION_COLORS.items():
         samples = metadata.index[metadata[CONDITION_COL] == condition]
         ax.scatter(
@@ -98,6 +102,7 @@ def plot_pca_plex(
     variance: np.ndarray,
     metadata: pd.DataFrame,
 ) -> None:
+    """Plot sample PCA colored by TMT plex number."""
     points = ax.scatter(
         pca["PC1"],
         pca["PC2"],
@@ -119,6 +124,7 @@ def plot_pca_plex(
 
 
 def plot_cohort_composition(ax: plt.Axes, metadata: pd.DataFrame) -> None:
+    """Plot tumor and normal sample counts for every TMT plex."""
     counts = metadata.groupby(["plex", CONDITION_COL]).size().unstack(fill_value=0)
     counts = counts.reindex(columns=CONDITION_COLORS, fill_value=0)
     bottom = np.zeros(len(counts))
@@ -136,6 +142,7 @@ def plot_cohort_composition(ax: plt.Axes, metadata: pd.DataFrame) -> None:
 def plot_missingness(
     ax: plt.Axes, matrix: pd.DataFrame, metadata: pd.DataFrame
 ) -> None:
+    """Plot sample-level protein missingness across TMT plexes."""
     frame = metadata[["plex", CONDITION_COL]].copy()
     frame["missing"] = matrix.isna().mean(axis=0).mul(100).loc[frame.index]
     sns.scatterplot(
@@ -158,6 +165,7 @@ def plot_missingness(
 def plot_detection_by_condition(
     ax: plt.Axes, matrix: pd.DataFrame, metadata: pd.DataFrame
 ) -> None:
+    """Compare detected-protein counts between tumor and normal samples."""
     frame = metadata[[CONDITION_COL]].copy()
     frame["detected"] = matrix.notna().sum(axis=0).loc[frame.index]
     order = list(CONDITION_COLORS)
@@ -190,6 +198,7 @@ def plot_detection_by_condition(
 
 
 def plot_scree(ax: plt.Axes, variance: np.ndarray) -> None:
+    """Plot component-wise and cumulative PCA variance."""
     components = np.arange(1, len(variance) + 1)
     ax.bar(components, variance, color="#F4A261")
     ax.plot(components, np.cumsum(variance), color="#264653")
@@ -199,6 +208,7 @@ def plot_scree(ax: plt.Axes, variance: np.ndarray) -> None:
 
 
 def significance_colors(de_result: pd.DataFrame) -> pd.Series:
+    """Map differential-expression calls to plot colors."""
     colors = pd.Series("#B8BEC3", index=de_result.index)
     colors.loc[de_result["significance"] == "UP"] = "#E74C3C"
     colors.loc[de_result["significance"] == "DOWN"] = "#3498DB"
@@ -206,6 +216,7 @@ def significance_colors(de_result: pd.DataFrame) -> pd.Series:
 
 
 def plot_volcano(ax: plt.Axes, de_result: pd.DataFrame) -> None:
+    """Plot effect size against adjusted significance."""
     colors = significance_colors(de_result)
     y_value = -np.log10(de_result["adj_pvalue"])
     ax.scatter(de_result["log2FC"], y_value, c=colors, s=13, alpha=0.7, linewidth=0)
@@ -227,6 +238,7 @@ def plot_volcano(ax: plt.Axes, de_result: pd.DataFrame) -> None:
 
 
 def plot_ma(ax: plt.Axes, de_result: pd.DataFrame) -> None:
+    """Plot differential effect size against mean abundance."""
     colors = significance_colors(de_result)
     ax.scatter(
         de_result["AveExpr"],
@@ -244,6 +256,7 @@ def plot_ma(ax: plt.Axes, de_result: pd.DataFrame) -> None:
 
 
 def top_de_proteins(de_result: pd.DataFrame, count: int = 12) -> list[str]:
+    """Select the strongest significant up- and down-regulated proteins."""
     significant = de_result[de_result["adj_pvalue"] < 0.05]
     up = significant.nlargest(count, "log2FC")["ProteinName"].tolist()
     down = significant.nsmallest(count, "log2FC")["ProteinName"].tolist()
@@ -256,6 +269,7 @@ def plot_heatmap(
     metadata: pd.DataFrame,
     de_result: pd.DataFrame,
 ) -> None:
+    """Plot standardized profiles for the strongest DE proteins."""
     proteins = [name for name in top_de_proteins(de_result) if name in matrix.index]
     sample_order = metadata.sort_values([CONDITION_COL, "plex"]).index
     values = matrix.loc[proteins, sample_order].copy()
@@ -292,6 +306,7 @@ def plot_heatmap(
 
 
 def representative_de_proteins(de_result: pd.DataFrame) -> pd.DataFrame:
+    """Select three nonredundant proteins for condition-level panels."""
     significant = de_result[de_result["adj_pvalue"] < 0.05]
     selected = pd.concat(
         [
@@ -310,6 +325,7 @@ def plot_protein_distribution(
     protein: pd.Series,
     panel: str,
 ) -> None:
+    """Plot one representative protein across tumor and normal samples."""
     protein_name = str(protein["ProteinName"])
     frame = metadata[[CONDITION_COL]].copy()
     frame["expression"] = matrix.loc[protein_name, frame.index]
@@ -352,6 +368,7 @@ def render_overview(
     metadata: pd.DataFrame,
     output: Path,
 ) -> None:
+    """Render the six-panel cohort and computational overview."""
     pca, variance = pca_coordinates(matrix)
     fig, axes = plt.subplots(2, 3, figsize=(24, 15), constrained_layout=True)
     plot_pca_condition(axes[0, 0], pca, variance, metadata)
@@ -375,6 +392,7 @@ def render_biology(
     de_result: pd.DataFrame,
     output: Path,
 ) -> None:
+    """Render the six-panel differential-expression showcase."""
     fig, axes = plt.subplots(2, 3, figsize=(24, 15), constrained_layout=True)
     plot_heatmap(axes[0, 0], matrix, metadata, de_result)
     plot_volcano(axes[0, 1], de_result)
@@ -394,6 +412,7 @@ def render_biology(
 
 
 def main() -> None:
+    """Load Rust outputs and render both CPTAC UCEC showcase figures."""
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     sns.set_theme(style="whitegrid", context="notebook")

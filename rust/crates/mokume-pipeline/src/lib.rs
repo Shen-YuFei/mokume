@@ -504,7 +504,10 @@ impl FeatureToProteinState {
             }
         }
         let empty_mapping = HashMap::new();
+        // TMM scales contextual peptidoforms in place, so `finalize` must still
+        // collapse them; the other dataset normalizers write canonical cells.
         let collapse_mapping = if dataset_normalization.is_some()
+            && dataset_normalization != Some(SampleNormalizationMethod::Tmm)
             && self.aggregation.applies_dataset_normalization()
         {
             &empty_mapping

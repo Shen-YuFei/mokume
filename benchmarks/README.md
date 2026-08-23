@@ -35,6 +35,7 @@ and batch metrics.
 ### quant-pxd007683-tmt-vs-lfq
 
 Recomputes the 11-sample PXD007683 LFQ arm with the current Rust kernel.
+
 - **Methods:** piBAQ, MaxLFQ, DirectLFQ, Sum, Top3, Top5, and Top10
 - **Scope:** LFQ was refreshed; the checked-in TMT and cross-technology assets are historical
 - **Interpretation:** CV, coverage, and spike-in recovery are reported separately; no global winner is inferred from CV alone
