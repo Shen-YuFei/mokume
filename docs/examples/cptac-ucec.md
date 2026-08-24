@@ -58,8 +58,7 @@ mokume features2proteins \
     --de-fdr 0.05 \
     --de-fdr-method bh \
     --de-output "$CPTAC_OUT/PDC000125.primary-tumor-vs-normal.csv" \
-    --threads 24 \
-    --memory 48GB
+    --threads 24
 ```
 
 `intensity` produces linear summed reporter abundance. Global-median
@@ -128,8 +127,7 @@ mkdir -p "$CPTAC_PERF"
     --quant-method intensity \
     --run-normalization none \
     --sample-normalization none \
-    --threads 24 \
-    --memory 48GB
+    --threads 24
 
 /usr/bin/time -f "globalmedian,%e,%M" \
     -o "$CPTAC_PERF/globalmedian.time" \
@@ -140,8 +138,7 @@ mkdir -p "$CPTAC_PERF"
     --quant-method intensity \
     --run-normalization none \
     --sample-normalization globalmedian \
-    --threads 24 \
-    --memory 48GB
+    --threads 24
 
 /usr/bin/time -f "globalmedian_irs,%e,%M" \
     -o "$CPTAC_PERF/globalmedian_irs.time" \
@@ -153,8 +150,7 @@ mkdir -p "$CPTAC_PERF"
     --run-normalization none \
     --sample-normalization globalmedian \
     --irs \
-    --threads 24 \
-    --memory 48GB
+    --threads 24
 
 /usr/bin/time -f "ratio,%e,%M" \
     -o "$CPTAC_PERF/ratio.time" \
@@ -166,8 +162,7 @@ mkdir -p "$CPTAC_PERF"
     --run-normalization none \
     --sample-normalization none \
     --ratio-fraction-merge mean \
-    --threads 24 \
-    --memory 48GB
+    --threads 24
 
 MPLCONFIGDIR="$CPTAC_OUT/matplotlib" \
 python docs/examples/render_cptac_performance.py \

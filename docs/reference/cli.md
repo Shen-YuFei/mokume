@@ -23,14 +23,22 @@ The unified pipeline: features to protein quantification in one step.
 mokume features2proteins [OPTIONS]
 ```
 
-### Required Options
+### Input & Output
 
-| Option | Description |
-|--------|-------------|
-| `-p/--parquet` | Input parquet file (quantms.io/qpx format) |
-| `-o/--output` | Output protein intensities CSV |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-p/--parquet` | none | Input quantms.io/QPX feature parquet; mutually exclusive with `--msstats` |
+| `--msstats` | none | Input MSstats CSV; mutually exclusive with `--parquet` and requires `--sdrf` |
+| `-o/--output` | required | Output protein intensities CSV |
+| `--output-format` | `python-compatible` | Protein identifier header: `ProteinName` for `python-compatible`, `protein` for `rust-native` |
 
-### Input & Filtering
+Provide exactly one of `--parquet` or `--msstats`. MSstats input requires
+`ProteinName`, `PeptideSequence`, `Intensity`, `Charge` or `PrecursorCharge`,
+and `Run` or `Reference`; isobaric data also requires `Channel`. Ratio
+quantification requires PSM-level QPX evidence and does not accept MSstats
+feature tables.
+
+### Metadata & Filtering
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -46,9 +54,16 @@ mokume features2proteins [OPTIONS]
 |--------|---------|-------------|
 | `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, pibaq, `top<N>` (top3, top5, top10, ...), sum, median, ratio, abd (TMT abundance), intensity (TMT reporter), spectral_count |
 | `--fasta` | none | FASTA file (required for piBAQ) |
-| `--ion-alignment` | none | Ion alignment: none or hierarchical |
-| `--directlfq-cores` | auto | CPU cores for DirectLFQ |
+| `--ion-alignment` | none | Compatibility option; only `none` is currently executable (`hierarchical` is rejected) |
+| `--directlfq-cores` | auto | Fallback Rayon thread count for DirectLFQ when `--threads` is omitted |
 | `--directlfq-min-nonan` | 1 | Min non-NaN values for DirectLFQ |
+| `--directlfq-num-samples-quadratic` | 50 | Maximum samples in DirectLFQ's quadratic global-alignment subset |
+| `--pibaq-enzyme` | `Trypsin` | Protease name from the installed pyOpenMS catalog |
+| `--pibaq-max-aa` | 50 | Maximum theoretical peptide length |
+| `--pibaq-min-shared` | 2 | Minimum shared peptides for automatic family discovery |
+| `--pibaq-families` | none | YAML file with explicit family overrides |
+| `--pibaq-min-anchors` | 1 | Minimum unique-peptide anchors required before proportional family allocation |
+| `--pibaq-high-anchor-threshold` | 3 | Anchor threshold used to classify high-evidence family members |
 
 !!! note "Write the N in the method name: `--quant-method top<N>`"
     TopN quantification takes its N from the method name — `--quant-method top3`,
@@ -64,7 +79,7 @@ mokume features2proteins [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--run-normalization` | `median` | Run-level: median, mean, max, global, max_min, iqr, none |
-| `--sample-normalization` | `globalMedian` | Sample-level: globalMedian, conditionMedian, hierarchical, quantile, mediancenter, meancenter, rlr, loess, none |
+| `--sample-normalization` | `globalMedian` | Sample-level: globalMedian, conditionMedian, hierarchical, quantile, mediancenter, meancenter, rlr, loess, tmm, none |
 | `--normalization-proteins` | none | File with protein IDs for normalization |
 
 ### IRS (Multi-Plex TMT)
@@ -73,6 +88,7 @@ mokume features2proteins [OPTIONS]
 |--------|---------|-------------|
 | `--irs` | off | Enable IRS normalization |
 | `--irs-reference-samples` | auto | Comma-separated reference sample names |
+| `--irs-reference-sample` | none | Repeatable single reference sample name; conflicts with `--irs-reference-samples` |
 | `--irs-sdrf-column` | auto | SDRF column for reference detection |
 | `--irs-sdrf-values` | auto | Values indicating reference samples |
 | `--irs-reference-regex` | `pool\|powder\|ref\|reference\|bridge` | Regex for reference auto-detection |
@@ -144,7 +160,7 @@ Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrast
 
 `--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods run in the native Rust kernel — no R or rpy2 required. Deterministic methods (limma / deqms) are cell-exact against frozen Python-generated compatibility output; RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change cell-exactly and p-values at rank level.
 
-`--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold.
+`--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold. Eligible non-ROTS members use the requested correction; ROTS and LimROTS retain their native permutation FDR. The Fisher-combined p-values use BH by default, with BKY or Storey applied when requested and reliable; IHW remains a member-level correction because the combined rows have no IHW covariate.
 
 ### Plots & Reports
 
@@ -168,22 +184,25 @@ Pass `--help` to either (`python -m mokume.commands.de_plots --help`) for the fu
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--export-peptides` | none | Export normalized peptides to file |
+| `--export-peptides` | none | Export normalized peptides (not supported with DirectLFQ) |
 | `--export-ions` | none | Export normalized ions (DirectLFQ only) |
 
-### DuckDB Resource Limits
+`--export-peptides` also rejects dataset-level sample normalization for
+non-cell-based aggregation methods, because those peptide values would not
+represent the normalized protein matrix.
+
+### Runtime Resource Controls
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--duckdb-memory` | DuckDB autoconfig (~80% of total RAM) | DuckDB memory limit (e.g. `80GB`, `16384MB`). See note below. |
-| `--duckdb-threads` | all cores | Number of threads DuckDB may use |
+| `--threads` | Rayon default | Size the Rayon thread pool used by parallel Rust sections; alias: `--duckdb-threads` |
+| `--memory` | none | Validate a memory-size string such as `80GB`; alias: `--duckdb-memory` |
 
-!!! warning "`--duckdb-memory` is not a hard process cap"
-    The flag only sizes DuckDB's internal buffer pool. PyArrow, polars, and pandas each
-    have their own independent allocators, so the surrounding Python process can grow to
-    **2-3x** the DuckDB limit on wide pivots (e.g. PXD030304 at 5798 samples peaks
-    ~94 GB of process RSS with `--duckdb-memory 40GB`). For production environments
-    that require a hard ceiling, layer one of these on top of mokume:
+!!! warning "`--memory` does not enforce a memory limit"
+    The current Rust path only parses and validates the value. It does not
+    configure DuckDB, cap process RSS, or alter the computation. The
+    `--duckdb-*` spellings are compatibility aliases; QPX loading is not
+    DuckDB-based. For a hard ceiling, use an external resource limit:
 
     - **systemd / cgroup**: `systemd-run --scope -p MemoryMax=80G -- mokume features2proteins ...`
     - **SLURM**: `sbatch --mem=80G ...`
@@ -281,7 +300,7 @@ mokume peptides2protein [OPTIONS]
 | `-i/--ploidy` | 2 | Ploidy number |
 | `-m/--organism` | `human` | Organism for histone data |
 | `-c/--cpc` | 200 | Cellular protein concentration (g/L) |
-| `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
+| `--threads` | -1 | Rayon threads for MaxLFQ and DirectLFQ; positive values set the pool, `-1` uses all available CPUs, `-2` leaves one free, and `0` keeps the global pool |
 | `--min_nonan` | 1 | Min non-NaN for DirectLFQ |
 | `--families` | none | YAML file with explicit family overrides (piBAQ only; see [user guide](../user-guide/peptides2protein.md#family-discovery-tuning)) |
 | `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (piBAQ only) |

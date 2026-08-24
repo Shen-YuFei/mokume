@@ -230,7 +230,7 @@ mokume.peptides2protein(method="sum", peptides="peptides.csv",
 | `-i/--ploidy` | 2 | Ploidy number |
 | `-m/--organism` | `human` | Organism for histone data |
 | `-c/--cpc` | 200 | Cellular protein concentration (g/L) |
-| `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
+| `--threads` | -1 | Rayon threads for MaxLFQ and DirectLFQ; positive values set the pool, `-1` uses all available CPUs, `-2` leaves one free, and `0` keeps the global pool |
 | `--min_nonan` | 1 | Min non-NaN values (DirectLFQ) |
 | `--families` | none | Optional YAML file with explicit family overrides (piBAQ only) |
 | `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (piBAQ only) |

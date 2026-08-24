@@ -45,6 +45,27 @@ The `features2proteins` command is the recommended way to go from raw feature da
     ])
     ```
 
+## Input Formats
+
+Provide exactly one feature input:
+
+- `--parquet` accepts a quantms.io/QPX feature parquet file.
+- `--msstats` accepts a native MSstats CSV and requires `--sdrf` so runs and
+  channels can be mapped to samples.
+
+```bash
+mokume features2proteins \
+    --msstats msstats.csv \
+    --sdrf experiment.sdrf.tsv \
+    --output proteins.csv \
+    --quant-method maxlfq
+```
+
+An MSstats CSV must contain `ProteinName`, `PeptideSequence`, `Intensity`,
+`Charge` or `PrecursorCharge`, and `Run` or `Reference`. Isobaric data also
+requires `Channel`. `--quant-method ratio` requires PSM-level QPX evidence and
+therefore cannot use an MSstats feature table.
+
 ## Quantification Methods
 
 | Method | CLI Flag | FASTA Required | Description |
@@ -63,7 +84,8 @@ The `features2proteins` command is the recommended way to go from raw feature da
 In practice:
 
 - Use `maxlfq` as the default starting point for standard LFQ workflows.
-- Use `directlfq` when you explicitly want the DirectLFQ package to handle normalization and quantification together.
+- Use `directlfq` when you explicitly want the native Rust DirectLFQ estimator
+  to handle normalization and quantification together.
 - Use `pibaq` when you need absolute-style quantification and have a FASTA
   file. The pipeline delegates to the same piBAQ algorithm as
   `peptides2protein` -- see
@@ -94,36 +116,34 @@ mokume features2proteins \
 
 ## Memory & Performance for Large Studies
 
-When the input parquet has thousands of samples (~5000+), the long-form
-features must be pivoted into a wide DirectLFQ matrix. mokume streams the
-DuckDB result set through Arrow into polars and pivots there, which keeps the
-load step's wall time down (cf. PXD030304: ~32 min on 163M long rows pivoted
-into 147,374 × 5,798) and avoids the OOM that pandas pivots used to trigger.
+The Rust kernel reads QPX parquet data in Arrow record batches and accumulates
+the compact peptide, protein, and sample structures needed by the selected
+method. It does not load the input through DuckDB or build a pandas pivot.
 
-The DuckDB engine itself can be size-capped via `--duckdb-memory` /
-`--duckdb-threads`:
+Use `--threads` to size the Rayon thread pool used by parallel Rust sections.
+When both options are present, `--threads` takes precedence over the
+DirectLFQ-specific `--directlfq-cores` fallback:
 
 ```bash
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq \
-    --duckdb-memory 40GB \
-    --duckdb-threads 16
+    --threads 16
 ```
 
-!!! warning "`--duckdb-memory` is *not* a hard process cap"
-    The flag only sizes DuckDB's internal buffer pool. PyArrow, polars, and
-    pandas allocate independently, so peak Python process RSS can grow to
-    **2-3x** the DuckDB cap on wide pivots. For production environments
-    that need a strict ceiling, layer one of these on top of mokume:
+!!! warning "`--memory` validates syntax but does not limit memory"
+    `--memory` currently accepts and validates values such as `40GB`, but it
+    does not configure DuckDB, cap process RSS, or change the calculation.
+    `--duckdb-memory` is retained only as a compatibility alias. Likewise,
+    `--duckdb-threads` is a compatibility alias for `--threads` and controls
+    Rayon, not DuckDB.
+
+    For production environments that need a strict memory ceiling, use an
+    external resource limit:
 
     - **systemd / cgroup**: `systemd-run --scope -p MemoryMax=80G -- mokume features2proteins ...`
     - **SLURM**: `sbatch --mem=80G ...`
     - **Docker / k8s**: `resources.limits.memory: 80Gi`
-
-    The `directlfq-cores` worker count is automatically reduced when
-    `--duckdb-memory` is set, so each forked worker has room for its
-    COW-amplified copy of the wide matrix.
 
 ## Normalization Options
 
@@ -203,6 +223,7 @@ mokume features2proteins \
 |------------|---------|-------------|
 | `--irs` | off | Enable IRS normalization |
 | `--irs-reference-samples` | auto | Comma-separated reference sample names |
+| `--irs-reference-sample` | none | Repeatable single reference sample name; conflicts with `--irs-reference-samples` |
 | `--irs-sdrf-column` | auto | SDRF column for reference detection |
 | `--irs-sdrf-values` | auto | Values indicating reference samples |
 | `--irs-reference-regex` | `pool\|powder\|ref\|reference\|bridge` | Regex for auto-detection |
@@ -422,13 +443,24 @@ cells in the kernel matrix.
 ## Exporting Intermediate Data
 
 ```bash
-# Export normalized peptides and ions
+# Export normalized peptides from a non-DirectLFQ aggregation
+mokume features2proteins \
+    -p features.parquet -o proteins.csv \
+    --quant-method sum \
+    --export-peptides peptides.csv
+
+# Export the normalized ion table used by DirectLFQ
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq \
-    --export-peptides peptides.csv \
     --export-ions ions.csv
 ```
+
+DirectLFQ peptide export is not supported because its calculation operates on
+the normalized ion matrix. Conversely, `--export-ions` is DirectLFQ-only. For
+non-cell-based aggregation methods, peptide export also rejects dataset-level
+sample normalization because the exported peptide values would not represent
+the normalized protein matrix.
 
 ## Full Example
 

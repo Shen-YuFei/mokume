@@ -231,15 +231,27 @@ mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.
 
 ## FDR Correction
 
-All methods produce raw p-values that are corrected for multiple testing. mokume supports two correction methods:
+Mokume supports four requested FDR corrections. LimROTS and ROTS are the
+exception: they retain their native permutation-based FDR rather than replacing
+it with another requested correction.
 
 | Method | Description | When to Use |
 |--------|-------------|-------------|
 | `bh` | Benjamini-Hochberg | Default; robust and widely accepted |
 | `ihw` | Independent Hypothesis Weighting | When a meaningful covariate exists (e.g., base mean expression) |
+| `bky` | Benjamini-Krieger-Yekutieli | Adaptive two-stage control when the estimated null fraction is reliable |
+| `storey` | Storey's q-value method | Adaptive control when the estimated null fraction is reliable |
 
 !!! info
-    IHW requires a suitable covariate to improve power over BH. If no covariate is available, mokume falls back to BH automatically.
+    IHW requires a suitable covariate to improve power over BH. If no covariate
+    is available, mokume falls back to BH automatically. BKY and Storey also
+    fall back to BH when their null-fraction estimate is not reliable.
+
+For an ensemble, eligible non-ROTS members use the requested correction while
+ROTS and LimROTS keep their native permutation FDR. Fisher-combined p-values use
+BH by default; BKY or Storey replaces that ensemble-level BH adjustment when
+requested and reliable. IHW remains a member-level correction because the
+combined rows have no IHW covariate.
 
 ## Benchmark Reference
 

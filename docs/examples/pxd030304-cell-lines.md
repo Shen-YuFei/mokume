@@ -31,8 +31,7 @@ RAYON_NUM_THREADS=24 mokume features2proteins \
     --quant-method directlfq \
     --run-normalization none \
     --sample-normalization none \
-    --threads 24 \
-    --memory 48GB
+    --threads 24
 ```
 
 DirectLFQ performs its own peptide-profile alignment and protein summarization.
