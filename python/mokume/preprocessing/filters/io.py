@@ -195,12 +195,14 @@ peptide:
   allowed_charge_states: null     # e.g., [2, 3, 4] or null for all charges
   exclude_modifications: []       # Modification names to exclude, e.g., ["Oxidation"]
   max_missed_cleavages: null      # Max missed cleavages (null = no filter)
+  fdr_threshold: null              # Peptide q-value cutoff (null = no filter)
   min_peptide_length: 7           # Minimum peptide length in amino acids
   max_peptide_length: 50          # Maximum peptide length in amino acids
   exclude_sequence_patterns: []   # Regex patterns to exclude
 
 # Protein-level filters
 protein:
+  fdr_threshold: null           # Protein-group q-value cutoff (null = no filter)
   min_peptides: 1             # Minimum total peptides per protein
   min_unique_peptides: 2      # Minimum unique peptides per protein
   razor_peptide_handling: keep   # How to handle shared peptides: keep, remove, assign_to_top

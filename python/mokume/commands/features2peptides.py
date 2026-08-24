@@ -66,7 +66,11 @@ def _validate_features2peptides_options(ctx: click.Context) -> None:
     _validate_irs_options(ctx)
 
 
-def _filter_overrides(ctx: click.Context) -> dict:
+def _filter_overrides(
+    ctx: click.Context,
+    peptide_fdr: float | None = None,
+    protein_fdr: float | None = None,
+) -> dict:
     params = ctx.params
     overrides = {}
     direct = {
@@ -79,6 +83,10 @@ def _filter_overrides(ctx: click.Context) -> dict:
     for source, target in direct.items():
         if params[source] is not None:
             overrides[target] = params[source]
+    if peptide_fdr is not None:
+        overrides["peptide_fdr"] = peptide_fdr
+    if protein_fdr is not None:
+        overrides["protein_fdr"] = protein_fdr
     if params["filter_charge_states"] is not None:
         overrides["charge_states"] = [
             int(value.strip()) for value in params["filter_charge_states"].split(",")
@@ -90,8 +98,12 @@ def _filter_overrides(ctx: click.Context) -> dict:
     return overrides
 
 
-def _preprocessing_config(ctx: click.Context) -> PreprocessingFilterConfig | None:
-    overrides = _filter_overrides(ctx)
+def _preprocessing_config(
+    ctx: click.Context,
+    peptide_fdr: float | None = None,
+    protein_fdr: float | None = None,
+) -> PreprocessingFilterConfig | None:
+    overrides = _filter_overrides(ctx, peptide_fdr, protein_fdr)
     config_path = ctx.params["filter_config"]
     if config_path:
         config = load_filter_config(config_path)
@@ -280,6 +292,12 @@ def _resolved_filter_thresholds(
     help="Override: maximum missed cleavages",
 )
 @click.option(
+    "--filter-peptide-fdr",
+    "filter_peptide_fdr",
+    type=click.FloatRange(0.0, 1.0),
+    help="Override: maximum QPX peptide q-value",
+)
+@click.option(
     "--filter-exclude-modifications",
     "filter_exclude_modifications",
     type=str,
@@ -290,6 +308,12 @@ def _resolved_filter_thresholds(
     "filter_min_unique_peptides",
     type=int,
     help="Override: minimum unique peptides per protein",
+)
+@click.option(
+    "--filter-protein-fdr",
+    "filter_protein_fdr",
+    type=click.FloatRange(0.0, 1.0),
+    help="Override: maximum QPX protein-group q-value",
 )
 @click.option(
     "--filter-min-features",
@@ -326,8 +350,10 @@ def features2parquet(
     filter_cv_threshold: float,
     filter_charge_states: str,
     filter_max_missed_cleavages: int,
+    filter_peptide_fdr: float,
     filter_exclude_modifications: str,
     filter_min_unique_peptides: int,
+    filter_protein_fdr: float,
     filter_min_features: int,
 ) -> None:
     """
@@ -342,7 +368,9 @@ def features2parquet(
         return
 
     _validate_features2peptides_options(ctx)
-    preprocessing_config = _preprocessing_config(ctx)
+    preprocessing_config = _preprocessing_config(
+        ctx, filter_peptide_fdr, filter_protein_fdr
+    )
     min_aa, min_unique = _resolved_filter_thresholds(ctx, preprocessing_config)
 
     peptide_normalization(

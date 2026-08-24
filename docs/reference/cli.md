@@ -286,12 +286,16 @@ them through `features2proteins`, where the full matrix exists.
 | `--filter-cv-threshold` | none | Max CV across replicates (override) |
 | `--filter-charge-states` | none | Comma-separated charge states (override) |
 | `--filter-max-missed-cleavages` | none | Max missed cleavages (override) |
+| `--filter-peptide-fdr` | none | Max QPX peptide q-value (override) |
 | `--filter-exclude-modifications` | none | Comma-separated modifications (override) |
 | `--filter-min-unique-peptides` | none | Min unique peptides (override) |
+| `--filter-protein-fdr` | none | Max QPX protein-group q-value (override) |
 | `--filter-min-features` | none | Min features per run (override) |
 
-Only implemented filters appear in the generated example. Active unsupported
-filter-config values are rejected instead of being logged and ignored.
+Only implemented filters appear in the generated example. FDR filtering is
+disabled by default and requires populated `peptide_qvalue` or
+`pg_global_qvalue` input. Active unsupported filter-config values are rejected
+instead of being logged and ignored.
 
 ---
 

@@ -14,6 +14,7 @@ from mokume.preprocessing.filters.enums import FilterLevel, RazorPeptideHandling
 
 
 logger = get_logger("mokume.preprocessing.filters.protein")
+PROTEIN_QVALUE = "pg_global_qvalue"
 
 
 class ContaminantFilter(BaseFilter):
@@ -183,6 +184,44 @@ class MinPeptideFilter(BaseFilter):
                 "min_peptides": self.min_peptides,
                 "min_unique_peptides": self.min_unique_peptides,
             },
+        )
+
+
+class ProteinFDRFilter(BaseFilter):
+    """Keep protein groups whose minimum QPX protein q-value passes."""
+
+    def __init__(
+        self,
+        fdr_threshold: float,
+        fdr_column: str = PROTEIN_QVALUE,
+        protein_column: str = PROTEIN_NAME,
+    ) -> None:
+        self.fdr_threshold = fdr_threshold
+        self.fdr_column = fdr_column
+        self.protein_column = protein_column
+
+    @property
+    def name(self) -> str:
+        return "ProteinFDRFilter"
+
+    @property
+    def level(self) -> FilterLevel:
+        return FilterLevel.PROTEIN
+
+    def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
+        input_count = len(df)
+        if self.fdr_column not in df.columns or not df[self.fdr_column].notna().any():
+            raise ValueError(
+                "protein FDR filtering requires a populated QPX "
+                f"'{self.fdr_column}' column"
+            )
+        protein_fdr = df.groupby(self.protein_column)[self.fdr_column].min()
+        passing = protein_fdr[protein_fdr <= self.fdr_threshold].index
+        filtered_df = df[df[self.protein_column].isin(passing)].copy()
+        return filtered_df, self._create_result(
+            input_count,
+            len(filtered_df),
+            {"fdr_threshold": self.fdr_threshold},
         )
 
 

@@ -116,7 +116,9 @@ class TestFilterConfigurations:
                 "cv_threshold": 0.25,
                 "min_replicate_agreement": 2,
                 "charge_states": [2, 3],
+                "peptide_fdr": 0.02,
                 "min_unique_peptides": 3,
+                "protein_fdr": 0.03,
                 "max_missing_rate": 0.4,
             }
         )
@@ -125,7 +127,9 @@ class TestFilterConfigurations:
         assert config.intensity.cv_threshold == 0.25
         assert config.intensity.min_replicate_agreement == 2
         assert config.peptide.allowed_charge_states == [2, 3]
+        assert config.peptide.fdr_threshold == 0.02
         assert config.protein.min_unique_peptides == 3
+        assert config.protein.fdr_threshold == 0.03
         assert config.run_qc.max_missing_rate == 0.4
 
     def test_unknown_top_level_key_is_rejected(self):
@@ -139,9 +143,7 @@ class TestFilterConfigurations:
             (None, "strict_mode"),
             ("intensity", "remove_zero_intensity"),
             ("peptide", "min_search_score"),
-            ("peptide", "fdr_threshold"),
             ("peptide", "require_unique_peptides"),
-            ("protein", "fdr_threshold"),
             ("protein", "min_coverage"),
             ("protein", "protein_grouping"),
             ("run_qc", "min_sample_correlation"),
@@ -225,6 +227,36 @@ class TestFilterPipeline:
         filter_names = [f.name for f in pipeline.filters]
         assert "ContaminantFilter" in filter_names
         assert "MinPeptideFilter" in filter_names
+
+    def test_explicit_qpx_fdr_filters_apply_and_require_values(self):
+        """Opt-in FDR cutoffs must filter dedicated QPX q-value fields."""
+        import pandas as pd
+
+        config = PreprocessingFilterConfig(name="qpx_fdr")
+        config.peptide.fdr_threshold = 0.01
+        config.protein.fdr_threshold = 0.01
+        pipeline = get_filter_pipeline(config)
+        peptide_filter = next(
+            item for item in pipeline.filters if item.name == "PeptideFDRFilter"
+        )
+        protein_filter = next(
+            item for item in pipeline.filters if item.name == "ProteinFDRFilter"
+        )
+        frame = pd.DataFrame(
+            {
+                "ProteinName": ["P1", "P1", "P2", "P2"],
+                "PeptideCanonical": ["A", "B", "C", "D"],
+                "peptide_qvalue": [0.005, 0.02, 0.005, 0.005],
+                "pg_global_qvalue": [0.02, 0.02, 0.02, 0.005],
+            }
+        )
+
+        peptide_rows, _result = peptide_filter.apply(frame)
+        assert set(peptide_rows["PeptideCanonical"]) == {"A", "C", "D"}
+        protein_rows, _result = protein_filter.apply(frame)
+        assert set(protein_rows["ProteinName"]) == {"P2"}
+        with pytest.raises(ValueError, match="populated QPX 'peptide_qvalue'"):
+            peptide_filter.apply(frame.drop(columns="peptide_qvalue"))
 
     def test_min_peptides_is_applied_when_stricter_than_unique_threshold(self):
         """The total-peptide threshold must not be ignored when sequences exist."""

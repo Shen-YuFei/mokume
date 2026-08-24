@@ -100,6 +100,11 @@ struct FeatureToProteinState {
     /// the per-`(protein, sample)` unique-peptide gate (matching Python's
     /// pipeline chain). Group-level filters are validated as unsupported upstream.
     peptide_filters: Option<PreprocessingFilterConfig>,
+    /// Protein groups that pass an explicitly requested protein-group q-value
+    /// cutoff. `None` means no protein FDR filter was requested; `Some` is
+    /// populated by a source pre-pass so every row of a passing protein group is
+    /// retained, matching the Python group-minimum FDR contract.
+    protein_fdr_allowed: Option<HashSet<String>>,
     /// Sample names dropped by the Run-QC group filters (Python `run_qc.py`:
     /// total-intensity / feature-count / protein-count thresholds). Computed in a
     /// pre-pass over the same initial-filtered features; ingest skips these
@@ -167,6 +172,7 @@ impl FeatureToProteinState {
             low_frequency: None,
             keep_shared_peptides: false,
             peptide_filters: None,
+            protein_fdr_allowed: None,
             run_qc_excluded_samples: HashSet::new(),
             excluded_sequence_regexes: Vec::new(),
             quantile_bounds: HashMap::new(),
@@ -205,9 +211,11 @@ impl FeatureToProteinState {
             .peptide_filters
             .as_ref()
             .map_or(&[], |config| &config.protein.contaminant_patterns);
-        if filtering.remove_contaminants
-            && matches_protein_contaminant(&protein_group, contaminant_patterns)
-        {
+        if self.rejects_protein_group(
+            &protein_group,
+            filtering.remove_contaminants,
+            contaminant_patterns,
+        ) {
             return Ok(());
         }
         // Python `remove_protein_by_ids` drops rows whose joined `ProteinName`
@@ -353,6 +361,19 @@ impl FeatureToProteinState {
         Ok(())
     }
 
+    fn rejects_protein_group(
+        &self,
+        protein_group: &str,
+        remove_contaminants: bool,
+        contaminant_patterns: &[String],
+    ) -> bool {
+        (remove_contaminants && matches_protein_contaminant(protein_group, contaminant_patterns))
+            || self
+                .protein_fdr_allowed
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(protein_group))
+    }
+
     /// Apply the opt-in `features2peptides` per-row preprocessing filters
     /// (Python pipeline's per-feature filters: intensity floor, peptide length,
     /// charge state, excluded modifications, missed cleavages). Returns `true`
@@ -395,6 +416,14 @@ impl FeatureToProteinState {
         // MissedCleavageFilter (trypsin), on the canonical sequence.
         if let Some(max) = config.peptide.max_missed_cleavages {
             if filters::trypsin_missed_cleavages(&feature.sequence) > max {
+                return false;
+            }
+        }
+        if let Some(threshold) = config.peptide.fdr_threshold {
+            if !feature
+                .peptide_qvalue
+                .is_some_and(|qvalue| qvalue.is_finite() && qvalue <= threshold)
+            {
                 return false;
             }
         }
@@ -5131,9 +5160,9 @@ fn run_features_to_proteins_inner(
 /// `run_features_to_peptides`); the group-level filters (CV, quantile, run QC)
 /// are applied via the `collect_intensity_group_filters` and
 /// `collect_run_qc_exclusions` pre-passes (see `validate_filter_pipeline_subset`),
-/// reproducing Python's per-sample chain rather than failing fast. Peptide/protein
-/// FDR thresholds are a no-op without a q-value column (matching Python's
-/// apply-time column check), so they are not rejected.
+/// reproducing Python's per-sample chain rather than failing fast. Explicit
+/// peptide/protein FDR thresholds use the dedicated QPX q-value fields and fail
+/// before output when the requested field is unpopulated.
 /// Compile the `exclude_sequence_patterns` once into regexes, mirroring Python's
 /// per-pattern `re.compile` (peptide.py:390). Patterns are real (un-escaped,
 /// case-sensitive) regexes; an invalid one is surfaced as a configuration error
@@ -5180,24 +5209,22 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     // the `min_unique`-gated, post-CV intensities) and the per-row drop in
     // `ingest`; nothing to reject here.
     let peptide = &config.peptide;
+    let protein = &config.protein;
+    validate_fdr_thresholds(peptide.fdr_threshold, protein.fdr_threshold)?;
     if peptide.min_search_score.is_some() {
         return unsupported("features2peptides filter min-search-score");
     }
-    if (peptide.fdr_threshold - 0.01).abs() > f64::EPSILON || peptide.require_unique_peptides {
-        return unsupported("features2peptides peptide FDR/unique filters");
+    if peptide.require_unique_peptides {
+        return unsupported("features2peptides peptide unique filter");
     }
     // `exclude_sequence_patterns` is applied per-row during ingest
     // (`passes_peptide_filter_pipeline` -> `filters::sequence_matches_excluded`),
     // compiled once into `excluded_sequence_regexes`; nothing to reject here.
-    let protein = &config.protein;
     if protein.min_coverage > 0.0 {
         return unsupported("features2peptides filter min-coverage");
     }
-    if (protein.fdr_threshold - 0.01).abs() > f64::EPSILON
-        || protein.min_peptides != 1
-        || !protein.protein_grouping.eq_ignore_ascii_case("none")
-    {
-        return unsupported("features2peptides protein FDR/grouping filters");
+    if protein.min_peptides != 1 || !protein.protein_grouping.eq_ignore_ascii_case("none") {
+        return unsupported("features2peptides protein grouping filters");
     }
     // `keep` (no-op), `remove` (drop all rows of a razor peptide), and
     // `assign_to_top` (keep only the top-protein rows, first-appearance tie-break)
@@ -5219,6 +5246,20 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     }
     if run_qc.min_sample_correlation.is_some() {
         return unsupported("features2peptides filter min-sample-correlation");
+    }
+    Ok(())
+}
+
+fn validate_fdr_thresholds(peptide: Option<f64>, protein: Option<f64>) -> Result<()> {
+    if peptide.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+        return Err(invalid_input(
+            "features2peptides peptide FDR threshold must be between 0 and 1",
+        ));
+    }
+    if protein.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+        return Err(invalid_input(
+            "features2peptides protein FDR threshold must be between 0 and 1",
+        ));
     }
     Ok(())
 }
@@ -5366,8 +5407,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     }
     state.peptide_filters = filter_pipeline.cloned();
     if let Some(pipeline) = filter_pipeline {
-        state.excluded_sequence_regexes =
-            compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
+        configure_fdr_and_sequence_filters(&mut state, parquet, pipeline)?;
         if let Some(peptides) = &mut state.export_rows.peptides {
             peptides.razor_handling =
                 parse_razor_handling(&pipeline.protein.razor_peptide_handling);
@@ -5467,6 +5507,82 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         // (verified on PXD003539: quantile/mediancenter == sample=none).
         None,
     )
+}
+
+fn configure_fdr_and_sequence_filters(
+    state: &mut FeatureToProteinState,
+    parquet: &Path,
+    pipeline: &PreprocessingFilterConfig,
+) -> Result<()> {
+    state.excluded_sequence_regexes =
+        compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
+    state.protein_fdr_allowed = collect_fdr_filter_state(
+        parquet,
+        pipeline.peptide.fdr_threshold,
+        pipeline.protein.fdr_threshold,
+    )?;
+    Ok(())
+}
+
+/// Validate that explicitly requested QPX q-value fields carry usable values
+/// and collect the protein groups passing the group-minimum protein FDR rule.
+/// The pre-pass happens before output creation, so an unavailable q-value cannot
+/// turn a requested filter into a successful no-op or a misleading empty file.
+fn collect_fdr_filter_state(
+    parquet: &Path,
+    peptide_threshold: Option<f64>,
+    protein_threshold: Option<f64>,
+) -> Result<Option<HashSet<String>>> {
+    if peptide_threshold.is_none() && protein_threshold.is_none() {
+        return Ok(None);
+    }
+
+    let mut peptide_values = 0_usize;
+    let mut protein_values = 0_usize;
+    let mut protein_min_qvalue: HashMap<String, f64> = HashMap::new();
+    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
+    stream_qpx_features(reader, |feature| {
+        if peptide_threshold.is_some()
+            && feature
+                .peptide_qvalue
+                .is_some_and(|qvalue| qvalue.is_finite())
+        {
+            peptide_values += 1;
+        }
+        if protein_threshold.is_some() {
+            if let (Some(qvalue), Some(protein)) = (
+                feature.pg_global_qvalue.filter(|qvalue| qvalue.is_finite()),
+                protein_group_name(&feature.protein_accessions),
+            ) {
+                protein_values += 1;
+                protein_min_qvalue
+                    .entry(protein)
+                    .and_modify(|known| *known = known.min(qvalue))
+                    .or_insert(qvalue);
+            }
+        }
+        Ok(())
+    })?;
+
+    if peptide_threshold.is_some() && peptide_values == 0 {
+        return Err(invalid_input(
+            "--filter-peptide-fdr requires a populated QPX `peptide_qvalue` column",
+        ));
+    }
+    let Some(threshold) = protein_threshold else {
+        return Ok(None);
+    };
+    if protein_values == 0 {
+        return Err(invalid_input(
+            "--filter-protein-fdr requires a populated QPX `pg_global_qvalue` column",
+        ));
+    }
+    Ok(Some(
+        protein_min_qvalue
+            .into_iter()
+            .filter_map(|(protein, qvalue)| (qvalue <= threshold).then_some(protein))
+            .collect(),
+    ))
 }
 
 /// Build the internal `FeatureToProteinsConfig` that drives the peptide export.
@@ -8431,6 +8547,7 @@ mod tests {
                 anchor_protein: None,
                 unique: Some(true),
                 is_decoy: Some(false),
+                peptide_qvalue: None,
                 pg_global_qvalue: None,
                 label: None,
                 intensity: 100.0,

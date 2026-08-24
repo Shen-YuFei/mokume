@@ -18,6 +18,7 @@ from mokume.preprocessing.filters.enums import FilterLevel
 
 
 logger = get_logger("mokume.preprocessing.filters.peptide")
+PEPTIDE_QVALUE = "peptide_qvalue"
 
 
 class PeptideLengthFilter(BaseFilter):
@@ -371,4 +372,34 @@ class SequencePatternFilter(BaseFilter):
 
         return filtered_df, self._create_result(
             input_count, output_count, {"exclude_patterns": self.exclude_patterns}
+        )
+
+
+class PeptideFDRFilter(BaseFilter):
+    """Filter peptide rows by the dedicated QPX peptide q-value."""
+
+    def __init__(self, fdr_threshold: float, fdr_column: str = PEPTIDE_QVALUE) -> None:
+        self.fdr_threshold = fdr_threshold
+        self.fdr_column = fdr_column
+
+    @property
+    def name(self) -> str:
+        return "PeptideFDRFilter"
+
+    @property
+    def level(self) -> FilterLevel:
+        return FilterLevel.PEPTIDE
+
+    def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
+        input_count = len(df)
+        if self.fdr_column not in df.columns or not df[self.fdr_column].notna().any():
+            raise ValueError(
+                "peptide FDR filtering requires a populated QPX "
+                f"'{self.fdr_column}' column"
+            )
+        filtered_df = df[df[self.fdr_column] <= self.fdr_threshold].copy()
+        return filtered_df, self._create_result(
+            input_count,
+            len(filtered_df),
+            {"fdr_threshold": self.fdr_threshold},
         )

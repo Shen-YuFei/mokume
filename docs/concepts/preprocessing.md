@@ -77,10 +77,12 @@ intensity:
   min_intensity: 0.0
 
 peptide:
+  fdr_threshold: null
   min_peptide_length: 7
   max_peptide_length: 50
 
 protein:
+  fdr_threshold: null
   min_unique_peptides: 2
   remove_contaminants: true
   remove_decoys: true
@@ -105,6 +107,7 @@ mokume features2peptides \
     --filter-config filters.yaml \
     --filter-min-intensity 1000 \
     --filter-cv-threshold 0.3 \
+    --filter-protein-fdr 0.01 \
     --output peptides.csv
 
 # CLI-only filtering (no config file)
@@ -114,6 +117,11 @@ mokume features2peptides \
     --filter-min-unique-peptides 2 \
     --output peptides.csv
 ```
+
+Peptide and protein FDR thresholds are explicit opt-ins. They use the dedicated
+QPX `peptide_qvalue` and `pg_global_qvalue` fields; requesting a threshold when
+the corresponding field is absent or entirely null fails before output is
+written.
 
 ### Python (wheel)
 

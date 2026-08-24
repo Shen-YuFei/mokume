@@ -72,6 +72,13 @@ if TYPE_CHECKING:
 logger = get_logger("mokume.peptide_normalization")
 
 
+def _ensure_qvalue_columns(dataset_df):
+    """Add nullable QPX q-value fields for legacy/custom feature frames."""
+    for column in ("peptide_qvalue", "pg_global_qvalue"):
+        if column not in dataset_df.columns:
+            dataset_df[column] = None
+
+
 @log_execution_time(logger)
 def peptide_normalization(
     parquet: str,
@@ -275,6 +282,7 @@ def peptide_normalization(
 
             if not keep_shared_peptides:
                 dataset_df = dataset_df[dataset_df["unique"] == 1]
+            _ensure_qvalue_columns(dataset_df)
             dataset_df = dataset_df[PARQUET_COLUMNS]
 
             dataset_df = reformat_quantms_feature_table_quant_labels(

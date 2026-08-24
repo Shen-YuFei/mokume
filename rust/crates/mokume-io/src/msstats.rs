@@ -141,6 +141,7 @@ impl<'a> MsstatsReader<'a> {
             anchor_protein: None,
             unique: Some(unique),
             is_decoy: None,
+            peptide_qvalue: None,
             pg_global_qvalue: None,
             label,
             intensity,

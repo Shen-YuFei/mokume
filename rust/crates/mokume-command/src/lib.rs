@@ -194,11 +194,17 @@ struct Features2PeptidesArgs {
     #[arg(long = "filter-max-missed-cleavages")]
     filter_max_missed_cleavages: Option<usize>,
 
+    #[arg(long = "filter-peptide-fdr", value_parser = parse_fraction)]
+    filter_peptide_fdr: Option<f64>,
+
     #[arg(long = "filter-exclude-modifications")]
     filter_exclude_modifications: Option<String>,
 
     #[arg(long = "filter-min-unique-peptides")]
     filter_min_unique_peptides: Option<usize>,
+
+    #[arg(long = "filter-protein-fdr", value_parser = parse_fraction)]
+    filter_protein_fdr: Option<f64>,
 
     #[arg(long = "filter-min-features")]
     filter_min_features: Option<usize>,
@@ -1453,13 +1459,7 @@ fn dispatch_features_to_peptides(args: &Features2PeptidesArgs) -> mokume_core::R
 fn build_filter_pipeline(
     args: &Features2PeptidesArgs,
 ) -> mokume_core::Result<Option<PreprocessingFilterConfig>> {
-    let has_override = args.filter_min_intensity.is_some()
-        || args.filter_cv_threshold.is_some()
-        || args.filter_charge_states.is_some()
-        || args.filter_max_missed_cleavages.is_some()
-        || args.filter_exclude_modifications.is_some()
-        || args.filter_min_unique_peptides.is_some()
-        || args.filter_min_features.is_some();
+    let has_override = has_filter_override(args);
 
     let mut config = match &args.filter_config {
         Some(path) => load_filter_config(path)?,
@@ -1483,6 +1483,7 @@ fn build_filter_pipeline(
     if let Some(value) = args.filter_max_missed_cleavages {
         config.peptide.max_missed_cleavages = Some(value);
     }
+    apply_fdr_overrides(args, &mut config);
     if let Some(value) = &args.filter_exclude_modifications {
         config.peptide.exclude_modifications = value
             .split(',')
@@ -1497,6 +1498,27 @@ fn build_filter_pipeline(
         config.run_qc.min_identified_features = value;
     }
     Ok(Some(config))
+}
+
+fn has_filter_override(args: &Features2PeptidesArgs) -> bool {
+    args.filter_min_intensity.is_some()
+        || args.filter_cv_threshold.is_some()
+        || args.filter_charge_states.is_some()
+        || args.filter_max_missed_cleavages.is_some()
+        || args.filter_peptide_fdr.is_some()
+        || args.filter_exclude_modifications.is_some()
+        || args.filter_min_unique_peptides.is_some()
+        || args.filter_protein_fdr.is_some()
+        || args.filter_min_features.is_some()
+}
+
+fn apply_fdr_overrides(args: &Features2PeptidesArgs, config: &mut PreprocessingFilterConfig) {
+    if let Some(value) = args.filter_peptide_fdr {
+        config.peptide.fdr_threshold = Some(value);
+    }
+    if let Some(value) = args.filter_protein_fdr {
+        config.protein.fdr_threshold = Some(value);
+    }
 }
 
 /// Load a preprocessing filter config from a YAML or JSON file, choosing the
@@ -1658,12 +1680,14 @@ peptide:
   allowed_charge_states: null     # e.g., [2, 3, 4] or null for all charges
   exclude_modifications: []       # Modification names to exclude, e.g., ["Oxidation"]
   max_missed_cleavages: null      # Max missed cleavages (null = no filter)
+  fdr_threshold: null              # Peptide q-value cutoff (null = no filter)
   min_peptide_length: 7           # Minimum peptide length in amino acids
   max_peptide_length: 50          # Maximum peptide length in amino acids
   exclude_sequence_patterns: []   # Regex patterns to exclude
 
 # Protein-level filters
 protein:
+  fdr_threshold: null           # Protein-group q-value cutoff (null = no filter)
   min_unique_peptides: 2      # Minimum unique peptides per protein
   razor_peptide_handling: keep   # How to handle shared peptides: keep, remove, assign_to_top
   remove_contaminants: true      # Remove contaminant proteins
@@ -1694,11 +1718,13 @@ const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
     "allowed_charge_states": null,
     "exclude_modifications": [],
     "max_missed_cleavages": null,
+    "fdr_threshold": null,
     "min_peptide_length": 7,
     "max_peptide_length": 50,
     "exclude_sequence_patterns": []
   },
   "protein": {
+    "fdr_threshold": null,
     "min_unique_peptides": 2,
     "razor_peptide_handling": "keep",
     "remove_contaminants": true,
@@ -2232,8 +2258,10 @@ mod tests {
             "--filter-cv-threshold",
             "--filter-charge-states",
             "--filter-max-missed-cleavages",
+            "--filter-peptide-fdr",
             "--filter-exclude-modifications",
             "--filter-min-unique-peptides",
+            "--filter-protein-fdr",
             "--filter-min-features",
         ] {
             assert!(

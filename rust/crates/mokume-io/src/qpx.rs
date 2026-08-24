@@ -22,6 +22,7 @@ pub struct QpxFeatureRecord {
     pub anchor_protein: Option<String>,
     pub unique: Option<bool>,
     pub is_decoy: Option<bool>,
+    pub peptide_qvalue: Option<f64>,
     pub pg_global_qvalue: Option<f64>,
     pub label: Option<String>,
     pub intensity: f64,
@@ -104,6 +105,7 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
     let anchor_protein = optional_column_by_names(batch, &["anchor_protein", "protein"]);
     let unique = optional_column_by_names(batch, &["unique", "is_unique"]);
     let is_decoy = optional_column_by_names(batch, &["is_decoy", "decoy"]);
+    let peptide_qvalue = optional_column_by_names(batch, &["peptide_qvalue", "peptide_q_value"]);
     let pg_global_qvalue = optional_column_by_names(batch, &["pg_global_qvalue", "protein_qvalue"]);
 
     let mut records = Vec::new();
@@ -135,10 +137,8 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
             .map(|column| optional_bool_value(column, row, "is_decoy"))
             .transpose()?
             .flatten();
-        let pg_global_qvalue = pg_global_qvalue
-            .map(|column| optional_f64_value(column, row, "pg_global_qvalue"))
-            .transpose()?
-            .flatten();
+        let (peptide_qvalue, pg_global_qvalue) =
+            optional_qvalue_values(peptide_qvalue, pg_global_qvalue, row)?;
 
         let entries = intensity_entries(intensities, row)?;
         // In quantms.io LFQ the per-run intensities are labeled by run file (the
@@ -174,6 +174,7 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
                     anchor_protein: anchor_protein.clone(),
                     unique,
                     is_decoy,
+                    peptide_qvalue,
                     pg_global_qvalue,
                     label: entry_label,
                     intensity: entry.intensity,
@@ -183,6 +184,23 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
     }
 
     Ok(records)
+}
+
+fn optional_qvalue_values(
+    peptide: Option<&dyn Array>,
+    protein: Option<&dyn Array>,
+    row: usize,
+) -> Result<(Option<f64>, Option<f64>)> {
+    let read = |column: Option<&dyn Array>, name: &str| {
+        column
+            .map(|values| optional_f64_value(values, row, name))
+            .transpose()
+            .map(Option::flatten)
+    };
+    Ok((
+        read(peptide, "peptide_qvalue")?,
+        read(protein, "pg_global_qvalue")?,
+    ))
 }
 
 fn column_by_names<'a>(batch: &'a RecordBatch, candidates: &[&str]) -> Result<&'a dyn Array> {
@@ -434,8 +452,8 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::array::{
-        ArrayRef, BooleanArray, Float32Builder, Float64Builder, Int16Array, Int32Array,
-        Int32Builder, ListBuilder, StringArray, StringBuilder, StructBuilder,
+        ArrayRef, BooleanArray, Float32Builder, Float64Array, Float64Builder, Int16Array,
+        Int32Array, Int32Builder, ListBuilder, StringArray, StringBuilder, StructBuilder,
     };
     use arrow::datatypes::{DataType, Field, Fields, Schema};
 
@@ -492,6 +510,8 @@ mod tests {
             Field::new("anchor_protein", DataType::Utf8, false),
             Field::new("unique", DataType::Boolean, false),
             Field::new("is_decoy", DataType::Boolean, false),
+            Field::new("peptide_qvalue", DataType::Float64, true),
+            Field::new("pg_global_qvalue", DataType::Float64, true),
             Field::new("intensities", intensities.data_type().clone(), true),
             Field::new("pg_accessions", proteins.data_type().clone(), true),
         ]));
@@ -505,6 +525,8 @@ mod tests {
                 Arc::new(StringArray::from(vec!["sp|P12345|PROT_HUMAN"])) as ArrayRef,
                 Arc::new(BooleanArray::from(vec![true])) as ArrayRef,
                 Arc::new(BooleanArray::from(vec![false])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![Some(0.005)])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![Some(0.008)])) as ArrayRef,
                 intensities,
                 proteins,
             ],
@@ -522,6 +544,8 @@ mod tests {
         );
         assert_eq!(records[0].unique, Some(true));
         assert_eq!(records[0].is_decoy, Some(false));
+        assert_eq!(records[0].peptide_qvalue, Some(0.005));
+        assert_eq!(records[0].pg_global_qvalue, Some(0.008));
         assert_eq!(records[0].sample_accession, None);
         assert_eq!(records[0].label.as_deref(), Some("TMT126"));
         assert_eq!(records[0].intensity, 1000.0);

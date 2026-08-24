@@ -156,6 +156,7 @@ mokume features2peptides \
     --filter-min-intensity 1000 \
     --filter-cv-threshold 0.3 \
     --filter-charge-states "2,3,4" \
+    --filter-protein-fdr 0.01 \
     --output peptides.csv
 ```
 
@@ -167,14 +168,19 @@ mokume features2peptides \
 | `--filter-cv-threshold` | Maximum CV across replicates |
 | `--filter-charge-states` | Comma-separated allowed charge states |
 | `--filter-max-missed-cleavages` | Maximum missed cleavages |
+| `--filter-peptide-fdr` | Maximum QPX `peptide_qvalue` |
 | `--filter-exclude-modifications` | Comma-separated modifications to exclude |
 | `--filter-min-unique-peptides` | Minimum unique peptides per protein |
+| `--filter-protein-fdr` | Maximum QPX `pg_global_qvalue` per protein group |
 | `--filter-min-features` | Minimum identified features per run |
 
 !!! note "Group-level filter support"
     The per-row filters (min-intensity floor, peptide length, charge states,
     excluded modifications, missed cleavages) and the per-`(protein, sample)`
     unique-peptide gate are wired in the kernel and oracle-locked vs Python.
+    FDR filtering is opt-in: peptide FDR uses `peptide_qvalue`, while protein
+    FDR keeps groups whose minimum `pg_global_qvalue` passes. A requested but
+    unpopulated q-value field is an error rather than a no-op.
     Among the group-level filters, CV threshold (`--filter-cv-threshold`),
     quantile outlier removal, and the run-QC checks `--filter-min-features` /
     min-total-intensity / min-proteins are implemented via a pre-pass. Replicate

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow::array::{
-    ArrayRef, BooleanArray, Float32Builder, Int16Array, Int32Builder, ListBuilder, StringArray,
-    StringBuilder, StructBuilder,
+    ArrayRef, BooleanArray, Float32Builder, Float64Array, Int16Array, Int32Builder, ListBuilder,
+    StringArray, StringBuilder, StructBuilder,
 };
 use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::record_batch::RecordBatch;
@@ -1817,6 +1817,89 @@ fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
             stage: "features2peptides filter min-coverage"
         })
     ));
+    Ok(())
+}
+
+#[test]
+fn features2peptides_applies_explicit_qpx_fdr_filters() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.fdr.features.parquet");
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new("PEPTIDEAK", "run1", 100.0, &["P1"]).with_qvalues(Some(0.005), Some(0.02)),
+            QpxRow::new("APEPTIDECK", "run1", 200.0, &["P1"]).with_qvalues(Some(0.02), Some(0.02)),
+            QpxRow::new("PEPTIDEBK", "run1", 300.0, &["P2"]).with_qvalues(Some(0.005), Some(0.02)),
+            QpxRow::new("BPEPTIDECK", "run1", 400.0, &["P2"])
+                .with_qvalues(Some(0.005), Some(0.005)),
+        ],
+    )?;
+
+    let peptide_output = root.join("peptides.peptide-fdr.csv");
+    let mut peptide = default_peptides_config(parquet.clone(), peptide_output.clone());
+    peptide.filter_pipeline = Some(PreprocessingFilterConfig {
+        peptide: PeptideFilterConfig {
+            fdr_threshold: Some(0.01),
+            ..PeptideFilterConfig::default()
+        },
+        protein: ProteinFilterConfig {
+            min_unique_peptides: 1,
+            ..ProteinFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&peptide)?;
+    let peptide_table = read_csv(&peptide_output)?;
+    assert!(peptide_table
+        .rows
+        .iter()
+        .all(|row| row.get(1).is_none_or(|sequence| sequence != "APEPTIDECK")));
+
+    let protein_output = root.join("peptides.protein-fdr.csv");
+    let mut protein = default_peptides_config(parquet, protein_output.clone());
+    protein.filter_pipeline = Some(PreprocessingFilterConfig {
+        protein: ProteinFilterConfig {
+            fdr_threshold: Some(0.01),
+            min_unique_peptides: 1,
+            ..ProteinFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&protein)?;
+    let protein_table = read_csv(&protein_output)?;
+    assert!(protein_table
+        .rows
+        .iter()
+        .all(|row| row.first().is_none_or(|value| value == "P2")));
+    assert_eq!(protein_table.rows.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn features2peptides_fdr_request_rejects_unpopulated_qvalue() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.missing-fdr.features.parquet");
+    let output = root.join("peptides.missing-fdr.csv");
+    write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
+    let mut config = default_peptides_config(parquet, output.clone());
+    config.filter_pipeline = Some(PreprocessingFilterConfig {
+        peptide: PeptideFilterConfig {
+            fdr_threshold: Some(0.01),
+            ..PeptideFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+
+    let error = match run_features_to_peptides(&config) {
+        Ok(()) => return Err("unpopulated peptide q-value was accepted".into()),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("requires a populated QPX `peptide_qvalue` column"));
+    assert!(!output.exists());
     Ok(())
 }
 
@@ -4609,6 +4692,8 @@ struct QpxRow<'a> {
     /// which Python's `SQLFilterBuilder` keeps in the median pre-pass only when
     /// `--keep-shared-peptides` is set (`require_unique = not keep_shared`).
     unique: bool,
+    peptide_qvalue: Option<f64>,
+    protein_qvalue: Option<f64>,
 }
 
 impl<'a> QpxRow<'a> {
@@ -4625,6 +4710,8 @@ impl<'a> QpxRow<'a> {
             charge: 2,
             accessions,
             unique: true,
+            peptide_qvalue: None,
+            protein_qvalue: None,
         }
     }
 
@@ -4642,6 +4729,8 @@ impl<'a> QpxRow<'a> {
             charge,
             accessions,
             unique: true,
+            peptide_qvalue: None,
+            protein_qvalue: None,
         }
     }
 
@@ -4658,7 +4747,15 @@ impl<'a> QpxRow<'a> {
             charge: 2,
             accessions,
             unique: false,
+            peptide_qvalue: None,
+            protein_qvalue: None,
         }
+    }
+
+    const fn with_qvalues(mut self, peptide: Option<f64>, protein: Option<f64>) -> Self {
+        self.peptide_qvalue = peptide;
+        self.protein_qvalue = protein;
+        self
     }
 }
 
@@ -4679,6 +4776,16 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
     let unique = Arc::new(BooleanArray::from(
         rows.iter().map(|row| row.unique).collect::<Vec<_>>(),
     )) as ArrayRef;
+    let peptide_qvalue = Arc::new(Float64Array::from(
+        rows.iter()
+            .map(|row| row.peptide_qvalue)
+            .collect::<Vec<_>>(),
+    )) as ArrayRef;
+    let protein_qvalue = Arc::new(Float64Array::from(
+        rows.iter()
+            .map(|row| row.protein_qvalue)
+            .collect::<Vec<_>>(),
+    )) as ArrayRef;
     let intensities = qpx_row_intensities(rows)?;
     let proteins = qpx_row_proteins(rows)?;
     let intensities_field = Field::new("intensities", intensities.data_type().clone(), true);
@@ -4691,6 +4798,8 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
         Field::new("run_file_name", DataType::Utf8, false),
         Field::new("is_decoy", DataType::Boolean, false),
         Field::new("unique", DataType::Boolean, false),
+        Field::new("peptide_qvalue", DataType::Float64, true),
+        Field::new("pg_global_qvalue", DataType::Float64, true),
         intensities_field,
         proteins_field,
     ]));
@@ -4703,6 +4812,8 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
             run_file_name,
             is_decoy,
             unique,
+            peptide_qvalue,
+            protein_qvalue,
             intensities,
             proteins,
         ],

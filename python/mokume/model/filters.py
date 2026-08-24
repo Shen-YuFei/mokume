@@ -9,6 +9,19 @@ from dataclasses import dataclass, field, asdict
 from typing import ClassVar, Optional, List
 
 
+def _optional_override(overrides: dict, key: str, current):
+    """Return a non-null override or preserve the current value."""
+    value = overrides.get(key)
+    return current if value is None else value
+
+
+@dataclass
+class _FdrThresholdConfig:
+    """Shared opt-in q-value threshold for peptide and protein filters."""
+
+    fdr_threshold: Optional[float] = None
+
+
 @dataclass
 class IntensityFilterConfig:
     """
@@ -54,7 +67,7 @@ class IntensityFilterConfig:
 
 
 @dataclass
-class PeptideFilterConfig:
+class PeptideFilterConfig(_FdrThresholdConfig):
     """
     Configuration for peptide-level filters.
 
@@ -66,6 +79,8 @@ class PeptideFilterConfig:
         List of modification names to exclude.
     max_missed_cleavages : int, optional
         Maximum number of missed cleavages allowed.
+    fdr_threshold : float, optional
+        Maximum peptide q-value. ``None`` disables peptide FDR filtering.
     min_peptide_length : int
         Minimum peptide length in amino acids.
     max_peptide_length : int
@@ -101,7 +116,7 @@ class PeptideFilterConfig:
 
 
 @dataclass
-class ProteinFilterConfig:
+class ProteinFilterConfig(_FdrThresholdConfig):
     """
     Configuration for protein-level filters.
 
@@ -109,6 +124,8 @@ class ProteinFilterConfig:
     ----------
     min_peptides : int
         Minimum number of peptides per protein.
+    fdr_threshold : float, optional
+        Maximum protein-group q-value. ``None`` disables protein FDR filtering.
     min_unique_peptides : int
         Minimum number of unique peptides per protein.
     razor_peptide_handling : str
@@ -312,6 +329,9 @@ class PreprocessingFilterConfig:
             and overrides["max_missed_cleavages"] is not None
         ):
             self.peptide.max_missed_cleavages = overrides["max_missed_cleavages"]
+        self.peptide.fdr_threshold = _optional_override(
+            overrides, "peptide_fdr", self.peptide.fdr_threshold
+        )
         if (
             "min_peptide_length" in overrides
             and overrides["min_peptide_length"] is not None
@@ -329,6 +349,9 @@ class PreprocessingFilterConfig:
             and overrides["min_unique_peptides"] is not None
         ):
             self.protein.min_unique_peptides = overrides["min_unique_peptides"]
+        self.protein.fdr_threshold = _optional_override(
+            overrides, "protein_fdr", self.protein.fdr_threshold
+        )
         if (
             "remove_contaminants" in overrides
             and overrides["remove_contaminants"] is not None

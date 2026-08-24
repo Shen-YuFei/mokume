@@ -262,7 +262,7 @@ pub struct PeptideFilterConfig {
     pub allowed_charge_states: Option<Vec<i32>>,
     pub exclude_modifications: Vec<String>,
     pub max_missed_cleavages: Option<usize>,
-    pub fdr_threshold: f64,
+    pub fdr_threshold: Option<f64>,
     pub min_peptide_length: usize,
     pub max_peptide_length: usize,
     pub exclude_sequence_patterns: Vec<String>,
@@ -276,7 +276,7 @@ impl Default for PeptideFilterConfig {
             allowed_charge_states: None,
             exclude_modifications: Vec::new(),
             max_missed_cleavages: None,
-            fdr_threshold: 0.01,
+            fdr_threshold: None,
             min_peptide_length: 7,
             max_peptide_length: 50,
             exclude_sequence_patterns: Vec::new(),
@@ -288,7 +288,7 @@ impl Default for PeptideFilterConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProteinFilterConfig {
-    pub fdr_threshold: f64,
+    pub fdr_threshold: Option<f64>,
     pub min_coverage: f64,
     pub min_peptides: usize,
     pub min_unique_peptides: usize,
@@ -302,7 +302,7 @@ pub struct ProteinFilterConfig {
 impl Default for ProteinFilterConfig {
     fn default() -> Self {
         Self {
-            fdr_threshold: 0.01,
+            fdr_threshold: None,
             min_coverage: 0.0,
             min_peptides: 1,
             min_unique_peptides: 2,

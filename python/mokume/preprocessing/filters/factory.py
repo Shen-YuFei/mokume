@@ -24,11 +24,13 @@ from mokume.preprocessing.filters.peptide import (
     ModificationFilter,
     MissedCleavageFilter,
     SequencePatternFilter,
+    PeptideFDRFilter,
 )
 from mokume.preprocessing.filters.protein import (
     ContaminantFilter,
     MinPeptideFilter,
     RazorPeptideFilter,
+    ProteinFDRFilter,
 )
 from mokume.preprocessing.filters.run_qc import (
     RunIntensityFilter,
@@ -118,6 +120,9 @@ def create_peptide_filters(config: PeptideFilterConfig) -> List[BaseFilter]:
             SequencePatternFilter(exclude_patterns=config.exclude_sequence_patterns)
         )
 
+    if config.fdr_threshold is not None:
+        filters.append(PeptideFDRFilter(fdr_threshold=config.fdr_threshold))
+
     return filters
 
 
@@ -153,6 +158,9 @@ def create_protein_filters(config: ProteinFilterConfig) -> List[BaseFilter]:
                 min_unique_peptides=config.min_unique_peptides,
             )
         )
+
+    if config.fdr_threshold is not None:
+        filters.append(ProteinFDRFilter(fdr_threshold=config.fdr_threshold))
 
     if config.razor_peptide_handling != "keep":
         filters.append(RazorPeptideFilter(handling=config.razor_peptide_handling))

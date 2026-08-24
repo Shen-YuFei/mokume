@@ -422,6 +422,7 @@ mokume features2peptides \
     --filter-cv-threshold 0.3 \
     --filter-charge-states "2,3,4" \
     --filter-max-missed-cleavages 2 \
+    --filter-protein-fdr 0.01 \
     --output peptides-filtered.csv
 ```
 

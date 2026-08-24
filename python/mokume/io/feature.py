@@ -23,6 +23,18 @@ from mokume.io.msstats import create_msstats_feature_table
 logger = get_logger("mokume.io.feature")
 
 
+def _first_present(columns: list[str], candidates: tuple[str, ...]) -> Optional[str]:
+    """Return the first candidate present in a parquet schema."""
+    return next((name for name in candidates if name in columns), None)
+
+
+def _optional_qvalue_projection(source: Optional[str], alias: str, indent: int) -> str:
+    """Build a canonical q-value projection, using typed null when absent."""
+    padding = " " * indent
+    expression = f"{source} as {alias}" if source else f"NULL::DOUBLE as {alias}"
+    return f",\n{padding}{expression}"
+
+
 def _normalize_run_key(value: object) -> str:
     if pd.isna(value):
         return ""
@@ -377,6 +389,12 @@ class Feature:
         # Detect new QPX fields for optimized filtering
         self._has_is_decoy = "is_decoy" in cols
         self._has_anchor_protein = "anchor_protein" in cols
+        self._peptide_qvalue_col = _first_present(
+            cols, ("peptide_qvalue", "peptide_q_value")
+        )
+        self._protein_qvalue_col = _first_present(
+            cols, ("pg_global_qvalue", "protein_qvalue")
+        )
 
         # New-QPX LFQ vs TMT discriminator. In LFQ the ``intensities.label`` names
         # the run each (possibly MBR-transferred) intensity belongs to, so it — not
@@ -483,6 +501,12 @@ class Feature:
             extra_cols += ",\n                    is_decoy"
         if self._has_anchor_protein:
             extra_cols += ",\n                    anchor_protein"
+        extra_cols += _optional_qvalue_projection(
+            self._peptide_qvalue_col, "peptide_qvalue", 20
+        )
+        extra_cols += _optional_qvalue_projection(
+            self._protein_qvalue_col, "pg_global_qvalue", 20
+        )
 
         self.parquet_db.execute(
             "".join(
@@ -645,6 +669,12 @@ class Feature:
             opt_cols_raw += ",\n                    is_decoy"
         if self._has_anchor_protein:
             opt_cols_raw += ",\n                    anchor_protein"
+        opt_cols_raw += _optional_qvalue_projection(
+            self._peptide_qvalue_col, "peptide_qvalue", 20
+        )
+        opt_cols_raw += _optional_qvalue_projection(
+            self._protein_qvalue_col, "pg_global_qvalue", 20
+        )
         if self._is_new_qpx:
             opt_cols_raw += (
                 f",\n                    {mapping_run} as _mapping_run"
@@ -686,6 +716,8 @@ class Feature:
             opt_cols_final += ",\n                p.is_decoy"
         if self._has_anchor_protein:
             opt_cols_final += ",\n                p.anchor_protein"
+        opt_cols_final += ",\n                p.peptide_qvalue"
+        opt_cols_final += ",\n                p.pg_global_qvalue"
 
         # Recreate main view with SDRF data joined
         self.parquet_db.execute("DROP VIEW IF EXISTS parquet_db")

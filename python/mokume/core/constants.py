@@ -71,6 +71,8 @@ PARQUET_COLUMNS = [
     "intensity",
     "run_file_name",
     "sample_accession",
+    "peptide_qvalue",
+    "pg_global_qvalue",
 ]
 
 
