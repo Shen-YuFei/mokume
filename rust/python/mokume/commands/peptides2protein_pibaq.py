@@ -70,12 +70,12 @@ def _parse_args(argv):
     )
     parser.add_argument("--min-aa", type=int, default=7)
     parser.add_argument("--max-aa", type=int, default=30)
-    parser.add_argument("--ploidy", type=int, default=2)
-    parser.add_argument("--organism", default="human")
-    parser.add_argument("--cpc", type=float, default=200.0)
+    parser.add_argument("--ploidy", type=int, default=None)
+    parser.add_argument("--organism", default=None)
+    parser.add_argument("--cpc", type=float, default=None)
     parser.add_argument(
         "--qc-report",
-        default="QCprofile.pdf",
+        default=None,
         help="PDF for the verbose QC images (only used with --verbose).",
     )
     parser.add_argument(
@@ -94,8 +94,35 @@ def _parse_args(argv):
     return parser.parse_args(argv)
 
 
+def _validate_options(args):
+    if args.ruler and not args.tpa:
+        raise SystemExit("piBAQ command aborted: --ruler requires --tpa")
+    if not args.ruler and any(
+        value is not None for value in (args.ploidy, args.organism, args.cpc)
+    ):
+        raise SystemExit(
+            "piBAQ command aborted: --ploidy/--organism/--cpc require --ruler"
+        )
+    if args.qc_report is not None and not args.verbose:
+        raise SystemExit("piBAQ command aborted: --qc-report requires --verbose")
+    if args.ploidy is not None and args.ploidy < 1:
+        raise SystemExit("piBAQ command aborted: --ploidy must be greater than zero")
+    if args.cpc is not None and args.cpc <= 0:
+        raise SystemExit("piBAQ command aborted: --cpc must be greater than zero")
+
+
+def _resolve_options(args):
+    _validate_options(args)
+    ploidy = 2 if args.ploidy is None else args.ploidy
+    organism = "human" if args.organism is None else args.organism
+    cpc = 200.0 if args.cpc is None else args.cpc
+    qc_report = "QCprofile.pdf" if args.qc_report is None else args.qc_report
+    return ploidy, organism, cpc, qc_report
+
+
 def main(argv=None):
     args = _parse_args(sys.argv[1:] if argv is None else argv)
+    ploidy, organism, cpc, qc_report = _resolve_options(args)
 
     # Import lazily so a missing install yields an actionable message (exit 1)
     # rather than an opaque traceback before argparse even runs.
@@ -124,12 +151,12 @@ def main(argv=None):
             max_aa=args.max_aa,
             tpa=args.tpa,
             ruler=args.ruler,
-            ploidy=args.ploidy,
-            cpc=args.cpc,
-            organism=args.organism,
+            ploidy=ploidy,
+            cpc=cpc,
+            organism=organism,
             output=args.output,
             verbose=args.verbose,
-            qc_report=args.qc_report,
+            qc_report=qc_report,
             families_yaml=args.families,
             min_shared=args.min_shared,
             min_anchors=args.min_anchors,

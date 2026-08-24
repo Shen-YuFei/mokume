@@ -111,8 +111,44 @@ def _resolve_output_html(report_output, plot_dir, key, n_contrasts):
     return str(Path(plot_dir) / "report_{0}.html".format(key))
 
 
+def _validate_args(args):
+    if args.report_output and args.plot_dir:
+        raise SystemExit(
+            "Interactive report aborted: choose --report-output or --plot-dir, not both"
+        )
+    if args.log2fc_threshold < 0:
+        raise SystemExit(
+            "Interactive report aborted: --log2fc-threshold must be non-negative"
+        )
+    if not 0 <= args.fdr_threshold <= 1:
+        raise SystemExit(
+            "Interactive report aborted: --fdr-threshold must be between 0 and 1"
+        )
+
+
+def _require_sample_conditions(sample_to_condition):
+    if not sample_to_condition:
+        raise SystemExit(
+            "Interactive report aborted: the SDRF yielded no sample conditions"
+        )
+
+
+def _validate_contrast_conditions(sample_to_condition, cond_a, cond_b):
+    missing_conditions = [
+        condition
+        for condition in (cond_a, cond_b)
+        if condition not in set(sample_to_condition.values())
+    ]
+    if missing_conditions:
+        raise SystemExit(
+            "Interactive report aborted: contrast conditions absent from SDRF: "
+            + ", ".join(missing_conditions)
+        )
+
+
 def main(argv=None):
     args = _parse_args(sys.argv[1:] if argv is None else argv)
+    _validate_args(args)
 
     # Import pandas / mokume.reports lazily so a clear message is printed when
     # the reports extra is missing, rather than an opaque ImportError trace.
@@ -149,6 +185,7 @@ def main(argv=None):
 
     protein_df = pd.read_csv(args.protein_matrix)
     sample_to_condition = detect_condition_from_sdrf(args.sdrf)
+    _require_sample_conditions(sample_to_condition)
     highlight = (
         [gene.strip() for gene in args.highlight_genes.split(",") if gene.strip()]
         if args.highlight_genes
@@ -156,7 +193,8 @@ def main(argv=None):
     )
 
     n_contrasts = len(args.contrast)
-    for key, _cond_a, _cond_b, de_csv in args.contrast:
+    for key, cond_a, cond_b, de_csv in args.contrast:
+        _validate_contrast_conditions(sample_to_condition, cond_a, cond_b)
         de_df = pd.read_csv(de_csv, float_precision="round_trip")
         output_html = _resolve_output_html(
             args.report_output, args.plot_dir, key, n_contrasts
@@ -166,7 +204,7 @@ def main(argv=None):
             protein_df=protein_df,
             sample_to_condition=sample_to_condition,
             output_html=output_html,
-            title="DE Report: {0}".format(key),
+            title="DE Report: {0} ({1} vs {2})".format(key, cond_a, cond_b),
             highlight_genes=highlight,
             log2fc_threshold=args.log2fc_threshold,
             fdr_threshold=args.fdr_threshold,

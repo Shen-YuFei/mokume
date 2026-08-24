@@ -49,13 +49,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         description="Per-dataset tissue proteome analysis (mokume command).",
     )
     parser.add_argument("--scan-dir", type=Path, default=None)
-    parser.add_argument("--output-dir", type=Path, default=Path("tissuemap_output"))
+    parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--config", dest="config_path", type=Path, default=None)
     parser.add_argument("--generate-config", type=Path, default=None)
     parser.add_argument(
         "--tmt-dataset", dest="tmt_datasets", action="append", default=[]
     )
-    parser.add_argument("--n-jobs", type=int, default=8)
+    parser.add_argument("--n-jobs", type=int, default=None)
     parser.add_argument("--dpi", type=int, default=None)
     parser.add_argument(
         "--imputation-method",
@@ -85,21 +85,23 @@ def _build_config(args: argparse.Namespace):
         load_config,
     )
 
-    scan_dir: Path = args.scan_dir
-    output_dir: Path = args.output_dir
+    scan_dir: Optional[Path] = args.scan_dir
+    output_dir: Optional[Path] = args.output_dir
     config_path: Optional[Path] = args.config_path
     tmt_datasets = tuple(args.tmt_datasets)
-    n_jobs: int = args.n_jobs
+    n_jobs: Optional[int] = args.n_jobs
     dpi: Optional[int] = args.dpi
     imputation_method: Optional[str] = args.imputation_method
     embedding_method: Optional[str] = args.embedding_method
 
     if config_path is not None:
-        overrides: dict[str, object] = {
-            "input.scan_dir": str(scan_dir),
-            "output.output_dir": str(output_dir),
-            "n_jobs": n_jobs,
-        }
+        overrides: dict[str, object] = {}
+        if scan_dir is not None:
+            overrides["input.scan_dir"] = str(scan_dir)
+        if output_dir is not None:
+            overrides["output.output_dir"] = str(output_dir)
+        if n_jobs is not None:
+            overrides["n_jobs"] = n_jobs
         if tmt_datasets:
             overrides["input.tmt_datasets"] = list(tmt_datasets)
         if dpi is not None:
@@ -117,12 +119,54 @@ def _build_config(args: argparse.Namespace):
         embedding_kwargs["embedding_method"] = embedding_method.lower()
 
     return TissueMapConfig(
-        n_jobs=n_jobs,
+        n_jobs=n_jobs if n_jobs is not None else 8,
         input=InputConfig(scan_dir=scan_dir, tmt_datasets=list(tmt_datasets)),
         plotting=PlottingConfig(dpi=dpi if dpi is not None else 250),
-        output=OutputConfig(output_dir=output_dir),
+        output=OutputConfig(
+            output_dir=output_dir
+            if output_dir is not None
+            else Path("tissuemap_output")
+        ),
         embedding=EmbeddingConfig(**embedding_kwargs),
     )
+
+
+def _handle_generate_config(args, generate_default_yaml):
+    if args.generate_config is None:
+        return None
+    if any(
+        (
+            args.scan_dir is not None,
+            args.output_dir is not None,
+            args.config_path is not None,
+            bool(args.tmt_datasets),
+            args.n_jobs is not None,
+            args.dpi is not None,
+            args.imputation_method is not None,
+            args.embedding_method is not None,
+        )
+    ):
+        print(
+            "error: --generate-config cannot be combined with run/config overrides",
+            file=sys.stderr,
+        )
+        return 2
+    generate_default_yaml(args.generate_config)
+    print(f"Default config written to {args.generate_config}")
+    return 0
+
+
+def _config_error(config):
+    if not config.input.scan_dir.exists() or not config.input.scan_dir.is_dir():
+        return (
+            "TissueMap scan directory does not exist or is not a directory: "
+            f"{config.input.scan_dir}"
+        )
+    if config.n_jobs < 1:
+        return "n_jobs must be greater than zero"
+    if config.plotting.dpi < 1:
+        return "plotting.dpi must be greater than zero"
+    return None
 
 
 def main(argv: list[str]) -> int:
@@ -139,27 +183,23 @@ def main(argv: list[str]) -> int:
         )
         return 1
 
-    # `--generate-config` writes a template and exits (mirrors the click body).
-    if args.generate_config is not None:
-        generate_default_yaml(args.generate_config)
-        print(f"Default config written to {args.generate_config}")
-        return 0
+    generate_result = _handle_generate_config(args, generate_default_yaml)
+    if generate_result is not None:
+        return generate_result
 
-    if args.scan_dir is None:
+    if args.scan_dir is None and args.config_path is None:
         print(
-            "error: --scan-dir is required when not using --generate-config.",
-            file=sys.stderr,
-        )
-        return 2
-
-    if not args.scan_dir.exists() or not args.scan_dir.is_dir():
-        print(
-            f"error: --scan-dir does not exist or is not a directory: {args.scan_dir}",
+            "error: --scan-dir is required unless it is defined by --config.",
             file=sys.stderr,
         )
         return 2
 
     config = _build_config(args)
+    config_error = _config_error(config)
+    if config_error:
+        print(f"error: {config_error}", file=sys.stderr)
+        return 2
+
     TissueMapPipeline(config).run()
     return 0
 

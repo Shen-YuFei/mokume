@@ -72,13 +72,13 @@ def _parse_args(argv):
     parser.add_argument(
         "--log2fc-threshold",
         type=float,
-        default=0.5,
+        default=None,
         help="|log2FC| significance threshold (matches --de-log2fc).",
     )
     parser.add_argument(
         "--fdr-threshold",
         type=float,
-        default=0.05,
+        default=None,
         help="FDR significance threshold (matches --de-fdr).",
     )
     parser.add_argument(
@@ -139,7 +139,7 @@ def _generate_volcano_plots(pd, contrasts, plot_dir, args):
         if args.highlight_genes
         else None
     )
-    for key, _cond_a, _cond_b, de_csv in contrasts:
+    for key, cond_a, cond_b, de_csv in contrasts:
         de_df = pd.read_csv(de_csv, float_precision="round_trip")
         output_file = str(plot_dir / "volcano_{0}.png".format(key))
         plot_volcano(
@@ -147,7 +147,7 @@ def _generate_volcano_plots(pd, contrasts, plot_dir, args):
             log2fc_threshold=args.log2fc_threshold,
             fdr_threshold=args.fdr_threshold,
             highlight_genes=highlight,
-            title="Volcano Plot: {0}".format(key),
+            title="Volcano Plot: {0} ({1} vs {2})".format(key, cond_a, cond_b),
             output_file=output_file,
         )
         print("Volcano plot saved to {0}".format(output_file))
@@ -212,8 +212,55 @@ def _generate_pca_plot(protein_df, sample_to_condition, plot_dir):
     print("PCA plot saved to {0}".format(output_file))
 
 
+def _validate_plot_selection(args):
+    if not any((args.volcano, args.heatmap, args.pca)):
+        raise SystemExit("DE plots aborted: select --volcano, --heatmap, or --pca")
+    if (args.volcano or args.heatmap) and not args.contrast:
+        raise SystemExit(
+            "DE plots aborted: --volcano/--heatmap require at least one --contrast"
+        )
+    if args.contrast and not (args.volcano or args.heatmap):
+        raise SystemExit(
+            "DE plots aborted: --contrast only applies to --volcano/--heatmap"
+        )
+    if (args.heatmap or args.pca) and not args.sdrf:
+        raise SystemExit("DE plots aborted: --heatmap/--pca require --sdrf")
+    if args.sdrf and not (args.heatmap or args.pca):
+        raise SystemExit("DE plots aborted: --sdrf only applies to --heatmap/--pca")
+
+
+def _validate_auxiliary_options(args):
+    if args.highlight_genes and not args.volcano:
+        raise SystemExit("DE plots aborted: --highlight-genes requires --volcano")
+    if args.irs_remove_reference and not (args.heatmap or args.pca):
+        raise SystemExit(
+            "DE plots aborted: --irs-remove-reference only applies to --heatmap/--pca"
+        )
+    thresholds_supplied = (
+        args.log2fc_threshold is not None or args.fdr_threshold is not None
+    )
+    if thresholds_supplied and not (args.volcano or args.heatmap):
+        raise SystemExit(
+            "DE plots aborted: significance thresholds require --volcano/--heatmap"
+        )
+
+
+def _resolve_thresholds(args):
+    args.log2fc_threshold = (
+        0.5 if args.log2fc_threshold is None else args.log2fc_threshold
+    )
+    args.fdr_threshold = 0.05 if args.fdr_threshold is None else args.fdr_threshold
+    if args.log2fc_threshold < 0:
+        raise SystemExit("DE plots aborted: --log2fc-threshold must be non-negative")
+    if not 0 <= args.fdr_threshold <= 1:
+        raise SystemExit("DE plots aborted: --fdr-threshold must be between 0 and 1")
+
+
 def main(argv=None):
     args = _parse_args(sys.argv[1:] if argv is None else argv)
+    _validate_plot_selection(args)
+    _validate_auxiliary_options(args)
+    _resolve_thresholds(args)
 
     from pathlib import Path
 
@@ -254,6 +301,8 @@ def main(argv=None):
         from mokume.normalization.irs import detect_condition_from_sdrf
 
         sample_to_condition = detect_condition_from_sdrf(args.sdrf)
+        if not sample_to_condition:
+            raise SystemExit("DE plots aborted: the SDRF yielded no sample conditions")
     sample_to_condition = _plot_sample_conditions(
         sample_to_condition, protein_df, args.irs_remove_reference
     )

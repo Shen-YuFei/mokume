@@ -114,7 +114,10 @@ def main(argv: list[str]) -> int:
         reanalysis = (f.split("/")[-1].split("_")[0]).replace("-proteins.tsv", "")
         dfs += [
             pd.read_csv(
-                f, usecols=[PROTEIN_NAME, SAMPLE_ID, PIBAQ_LOG], sep=","
+                f,
+                usecols=[PROTEIN_NAME, SAMPLE_ID, PIBAQ_LOG],
+                sep=None,
+                engine="python",
             ).assign(reanalysis=reanalysis)
         ]
 
