@@ -17,7 +17,7 @@ use mokume_core::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
     FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
     IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
-    NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig, PibaqConfig,
+    MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig, PibaqConfig,
     PreprocessingFilterConfig, ProteinFilterConfig, QuantMethod, RatioConfig, RunQcFilterConfig,
     RuntimeConfig,
 };
@@ -1492,7 +1492,7 @@ fn features2peptides_keep_shared_median_includes_shared_peptides() -> Result<(),
 // not dropped by the unique gate before razor runs):
 //   P1 anchors ANCHORPONEK(200)/ANCHORPTWOK(210); P2 anchors ANCHORQONEK(300)/
 //   ANCHORQTWOK(310); RAZORSHAREDK shared as [P1](500) + [P2](505).
-// The razor block isolation (min_unique_peptides=0, min_peptides=0, no
+// The razor block isolation (min_unique_peptides=0, no
 // contaminant/decoy removal) keeps the anchors and exercises only razor.
 //
 // Cross-language parity (validated out-of-band against the `mokume` CLI on the
@@ -1513,7 +1513,6 @@ fn razor_filter_pipeline(handling: &str) -> PreprocessingFilterConfig {
             // Isolate razor: no unique/peptide-count gate, no contaminant or
             // decoy removal, so the only protein-level effect is razor handling.
             min_unique_peptides: 0,
-            min_peptides: 0,
             remove_contaminants: false,
             remove_decoys: false,
             razor_peptide_handling: handling.to_owned(),
@@ -1779,37 +1778,45 @@ fn features2peptides_razor_assign_to_top_flips_winner_on_row_order() -> Result<(
     Ok(())
 }
 
-// `min_search_score` and `min_coverage` are no-ops on QPX inputs: the QPX schema
-// carries neither a search-engine score nor a coverage column, so they match
-// Python's column-absent skip. Setting them must not change the output.
+// The QPX schema carries neither a search-engine score nor a coverage column.
+// Reject those filters instead of accepting options that cannot affect output.
 #[test]
-fn features2peptides_search_score_and_coverage_filters_are_no_ops() -> Result<(), Box<dyn Error>> {
+fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
+) -> Result<(), Box<dyn Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
-    let parquet = root.join("peptides.noop.features.parquet");
+    let parquet = root.join("peptides.unsupported.features.parquet");
     write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
 
-    let base_out = root.join("noop.base.csv");
-    let mut base = default_peptides_config(parquet.clone(), base_out.clone());
-    base.filter_pipeline = Some(PreprocessingFilterConfig::default());
-    run_features_to_peptides(&base)?;
-
-    let noop_out = root.join("noop.set.csv");
-    let mut noop = default_peptides_config(parquet, noop_out.clone());
-    noop.filter_pipeline = Some(PreprocessingFilterConfig {
+    let mut search_score = default_peptides_config(parquet.clone(), root.join("search-score.csv"));
+    search_score.filter_pipeline = Some(PreprocessingFilterConfig {
         peptide: PeptideFilterConfig {
             min_search_score: Some(0.9),
             ..PeptideFilterConfig::default()
         },
+        ..PreprocessingFilterConfig::default()
+    });
+    assert!(matches!(
+        run_features_to_peptides(&search_score),
+        Err(MokumeError::NotImplemented {
+            stage: "features2peptides filter min-search-score"
+        })
+    ));
+
+    let mut coverage = default_peptides_config(parquet, root.join("coverage.csv"));
+    coverage.filter_pipeline = Some(PreprocessingFilterConfig {
         protein: ProteinFilterConfig {
             min_coverage: 0.5,
             ..ProteinFilterConfig::default()
         },
         ..PreprocessingFilterConfig::default()
     });
-    run_features_to_peptides(&noop)?;
-
-    assert_eq!(read_csv(&base_out)?.rows, read_csv(&noop_out)?.rows);
+    assert!(matches!(
+        run_features_to_peptides(&coverage),
+        Err(MokumeError::NotImplemented {
+            stage: "features2peptides filter min-coverage"
+        })
+    ));
     Ok(())
 }
 
@@ -2142,26 +2149,11 @@ fn features2peptides_aggregation_run_parquet_matches_python_schema() -> Result<(
     Ok(())
 }
 
-// Dataset-level sample normalization (quantile/rlr/loess/hierarchical/
-// median-center/mean-center) is a deterministic NO-OP in the standalone
-// `features2peptides` command. Python's `peptide_normalization` (peptide.py:370)
-// calls the per-sample placeholder fns (model/normalization.py:416-453) that
-// return the frame unchanged, and the command has no post-loop dataset pass --
-// the `_apply_dataset_normalization` pivot lives in `LoadingStage`, consumed
-// only by `features2proteins` (features_to_proteins.py:300). So a dataset-level
-// request yields exactly the `--sample-normalization none` matrix.
-//
-// Verified byte-identical on PXD003539 (`mokume features2peptides
-// --sample-normalization {quantile,mediancenter}` == `none`, only_py=0/
-// only_rs=0/max_rel<=2.5e-7). On this no-SDRF fixture run=median is inert
-// (one tech rep per run), so the oracle is the raw summed matrix:
-//   P1,APEPTIDECK,run1=200  P1,PEPTIDEAK,run1=250 (z2 100 + z3 150)
-//   P1,APEPTIDECK,run2=400  P1,PEPTIDEAK,run2=300
-// distinct from the globalMedian factor oracle (300/375/300/225), so the assert
-// is non-vacuous. Python oracle (`features2peptides -p synth.parquet
-// --sample-normalization quantile`, no sdrf): identical to the `none` output.
+// Dataset-level sample-normalization methods are not implemented by the
+// standalone peptide command. Reject them instead of silently returning the
+// same matrix as `--sample-normalization none`.
 #[test]
-fn features2peptides_dataset_level_sample_normalization_is_noop() -> Result<(), Box<dyn Error>> {
+fn features2peptides_rejects_dataset_level_sample_normalization() -> Result<(), Box<dyn Error>> {
     for method in [
         "quantile",
         "mediancenter",
@@ -2173,40 +2165,20 @@ fn features2peptides_dataset_level_sample_normalization_is_noop() -> Result<(), 
         let root = temp_root()?;
         create_dir_all(&root)?;
         let parquet = root.join(format!("peptides.noop.{method}.features.parquet"));
-        let output = root.join(format!("peptides.noop.{method}.csv"));
+        let output = root.join(format!("peptides.unsupported.{method}.csv"));
         write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
 
-        let mut config = default_peptides_config(parquet, output.clone());
+        let mut config = default_peptides_config(parquet, output);
         config.skip_normalization = false;
         config.sample_normalization = method.to_owned();
-        run_features_to_peptides(&config)?;
-
-        let table = read_csv(&output)?;
-        assert_eq!(
-            table.rows.len(),
-            4,
-            "{method}: unexpected rows:\n{:#?}",
-            table.rows
-        );
-        // Identical to `--sample-normalization none` (the dataset-level method is
-        // never applied), and distinct from the globalMedian factor oracle.
-        assert_peptide_cell(&table, "P1", "APEPTIDECK", "run1", 200.0)?;
-        assert_peptide_cell(&table, "P1", "PEPTIDEAK", "run1", 250.0)?;
-        assert_peptide_cell(&table, "P1", "APEPTIDECK", "run2", 400.0)?;
-        assert_peptide_cell(&table, "P1", "PEPTIDEAK", "run2", 300.0)?;
-        // Dataset-level methods must NOT drop BioReplicate/Condition (no pivot
-        // happens on this path, unlike `features2proteins --export-peptides`).
-        assert_eq!(
-            table.headers,
-            vec![
-                "ProteinName",
-                "PeptideCanonical",
-                "SampleID",
-                "BioReplicate",
-                "Condition",
-                "NormIntensity",
-            ],
-            "{method}: no-op path must keep all six columns"
+        assert!(
+            matches!(
+                run_features_to_peptides(&config),
+                Err(MokumeError::NotImplemented {
+                    stage: "features2peptides sample-normalization-method"
+                })
+            ),
+            "{method} must be rejected instead of ignored"
         );
     }
     Ok(())

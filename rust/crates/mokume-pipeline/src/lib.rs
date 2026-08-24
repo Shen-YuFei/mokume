@@ -5280,11 +5280,6 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
             "conditionmedian sample normalization requires --sdrf option",
         ));
     }
-    if config.skip_normalization && config.irs.is_some() {
-        return Err(invalid_input(
-            "--skip-normalization conflicts with features2peptides IRS options",
-        ));
-    }
     Ok(())
 }
 
