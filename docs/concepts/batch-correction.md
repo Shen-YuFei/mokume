@@ -99,13 +99,11 @@ over a folder of piBAQ TSVs:
 |--------|-------------|---------|
 | `sample_prefix` | Extract from sample name prefix | `PXD001-S1` &rarr; batch `PXD001` |
 | `column` | Explicit values from SDRF column (`--batch-column`) | User-specified |
-| `run` | Use run/reference file name | Each file is a batch |
 
-!!! warning "`--batch-method run` in the protein-matrix flow"
-    `--batch-method run` has no run-level mapping in the `features2proteins`
-    protein-matrix flow and **errors at runtime** (the same way Python raises
-    `run_info required`). Use `sample_prefix` or `column` here. The PCA + HDBSCAN
-    outlier-removal pass is unported (HDBSCAN is not reproducible cross-language).
+The protein-matrix CLI exposes only methods with available sample-level
+metadata. If the selected data do not contain at least two batches with two
+samples each, or contain no complete protein row for ComBat, the command fails
+instead of returning the uncorrected matrix as a successful result.
 
 ## When to Use Batch Correction
 

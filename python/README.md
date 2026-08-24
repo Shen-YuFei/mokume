@@ -965,7 +965,6 @@ mokume provides a comprehensive filter system for quality control. Filters can b
 | ChargeStateFilter | `allowed_charge_states` | null | Allowed charges (e.g., [2,3,4]) |
 | ModificationFilter | `exclude_modifications` | [] | Remove specific modifications |
 | MissedCleavageFilter | `max_missed_cleavages` | null | Max missed cleavages |
-| SearchScoreFilter | `min_search_score` | null | Min search engine score |
 | SequencePatternFilter | `exclude_sequence_patterns` | [] | Regex patterns to exclude |
 
 #### Protein Filters
@@ -974,8 +973,6 @@ mokume provides a comprehensive filter system for quality control. Filters can b
 |--------|-----------|---------|-------------|
 | ContaminantFilter | `remove_contaminants/decoys` | true | Remove contaminants/decoys |
 | MinPeptideFilter | `min_unique_peptides` | 2 | Min unique peptides per protein |
-| ProteinFDRFilter | `fdr_threshold` | 0.01 | Protein-level FDR |
-| CoverageFilter | `min_coverage` | 0.0 | Min sequence coverage |
 | RazorPeptideFilter | `razor_peptide_handling` | "keep" | Handle shared peptides |
 
 #### Run/Sample QC Filters
@@ -985,7 +982,6 @@ mokume provides a comprehensive filter system for quality control. Filters can b
 | RunIntensityFilter | `min_total_intensity` | 0.0 | Min total intensity per run |
 | MinFeaturesFilter | `min_identified_features` | 0 | Min features per run |
 | MissingRateFilter | `max_missing_rate` | 1.0 | Max missing value rate |
-| SampleCorrelationFilter | `min_sample_correlation` | null | Min replicate correlation |
 
 ### Example Filter Configurations
 
@@ -1007,7 +1003,7 @@ name: basic_qc
 enabled: true
 
 intensity:
-  remove_zero_intensity: true
+  min_intensity: 0.0
 
 peptide:
   min_peptide_length: 7

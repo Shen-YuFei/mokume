@@ -27,7 +27,6 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 | ChargeStateFilter | `allowed_charge_states` | null | Allowed charges (e.g., [2,3,4]) |
 | ModificationFilter | `exclude_modifications` | [] | Remove specific modifications |
 | MissedCleavageFilter | `max_missed_cleavages` | null | Max missed cleavages |
-| SearchScoreFilter | `min_search_score` | null | Min search engine score |
 | SequencePatternFilter | `exclude_sequence_patterns` | [] | Regex patterns to exclude |
 
 ### Protein Filters
@@ -36,8 +35,6 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 |--------|-----------|---------|-------------|
 | ContaminantFilter | `remove_contaminants/decoys` | true | Remove contaminants/decoys |
 | MinPeptideFilter | `min_unique_peptides` | 2 | Min unique peptides per protein |
-| ProteinFDRFilter | `fdr_threshold` | 0.01 | Protein-level FDR |
-| CoverageFilter | `min_coverage` | 0.0 | Min sequence coverage |
 | RazorPeptideFilter | `razor_peptide_handling` | "keep" | Handle shared peptides |
 
 ### Run/Sample QC Filters
@@ -47,20 +44,18 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 | RunIntensityFilter | `min_total_intensity` | 0.0 | Min total intensity per run |
 | MinFeaturesFilter | `min_identified_features` | 0 | Min features per run |
 | MissingRateFilter | `max_missing_rate` | 1.0 | Max missing value rate |
-| SampleCorrelationFilter | `min_sample_correlation` | null | Min replicate correlation |
 
-!!! note "Group-level filters: what runs and what is a no-op"
+!!! note "Group-level filter support"
     The per-row filters (min-intensity floor, peptide length, charge states,
     excluded modifications, missed cleavages) and the per-`(protein, sample)`
     unique-peptide gate are wired and oracle-locked in the Rust kernel. Among the
     **group-level** filters, CV threshold, quantile outlier removal, and the
     run-QC checks (min-features, min-total-intensity, min-proteins) are
     implemented via a pre-pass that applies them before the normalization median.
-    Replicate agreement reproduces Python's degenerate per-sample behaviour (a
-    `>= 2` threshold empties the output). `max-missing-rate`, `sample-correlation`,
-    `min-search-score`, and `min-coverage` are no-ops on QPX inputs — each warns
-    and passes rows through, matching Python's per-sample / column-absent skip.
-    Only an unknown `razor-peptide-handling` value returns `NotImplemented`.
+    Replicate agreement reproduces the Python per-sample behaviour. Settings
+    that cannot be evaluated from QPX streaming input (`max-missing-rate`,
+    sample correlation, search score, and coverage) are rejected when active.
+    Unknown YAML/JSON keys and unsupported razor handling are also rejected.
 
 ## Configuration
 
@@ -79,7 +74,7 @@ name: basic_qc
 enabled: true
 
 intensity:
-  remove_zero_intensity: true
+  min_intensity: 0.0
 
 peptide:
   min_peptide_length: 7

@@ -45,7 +45,7 @@ The kernel writes one DE result CSV per contrast. The leading columns are shared
 
 | Column | Description |
 |--------|-------------|
-| `ProteinName` | UniProt accession (`Protein` in the ensemble output) |
+| `ProteinName` | UniProt accession (same header for single-method and ensemble output) |
 | `log2FC` | Log2 fold change between conditions |
 | `pvalue` | Raw p-value |
 | `adj_pvalue` | FDR-adjusted p-value |

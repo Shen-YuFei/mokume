@@ -132,9 +132,10 @@ mokume.peptides2protein(
     piBAQ reads the complete protease catalog from the installed pyOpenMS runtime,
     including context-dependent rules, unspecific cleavage, and no cleavage. Python
     supplies the theoretical-peptide map; Rust performs shared-peptide allocation,
-    family handling, denominators, TPA, normalization, and output. The `--qc_report`
-    PDF is plotting periphery: `--verbose` prints a one-line pointer to
-    `mokume.peptides2protein_qc` (`plotting` extra).
+    family handling, denominators, TPA, normalization, and output. With the
+    plotting dependencies installed, `--verbose --qc_report QC.pdf` writes the
+    PDF after the native table has been produced. A custom `--qc_report` path
+    requires `--verbose`.
 
 ### TopN
 
@@ -227,15 +228,19 @@ mokume.peptides2protein(method="sum", peptides="peptides.csv",
 | `--max_aa` | 30 | Maximum amino acid length |
 | `-t/--tpa` | off | Calculate TPA (piBAQ only) |
 | `-r/--ruler` | off | Use ProteomicRuler (piBAQ only) |
-| `-i/--ploidy` | 2 | Ploidy number |
-| `-m/--organism` | `human` | Organism for histone data |
-| `-c/--cpc` | 200 | Cellular protein concentration (g/L) |
-| `--threads` | -1 | Rayon threads for MaxLFQ and DirectLFQ; positive values set the pool, `-1` uses all available CPUs, `-2` leaves one free, and `0` keeps the global pool |
+| `-i/--ploidy` | 2 with `--ruler` | Positive ploidy number (ruler only) |
+| `-m/--organism` | `human` with `--ruler` | Organism for histone data (ruler only) |
+| `-c/--cpc` | 200 with `--ruler` | Positive cellular protein concentration in g/L (ruler only) |
+| `--threads` | -1 | Rayon workers for MaxLFQ and DirectLFQ; positive values set the pool, negative values use CPU-relative semantics, and `0` is rejected |
 | `--min_nonan` | 1 | Min non-NaN values (DirectLFQ) |
 | `--families` | none | Optional YAML file with explicit family overrides (piBAQ only) |
 | `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (piBAQ only) |
-| `-o/--output` | none | Output file path |
+| `-o/--output` | required | Output file path |
 | `--verbose` | off | Print distribution info |
 | `--qc_report` | QCprofile.pdf | Path for QC report PDF |
 
-`-o/--output` is effectively required for `--method pibaq`; for the other methods, omitting it prints the result table to stdout.
+Method-specific options are rejected for other methods instead of being
+accepted and ignored. For example, `--threads` applies only to LFQ methods,
+`--min_nonan` only to DirectLFQ, and FASTA/digestion/family/QC options only to
+piBAQ. `--ploidy`, `--organism`, and `--cpc` require `--ruler`, and invalid or
+non-positive values are rejected.

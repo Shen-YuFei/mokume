@@ -84,16 +84,11 @@ The command performs these steps in order:
 | `conditionMedian` | Adjust samples within each condition |
 | `none` | Skip sample normalization |
 
-!!! note "Only scalar-per-sample methods change the peptide output"
-    In the peptide flow only the factor-based normalizers (`globalmedian` /
-    `conditionmedian`) are applied. The dataset-level methods
-    (`quantile`, `rlr`, `loess`, `hierarchical`,
-    `mediancenter`, `meancenter`) are accepted but are a deterministic **no-op**
-    here (same result as `--sample-normalization none`): they need the full
-    matrix, which the streaming peptide pass does not hold, and Python's
-    per-sample loop also leaves them unchanged. All of these methods **are** implemented and
-    oracle-verified in [`features2proteins`](features2proteins.md#normalization-options),
-    where the full matrix exists — run dataset-level normalization there.
+!!! note "Only scalar-per-sample methods are accepted"
+    The peptide flow accepts only `none`, `globalmedian`, and
+    `conditionmedian`. Dataset-level methods need the full matrix and are
+    rejected here instead of being accepted as no-ops. They remain available
+    in [`features2proteins`](features2proteins.md#normalization-options).
 
 ## Filtering Options
 
@@ -175,20 +170,19 @@ mokume features2peptides \
 | `--filter-exclude-modifications` | Comma-separated modifications to exclude |
 | `--filter-min-unique-peptides` | Minimum unique peptides per protein |
 | `--filter-min-features` | Minimum identified features per run |
-| `--filter-max-missing-rate` | Maximum missing value rate (0.0-1.0) |
 
-!!! note "Group-level filters: what runs and what is a no-op"
+!!! note "Group-level filter support"
     The per-row filters (min-intensity floor, peptide length, charge states,
     excluded modifications, missed cleavages) and the per-`(protein, sample)`
     unique-peptide gate are wired in the kernel and oracle-locked vs Python.
     Among the group-level filters, CV threshold (`--filter-cv-threshold`),
     quantile outlier removal, and the run-QC checks `--filter-min-features` /
     min-total-intensity / min-proteins are implemented via a pre-pass. Replicate
-    agreement reproduces Python's degenerate per-sample behaviour (a threshold
-    `>= 2` empties the output, matching the reference). `--filter-max-missing-rate`,
-    sample correlation, min-search-score, and min-coverage are no-ops on the QPX
-    streaming model — each warns and passes rows through, exactly as Python skips
-    them. Only an unknown `razor-peptide-handling` value returns `NotImplemented`.
+    agreement reproduces the Python per-sample behaviour. Filter-config keys
+    that the QPX streaming model cannot evaluate (including missing rate,
+    sample correlation, search score, and protein coverage) are rejected when
+    active. Unknown YAML/JSON keys are also rejected, so a typo cannot silently
+    pass through.
 
 See [Preprocessing Filters](../concepts/preprocessing.md) for the full filter reference.
 
@@ -207,6 +201,10 @@ mokume features2peptides -p data.parquet -o peptides.csv --log2
 # Skip normalization entirely
 mokume features2peptides -p data.parquet -o peptides.csv --skip_normalization
 ```
+
+`--skip_normalization` conflicts with channel IRS options. IRS autodetection
+requires an SDRF and must match a reference channel; otherwise the command
+fails instead of writing an unscaled result.
 
 ## Python API
 

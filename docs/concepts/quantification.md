@@ -177,7 +177,9 @@ mokume features2proteins -p features.parquet -o proteins.csv \
 **DirectLFQ** (Ammar et al., 2023) uses hierarchical normalization with variance-guided pairwise alignment. When used as the quantification method, it handles both normalization and quantification. It is a native Rust port of the DirectLFQ estimator — no separate Python dependency is needed.
 
 !!! note
-    When `--quant-method directlfq` is selected, the kernel handles **all processing** through the DirectLFQ estimator. Run and sample normalization settings are ignored.
+    When `--quant-method directlfq` is selected, the kernel handles normalization
+    and quantification through the DirectLFQ estimator. External run/sample
+    normalization defaults to `none`; non-`none` values are rejected.
 
 ```bash
 mokume features2proteins \
@@ -208,7 +210,8 @@ mokume features2proteins \
 ```
 
 !!! info
-    Ratio quantification handles cross-plex normalization inherently via per-plex reference division. The `--irs` flag is ignored for ratio mode.
+    Ratio quantification handles cross-plex normalization inherently via
+    per-plex reference division. Combining it with `--irs` is rejected.
 
 ## TMT Abundance
 

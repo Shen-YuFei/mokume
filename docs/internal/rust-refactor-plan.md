@@ -79,10 +79,9 @@ peptide-level normalization are implemented.
 
 Recently closed (2026-06-27 — `features2peptides` C-stage parity, six commits on top
 of the IRS-global work): dataset-level sample normalization (`quantile`/`rlr`/
-`loess`/`hierarchical`/`mediancenter`/`meancenter`) is accepted and emits the
-same deterministic no-op matrix Python produces (the registered replicate fns return
-the frame unchanged and there is no post-loop dataset pass in the `features2peptides`
-command — the dataset pivot lives only in `features2proteins`); the CV-threshold and
+`loess`/`hierarchical`/`mediancenter`/`meancenter`) was initially accepted for
+compatibility but is now rejected by both CLIs because the peptide command has
+no full-matrix pass; the CV-threshold and
 replicate-agreement intensity group filters are ported (joining the already-ported
 quantile / Run-QC / per-row / razor filters, so the whole `--filter-config` pipeline
 is live, with the single-sample `dataset_df` semantics mirrored — replicate-agreement
@@ -530,10 +529,8 @@ Tasks:
   filtering, stable CSV ordering, and the `ProteinName`/`protein` output columns
   are covered by tests; `PXD003539 sum + none + none` is cell-for-cell
   identical, while full real-data parity has not yet been accepted.]
-- Document clearly that `--memory` currently only validates and does not limit
-  memory, to avoid misleading users. [Done:
-  `docs/features2proteins-parity.md` and the performance concerns in this plan
-  record this behavior.]
+- Remove the Rust `--memory` compatibility flag because the streaming path
+  cannot enforce it; document external cgroup/scheduler/container limits.
 
 Acceptance:
 
@@ -918,8 +915,8 @@ Then extend to:
   aggregation, increasing IO cost.
 - FASTA is currently read fully into memory; a large FASTA carries a fixed memory
   pressure.
-- `--memory`/`--duckdb-memory` currently only do string validation, not
-  process-memory limiting.
+- The Rust CLI no longer exposes `--memory`/`--duckdb-memory`; use an external
+  cgroup, scheduler, or container limit for process memory.
 - Output ordering guarantees stability, but sorting a large matrix has a cost.
 - A real performance report must record both runtime and peak memory, not just
   wall time.

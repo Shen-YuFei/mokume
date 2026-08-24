@@ -121,29 +121,20 @@ the compact peptide, protein, and sample structures needed by the selected
 method. It does not load the input through DuckDB or build a pandas pivot.
 
 Use `--threads` to size the Rayon thread pool used by parallel Rust sections.
-When both options are present, `--threads` takes precedence over the
-DirectLFQ-specific `--directlfq-cores` fallback:
+`--threads` and the DirectLFQ-specific `--directlfq-cores` are mutually
+exclusive, so the requested worker count can never be shadowed:
 
 ```bash
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq \
-    --threads 16
+    --threads 24
 ```
 
-!!! warning "`--memory` validates syntax but does not limit memory"
-    `--memory` currently accepts and validates values such as `40GB`, but it
-    does not configure DuckDB, cap process RSS, or change the calculation.
-    `--duckdb-memory` is retained only as a compatibility alias. Likewise,
-    `--duckdb-threads` is a compatibility alias for `--threads` and controls
-    Rayon, not DuckDB.
-
-    For production environments that need a strict memory ceiling, use an
-    external resource limit:
-
-    - **systemd / cgroup**: `systemd-run --scope -p MemoryMax=80G -- mokume features2proteins ...`
-    - **SLURM**: `sbatch --mem=80G ...`
-    - **Docker / k8s**: `resources.limits.memory: 80Gi`
+The Rust CLI does not expose a memory-limit flag because it cannot enforce one.
+Use an external cgroup, scheduler, or container limit when a hard ceiling is
+required. `--duckdb-threads` remains an alias for the effective Rayon
+`--threads` setting.
 
 ## Normalization Options
 
@@ -172,7 +163,7 @@ mokume features2proteins -p data.parquet -o out.csv \
 
 # With specific normalization proteins
 mokume features2proteins -p data.parquet -o out.csv \
-    --sample-normalization hierarchical \
+    --sample-normalization globalmedian \
     --normalization-proteins housekeeping.txt
 
 # Quantile / MedianCenter / MeanCenter / RLR / LOESS / TMM (dataset-level)
@@ -192,6 +183,11 @@ mokume features2proteins -p data.parquet -o out.csv \
     the Rust kernel. `tmm` (Trimmed Mean of M-values,
     `mokume.normalization.tmm.TMMNormalizer`) is robust to composition bias from
     highly abundant proteins.
+
+    MaxLFQ and piBAQ currently accept `quantile` as their dataset-level method;
+    requesting RLR, LOESS, hierarchical, centering, or TMM with either method
+    is rejected before input loading. For MaxLFQ + quantile, Mokume selects the
+    built-in MaxLFQ path so the requested normalization is actually applied.
 
 - `globalMedian` is the default and a good general-purpose starting point.
 - `hierarchical` is useful when you want DirectLFQ-style normalization with a non-DirectLFQ quantification method.
@@ -230,6 +226,10 @@ mokume features2proteins \
 | `--irs-stat` | `median` | Statistic for plex reference: median or mean |
 | `--irs-remove-reference` | off | Remove reference samples from output |
 
+Every IRS sub-option requires `--irs` and an SDRF. If reference detection finds
+no usable sample/plex mapping or no finite scale, the command fails rather than
+returning an unscaled matrix.
+
 ## Ratio Quantification (TMT PS Protocol)
 
 For multi-plex TMT with per-plex reference division:
@@ -243,7 +243,8 @@ mokume features2proteins \
 ```
 
 !!! info
-    Ratio quantification handles cross-plex normalization inherently via per-plex reference division. The `--irs` flag is ignored in ratio mode.
+    Ratio quantification handles cross-plex normalization inherently via
+    per-plex reference division. Combining it with `--irs` is rejected.
 
 ## Batch Correction
 
@@ -276,11 +277,10 @@ ComBat runs as a native Rust kernel (oracle-verified vs inmoose), so no extra de
     )
     ```
 
-!!! warning "`--batch-method run` is not available in this flow"
-    Only `sample_prefix` and `column` (with `--batch-column`) detection are
-    supported in the protein-matrix flow. `--batch-method run` has no run-level
-    mapping here and errors at runtime; PCA + HDBSCAN outlier removal is not
-    ported.
+Only `sample_prefix` and `column` (with `--batch-column`) are exposed in this
+protein-matrix flow. ComBat requires at least two batches with two samples each
+and at least one protein observed in every sample; otherwise it fails instead
+of returning unchanged values. PCA + HDBSCAN outlier removal is not ported.
 
 ## Differential Expression
 
@@ -294,7 +294,7 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
         --quant-method maxlfq \
         --de \
         --de-contrasts "NASH vs HL,NASH vs Control" \
-        --de-method limrots \
+        --de-method deqms \
         --de-fdr-method ihw \
         --de-output de_results.csv
     ```
@@ -328,7 +328,7 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 | `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
 | `--de-ensemble-methods` | `limrots,deqms,proda` | Comma-separated DE methods used when `--de-method=ensemble` |
-| `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
+| `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction (ensemble only) |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
 | `--de-effect-size-gate` | — | Explicit data-driven gate: `mixture` or `null_quantile`; a numeric `--de-log2fc` becomes its fallback |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
@@ -341,13 +341,16 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
     the pipeline raises an error listing available conditions.
     Use `" vs "` as the delimiter to support hyphenated
     condition names.
+    A DE output path is also required, so completed results cannot be discarded.
 
 !!! tip
     `--de-method auto` chooses `deqms` for `directlfq`
     quantification and `limrots` for all others. All methods
     run in the native Rust kernel — no R or rpy2 required.
     BKY and Storey fall back to BH when their pi0 estimate is not reliable.
-    ROTS and LimROTS retain their own permutation FDR.
+    ROTS and LimROTS retain their own permutation FDR, so alternative
+    `--de-fdr-method` values are rejected for those methods. Ensemble applies
+    the selected correction to the combined result.
     See [Differential Expression
     concepts](../concepts/differential-expression.md) for a
     detailed comparison of methods.
@@ -389,18 +392,20 @@ mokume features2proteins \
 | Imputation Option | Default | Description |
 |-------------------|---------|-------------|
 | `--impute` | off | Enable imputation on the protein matrix |
-| `--impute-method` | `none` | none, mean, median, constant, zero, most_frequent, knn, minprob, mindet, qrilc, missforest, seqknn, impseq, gms, bpca, impseqrob |
-| `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet/QRILC low-tail draw |
+| `--impute-method` | required with `--impute` | mean, median, constant, zero, most_frequent, knn, minprob, mindet, qrilc, seqknn, impseq, gms, bpca, impseqrob |
+| `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet |
 | `--impute-shift` | 1.6 | MinProb shift in standard deviations |
 | `--impute-scale` | 0.3 | MinProb scale factor for sigma |
 | `--impute-n-neighbors` | 5 | Neighbours for KNN/SeqKNN |
 
-!!! warning "`missforest` is wheel-only"
-    Every imputation method above runs in the Rust kernel except `missforest`,
-    which wraps scikit-learn's `IterativeImputer`, whose tree-building internals
-    are not reproducible cross-language. Passing
-    `--impute-method missforest` errors with a pointer to the
-    pure-Python fallback. Run it on the protein matrix instead (`analysis` extra):
+Imputation tuning options are method-scoped: quantile applies to MinDet/MinProb,
+shift and scale to MinProb, and neighbour count to KNN/SeqKNN. Passing them to
+another method is rejected.
+
+!!! warning "`missforest` is Python analysis periphery"
+    `missforest` is not offered by the Rust compute command because it wraps
+    scikit-learn. Install the Rust-backed wheel's `analysis` dependencies and
+    call the Python API:
 
     ```python
     import mokume
@@ -424,6 +429,7 @@ import mokume
 mokume.de_plots([
     "--protein-matrix", "proteins.csv",
     "--plot-dir", "plots",
+    "--sdrf", "experiment.sdrf.tsv",
     "--volcano", "--heatmap", "--pca",
     "--contrast", "NASH-HL", "NASH", "HL", "de_results.csv",
 ])
@@ -456,8 +462,8 @@ mokume features2proteins \
     --export-ions ions.csv
 ```
 
-DirectLFQ peptide export is not supported because its calculation operates on
-the normalized ion matrix. Conversely, `--export-ions` is DirectLFQ-only. For
+DirectLFQ and Ratio peptide export is not supported because those calculations
+operate on method-specific normalized structures. Conversely, `--export-ions` is DirectLFQ-only. For
 non-cell-based aggregation methods, peptide export also rejects dataset-level
 sample normalization because the exported peptide values would not represent
 the normalized protein matrix.
@@ -476,9 +482,8 @@ mokume features2proteins \
     --run-normalization median \
     --sample-normalization globalMedian \
     --min-unique 2 \
-    --remove-contaminants \
     --irs --irs-remove-reference \
     --batch-correction --batch-method sample_prefix \
-    --de --de-contrasts "NASH vs HL" --de-method limrots --de-fdr-method ihw \
+    --de --de-contrasts "NASH vs HL" --de-method deqms --de-fdr-method ihw \
     --de-output de_results.csv
 ```

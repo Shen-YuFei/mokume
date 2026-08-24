@@ -107,8 +107,8 @@ Generally the most accurate of the MAR family but the slowest.
 !!! warning "Wheel-only"
     `missforest` is **not** ported to the Rust kernel — it wraps scikit-learn's
     `IterativeImputer` driven by `RandomForestRegressor`, whose tree-building and
-    RNG cannot be reproduced cross-language. The kernel rejects
-    `--impute-method missforest` and points to the wheel:
+    RNG cannot be reproduced cross-language. The Rust compute CLI does not
+    advertise this method; use the wheel's Python analysis API:
     `mokume.impute(matrix, method="missforest")` (`pip install mokume[analysis]`).
 
 ## Latent / Matrix-Completion Methods

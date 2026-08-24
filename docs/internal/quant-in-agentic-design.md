@@ -80,23 +80,23 @@ issue #48 Point 3 除 quant 外还点名了归一化搜索空间。`CandidateCon
 
 sample 层与 matrix 层则做同一件事(拉平样本之间)、只是层级不同,所以 agentic 的 matrix 归一化实际是在**重做**上游 sample 归一化。这也解释了当前 knowledge graph 中 OpDEA 与 Grid evidence 为何常把 `none` 放在参考配置里——那些证据来自“归一化只做一次”的流水线，搬到“上游已归一化过”的矩阵上，`none` 往往就是对的。
 
-### 7.1 顺带查实:上游 config **不能**当作矩阵的事实记录
+### 7.1 上游归一化参数现在是可执行契约,但仍不是 provenance 边车
 
-设计过程中本想让 `features2proteins` 把上游配置写成边车文件供 agentic 读取("至少让它知道自己被冻在哪")。**查源码后否掉了**,因为请求的归一化经常根本没生效:
+本节最初记录的“配置接受但计算不读取”问题已经在命令契约修复中消除。当前行为是:
 
-| quant 分支 | `--run-normalization` / `--sample-normalization` 是否生效 |
+| quant 分支 | `--run-normalization` / `--sample-normalization` 行为 |
 | --- | --- |
-| `directlfq` | **永不生效**。`_run_directlfq_pipeline`(`features_to_proteins.py:281-329`)从不读 `self.config.normalization`,归一化由 DirectLFQ 自己的 `NormalizationManagerSamplesOnSelectedProteins` 完成 |
-| `ratio` | **永不生效**。走每 plex 参考除法 |
-| `maxlfq` + `--sample-normalization none` | **不生效**。`_can_run_maxlfq_directlfq_pipeline()` 放行,路由到 DirectLFQ 流式路径 |
-| `maxlfq`(默认 sample-norm) | 生效,走 `_run_mokume_pipeline` |
-| `pibaq` / `top<N>` / `sum` | 生效 |
+| `directlfq` | 省略时解析为 `none/none`; 显式活动归一化被拒绝,由 DirectLFQ 自己完成内部归一化 |
+| `ratio` | 省略时解析为 `none/none`; 显式活动归一化被拒绝,由每 plex reference ratio 完成缩放 |
+| `maxlfq` | 无 dataset-level 方法时走 DirectLFQ-aligned 路径; 请求 quantile 时切换到 built-in MaxLFQ 并实际应用 quantile; 当前不支持的 dataset-level 组合直接报错 |
+| `pibaq` | quantile 会实际应用; 其他 dataset-level 方法直接报错 |
+| `top<N>` / `sum` 等 cell-based 方法 | 请求的已支持 run/sample 方法均进入实际计算 |
 
-而 `run_pipeline` 的默认值是 `run_normalization="median"`、`sample_normalization="globalMedian"`(`features_to_proteins.py:474-475`)。**所以对一张 directlfq 矩阵照抄 config,会记下 "median/globalMedian" 这两个从未碰过数据的值。** 更糟的是 CLI 那句提醒的条件是 `run_normalization != "median" or sample_normalization != "globalmedian"`(`commands/features2proteins.py:778`)——**用默认值跑 directlfq 时连提醒都不会打**。
+CLI 使用“是否显式传入”的参数来源信息区分默认值和用户请求; API 层也在运行前检查方法作用域。因此不再通过 warning 接受无效配置,也不存在 `--threads` 被 `--directlfq-cores` 覆盖的优先级。
 
 此外 run 归一化在无技术重复时是空操作(`stages.py:440`、`:587`、`:683` 三处都以 `technical_repetitions > 1` 为条件),即对许多数据集,"被冻结的 run-norm 轴"根本不是一条真轴。
 
-**结论:config 是意图,矩阵才是事实,mokume 自己的源码承认两者会分叉。** 任何 config 序列化若要当事实用,必须携带 requested/effective 双层 + 实际生效分支标记;单层照抄会把 issue #48 批评的"工具夸大自己控制了什么"换个形式再犯一遍。这也是本轮**没有**做边车文件的原因。
+**结论:当前 config 已是经过作用域验证的执行意图,矩阵仍是最终计算事实。** 如果未来把 config 序列化为 provenance,仍应记录 resolved/effective 值与实际路由;本轮按既定决定不新增 provenance 边车。
 
 本轮落地的是不依赖上游猜测、对**任何**来源矩阵都成立的边界:ContractBlock 和 plugin skill 固定声明 frozen axes，Host 不能把 quantification 改写成当前工具能够搜索的参数。它把“有 truth 时的胜出配置只在当前蛋白矩阵切片内比较、无 truth 时不产生 winner”讲明白。
 

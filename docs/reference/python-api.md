@@ -166,7 +166,12 @@ mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
                  "--volcano", "--contrast", "c1", "A", "B", "de.csv"])
 
 # interactive HTML report from kernel CSVs (reports extra)
-mokume.interactive_report(["--protein-matrix", "proteins.csv", "--report-output", "report.html"])
+mokume.interactive_report([
+    "--protein-matrix", "proteins.csv",
+    "--sdrf", "experiment.sdrf.tsv",
+    "--report-output", "report.html",
+    "--contrast", "c1", "A", "B", "de.csv",
+])
 ```
 
 Run `python -m mokume.commands.de_plots --help` / `python -m mokume.commands.interactive_report --help` for the flags.

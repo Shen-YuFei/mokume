@@ -66,7 +66,9 @@ This generates:
 The `--volcano` / `--heatmap` / `--pca` flags select which plots to render;
 `--log2fc-threshold` (default 0.5) and `--fdr-threshold` (default 0.05) mirror the
 kernel's `--de-log2fc` / `--de-fdr` so the significance cutoffs match. The same
-command is runnable as `python -m mokume.commands.de_plots ...`.
+command is runnable as `python -m mokume.commands.de_plots ...`. Volcano and
+heatmap require at least one `--contrast`; heatmap and PCA require `--sdrf`.
+Invalid option scopes are rejected instead of producing an empty plot directory.
 
 ## Interactive HTML Report
 
@@ -85,6 +87,9 @@ mokume.interactive_report([
     "--contrast", "NASH-HL", "NASH", "HL", "de_results/NASH_vs_HL.csv",
 ])
 ```
+
+Use either `--report-output` or `--plot-dir`; supplying both is rejected because
+the explicit report path otherwise makes the plot directory ineffective.
 
 The interactive report includes:
 

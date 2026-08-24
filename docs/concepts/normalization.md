@@ -169,4 +169,7 @@ mokume features2proteins -p data.parquet -o out.csv \
 ## DirectLFQ Mode
 
 !!! warning "DirectLFQ handles its own normalization"
-    When using `--quant-method directlfq`, the kernel runs **all processing** (normalization + quantification) through the native Rust DirectLFQ estimator. The `--run-normalization` and `--sample-normalization` options are ignored.
+    When using `--quant-method directlfq`, the kernel runs normalization and
+    quantification through the native Rust DirectLFQ estimator. The CLI defaults
+    both external normalization settings to `none` and rejects any non-`none`
+    value instead of ignoring it.
