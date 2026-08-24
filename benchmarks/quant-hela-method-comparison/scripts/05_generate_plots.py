@@ -36,8 +36,6 @@ sns.set_palette("husl")
 # Figure sizes
 FIGSIZE_SMALL = (8, 6)
 FIGSIZE_MEDIUM = (10, 8)
-FIGSIZE_LARGE = (14, 10)
-FIGSIZE_WIDE = (14, 6)
 
 
 def load_analysis_results() -> dict:

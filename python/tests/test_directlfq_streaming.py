@@ -100,8 +100,9 @@ def test_maxlfq_directlfq_wrapper_matches_upstream_run_lfq():
         )
         output_paths = list(Path(temp_dir).glob("*protein_intensities*.tsv"))
         assert len(output_paths) == 1
-        upstream_df = directlfq._parse_output(
-            str(output_paths[0]),
+        upstream_wide = pd.read_csv(output_paths[0], sep="\t")
+        upstream_df = directlfq._parse_wide_output(
+            upstream_wide,
             protein_column="ProteinName",
             sample_column="SampleID",
         )

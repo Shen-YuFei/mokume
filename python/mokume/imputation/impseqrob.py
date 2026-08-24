@@ -72,7 +72,7 @@ def _covSD(x: np.ndarray, h: int, chunk_size: int = 50_000) -> dict:
     ``np.max`` over chunks combines via row-wise ``np.maximum``, so the
     chunked version is mathematically identical to the dense one.
     """
-    n, p = x.shape
+    n = x.shape[0]
     B = _extradir(x)
     norms = np.linalg.norm(B, axis=1)
     keep = norms > 1e-12
@@ -132,7 +132,7 @@ def _impnorm_preimpute(x: np.ndarray, n_needed: int) -> np.ndarray:
     the ``n_needed`` rows with fewest missing values using the conditional
     normal distribution.
     """
-    n, p = x.shape
+    p = x.shape[1]
     isnan = np.isnan(x)
     n_miss_per_row = isnan.sum(axis=1)
 

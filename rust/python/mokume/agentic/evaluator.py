@@ -315,14 +315,6 @@ def compare_fdr_calibration(
     return out
 
 
-def de_protein_set(de_df: pd.DataFrame, expected_direction: str = "UP") -> set[str]:
-    """Proteins this DE table calls significant in the expected direction."""
-    protein_col = _protein_col(de_df)
-    if protein_col is None or "significance" not in de_df.columns:
-        return set()
-    return set(de_df.loc[de_df["significance"] == expected_direction, protein_col])
-
-
 def de_signed_call_set(
     de_df: pd.DataFrame,
     expected_direction: str | None = None,

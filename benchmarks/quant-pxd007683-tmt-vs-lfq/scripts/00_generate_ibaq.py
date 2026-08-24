@@ -13,7 +13,6 @@ import shutil
 import urllib.request
 import urllib.parse
 import warnings
-from pathlib import Path
 
 import pandas as pd
 import numpy as np

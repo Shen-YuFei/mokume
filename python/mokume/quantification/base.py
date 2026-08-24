@@ -92,27 +92,6 @@ class ProteinQuantificationMethod(ABC):
         """
         pass
 
-    def _get_grouping_column(
-        self, sample_column: str, run_column: Optional[str] = None
-    ) -> str:
-        """
-        Get the column to use for grouping based on aggregation level.
-
-        Parameters
-        ----------
-        sample_column : str
-            Column name for sample identifiers.
-        run_column : str, optional
-            Column name for run identifiers.
-
-        Returns
-        -------
-        str
-            The column name to use for grouping (run_column if provided,
-            otherwise sample_column).
-        """
-        return run_column if run_column is not None else sample_column
-
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"
 

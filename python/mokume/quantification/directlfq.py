@@ -221,32 +221,6 @@ class DirectLFQQuantification(ProteinQuantificationMethod):
             result_long["Intensity"].notna() & (result_long["Intensity"] > 0)
         ]
 
-    def _parse_output(
-        self,
-        output_path: str,
-        protein_column: str,
-        sample_column: str,
-    ) -> pd.DataFrame:
-        """
-        Parse DirectLFQ output and convert to long format.
-
-        Parameters
-        ----------
-        output_path : str
-            Path to DirectLFQ protein intensities output.
-        protein_column : str
-            Original protein column name to use in output.
-        sample_column : str
-            Original sample column name to use in output.
-
-        Returns
-        -------
-        pd.DataFrame
-            Results in long format with protein, sample, and intensity columns.
-        """
-        result_wide = pd.read_csv(output_path, sep="\t")
-        return self._parse_wide_output(result_wide, protein_column, sample_column)
-
     def _run_streamed_directlfq(self, input_path: str) -> pd.DataFrame:
         lfq_manager = _import_directlfq()
         import directlfq.config as lfq_config

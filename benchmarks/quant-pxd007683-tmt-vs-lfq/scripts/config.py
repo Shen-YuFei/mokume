@@ -29,12 +29,6 @@ FIGURES_DIR = BENCHMARK_DIR / "figures"
 BENCHMARKS_LOCAL_DIR = Path(__file__).parent.parent.parent.parent / "benchmarks-local" / "PXD007683"
 LOCAL_DATA_DIR = BENCHMARKS_LOCAL_DIR / "data" / "processed"
 
-# Local parquet files (peptide-level data)
-LOCAL_PARQUET_FILES = {
-    "tmt": LOCAL_DATA_DIR / "tmt_peptides.parquet",
-    "lfq": LOCAL_DATA_DIR / "lfq_peptides.parquet",
-}
-
 # Pre-quantified results (protein-level)
 LOCAL_QUANTIFIED_DIR = BENCHMARKS_LOCAL_DIR / "results" / "quantification"
 
@@ -141,51 +135,12 @@ IMPUTATION_METHODS = [
 # Minimum peptides per protein
 MIN_PEPTIDES = 2
 
-# Minimum samples for CV calculation
-MIN_SAMPLES_CV = 3
-
 # CV thresholds for quality assessment
 CV_THRESHOLDS = {
     "excellent": 0.10,  # < 10%
     "good": 0.20,       # < 20%
     "acceptable": 0.30, # < 30%
     "poor": 0.50,       # < 50%
-}
-
-# Fold-change accuracy thresholds (log2 scale)
-FC_ACCURACY_THRESHOLDS = {
-    "excellent": 0.2,   # < 0.2 log2 units
-    "good": 0.4,        # < 0.4 log2 units
-    "acceptable": 0.6,  # < 0.6 log2 units
-}
-
-# =============================================================================
-# Metrics to Compute
-# =============================================================================
-
-METRICS = {
-    # Q1: Absolute expression stability
-    "cv_within_condition": "CV of protein abundances within same condition",
-    "cv_across_samples": "Overall CV across all samples",
-    "proteins_quantified": "Number of proteins quantified",
-    "missing_rate": "Percentage of missing values",
-
-    # Q2: Technical vs biological variance
-    "pca_var_pc1": "Variance explained by PC1",
-    "pca_var_pc2": "Variance explained by PC2",
-    "pca_condition_separation": "R² of condition ~ PC scores",
-    "silhouette_condition": "Silhouette score for condition clustering",
-
-    # Q3: Fold-change accuracy (yeast proteins)
-    "fc_accuracy_3fold": "RMSE for 3-fold expected changes",
-    "fc_accuracy_2fold": "RMSE for 2-fold expected changes",
-    "fc_accuracy_1.5fold": "RMSE for 1.5-fold expected changes",
-    "fc_bias": "Mean bias in fold-change estimation",
-
-    # Cross-technology (LFQ vs TMT)
-    "pearson_overall": "Pearson correlation LFQ vs TMT",
-    "spearman_overall": "Spearman correlation LFQ vs TMT",
-    "pearson_per_protein": "Mean per-protein Pearson correlation",
 }
 
 # =============================================================================
@@ -216,30 +171,3 @@ METHOD_COLORS = {
     "directlfq": "#e31a1c",
     "ibaq": "#fdbf6f",
 }
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-def get_methods_for_technology(technology: str) -> list:
-    """
-    Get appropriate quantification methods for a technology.
-
-    DirectLFQ should NOT be used for TMT data - it was designed for LFQ.
-
-    Parameters
-    ----------
-    technology : str
-        Either "tmt" or "lfq"
-
-    Returns
-    -------
-    list
-        List of appropriate quantification methods
-    """
-    if technology.lower() == "tmt":
-        return QUANTIFICATION_METHODS_TMT
-    elif technology.lower() == "lfq":
-        return QUANTIFICATION_METHODS_LFQ
-    else:
-        raise ValueError(f"Unknown technology: {technology}. Use 'tmt' or 'lfq'.")

@@ -331,10 +331,6 @@ PIBAQ_PARAMS = {
 # uses PIBAQ_PARAMS directly.
 IBAQ_PARAMS = PIBAQ_PARAMS
 
-# Normalization settings
-NORMALIZATION_METHOD = "median"
-
-
 # ============================================================================
 # COLUMN MAPPINGS FOR DIFFERENT FILE FORMATS
 # ============================================================================
@@ -365,5 +361,3 @@ QUANTMS_PARQUET_MAPPING = {
     "BioReplicate": "BioReplicate",
     "biological_replicate": "BioReplicate",
 }
-
-COLUMN_MAPPING = QUANTMS_PARQUET_MAPPING

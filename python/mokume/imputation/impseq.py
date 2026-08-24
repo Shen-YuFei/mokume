@@ -40,7 +40,7 @@ def _cond_normal_impute(
 
 def _impseq_core(data: np.ndarray) -> np.ndarray:
     """Sequential imputation matching R rrcovNA::impSeq."""
-    n, p = data.shape
+    _, p = data.shape
     result = data.copy()
     observed = np.isfinite(data)
 

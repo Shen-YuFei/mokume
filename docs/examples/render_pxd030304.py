@@ -23,7 +23,6 @@ from mokume.tissuemap.tissue_specificity import compute_ts_scores
 
 
 TISSUE_COL = "characteristics[organism part]"
-BATCH_COL = "characteristics[batch]"
 
 
 def parse_args() -> argparse.Namespace:

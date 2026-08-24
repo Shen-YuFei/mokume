@@ -7,9 +7,7 @@ These functions operate on pandas DataFrames / numpy arrays directly.
 """
 
 import re
-from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 # =============================================================================
@@ -201,25 +199,6 @@ def total_intensity_normalize(df: pd.DataFrame) -> pd.DataFrame:
     col_sums = df.sum()
     target = col_sums.median()
     return df * (target / col_sums)
-
-def global_median_normalize(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Global median normalization: scale each sample's median to the global median.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Numeric DataFrame (proteins x samples).
-
-    Returns
-    -------
-    pd.DataFrame
-        Normalized DataFrame.
-    """
-    global_median = df.median().median()
-    sample_medians = df.median()
-    factors = global_median / sample_medians
-    return df * factors
 
 def hierarchical_normalize(df_log: pd.DataFrame, min_overlap: int = 10) -> pd.DataFrame:
     """
@@ -434,90 +413,6 @@ def filter_min_peptides(
     peptide_counts = df.groupby(protein_column)[peptide_column].nunique()
     passing_proteins = peptide_counts[peptide_counts >= min_unique_peptides].index
     return df[df[protein_column].isin(passing_proteins)].copy()
-
-def filter_min_cv(
-    df_wide: pd.DataFrame,
-    max_cv: float,
-    condition_map: dict,
-) -> pd.DataFrame:
-    """
-    Filter proteins by maximum CV within conditions.
-
-    Parameters
-    ----------
-    df_wide : pd.DataFrame
-        Wide-format DataFrame (proteins x samples).
-    max_cv : float
-        Maximum allowed CV.
-    condition_map : dict
-        Mapping from sample names to condition labels.
-
-    Returns
-    -------
-    pd.DataFrame
-        Filtered DataFrame.
-    """
-    keep = pd.Series(True, index=df_wide.index)
-
-    conditions = set(condition_map.values())
-    for cond in conditions:
-        cols = [c for c in df_wide.columns if condition_map.get(str(c)) == cond]
-        if len(cols) < 2:
-            continue
-        subset = df_wide[cols]
-        cv = subset.std(axis=1) / subset.mean(axis=1)
-        cv = cv.replace([np.inf, -np.inf], np.nan).fillna(1.0)
-        keep = keep & (cv <= max_cv)
-
-    return df_wide[keep].copy()
-
-def filter_min_intensity(
-    df: pd.DataFrame,
-    min_intensity: float,
-    intensity_column: str = "Intensity",
-) -> pd.DataFrame:
-    """
-    Filter rows by minimum intensity value.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame with an intensity column.
-    min_intensity : float
-        Minimum intensity threshold.
-    intensity_column : str
-        Name of the intensity column.
-
-    Returns
-    -------
-    pd.DataFrame
-        Filtered DataFrame.
-    """
-    return df[df[intensity_column] >= min_intensity].copy()
-
-def filter_charge_state(
-    df: pd.DataFrame,
-    allowed_charges: set,
-    charge_column: str = "Charge",
-) -> pd.DataFrame:
-    """
-    Filter rows by allowed charge states.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame with a charge column.
-    allowed_charges : set
-        Set of allowed charge state integers.
-    charge_column : str
-        Name of the charge column.
-
-    Returns
-    -------
-    pd.DataFrame
-        Filtered DataFrame.
-    """
-    return df[df[charge_column].isin(allowed_charges)].copy()
 
 # =============================================================================
 # Quantification Helpers

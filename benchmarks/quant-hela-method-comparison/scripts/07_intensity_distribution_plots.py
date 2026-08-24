@@ -48,42 +48,6 @@ def median_normalize(df, intensity_col='LogIntensity', sample_col='SampleID'):
     return df
 
 
-def plot_intensity_distribution(df, intensity_col, sample_col, title, output_path,
-                                 xlabel='log10(Intensity)', colors=None):
-    """Plot intensity distribution for each sample using KDE."""
-    fig, ax = plt.subplots(figsize=(10, 7))
-
-    samples = sorted(df[sample_col].unique())
-
-    if colors is None:
-        cmap = plt.cm.get_cmap('tab20', len(samples))
-        colors = [cmap(i) for i in range(len(samples))]
-
-    for i, sample in enumerate(samples):
-        sample_data = df[df[sample_col] == sample][intensity_col].dropna()
-
-        if len(sample_data) > 10:
-            # KDE estimation
-            try:
-                kde = stats.gaussian_kde(sample_data)
-                x_range = np.linspace(sample_data.min() - 0.5, sample_data.max() + 0.5, 200)
-                y = kde(x_range)
-                ax.plot(x_range, y, label=sample, color=colors[i], linewidth=1.5)
-            except:
-                pass
-
-    ax.set_xlabel(xlabel, fontsize=12)
-    ax.set_ylabel('Density', fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend(title='Sample', bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=8)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=200, bbox_inches='tight', facecolor='white')
-    plt.close()
-    print(f"Saved: {output_path}")
-
-
 def plot_before_after(df_raw, df_norm, sample_col, dataset_name, output_path):
     """Plot before and after normalization side by side."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))

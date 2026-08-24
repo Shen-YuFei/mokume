@@ -35,13 +35,33 @@ def _reference_pibaq_module():
     source = (
         Path(__file__).parents[2] / "python" / "mokume" / "quantification" / "pibaq.py"
     )
+    allocation_source = source.with_name("_pibaq_allocation.py")
+    allocation_name = "mokume.quantification._pibaq_allocation"
     name = "_mokume_canonical_pibaq_reference"
     spec = importlib.util.spec_from_file_location(name, source)
-    if spec is None or spec.loader is None:
+    allocation_spec = importlib.util.spec_from_file_location(
+        allocation_name, allocation_source
+    )
+    if (
+        spec is None
+        or spec.loader is None
+        or allocation_spec is None
+        or allocation_spec.loader is None
+    ):
         raise RuntimeError(f"Could not load canonical piBAQ reference from {source}")
     module = importlib.util.module_from_spec(spec)
+    allocation_module = importlib.util.module_from_spec(allocation_spec)
+    previous_allocation = sys.modules.get(allocation_name)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    sys.modules[allocation_name] = allocation_module
+    try:
+        allocation_spec.loader.exec_module(allocation_module)
+        spec.loader.exec_module(module)
+    finally:
+        if previous_allocation is None:
+            sys.modules.pop(allocation_name, None)
+        else:
+            sys.modules[allocation_name] = previous_allocation
     return module
 
 

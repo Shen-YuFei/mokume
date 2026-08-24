@@ -55,6 +55,9 @@ allow-list:
       Rust-wheel compatibility entrypoints adapt DataFrames and legacy arguments
       to the native piBAQ core; the pure-Python calculation and file workflow are
       intentionally not vendored.
+  quantification/_pibaq_allocation.py
+      The pure-Python package retains the allocation implementation, while the
+      Rust-wheel sidecar keeps only DataFrame helpers used around the native core.
   imputation/censored.py
   imputation/methods.py
   imputation/missforest.py
@@ -121,7 +124,6 @@ SHARED_FILES: tuple[str, ...] = (
     "plotting/differential_expression.py",
     "plotting/distributions.py",
     "plotting/pca.py",
-    "quantification/_pibaq_allocation.py",
     "quantification/families.py",
     "reports/__init__.py",
     "reports/interactive.py",
@@ -158,6 +160,7 @@ INTENTIONALLY_EXCLUDED: tuple[str, ...] = (
     "imputation/missforest.py",
     "io/__init__.py",
     "normalization/__init__.py",
+    "quantification/_pibaq_allocation.py",
     "quantification/__init__.py",
     "quantification/pibaq.py",
 )
