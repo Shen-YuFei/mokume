@@ -99,19 +99,40 @@ pub fn run_peptides_to_protein_with_digest(
     pibaq_digest: Option<PibaqDigest>,
 ) -> Result<()> {
     let method = args.method.to_ascii_lowercase();
+    let output = peptides2protein_output(args)?;
+    validate_lfq_options(args, &method)?;
+    validate_pibaq_options(args, &method)?;
 
+    match method.as_str() {
+        "pibaq" => run_pibaq(args, output, pibaq_digest),
+        "sum" => run_generic(args, &method, output),
+        // `--method` is validated (and `topn` normalized to `top3`) by
+        // `parse_peptides2protein_method`, so any `top`-prefixed name reaching
+        // here is a well-formed `top<N>`.
+        name if parse_topn_from_method_name(name).is_some() => run_generic(args, &method, output),
+        "maxlfq" | "directlfq" => run_lfq(args, &method, output),
+        other => Err(MokumeError::InvalidInput {
+            message: format!("unknown peptides2protein method '{other}'"),
+        }),
+    }
+}
+
+fn peptides2protein_output(args: &Peptides2ProteinArgs) -> Result<&Path> {
     if !args.peptides.exists() {
         return Err(MokumeError::MissingInput {
             path: args.peptides.clone(),
         });
     }
-    let Some(output) = args.output.as_ref() else {
-        return Err(MokumeError::InvalidInput {
-            message: "peptides2protein requires --output".to_owned(),
-        });
-    };
 
-    let is_lfq = matches!(method.as_str(), "maxlfq" | "directlfq");
+    args.output
+        .as_deref()
+        .ok_or_else(|| MokumeError::InvalidInput {
+            message: "peptides2protein requires --output".to_owned(),
+        })
+}
+
+fn validate_lfq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<()> {
+    let is_lfq = matches!(method, "maxlfq" | "directlfq");
     if !is_lfq && args.threads != -1 {
         return Err(MokumeError::InvalidInput {
             message: "--threads only applies to peptides2protein DirectLFQ/MaxLFQ".to_owned(),
@@ -122,23 +143,31 @@ pub fn run_peptides_to_protein_with_digest(
             message: "--min-nonan only applies to peptides2protein DirectLFQ".to_owned(),
         });
     }
-    if method != "pibaq"
-        && (args.fasta.is_some()
-            || !args.enzyme.eq_ignore_ascii_case("Trypsin")
-            || args.min_aa != 7
-            || args.max_aa != 30
-            || args.tpa
-            || args.ruler
-            || args.ploidy.is_some()
-            || args.organism.is_some()
-            || args.cpc.is_some()
-            || args.families_yaml.is_some()
-            || args.min_shared != 2
-            || args.min_anchors != 1
-            || args.high_anchor_threshold != 3
-            || args.verbose
-            || args.qc_report != Path::new("QCprofile.pdf"))
-    {
+    Ok(())
+}
+
+fn validate_pibaq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<()> {
+    let has_pibaq_options = [
+        args.fasta.is_some(),
+        !args.enzyme.eq_ignore_ascii_case("Trypsin"),
+        args.min_aa != 7,
+        args.max_aa != 30,
+        args.tpa,
+        args.ruler,
+        args.ploidy.is_some(),
+        args.organism.is_some(),
+        args.cpc.is_some(),
+        args.families_yaml.is_some(),
+        args.min_shared != 2,
+        args.min_anchors != 1,
+        args.high_anchor_threshold != 3,
+        args.verbose,
+        args.qc_report != Path::new("QCprofile.pdf"),
+    ]
+    .into_iter()
+    .any(|configured| configured);
+
+    if method != "pibaq" && has_pibaq_options {
         return Err(MokumeError::InvalidInput {
             message: "piBAQ digestion/TPA/ruler/QC options require --method pibaq".to_owned(),
         });
@@ -156,19 +185,7 @@ pub fn run_peptides_to_protein_with_digest(
             message: "--qc-report requires --verbose".to_owned(),
         });
     }
-
-    match method.as_str() {
-        "pibaq" => run_pibaq(args, output, pibaq_digest),
-        "sum" => run_generic(args, &method, output),
-        // `--method` is validated (and `topn` normalized to `top3`) by
-        // `parse_peptides2protein_method`, so any `top`-prefixed name reaching
-        // here is a well-formed `top<N>`.
-        name if parse_topn_from_method_name(name).is_some() => run_generic(args, &method, output),
-        "maxlfq" | "directlfq" => run_lfq(args, &method, output),
-        other => Err(MokumeError::InvalidInput {
-            message: format!("unknown peptides2protein method '{other}'"),
-        }),
-    }
+    Ok(())
 }
 
 /// DirectLFQ default `num_samples_quadratic` (the global-stage knob). The Python
