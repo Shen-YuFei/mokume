@@ -54,6 +54,15 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
     quant_method_name = config.quantification.method.lower()
     logger.info(f"Starting pipeline with quant_method={quant_method_name}")
 
+    if quant_method_name in {"directlfq", "ratio"} and (
+        config.normalization.run_method.lower() != "none"
+        or config.normalization.sample_method.lower() != "none"
+    ):
+        raise ValueError(
+            f"{quant_method_name} manages normalization internally; "
+            "use run/sample normalization 'none'"
+        )
+
     if config.input.msstats and quant_method_name == "ratio":
         raise ValueError(
             "Ratio quantification requires PSM-level QPX input; "

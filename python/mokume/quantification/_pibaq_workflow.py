@@ -261,9 +261,13 @@ def _validate_ruler_request(request: _PeptidesToProteinRequest) -> None:
         raise ValueError(
             "Proteomic ruler requires --tpa, a positive ploidy/CPC, and an organism"
         )
-    if not options.ruler and (
-        options.ploidy != 2 or options.cpc != 200 or options.organism != "human"
-    ):
+    uses_cli_defaults = (
+        options.ploidy == 2 and options.cpc == 200 and options.organism == "human"
+    )
+    uses_legacy_sentinels = (
+        options.ploidy == 0 and options.cpc == 0 and not options.organism
+    )
+    if not options.ruler and not (uses_cli_defaults or uses_legacy_sentinels):
         raise ValueError("ploidy, CPC, and organism only apply to proteomic ruler")
 
 

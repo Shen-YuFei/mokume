@@ -55,6 +55,7 @@ def _make_config(quant_method: str) -> PipelineConfig:
     ``min_unique_peptides=1`` is used because the fixture is a tiny slice;
     the default of 2 leaves too few proteins to be a useful signal.
     """
+    manages_normalization = quant_method == "directlfq"
     return PipelineConfig(
         input=InputConfig(parquet=PARQUET, sdrf=SDRF),
         filtering=FilterConfig(
@@ -63,8 +64,8 @@ def _make_config(quant_method: str) -> PipelineConfig:
             remove_contaminants=True,
         ),
         normalization=NormalizationConfig(
-            run_method="median",
-            sample_method="globalMedian",
+            run_method="none" if manages_normalization else "median",
+            sample_method="none" if manages_normalization else "globalMedian",
         ),
         quantification=QuantificationConfig(method=quant_method),
     )
@@ -123,6 +124,15 @@ class TestRunPipelineMatchesRunDataset:
         pytest.importorskip("directlfq")
         pytest.importorskip("polars")
         assert _max_abs_diff("directlfq") < 1e-9
+
+    def test_directlfq_rejects_external_normalization(self):
+        config = _make_config("directlfq")
+        config.normalization.run_method = "median"
+
+        with pytest.raises(ValueError, match="manages normalization internally"):
+            run_pipeline(config)
+        with pytest.raises(ValueError, match="manages normalization internally"):
+            QuantificationPipeline(config).run_dataset()
 
 
 class TestRunPipelineProvenance:
