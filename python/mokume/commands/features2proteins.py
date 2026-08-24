@@ -9,7 +9,9 @@ import re
 
 import click
 
-from mokume.commands._features2proteins_options import (
+from mokume.model.normalization import PeptideNormalizationMethod
+
+from ._features2proteins_options import (
     _parse_de_contrasts,
     _resolved_imputation_method,
     _resolved_normalizations,
@@ -20,7 +22,6 @@ from mokume.commands._features2proteins_options import (
     _validate_quantification_options,
     _validate_reference_options,
 )
-from mokume.model.normalization import PeptideNormalizationMethod
 
 
 # Build choices for sample normalization (including hierarchical)
