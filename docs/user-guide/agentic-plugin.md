@@ -133,8 +133,9 @@ point starts from an existing protein matrix.
 The Plugin accepts only `fdr_method="bh"` for standalone `rots` and `limrots`
 candidates. Both methods retain their native permutation FDR, so alternative
 values would otherwise create duplicate candidate signatures with identical
-results. Ensemble candidates may still use the full FDR catalog because the
-requested correction is applied at the member and combination layers.
+results. Ensemble candidates may still use the full FDR catalog: eligible
+non-ROTS members and the combination layer use the requested correction, while
+ROTS and LimROTS members retain their native permutation FDR.
 
 Each evaluated round writes one DE table per candidate,
 `method_sensitivity.tsv`, and `evaluation.json`. The sensitivity table separates

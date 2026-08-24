@@ -55,8 +55,8 @@ use mokume_core::quant::parse_topn_from_method_name;
 use mokume_core::{MokumeError, Result};
 use mokume_io::read_peptide_parquet;
 use mokume_pipeline::{
-    run_lfq_from_peptides, run_pibaq_from_peptides, LfqPeptideObservation, PeptideObservation,
-    PibaqDigest, PibaqFromPeptidesParams, PibaqProteinRow,
+    run_lfq_from_peptides_with_threads, run_pibaq_from_peptides, LfqPeptideObservation,
+    PeptideObservation, PibaqDigest, PibaqFromPeptidesParams, PibaqProteinRow,
 };
 
 use crate::Peptides2ProteinArgs;
@@ -137,6 +137,22 @@ pub fn run_peptides_to_protein_with_digest(
 /// does not expose it, so it is fixed here too.
 const DIRECTLFQ_NUM_SAMPLES_QUADRATIC: usize = 50;
 
+/// Translate the Python/joblib-style thread count into an explicit Rayon pool
+/// size. Negative values reserve `abs(threads) - 1` logical CPUs, so `-1`
+/// selects every available CPU and `-2` leaves one free; zero keeps Rayon's
+/// configured global pool.
+fn resolve_lfq_threads(threads: i32) -> Option<usize> {
+    if threads > 0 {
+        return Some(threads as usize);
+    }
+    if threads == 0 {
+        return None;
+    }
+    let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let reserved = threads.unsigned_abs().saturating_sub(1) as usize;
+    Some(available.saturating_sub(reserved).max(1))
+}
+
 /// DirectLFQ / MaxLFQ path: roll the peptide matrix up with the DirectLFQ
 /// estimator (Python's `DirectLFQQuantification`; `maxlfq` delegates to it with
 /// `min_nonan = 2`). Emits the same long-format table as the deterministic
@@ -173,15 +189,19 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
         });
     }
 
-    let mut results: Vec<GenericRow> =
-        run_lfq_from_peptides(&observations, min_nonan, DIRECTLFQ_NUM_SAMPLES_QUADRATIC)
-            .into_iter()
-            .map(|row| GenericRow {
-                protein: row.protein,
-                sample: row.sample,
-                intensity: row.intensity,
-            })
-            .collect();
+    let mut results: Vec<GenericRow> = run_lfq_from_peptides_with_threads(
+        &observations,
+        min_nonan,
+        DIRECTLFQ_NUM_SAMPLES_QUADRATIC,
+        resolve_lfq_threads(args.threads),
+    )?
+    .into_iter()
+    .map(|row| GenericRow {
+        protein: row.protein,
+        sample: row.sample,
+        intensity: row.intensity,
+    })
+    .collect();
     results.sort_by(|left, right| {
         left.protein
             .cmp(&right.protein)
@@ -1697,18 +1717,42 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&peptides, PEPTIDES_CSV)?;
 
         for method in ["maxlfq", "directlfq"] {
-            let output = dir.join(format!("{method}.tsv"));
-            let mut args = base_args(&peptides, &output);
-            args.method = method.to_owned();
-            run_peptides_to_protein_with_digest(&args, None)?;
+            let mut one_thread_output = None;
+            for threads in [1, 4] {
+                let output = dir.join(format!("{method}-{threads}.tsv"));
+                let mut args = base_args(&peptides, &output);
+                args.method = method.to_owned();
+                args.threads = threads;
+                run_peptides_to_protein_with_digest(&args, None)?;
 
-            let (headers, rows) = read_table(&output)?;
-            assert_eq!(headers.first().map(String::as_str), Some(PROTEIN_NAME));
-            assert_eq!(headers.get(1).map(String::as_str), Some(SAMPLE_ID));
-            assert_eq!(headers.get(2).map(String::as_str), Some("Intensity"));
-            assert!(!rows.is_empty(), "{method} produced rows");
+                let table = read_table(&output)?;
+                assert_eq!(table.0.first().map(String::as_str), Some(PROTEIN_NAME));
+                assert_eq!(table.0.get(1).map(String::as_str), Some(SAMPLE_ID));
+                assert_eq!(table.0.get(2).map(String::as_str), Some("Intensity"));
+                assert!(!table.1.is_empty(), "{method} produced rows");
+                if let Some(expected) = &one_thread_output {
+                    assert_eq!(&table, expected, "{method} changed with thread count");
+                } else {
+                    one_thread_output = Some(table);
+                }
+            }
         }
         Ok(())
+    }
+
+    #[test]
+    fn resolves_lfq_thread_sentinels_like_python() {
+        let available = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1);
+
+        assert_eq!(super::resolve_lfq_threads(4), Some(4));
+        assert_eq!(super::resolve_lfq_threads(0), None);
+        assert_eq!(super::resolve_lfq_threads(-1), Some(available));
+        assert_eq!(
+            super::resolve_lfq_threads(-2),
+            Some(available.saturating_sub(1).max(1))
+        );
     }
 
     #[test]

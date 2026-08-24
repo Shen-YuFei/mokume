@@ -28,8 +28,9 @@
 //!
 //! BH, IHW, BKY, and Storey are wired. BKY/Storey use the Python reliability
 //! gate and fall back to BH when pi0 is not trustworthy; ROTS/LimROTS preserve
-//! their permutation FDR. Ensemble members use the requested correction and the
-//! combined Fisher p-values are corrected again, matching Python. A fixed
+//! their permutation FDR, including as ensemble members. Eligible non-ROTS
+//! ensemble members use the requested correction, and the combined Fisher
+//! p-values are corrected again, matching Python. A fixed
 //! `--de-log2fc` threshold or the Python-compatible `auto` mixture gate is
 //! applied to both member and ensemble classifications; `null_quantile` is also
 //! available explicitly.

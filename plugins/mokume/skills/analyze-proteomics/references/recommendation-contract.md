@@ -146,8 +146,9 @@ Pass `mokume.evaluate_recommendation` an object with exactly this shape:
 Standalone `rots` and `limrots` candidates require `fdr_method="bh"`: those
 methods preserve their native permutation FDR, so another value would create a
 distinct candidate signature without changing the calculation. This restriction
-does not apply to `de_method="ensemble"`, where the requested correction is
-applied at the member and combination layers.
+does not apply to `de_method="ensemble"`: eligible non-ROTS members and the
+combination layer use the requested correction, while ROTS and LimROTS members
+retain their native permutation FDR.
 Normalization supports `none`, `median`, `quantile`, `mean`, `rlr`, and
 `loess`. Imputation supports `none`, `minprob`, `mindet`, `knn`, `missforest`,
 `seqknn`, `qrilc`, `impseq`, `impseqrob`, `bpca`, and `gms`.

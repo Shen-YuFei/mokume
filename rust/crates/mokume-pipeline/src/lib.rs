@@ -4478,14 +4478,32 @@ pub struct LfqProteinIntensity {
     pub intensity: f64,
 }
 
-/// Roll a peptide-level table up to per-protein intensities with the DirectLFQ
-/// estimator (canonical peptides as ions) -- the engine behind
+/// Roll a peptide-level table up to per-protein intensities inside an explicitly
+/// sized Rayon worker pool with the DirectLFQ estimator (canonical peptides as
+/// ions) -- the engine behind
 /// `peptides2protein --method directlfq` and `--method maxlfq`. mokume's
 /// `MaxLFQQuantification` delegates to DirectLFQ when the package is available
 /// (`min_nonan = 2`, its `min_peptides`); the `directlfq` method uses its own
 /// `min_nonan`. `num_samples_quadratic` is DirectLFQ's global-stage knob (the
-/// directlfq default is 50). Only intensities `> 0` are returned, matching
-/// Python's `_parse_wide_output`.
+/// directlfq default is 50). `None` retains the configured global pool. Only
+/// intensities `> 0` are returned, matching Python's `_parse_wide_output`.
+pub fn run_lfq_from_peptides_with_threads(
+    observations: &[LfqPeptideObservation],
+    min_nonan: usize,
+    num_samples_quadratic: usize,
+    threads: Option<usize>,
+) -> Result<Vec<LfqProteinIntensity>> {
+    threading::install(threads, || {
+        Ok(run_lfq_from_peptides(
+            observations,
+            min_nonan,
+            num_samples_quadratic,
+        ))
+    })
+}
+
+/// Run the same DirectLFQ roll-up in the current Rayon worker pool. Call
+/// [`run_lfq_from_peptides_with_threads`] when the pool size must be explicit.
 pub fn run_lfq_from_peptides(
     observations: &[LfqPeptideObservation],
     min_nonan: usize,
