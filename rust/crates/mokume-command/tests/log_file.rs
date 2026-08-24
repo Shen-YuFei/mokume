@@ -15,13 +15,15 @@ fn log_file_option_writes_file_and_preserves_command_errors(
     let log_file = root.join("logs").join("mokume.log");
     let error = match run_from_args([
         "mokume",
-        "--log-file",
-        path_str(&log_file)?,
         "features2proteins",
         "--parquet",
         "definitely-missing.feature.parquet",
         "--output",
         "protein.csv",
+        "--log-level",
+        "info",
+        "--log-file",
+        path_str(&log_file)?,
     ]) {
         Ok(()) => panic!("command must still fail for a missing input"),
         Err(error) => error,
@@ -54,8 +56,6 @@ P1,PEPTIDEAK,S1,A,100.0\n",
     run_from_args_with_pibaq_digest(
         [
             "mokume",
-            "--log-file",
-            path_str(&log_file)?,
             "peptides2protein",
             "--method",
             "pibaq",
@@ -69,6 +69,10 @@ P1,PEPTIDEAK,S1,A,100.0\n",
             "100",
             "--output",
             path_str(&output)?,
+            "--log-level",
+            "info",
+            "--log-file",
+            path_str(&log_file)?,
         ],
         PibaqDigest {
             accession_peptides: HashMap::from([(
@@ -100,6 +104,34 @@ P1,PEPTIDEAK,S1,A,100.0\n",
             "missing {expected:?} in log:\n{log}"
         );
     }
+
+    let conflicting_log = root.join("logs").join("conflicting.log");
+    let conflict = match run_from_args([
+        "mokume",
+        "features2proteins",
+        "--parquet",
+        "another-missing.feature.parquet",
+        "--output",
+        "other.csv",
+        "--log-level",
+        "warn",
+        "--log-file",
+        path_str(&conflicting_log)?,
+    ]) {
+        Ok(()) => panic!("a later logging configuration must not be silently ignored"),
+        Err(error) => error,
+    };
+    assert!(
+        conflict
+            .to_string()
+            .contains("logging is already initialized with log_level=info"),
+        "unexpected conflict error: {conflict}"
+    );
+    assert!(
+        !conflicting_log.exists(),
+        "conflicting logging configuration must not create {}",
+        conflicting_log.display()
+    );
     Ok(())
 }
 

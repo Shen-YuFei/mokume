@@ -34,18 +34,19 @@ struct Cli {
         short = 'v',
         long = "log-level",
         default_value = "debug",
-        ignore_case = true
+        ignore_case = true,
+        global = true
     )]
     log_level: LogLevel,
 
-    #[arg(long = "log-file")]
+    #[arg(long = "log-file", global = true)]
     log_file: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum LogLevel {
     Debug,
     Info,
@@ -1269,15 +1270,38 @@ fn generate_filter_config(path: &Path) -> mokume_core::Result<()> {
     Ok(())
 }
 
-/// Initialize the global tracing subscriber at most once per process. The
-/// library entry may be invoked many times from a hosting Python process, so the
-/// `Once` guard keeps repeat calls from re-attempting initialization and
-/// emitting a spurious "already set" warning.
+/// Initialize the global tracing subscriber once per process.
+///
+/// Library entry points may be called repeatedly from one Python process. The
+/// same logging configuration reuses the installed subscriber; a different
+/// configuration is rejected instead of silently pretending that it took
+/// effect.
 fn init_logging(level: LogLevel, log_file: Option<PathBuf>) -> mokume_core::Result<()> {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    let mut outcome: mokume_core::Result<()> = Ok(());
-    INIT.call_once(|| outcome = init_logging_once(level, log_file));
-    outcome
+    static CONFIG: Mutex<Option<(LogLevel, Option<PathBuf>)>> = Mutex::new(None);
+    let requested = (level, log_file);
+    let mut active = CONFIG.lock().map_err(|_| MokumeError::InvalidInput {
+        message: "logging configuration lock is poisoned".to_owned(),
+    })?;
+
+    if let Some(config) = active.as_ref() {
+        if config == &requested {
+            return Ok(());
+        }
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "logging is already initialized with log_level={} and log_file={:?}; \
+                 requested log_level={} and log_file={:?}",
+                config.0.as_filter(),
+                config.1,
+                requested.0.as_filter(),
+                requested.1,
+            ),
+        });
+    }
+
+    init_logging_once(requested.0, requested.1.clone())?;
+    *active = Some(requested);
+    Ok(())
 }
 
 fn init_logging_once(level: LogLevel, log_file: Option<PathBuf>) -> mokume_core::Result<()> {
@@ -1296,16 +1320,21 @@ fn init_logging_once(level: LogLevel, log_file: Option<PathBuf>) -> mokume_core:
             path: path.clone(),
             source,
         })?;
-        if let Err(error) = tracing_subscriber::fmt()
+        tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_ansi(false)
             .with_writer(Mutex::new(file))
             .try_init()
-        {
-            eprintln!("failed to initialize logging: {error}");
-        }
-    } else if let Err(error) = tracing_subscriber::fmt().with_env_filter(filter).try_init() {
-        eprintln!("failed to initialize logging: {error}");
+            .map_err(|error| MokumeError::InvalidInput {
+                message: format!("failed to initialize logging: {error}"),
+            })?;
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .try_init()
+            .map_err(|error| MokumeError::InvalidInput {
+                message: format!("failed to initialize logging: {error}"),
+            })?;
     }
     Ok(())
 }

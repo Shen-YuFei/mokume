@@ -85,6 +85,11 @@ mokume.run(["correct-batches", "--folder", "pibaq_dir", "--output", "corrected.t
 
 `mokume.run` and the four wrappers raise on a dispatch failure and surface clap's usage errors; they never tear down the hosting interpreter.
 
+Rust tracing is process-global. Set `log_level` and `log_file` on the first
+in-process compute call when you need non-default logging. Later calls may reuse
+that exact logging configuration; requesting a different level or file raises a
+clear error instead of silently ignoring the new values.
+
 ---
 
 ## Matrix-level compute
