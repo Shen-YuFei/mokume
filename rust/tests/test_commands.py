@@ -1,6 +1,7 @@
 """The relocated periphery command modules import and expose ``main(argv)``."""
 
 import importlib
+import sys
 from types import SimpleNamespace
 
 import pandas as pd
@@ -82,14 +83,17 @@ def test_tissuemap_config_values_are_not_overridden_by_parser_defaults(
         encoding="utf-8",
     )
     captured = {}
-    pipeline_module = importlib.import_module("mokume.tissuemap.pipeline")
 
     def capture_pipeline(config):
         """Return a no-op pipeline while retaining its resolved configuration."""
         captured["config"] = config
         return SimpleNamespace(run=lambda: None)
 
-    monkeypatch.setattr(pipeline_module, "TissueMapPipeline", capture_pipeline)
+    monkeypatch.setitem(
+        sys.modules,
+        "mokume.tissuemap.pipeline",
+        SimpleNamespace(TissueMapPipeline=capture_pipeline),
+    )
     module = importlib.import_module("mokume.commands.tissuemap")
 
     assert module.main(["--config", str(config_path)]) == 0

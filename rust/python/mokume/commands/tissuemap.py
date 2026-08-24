@@ -26,6 +26,7 @@ argv contract:
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 from pathlib import Path
 from typing import Optional
@@ -174,10 +175,9 @@ def main(argv: list[str]) -> int:
 
     try:
         from mokume.tissuemap.config import generate_default_yaml
-        from mokume.tissuemap.pipeline import TissueMapPipeline
     except ImportError as exc:  # pragma: no cover - environment dependent
         print(
-            "error: failed to import mokume tissuemap dependencies: "
+            "error: failed to import mokume tissuemap configuration: "
             f"{exc}\nInstall them with: pip install mokume[tissuemap]",
             file=sys.stderr,
         )
@@ -200,7 +200,19 @@ def main(argv: list[str]) -> int:
         print(f"error: {config_error}", file=sys.stderr)
         return 2
 
-    TissueMapPipeline(config).run()
+    try:
+        pipeline_class = getattr(
+            importlib.import_module("mokume.tissuemap.pipeline"), "TissueMapPipeline"
+        )
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        print(
+            "error: failed to import mokume tissuemap dependencies: "
+            f"{exc}\nInstall them with: pip install mokume[tissuemap]",
+            file=sys.stderr,
+        )
+        return 1
+
+    pipeline_class(config).run()
     return 0
 
 
