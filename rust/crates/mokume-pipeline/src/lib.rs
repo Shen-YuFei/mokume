@@ -54,6 +54,12 @@ struct PeptideCellKey {
     peptide: PeptideId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RunQcKey {
+    sample: String,
+    technical_replicate: i64,
+}
+
 /// Key for the DirectLFQ ion table: one entry per (protein, canonical
 /// sequence, sample), holding the summed linear intensity. DirectLFQ's "ion"
 /// is the bare sequence, so this keys on the canonical peptide id.
@@ -105,14 +111,13 @@ struct FeatureToProteinState {
     /// populated by a source pre-pass so every row of a passing protein group is
     /// retained, matching the Python group-minimum FDR contract.
     protein_fdr_allowed: Option<HashSet<String>>,
-    /// Sample names dropped by the Run-QC group filters (Python `run_qc.py`:
-    /// total-intensity / feature-count / protein-count thresholds). Computed in a
-    /// pre-pass over the same initial-filtered features; ingest skips these
-    /// samples entirely. Empty when no Run-QC threshold is set. The normalization
-    /// median is computed before Run-QC (Python computes it via `SQLFilterBuilder`
-    /// ahead of the per-sample pipeline), so excluded samples still contribute to
-    /// the median, matching Python.
-    run_qc_excluded_samples: HashSet<String>,
+    /// `(sample, technical replicate)` runs dropped by the Run-QC group filters
+    /// (Python `run_qc.py`: total intensity, feature/protein counts and missing
+    /// rate). Computed in a pre-pass over the same initial-filtered features;
+    /// ingest skips only the rejected technical run, not its whole sample. Empty
+    /// when no Run-QC threshold is active. The normalization median is computed
+    /// before Run-QC, matching Python's `SQLFilterBuilder` ordering.
+    run_qc_excluded_runs: HashSet<RunQcKey>,
     /// Pre-compiled `exclude_sequence_patterns` regexes (Python
     /// `SequencePatternFilter`, peptide.py:415-418). Empty unless a
     /// `features2peptides` filter pipeline supplies non-empty patterns; compiled
@@ -173,7 +178,7 @@ impl FeatureToProteinState {
             keep_shared_peptides: false,
             peptide_filters: None,
             protein_fdr_allowed: None,
-            run_qc_excluded_samples: HashSet::new(),
+            run_qc_excluded_runs: HashSet::new(),
             excluded_sequence_regexes: Vec::new(),
             quantile_bounds: HashMap::new(),
             cv_dropped: HashSet::new(),
@@ -237,11 +242,11 @@ impl FeatureToProteinState {
 
         let sdrf_record = sdrf_record(feature, sdrf)?;
         let sample_name = sample_name(feature, sdrf_record);
-        // Run-QC group filters drop whole samples (Python `run_qc.py`). The
-        // decision is precomputed in a pre-pass; skip excluded samples here, the
-        // same way the Python per-sample pipeline removes them before the
-        // peptide/protein stages. The median already accounts for them.
-        if self.run_qc_excluded_samples.contains(&sample_name) {
+        // Python applies Run-QC within a per-sample frame but groups its rows by
+        // `TechReplicate`. The pre-pass therefore rejects individual technical
+        // runs; other runs from the same sample must remain available.
+        let run_qc_key = run_qc_key(feature, sdrf_record, sample_name.clone());
+        if self.run_qc_excluded_runs.contains(&run_qc_key) {
             return Ok(());
         }
         // CVThresholdFilter (Python `intensity.py:127-141`): drop every row of a
@@ -834,7 +839,11 @@ impl PeptideExport {
         let (run, tech_replicate) = if self.run_mode {
             (
                 Some(measurement.run_file_name.to_owned()),
-                tech_replicate_of(measurement.run_file_name),
+                measurement
+                    .sdrf_record
+                    .and_then(|record| record.technical_replicate)
+                    .map(i64::from)
+                    .unwrap_or_else(|| tech_replicate_of(measurement.run_file_name)),
             )
         } else {
             (None, 0)
@@ -5145,11 +5154,8 @@ fn run_features_to_proteins_inner(
 ///   * `--aggregation_level run`: append `Run` / `TechReplicate` columns and key
 ///     the matrix at run level (Python `sum_peptidoform_intensities` run branch).
 ///
-/// Stages that depend on not-yet-ported pieces are rejected with
-/// `MokumeError::NotImplemented` before any work, never silently skipped:
-/// channel-based IRS (`--irs_channel` / `--irs_autodetect_regex`), the filter
-/// pipeline (`--filter-config` / `--filter-*`), and the dataset-level sample
-/// normalization methods (hierarchical/quantile/rlr/loess).
+/// Requested filter settings that are not implemented are rejected with
+/// `MokumeError::NotImplemented` before any work, never silently skipped.
 /// Up-front validation for `features2peptides`: existence of inputs, supported
 /// normalization methods, and the channel-IRS-adjacent constraints. Kept
 /// separate so the orchestrator stays a linear sequence of stages.
@@ -5239,10 +5245,12 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     // `collect_intensity_factors` / `collect_run_qc_exclusions`) and at ingest via
     // `matches_protein_contaminant` (parsed `protein_group`), so this is accepted.
     let run_qc = &config.run_qc;
-    // min-total-intensity / min-features / min-proteins are implemented via the
-    // Run-QC pre-pass (`collect_run_qc_exclusions`), so they are accepted here.
-    if run_qc.max_missing_rate < 1.0 {
-        return unsupported("features2peptides filter max-missing-rate");
+    // Run-QC thresholds, including missing rate, are implemented via the
+    // technical-run pre-pass (`collect_run_qc_exclusions`).
+    if !run_qc.max_missing_rate.is_finite() || !(0.0..=1.0).contains(&run_qc.max_missing_rate) {
+        return Err(invalid_input(
+            "features2peptides max-missing-rate must be between 0 and 1",
+        ));
     }
     if run_qc.min_sample_correlation.is_some() {
         return unsupported("features2peptides filter min-sample-correlation");
@@ -5413,21 +5421,21 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
                 parse_razor_handling(&pipeline.protein.razor_peptide_handling);
         }
     }
-    // Run-QC group filters drop whole samples before the per-sample chain; decide
-    // which samples to drop in a pre-pass (the median is computed independently in
-    // `collect_intensity_factors`, so excluded samples still feed it -- matching
-    // Python, where `get_median_map` runs via `SQLFilterBuilder` ahead of the
-    // per-sample filter pipeline).
+    // Run-QC filters run inside each sample frame and group by technical
+    // replicate. Decide which runs to drop in a pre-pass (the median is computed
+    // independently in `collect_intensity_factors`, so excluded runs still feed
+    // it -- matching Python, where `get_median_map` runs via `SQLFilterBuilder`
+    // ahead of the per-sample filter pipeline).
     if let Some(pipeline) = filter_pipeline {
-        state.run_qc_excluded_samples = collect_run_qc_exclusions(
-            parquet,
-            proteins_config.filtering,
-            sdrf.as_ref(),
-            config.keep_shared_peptides,
-            proteins_config.filtering.min_unique_peptides,
-            &pipeline.run_qc,
-            &pipeline.protein.contaminant_patterns,
-        )?;
+        let source = RunQcSource {
+            filtering: proteins_config.filtering,
+            keep_shared_peptides: config.keep_shared_peptides,
+            min_unique_peptides: proteins_config.filtering.min_unique_peptides,
+            contaminant_patterns: &pipeline.protein.contaminant_patterns,
+            remove_protein_ids: &state.remove_protein_ids,
+        };
+        state.run_qc_excluded_runs =
+            collect_run_qc_exclusions(parquet, sdrf.as_ref(), &pipeline.run_qc, &source)?;
     }
     // CVThresholdFilter and QuantileFilter are group-level filters: both need the
     // whole sample's `min_unique`-gated intensities, which the streaming ingest
@@ -5435,7 +5443,8 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // Run-QC), over the rows Python's pipeline sees at `intensity.py:293` (post
     // `min_unique` gate, pre feature-normalization). They share the pass so the
     // quantile bounds see the post-CV survivors (Python orders CV before Quantile).
-    // Excluded Run-QC samples are skipped so they do not feed either decision.
+    // Excluded Run-QC technical runs are skipped so they do not feed either
+    // decision.
     if let Some(pipeline) = filter_pipeline {
         let group_filters = collect_intensity_group_filters(
             parquet,
@@ -5444,7 +5453,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             config.keep_shared_peptides,
             proteins_config.filtering.min_unique_peptides,
             &pipeline.intensity,
-            &state.run_qc_excluded_samples,
+            &state.run_qc_excluded_runs,
         )?;
         state.cv_dropped = group_filters.cv_dropped;
         state.quantile_bounds = group_filters.quantile_bounds;
@@ -6349,49 +6358,98 @@ fn supports_sample_normalization(method: &str) -> bool {
     parse_sample_normalization_method(method).is_ok()
 }
 
-/// Compute the Run-QC group-filter exclusions for `features2peptides`: stream the
-/// initial-filtered features once, accumulate each sample's total intensity,
-/// feature-row count and distinct-protein count, then drop samples below the
-/// configured thresholds (Python `run_qc.py` RunIntensityFilter / MinFeaturesFilter,
-/// applied first in the per-sample chain). max-missing-rate and sample-correlation
-/// are no-ops on this long feature table (every kept row has intensity > 0; a
-/// single-sample frame cannot cross-correlate), matching Python's per-sample
-/// application. The normalization median is computed separately (before Run-QC),
-/// so excluded samples still contribute to it -- verified bit-exact on PXD003539.
-fn collect_run_qc_exclusions(
-    parquet: &Path,
+#[derive(Debug, Default)]
+struct RunQcProteinStats {
+    canonicals: HashSet<String>,
+    runs: HashMap<i64, RunQcRunProteinStats>,
+}
+
+#[derive(Debug, Default)]
+struct RunQcRunProteinStats {
+    canonicals: HashSet<String>,
+    total_intensity: f64,
+}
+
+#[derive(Debug, Default)]
+struct RunQcRunStats {
+    total_intensity: f64,
+    feature_count: usize,
+    protein_count: usize,
+}
+
+struct RunQcSource<'a> {
     filtering: FilterConfig,
-    sdrf: Option<&SdrfTable>,
     keep_shared_peptides: bool,
     min_unique_peptides: usize,
+    contaminant_patterns: &'a [String],
+    remove_protein_ids: &'a [String],
+}
+
+/// Compute the Run-QC exclusions for `features2peptides`. Python applies the
+/// filter pipeline to one sample frame at a time, then groups Run-QC decisions by
+/// `TechReplicate`; the exclusion key is therefore `(sample, technical replicate)`.
+/// The pre-pass mirrors the Python order:
+///
+/// 1. apply the per-`(sample, protein)` distinct-canonical `min_unique` gate;
+/// 2. reject technical runs below total-intensity / distinct-feature / protein
+///    thresholds;
+/// 3. build each remaining sample's complete distinct `(protein, canonical)`
+///    feature universe and reject runs whose absent fraction exceeds
+///    `max_missing_rate`.
+///
+/// The normalization median is computed separately before Run-QC, so rejected
+/// runs still contribute to it, matching Python.
+fn collect_run_qc_exclusions(
+    parquet: &Path,
+    sdrf: Option<&SdrfTable>,
     run_qc: &RunQcFilterConfig,
-    contaminant_patterns: &[String],
-) -> Result<HashSet<String>> {
-    if run_qc.min_total_intensity <= 0.0
-        && run_qc.min_identified_features == 0
-        && run_qc.min_identified_proteins == 0
-    {
+    source: &RunQcSource<'_>,
+) -> Result<HashSet<RunQcKey>> {
+    if !run_qc_is_active(run_qc) {
         return Ok(HashSet::new());
     }
 
-    // Python applies the per-protein `min_unique` gate (>= N distinct canonical
-    // peptides per sample) BEFORE the Run-QC pipeline, so singleton-protein
-    // features are not counted. Buffer per `(sample, protein)` to reproduce that
-    // gate, then aggregate the surviving proteins into the per-sample stats.
-    let mut stats: HashMap<(String, String), (HashSet<String>, usize, f64)> = HashMap::new();
+    let proteins = collect_run_qc_proteins(parquet, sdrf, source)?;
+    let min_unique = if source.keep_shared_peptides {
+        0
+    } else {
+        source.min_unique_peptides
+    };
+    let runs = summarize_run_qc_runs(&proteins, min_unique);
+    let mut excluded = primary_run_qc_exclusions(&runs, run_qc);
+    extend_missing_rate_exclusions(&proteins, min_unique, run_qc, &mut excluded);
+    Ok(excluded)
+}
+
+fn run_qc_is_active(run_qc: &RunQcFilterConfig) -> bool {
+    run_qc.min_total_intensity > 0.0
+        || run_qc.min_identified_features > 0
+        || run_qc.min_identified_proteins > 0
+        || run_qc.max_missing_rate < 1.0
+}
+
+/// Buffer per-run feature sets under each `(sample, protein)`: the protein-level
+/// `min_unique` decision needs the whole sample, while Run-QC metrics need the
+/// technical-run subsets.
+fn collect_run_qc_proteins(
+    parquet: &Path,
+    sdrf: Option<&SdrfTable>,
+    source: &RunQcSource<'_>,
+) -> Result<HashMap<(String, String), RunQcProteinStats>> {
+    let mut proteins: HashMap<(String, String), RunQcProteinStats> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
     stream_qpx_features(reader, |feature| {
-        if !passes_feature_filter(&feature, filtering, keep_shared_peptides) {
+        if !passes_feature_filter(&feature, source.filtering, source.keep_shared_peptides) {
             return Ok(());
         }
         // Run-QC shares the median pre-pass contaminant semantics (Python computes
         // both via `SQLFilterBuilder` ahead of the per-sample chain): match the
         // **raw** `pg_accessions`, case-sensitive substring, DECOY handled by the
         // `is_decoy` load filter.
-        if filtering.remove_contaminants
+        if source.filtering.remove_contaminants
             && matches_sql_contaminant(
                 &feature.protein_accessions,
-                contaminant_patterns,
+                source.contaminant_patterns,
                 feature.is_decoy.is_some(),
             )
         {
@@ -6400,44 +6458,114 @@ fn collect_run_qc_exclusions(
         let Some(protein_group) = protein_group_name(&feature.protein_accessions) else {
             return Ok(());
         };
+        if source
+            .remove_protein_ids
+            .iter()
+            .any(|id| protein_group.contains(id.as_str()))
+        {
+            return Ok(());
+        }
         let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
-        let entry = stats.entry((sample, protein_group)).or_default();
-        entry.0.insert(feature.sequence.clone());
-        entry.1 += 1;
-        entry.2 += feature.intensity;
+        let technical_replicate =
+            run_qc_key(&feature, sdrf_record, sample.clone()).technical_replicate;
+        let protein = proteins.entry((sample, protein_group)).or_default();
+        protein.canonicals.insert(feature.sequence.clone());
+        let run = protein.runs.entry(technical_replicate).or_default();
+        run.canonicals.insert(feature.sequence.clone());
+        run.total_intensity += feature.intensity;
         Ok(())
     })?;
+    Ok(proteins)
+}
 
-    let min_unique = if keep_shared_peptides {
-        0
-    } else {
-        min_unique_peptides
-    };
-    let mut sample_total: HashMap<String, f64> = HashMap::new();
-    let mut sample_features: HashMap<String, usize> = HashMap::new();
-    let mut sample_proteins: HashMap<String, usize> = HashMap::new();
-    for ((sample, _protein), (canonicals, features, intensity)) in &stats {
-        if canonicals.len() < min_unique {
+fn summarize_run_qc_runs(
+    proteins: &HashMap<(String, String), RunQcProteinStats>,
+    min_unique: usize,
+) -> HashMap<RunQcKey, RunQcRunStats> {
+    let mut runs: HashMap<RunQcKey, RunQcRunStats> = HashMap::new();
+    for ((sample, _protein), protein) in proteins {
+        if protein.canonicals.len() < min_unique {
             continue;
         }
-        *sample_total.entry(sample.clone()).or_insert(0.0) += *intensity;
-        *sample_features.entry(sample.clone()).or_insert(0) += *features;
-        *sample_proteins.entry(sample.clone()).or_insert(0) += 1;
-    }
-
-    let mut excluded = HashSet::new();
-    for (sample, total) in &sample_total {
-        let count = sample_features.get(sample).copied().unwrap_or(0);
-        let proteins = sample_proteins.get(sample).copied().unwrap_or(0);
-        let drop = (run_qc.min_total_intensity > 0.0 && *total < run_qc.min_total_intensity)
-            || (run_qc.min_identified_features > 0 && count < run_qc.min_identified_features)
-            || (run_qc.min_identified_proteins > 0 && proteins < run_qc.min_identified_proteins);
-        if drop {
-            excluded.insert(sample.clone());
+        for (technical_replicate, protein_run) in &protein.runs {
+            let run = runs
+                .entry(RunQcKey {
+                    sample: sample.clone(),
+                    technical_replicate: *technical_replicate,
+                })
+                .or_default();
+            run.total_intensity += protein_run.total_intensity;
+            run.feature_count += protein_run.canonicals.len();
+            run.protein_count += 1;
         }
     }
-    Ok(excluded)
+    runs
+}
+
+fn primary_run_qc_exclusions(
+    runs: &HashMap<RunQcKey, RunQcRunStats>,
+    run_qc: &RunQcFilterConfig,
+) -> HashSet<RunQcKey> {
+    let mut excluded = HashSet::new();
+    for (key, run) in runs {
+        let drop = (run_qc.min_total_intensity > 0.0
+            && run.total_intensity < run_qc.min_total_intensity)
+            || (run_qc.min_identified_features > 0
+                && run.feature_count < run_qc.min_identified_features)
+            || (run_qc.min_identified_proteins > 0
+                && run.protein_count < run_qc.min_identified_proteins);
+        if drop {
+            excluded.insert(key.clone());
+        }
+    }
+    excluded
+}
+
+fn extend_missing_rate_exclusions(
+    proteins: &HashMap<(String, String), RunQcProteinStats>,
+    min_unique: usize,
+    run_qc: &RunQcFilterConfig,
+    excluded: &mut HashSet<RunQcKey>,
+) {
+    if run_qc.max_missing_rate >= 1.0 {
+        return;
+    }
+
+    // MissingRateFilter runs after the preceding Run-QC filters. Its universe is
+    // the distinct `(ProteinName, PeptideCanonical)` set still present in the
+    // sample, while the numerator is each surviving run's distinct detected set.
+    let mut sample_universe_size: HashMap<String, usize> = HashMap::new();
+    let mut detected_by_run: HashMap<RunQcKey, usize> = HashMap::new();
+    for ((sample, _protein), protein) in proteins {
+        if protein.canonicals.len() < min_unique {
+            continue;
+        }
+        let mut surviving_canonicals = HashSet::new();
+        for (technical_replicate, protein_run) in &protein.runs {
+            let key = RunQcKey {
+                sample: sample.clone(),
+                technical_replicate: *technical_replicate,
+            };
+            if excluded.contains(&key) {
+                continue;
+            }
+            surviving_canonicals.extend(protein_run.canonicals.iter());
+            *detected_by_run.entry(key).or_insert(0) += protein_run.canonicals.len();
+        }
+        *sample_universe_size.entry(sample.clone()).or_insert(0) += surviving_canonicals.len();
+    }
+
+    for (key, detected) in detected_by_run {
+        let universe = sample_universe_size.get(&key.sample).copied().unwrap_or(0);
+        if universe == 0 {
+            continue;
+        }
+        let missing_rate = 1.0 - (detected as f64 / universe as f64);
+        if missing_rate > run_qc.max_missing_rate {
+            excluded.insert(key);
+        }
+    }
 }
 
 /// The group-level intensity filters that need a per-sample buffering pre-pass
@@ -6479,7 +6607,7 @@ fn collect_intensity_group_filters(
     keep_shared_peptides: bool,
     min_unique_peptides: usize,
     intensity: &IntensityFilterConfig,
-    run_qc_excluded: &HashSet<String>,
+    run_qc_excluded: &HashSet<RunQcKey>,
 ) -> Result<IntensityGroupFilters> {
     let cv_active = intensity.cv_threshold.is_some();
     let quantile_active = intensity.quantile_lower > 0.0 || intensity.quantile_upper < 1.0;
@@ -6520,7 +6648,8 @@ fn collect_intensity_group_filters(
         }
         let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
-        if run_qc_excluded.contains(&sample) {
+        let run_key = run_qc_key(&feature, sdrf_record, sample.clone());
+        if run_qc_excluded.contains(&run_key) {
             return Ok(());
         }
         cell_canonicals
@@ -7310,6 +7439,21 @@ fn sample_name(feature: &QpxFeatureRecord, sdrf_record: Option<&SdrfRecord>) -> 
         .sample_accession
         .clone()
         .unwrap_or_else(|| feature.run_file_name.clone())
+}
+
+fn run_qc_key(
+    feature: &QpxFeatureRecord,
+    sdrf_record: Option<&SdrfRecord>,
+    sample: String,
+) -> RunQcKey {
+    let technical_replicate = sdrf_record
+        .and_then(|record| record.technical_replicate)
+        .map(i64::from)
+        .unwrap_or_else(|| tech_replicate_of(&feature.run_file_name));
+    RunQcKey {
+        sample,
+        technical_replicate,
+    }
 }
 
 fn peptide_key(feature: &QpxFeatureRecord) -> String {

@@ -169,3 +169,26 @@ def test_duplicate_min_unique_cli_options_are_rejected(tmp_path: Path):
 
     assert result.exit_code != 0
     assert "Choose either --min_unique or --filter-min-unique-peptides" in result.output
+
+
+def test_filter_max_missing_rate_reaches_filter_config(monkeypatch, tmp_path: Path):
+    """The CLI override must activate the run-level missing-rate filter."""
+    parquet = tmp_path / "input.parquet"
+    parquet.write_text("placeholder", encoding="utf-8")
+    captured = _patch_peptide_normalization(monkeypatch)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2peptides",
+            "-p",
+            str(parquet),
+            "-o",
+            str(tmp_path / "peptides.csv"),
+            "--filter-max-missing-rate",
+            "0.4",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["filter_config"].run_qc.max_missing_rate == 0.4

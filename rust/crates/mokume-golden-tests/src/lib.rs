@@ -1903,20 +1903,27 @@ fn features2peptides_fdr_request_rejects_unpopulated_qvalue() -> Result<(), Box<
     Ok(())
 }
 
-// Run-QC group filter (min-features) drops whole samples below the threshold,
-// matching Python `run_qc.py` MinFeaturesFilter applied first in the per-sample
-// chain. Feature counts are taken AFTER the per-protein min_unique gate (Python
-// applies it before the pipeline): run1 keeps P1 (3 features: two PEPTIDEAK
-// charges + APEPTIDECK; P2/ONEPEPTK fails min_unique=2), run2 keeps 2 features.
-// min_features=3 therefore drops run2 and keeps run1. Real-data sample-set +
-// value parity is verified on PXD003539 (min-features / min-proteins).
+// Run-QC MinFeaturesFilter counts distinct `(protein, canonical)` features per
+// technical run after the per-sample protein min_unique gate. Duplicate charge
+// states must not inflate the count: run1 has three canonicals, while run2 has
+// two, so min_features=3 keeps only run1.
 #[test]
 fn features2peptides_run_qc_drops_low_feature_samples() -> Result<(), Box<dyn Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.runqc.features.parquet");
     let output = root.join("peptides.runqc.csv");
-    write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new_with_charge("PEPTIDEAK", "run1", 100.0, 2, &["P1"]),
+            QpxRow::new_with_charge("PEPTIDEAK", "run1", 150.0, 3, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run1", 200.0, &["P1"]),
+            QpxRow::new("THIDPEAK", "run1", 250.0, &["P1"]),
+            QpxRow::new("PEPTIDEAK", "run2", 300.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run2", 400.0, &["P1"]),
+        ],
+    )?;
 
     let mut config = default_peptides_config(parquet, output.clone());
     config.filter_pipeline = Some(PreprocessingFilterConfig {
@@ -1946,6 +1953,56 @@ fn features2peptides_run_qc_drops_low_feature_samples() -> Result<(), Box<dyn Er
         "run1 (3 features >= 3) must survive Run-QC:\n{:#?}",
         table.rows
     );
+    Ok(())
+}
+
+// MissingRateFilter uses the complete `(protein, canonical)` universe of the
+// surviving technical runs within a sample. run_a detects A/B/C; run_b detects
+// only A, so its missing rate is 2/3 and a 0.4 cutoff removes run_b only. The
+// shared sample remains, and A's sample-level intensity proves the rejected run
+// did not leak into aggregation (10 rather than 10 + 9).
+#[test]
+fn features2peptides_missing_rate_drops_incomplete_technical_run() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.missing-rate.features.parquet");
+    let sdrf = root.join("peptides.missing-rate.sdrf.tsv");
+    let output = root.join("peptides.missing-rate.csv");
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new("PEPTIDEAK", "run_a.raw", 10.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run_a.raw", 11.0, &["P1"]),
+            QpxRow::new("THIDPEAK", "run_a.raw", 12.0, &["P1"]),
+            QpxRow::new("PEPTIDEAK", "run_b.raw", 9.0, &["P1"]),
+        ],
+    )?;
+    write_run_replicate_sdrf(&sdrf)?;
+
+    let mut config = default_peptides_config(parquet, output.clone());
+    config.input.sdrf = Some(sdrf);
+    config.filtering.min_unique_peptides = 1;
+    config.aggregation_level = AggregationLevel::Run;
+    config.filter_pipeline = Some(PreprocessingFilterConfig {
+        run_qc: RunQcFilterConfig {
+            max_missing_rate: 0.4,
+            ..RunQcFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&config)?;
+
+    let table = read_csv(&output)?;
+    assert_eq!(table.rows.len(), 3, "unexpected filtered table: {table:#?}");
+    assert_eq!(
+        peptide_norm_intensity(&table, "P1", "PEPTIDEAK", "sample-run")?,
+        10.0,
+        "run_b must be excluded before peptide aggregation"
+    );
+    let run = header_index(&table.headers, "Run")?;
+    let technical_replicate = header_index(&table.headers, "TechReplicate")?;
+    assert!(table.rows.iter().all(|row| row[run] == "run_a.raw"));
+    assert!(table.rows.iter().all(|row| row[technical_replicate] == "1"));
     Ok(())
 }
 

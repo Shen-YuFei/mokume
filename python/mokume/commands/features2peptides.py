@@ -70,6 +70,7 @@ def _filter_overrides(
     ctx: click.Context,
     peptide_fdr: float | None = None,
     protein_fdr: float | None = None,
+    max_missing_rate: float | None = None,
 ) -> dict:
     params = ctx.params
     overrides = {}
@@ -87,6 +88,8 @@ def _filter_overrides(
         overrides["peptide_fdr"] = peptide_fdr
     if protein_fdr is not None:
         overrides["protein_fdr"] = protein_fdr
+    if max_missing_rate is not None:
+        overrides["max_missing_rate"] = max_missing_rate
     if params["filter_charge_states"] is not None:
         overrides["charge_states"] = [
             int(value.strip()) for value in params["filter_charge_states"].split(",")
@@ -102,8 +105,9 @@ def _preprocessing_config(
     ctx: click.Context,
     peptide_fdr: float | None = None,
     protein_fdr: float | None = None,
+    max_missing_rate: float | None = None,
 ) -> PreprocessingFilterConfig | None:
-    overrides = _filter_overrides(ctx, peptide_fdr, protein_fdr)
+    overrides = _filter_overrides(ctx, peptide_fdr, protein_fdr, max_missing_rate)
     config_path = ctx.params["filter_config"]
     if config_path:
         config = load_filter_config(config_path)
@@ -321,6 +325,12 @@ def _resolved_filter_thresholds(
     type=int,
     help="Override: minimum identified features per run",
 )
+@click.option(
+    "--filter-max-missing-rate",
+    "filter_max_missing_rate",
+    type=click.FloatRange(0.0, 1.0),
+    help="Override: maximum missing feature fraction per run",
+)
 @click.pass_context
 def features2parquet(
     ctx,
@@ -355,6 +365,7 @@ def features2parquet(
     filter_min_unique_peptides: int,
     filter_protein_fdr: float,
     filter_min_features: int,
+    filter_max_missing_rate: float,
 ) -> None:
     """
     Convert feature data to a parquet file with optional normalization and filtering steps.
@@ -369,7 +380,10 @@ def features2parquet(
 
     _validate_features2peptides_options(ctx)
     preprocessing_config = _preprocessing_config(
-        ctx, filter_peptide_fdr, filter_protein_fdr
+        ctx,
+        filter_peptide_fdr,
+        filter_protein_fdr,
+        filter_max_missing_rate,
     )
     min_aa, min_unique = _resolved_filter_thresholds(ctx, preprocessing_config)
 

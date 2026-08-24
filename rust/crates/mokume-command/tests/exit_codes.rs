@@ -201,6 +201,10 @@ fn features2peptides_generates_filter_config() -> Result<(), Box<dyn std::error:
         yaml.contains("min_unique_peptides: 2"),
         "yaml config is missing protein min_unique_peptides:\n{yaml}"
     );
+    assert!(
+        yaml.contains("max_missing_rate: 1.0"),
+        "yaml config is missing run-QC max_missing_rate:\n{yaml}"
+    );
 
     let json = std::fs::read_to_string(json)?;
     assert!(
@@ -210,6 +214,10 @@ fn features2peptides_generates_filter_config() -> Result<(), Box<dyn std::error:
     assert!(
         json.contains(r#""min_unique_peptides": 2"#),
         "json config is missing protein min_unique_peptides:\n{json}"
+    );
+    assert!(
+        json.contains(r#""max_missing_rate": 1.0"#),
+        "json config is missing run-QC max_missing_rate:\n{json}"
     );
     Ok(())
 }

@@ -50,11 +50,12 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
     excluded modifications, missed cleavages) and the per-`(protein, sample)`
     unique-peptide gate are wired and oracle-locked in the Rust kernel. Among the
     **group-level** filters, CV threshold, quantile outlier removal, and the
-    run-QC checks (min-features, min-total-intensity, min-proteins) are
-    implemented via a pre-pass that applies them before the normalization median.
-    Replicate agreement reproduces the Python per-sample behaviour. Settings
-    that cannot be evaluated from QPX streaming input (`max-missing-rate`,
-    sample correlation, search score, and coverage) are rejected when active.
+    run-QC checks (min-features, min-total-intensity, min-proteins and missing
+    rate) are implemented via a technical-run pre-pass. Missing rate is the absent
+    fraction of the complete distinct `(protein, peptide)` universe among the
+    surviving runs in each sample. Replicate agreement reproduces the Python
+    per-sample behaviour. Settings that cannot be evaluated from QPX streaming
+    input (sample correlation, search score, and coverage) are rejected when active.
     Unknown YAML/JSON keys and unsupported razor handling are also rejected.
 
 ## Configuration

@@ -208,6 +208,9 @@ struct Features2PeptidesArgs {
 
     #[arg(long = "filter-min-features")]
     filter_min_features: Option<usize>,
+
+    #[arg(long = "filter-max-missing-rate", value_parser = parse_fraction)]
+    filter_max_missing_rate: Option<f64>,
 }
 
 #[allow(dead_code)]
@@ -1497,6 +1500,9 @@ fn build_filter_pipeline(
     if let Some(value) = args.filter_min_features {
         config.run_qc.min_identified_features = value;
     }
+    if let Some(value) = args.filter_max_missing_rate {
+        config.run_qc.max_missing_rate = value;
+    }
     Ok(Some(config))
 }
 
@@ -1510,6 +1516,7 @@ fn has_filter_override(args: &Features2PeptidesArgs) -> bool {
         || args.filter_min_unique_peptides.is_some()
         || args.filter_protein_fdr.is_some()
         || args.filter_min_features.is_some()
+        || args.filter_max_missing_rate.is_some()
 }
 
 fn apply_fdr_overrides(args: &Features2PeptidesArgs, config: &mut PreprocessingFilterConfig) {
@@ -1702,6 +1709,7 @@ run_qc:
   min_total_intensity: 0.0      # Min total intensity per run
   min_identified_features: 0    # Min features per run
   min_identified_proteins: 0    # Min proteins per run
+  max_missing_rate: 1.0         # Max missing value rate per run (0-1)
 "#;
 
 const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
@@ -1738,7 +1746,8 @@ const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
   "run_qc": {
     "min_total_intensity": 0.0,
     "min_identified_features": 0,
-    "min_identified_proteins": 0
+    "min_identified_proteins": 0,
+    "max_missing_rate": 1.0
   },
   "enabled": true
 }
@@ -2263,6 +2272,7 @@ mod tests {
             "--filter-min-unique-peptides",
             "--filter-protein-fdr",
             "--filter-min-features",
+            "--filter-max-missing-rate",
         ] {
             assert!(
                 help.contains(option),

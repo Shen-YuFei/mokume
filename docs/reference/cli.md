@@ -291,11 +291,14 @@ them through `features2proteins`, where the full matrix exists.
 | `--filter-min-unique-peptides` | none | Min unique peptides (override) |
 | `--filter-protein-fdr` | none | Max QPX protein-group q-value (override) |
 | `--filter-min-features` | none | Min features per run (override) |
+| `--filter-max-missing-rate` | none | Max missing feature fraction per technical run (override) |
 
 Only implemented filters appear in the generated example. FDR filtering is
 disabled by default and requires populated `peptide_qvalue` or
-`pg_global_qvalue` input. Active unsupported filter-config values are rejected
-instead of being logged and ignored.
+`pg_global_qvalue` input. Missing rate uses the complete distinct
+`(protein, peptide)` universe among the surviving technical runs in each sample.
+Active unsupported filter-config values are rejected instead of being logged and
+ignored.
 
 ---
 

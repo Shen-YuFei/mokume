@@ -173,6 +173,7 @@ mokume features2peptides \
 | `--filter-min-unique-peptides` | Minimum unique peptides per protein |
 | `--filter-protein-fdr` | Maximum QPX `pg_global_qvalue` per protein group |
 | `--filter-min-features` | Minimum identified features per run |
+| `--filter-max-missing-rate` | Maximum missing feature fraction per technical run |
 
 !!! note "Group-level filter support"
     The per-row filters (min-intensity floor, peptide length, charge states,
@@ -183,12 +184,14 @@ mokume features2peptides \
     unpopulated q-value field is an error rather than a no-op.
     Among the group-level filters, CV threshold (`--filter-cv-threshold`),
     quantile outlier removal, and the run-QC checks `--filter-min-features` /
-    min-total-intensity / min-proteins are implemented via a pre-pass. Replicate
-    agreement reproduces the Python per-sample behaviour. Filter-config keys
-    that the QPX streaming model cannot evaluate (including missing rate,
-    sample correlation, search score, and protein coverage) are rejected when
-    active. Unknown YAML/JSON keys are also rejected, so a typo cannot silently
-    pass through.
+    min-total-intensity / min-proteins / `--filter-max-missing-rate` are
+    implemented via a pre-pass. Run-QC rejects individual technical runs;
+    missing rate uses the complete distinct `(protein, peptide)` universe among
+    the surviving runs in that sample. Replicate agreement reproduces the Python
+    per-sample behaviour. Filter-config keys that the QPX streaming model cannot
+    evaluate (including sample correlation, search score, and protein coverage)
+    are rejected when active. Unknown YAML/JSON keys are also rejected, so a typo
+    cannot silently pass through.
 
 See [Preprocessing Filters](../concepts/preprocessing.md) for the full filter reference.
 
