@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mokume.agentic.service import _ranking_payload
+from mokume.agentic.ranking import build_ranking_payload
 
 
 def test_ground_truth_ranking_uses_five_metric_mean_rank() -> None:
@@ -37,7 +37,7 @@ def test_ground_truth_ranking_uses_five_metric_mean_rank() -> None:
         },
     ]
 
-    payload = _ranking_payload(rows, True, {})
+    payload = build_ranking_payload(rows, True, {})
 
     assert payload["ranking_objective"] == "benchmark_mean_rank"
     assert payload["best_config"] == "B"
