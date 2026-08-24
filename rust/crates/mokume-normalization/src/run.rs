@@ -72,14 +72,19 @@ pub fn run_normalization_transforms(
         return max_min_run_transforms(run_values);
     }
 
-    let mut run_metrics = HashMap::new();
+    let mut run_metrics = Vec::new();
     for (key, mut values) in run_values {
         if let Some(metric) = run_metric(method, &mut values) {
             if valid_scale(metric) {
-                run_metrics.insert(key, metric);
+                run_metrics.push((key, metric));
             }
         }
     }
+    run_metrics.sort_by(|(left, _), (right, _)| {
+        left.sample
+            .cmp(&right.sample)
+            .then_with(|| left.run.cmp(&right.run))
+    });
 
     let mut metrics_by_sample = HashMap::<String, Vec<f64>>::new();
     for (key, metric) in &run_metrics {
@@ -140,12 +145,17 @@ fn run_metric(method: RunNormalizationMethod, values: &mut Vec<f64>) -> Option<f
 fn max_min_run_transforms(
     run_values: HashMap<RunCellKey, Vec<f64>>,
 ) -> HashMap<RunCellKey, RunNormalizationTransform> {
-    let mut run_ranges = HashMap::<RunCellKey, (f64, f64)>::new();
+    let mut run_ranges = Vec::<(RunCellKey, (f64, f64))>::new();
     for (key, values) in run_values {
         if let Some(range) = positive_range(&values) {
-            run_ranges.insert(key, range);
+            run_ranges.push((key, range));
         }
     }
+    run_ranges.sort_by(|(left, _), (right, _)| {
+        left.sample
+            .cmp(&right.sample)
+            .then_with(|| left.run.cmp(&right.run))
+    });
 
     let mut ranges_by_sample = HashMap::<String, Vec<(f64, f64)>>::new();
     for (key, range) in &run_ranges {
@@ -223,6 +233,39 @@ fn affine_range_transform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn keyed_run_values(entries: &[(&str, f64)]) -> HashMap<RunCellKey, Vec<f64>> {
+        entries
+            .iter()
+            .map(|(run, value)| {
+                (
+                    RunCellKey {
+                        sample: "sample".to_owned(),
+                        run: (*run).to_owned(),
+                    },
+                    vec![*value],
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn run_factor_targets_are_independent_of_hashmap_order() {
+        let entries = [("a", 1.0), ("b", 1.0), ("c", 1.0e16)];
+        let expected = run_normalization_transforms(
+            RunNormalizationMethod::Median,
+            keyed_run_values(&entries),
+        );
+
+        for _ in 0..32 {
+            let reordered = [entries[2], entries[0], entries[1]];
+            let actual = run_normalization_transforms(
+                RunNormalizationMethod::Median,
+                keyed_run_values(&reordered),
+            );
+            assert_eq!(actual, expected);
+        }
+    }
 
     #[test]
     fn iqr_metric_excludes_zeros_and_non_finite() {

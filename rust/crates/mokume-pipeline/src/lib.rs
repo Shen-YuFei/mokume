@@ -1015,7 +1015,7 @@ impl PeptideExport {
                         normalized.get(&(key.protein, key.sample, key.peptide_canonical.clone()))
                     })
                     .copied()
-                    .unwrap_or_else(|| peptides.values().sum::<f64>());
+                    .unwrap_or_else(|| sum_peptide_values(peptides));
                 let value = if log2 { raw.log2() } else { raw };
                 Some(PeptideParquetRow {
                     protein_name: key.protein_name.clone(),
@@ -1611,7 +1611,7 @@ impl FeatureAggregation {
                     .filter_map(|(key, peptides)| {
                         allowed_cells
                             .contains(&key)
-                            .then(|| (key, peptides.into_values().sum()))
+                            .then(|| (key, sum_peptide_values(&peptides)))
                     })
                     .collect(),
             ),
@@ -2115,6 +2115,12 @@ fn push_peptide_max(
     }
 }
 
+fn sum_peptide_values(peptides: &HashMap<PeptideId, f64>) -> f64 {
+    let mut values = peptides.iter().collect::<Vec<_>>();
+    values.sort_by_key(|(peptide, _)| **peptide);
+    values.into_iter().map(|(_, value)| *value).sum()
+}
+
 /// Collapse per-(peptidoform, charge) values into one value per canonical
 /// peptide by summing, mirroring the Python loader which keeps the max
 /// intensity per ion across runs and then sums ions into the canonical peptide
@@ -2125,6 +2131,8 @@ fn collapse_to_canonical(
     peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
 ) -> HashMap<PeptideId, f64> {
     let mut canonical = HashMap::with_capacity(peptides.len());
+    let mut peptides = peptides.into_iter().collect::<Vec<_>>();
+    peptides.sort_by_key(|(peptide, _)| *peptide);
     for (peptide, value) in peptides {
         let key = peptide_to_canonical
             .get(&peptide)
@@ -8475,8 +8483,9 @@ mod tests {
     use mokume_core::{
         BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
         FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig, IrsConfig,
-        MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PibaqConfig,
-        ProteinId, QuantMethod, RatioConfig, RuntimeConfig, SampleId, StringIdRegistry,
+        MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
+        PibaqConfig, ProteinId, QuantMethod, RatioConfig, RuntimeConfig, SampleId,
+        StringIdRegistry,
     };
     use mokume_io::{QpxFeatureRecord, SdrfRawTable, SdrfTable};
     use mokume_normalization::SampleNormalizationMethod;
@@ -8487,10 +8496,30 @@ mod tests {
         irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
         irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
         resolve_de_method, resolve_irs_autodetect_channel, resolve_irs_reference_samples,
-        run_features_to_proteins, tech_replicate_of, validate_batch_sizes, validate_combat_design,
-        validate_features_to_proteins, validate_implemented_subset, CellKey, IrsStat,
-        NormalizationFactorCollector, ProteinMatrix, ProteinValues,
+        run_features_to_proteins, sum_peptide_values, tech_replicate_of, validate_batch_sizes,
+        validate_combat_design, validate_features_to_proteins, validate_implemented_subset,
+        CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix, ProteinValues,
     };
+
+    #[test]
+    fn peptide_sums_follow_stable_id_order() {
+        let expected = HashMap::from([
+            (PeptideId::new(0), 1.0),
+            (PeptideId::new(1), 1.0),
+            (PeptideId::new(2), 1.0e16),
+        ]);
+        let reordered = HashMap::from([
+            (PeptideId::new(2), 1.0e16),
+            (PeptideId::new(0), 1.0),
+            (PeptideId::new(1), 1.0),
+        ]);
+
+        assert_eq!(
+            sum_peptide_values(&expected),
+            sum_peptide_values(&reordered)
+        );
+        assert_eq!(sum_peptide_values(&expected), (1.0 + 1.0) + 1.0e16);
+    }
 
     #[test]
     fn pibaq_shared_allocation_is_exact_and_conservative() {

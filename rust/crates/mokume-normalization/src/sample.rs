@@ -61,11 +61,18 @@ pub fn condition_median_sample_factors(
 ) -> HashMap<String, f64> {
     let mut factors = HashMap::new();
     for sample_values in condition_sample_values.into_values() {
-        let sample_medians = sample_medians(sample_values);
+        let mut sample_medians = sample_medians(sample_values)
+            .into_iter()
+            .collect::<Vec<_>>();
         if sample_medians.is_empty() {
             continue;
         }
-        let condition_mean = sample_medians.values().sum::<f64>() / sample_medians.len() as f64;
+        sample_medians.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let condition_mean = sample_medians
+            .iter()
+            .map(|(_, median)| *median)
+            .sum::<f64>()
+            / sample_medians.len() as f64;
         if !valid_scale(condition_mean) {
             continue;
         }
@@ -387,6 +394,26 @@ fn percentile_linear(values: &mut [f64], q: f64) -> f64 {
 #[cfg(test)]
 mod tmm_tests {
     use super::*;
+
+    fn condition_values(entries: &[(&str, f64)]) -> HashMap<String, HashMap<String, Vec<f64>>> {
+        let samples = entries
+            .iter()
+            .map(|(sample, value)| ((*sample).to_owned(), vec![*value]))
+            .collect();
+        HashMap::from([("condition".to_owned(), samples)])
+    }
+
+    #[test]
+    fn condition_factors_are_independent_of_hashmap_order() {
+        let entries = [("a", 1.0), ("b", 1.0), ("c", 1.0e16)];
+        let expected = condition_median_sample_factors(condition_values(&entries));
+
+        for _ in 0..32 {
+            let reordered = [entries[2], entries[0], entries[1]];
+            let actual = condition_median_sample_factors(condition_values(&reordered));
+            assert_eq!(actual, expected);
+        }
+    }
 
     /// Golden factors computed with the pure-Python `TMMNormalizer` on the same
     /// tiny matrix (see the crate test module's docstring for the recipe). The
