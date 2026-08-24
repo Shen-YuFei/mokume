@@ -222,6 +222,7 @@ fn impute_matrix_py(
     options: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<Vec<Vec<Option<f64>>>> {
     let options = ImputationOptions::from_dict(options)?;
+    options.validate_for_method(&method)?;
     let matrix = decode_matrix(values);
     let config = ImputationConfig {
         enabled: !matches!(method.trim().to_ascii_lowercase().as_str(), "" | "none"),
@@ -244,6 +245,10 @@ struct ImputationOptions {
     scale: f64,
     n_neighbors: usize,
     threads: Option<usize>,
+    quantile_supplied: bool,
+    shift_supplied: bool,
+    scale_supplied: bool,
+    n_neighbors_supplied: bool,
 }
 
 impl ImputationOptions {
@@ -254,6 +259,10 @@ impl ImputationOptions {
             scale: 0.3,
             n_neighbors: 5,
             threads: None,
+            quantile_supplied: false,
+            shift_supplied: false,
+            scale_supplied: false,
+            n_neighbors_supplied: false,
         };
         let Some(options) = options else {
             return Ok(parsed);
@@ -261,10 +270,22 @@ impl ImputationOptions {
         for (key, value) in options.iter() {
             let key = key.extract::<String>()?;
             match key.as_str() {
-                "quantile" => parsed.quantile = value.extract()?,
-                "shift" => parsed.shift = value.extract()?,
-                "scale" => parsed.scale = value.extract()?,
-                "n_neighbors" => parsed.n_neighbors = value.extract()?,
+                "quantile" => {
+                    parsed.quantile = value.extract()?;
+                    parsed.quantile_supplied = true;
+                }
+                "shift" => {
+                    parsed.shift = value.extract()?;
+                    parsed.shift_supplied = true;
+                }
+                "scale" => {
+                    parsed.scale = value.extract()?;
+                    parsed.scale_supplied = true;
+                }
+                "n_neighbors" => {
+                    parsed.n_neighbors = value.extract()?;
+                    parsed.n_neighbors_supplied = true;
+                }
                 "threads" => parsed.threads = value.extract()?,
                 _ => {
                     return Err(PyTypeError::new_err(format!(
@@ -274,6 +295,26 @@ impl ImputationOptions {
             }
         }
         Ok(parsed)
+    }
+
+    fn validate_for_method(&self, method: &str) -> PyResult<()> {
+        let method = method.trim().to_ascii_lowercase();
+        if self.quantile_supplied && !matches!(method.as_str(), "mindet" | "minprob") {
+            return Err(PyTypeError::new_err(
+                "`quantile` only applies to mindet/minprob imputation",
+            ));
+        }
+        if (self.shift_supplied || self.scale_supplied) && method != "minprob" {
+            return Err(PyTypeError::new_err(
+                "`shift` and `scale` only apply to minprob imputation",
+            ));
+        }
+        if self.n_neighbors_supplied && !matches!(method.as_str(), "knn" | "seqknn") {
+            return Err(PyTypeError::new_err(
+                "`n_neighbors` only applies to knn/seqknn imputation",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -292,6 +333,7 @@ fn differential_expression_py(
     options: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     let options = DifferentialExpressionOptions::from_dict(options)?;
+    options.validate_for_method(&method)?;
     let matrix = decode_matrix(values);
     let count_by_protein = peptide_count_map(&proteins, options.peptide_counts.as_deref());
     let config = differential_expression_config(&method, &options);
@@ -363,6 +405,8 @@ struct DifferentialExpressionOptions {
     condition_a: String,
     condition_b: String,
     threads: Option<usize>,
+    ensemble_min_k_supplied: bool,
+    fdr_method_supplied: bool,
 }
 
 impl DifferentialExpressionOptions {
@@ -378,6 +422,8 @@ impl DifferentialExpressionOptions {
             condition_a: "A".to_owned(),
             condition_b: "B".to_owned(),
             threads: None,
+            ensemble_min_k_supplied: false,
+            fdr_method_supplied: false,
         };
         let Some(options) = options else {
             return Ok(parsed);
@@ -387,11 +433,17 @@ impl DifferentialExpressionOptions {
             match key.as_str() {
                 "peptide_counts" => parsed.peptide_counts = value.extract()?,
                 "ensemble_methods" => parsed.ensemble_methods = value.extract()?,
-                "ensemble_min_k" => parsed.ensemble_min_k = value.extract()?,
+                "ensemble_min_k" => {
+                    parsed.ensemble_min_k = value.extract()?;
+                    parsed.ensemble_min_k_supplied = true;
+                }
                 "log2fc_threshold" => parsed.log2fc_threshold = value.extract()?,
                 "effect_size_gate" => parsed.effect_size_gate = value.extract()?,
                 "fdr_threshold" => parsed.fdr_threshold = value.extract()?,
-                "fdr_method" => parsed.fdr_method = value.extract()?,
+                "fdr_method" => {
+                    parsed.fdr_method = value.extract()?;
+                    parsed.fdr_method_supplied = true;
+                }
                 "condition_a" => parsed.condition_a = value.extract()?,
                 "condition_b" => parsed.condition_b = value.extract()?,
                 "threads" => parsed.threads = value.extract()?,
@@ -403,6 +455,21 @@ impl DifferentialExpressionOptions {
             }
         }
         Ok(parsed)
+    }
+
+    fn validate_for_method(&self, method: &str) -> PyResult<()> {
+        let method = method.trim().to_ascii_lowercase();
+        if self.ensemble_min_k_supplied && method != "ensemble" {
+            return Err(PyTypeError::new_err(
+                "`ensemble_min_k` only applies to ensemble DE",
+            ));
+        }
+        if self.fdr_method_supplied && matches!(method.as_str(), "rots" | "limrots") {
+            return Err(PyTypeError::new_err(format!(
+                "`fdr_method` does not apply to {method}, which retains its permutation FDR"
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -489,7 +556,7 @@ fn ensemble_rows_to_python(py: Python<'_>, rows: Vec<EnsembleResult>) -> PyResul
     rows.into_iter()
         .map(|row| {
             let output = PyDict::new(py);
-            output.set_item("Protein", row.protein)?;
+            output.set_item("ProteinName", row.protein)?;
             output.set_item("log2FC", row.log2_fold_change)?;
             output.set_item("pvalue", row.p_value)?;
             output.set_item("n_methods_up", row.n_methods_up)?;

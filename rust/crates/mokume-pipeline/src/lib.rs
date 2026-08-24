@@ -4,12 +4,11 @@ use std::path::{Path, PathBuf};
 
 use csv::WriterBuilder;
 use mokume_core::{
-    parse_memory_to_bytes, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
-    IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
-    MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideId, PibaqConfig,
-    PreprocessingFilterConfig, ProteinId, QuantMethod, RatioConfig, Result, RunQcFilterConfig,
-    RuntimeConfig, SampleId, StringIdRegistry,
+    BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig, FeatureToPeptidesConfig,
+    FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig, IntensityFilterConfig,
+    IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig, MokumeError, NormalizationConfig,
+    OutputConfig, OutputFormat, PeptideId, PibaqConfig, PreprocessingFilterConfig, ProteinId,
+    QuantMethod, RatioConfig, Result, RunQcFilterConfig, RuntimeConfig, SampleId, StringIdRegistry,
 };
 use mokume_imputation::imputed_values;
 use mokume_io::{
@@ -25,7 +24,7 @@ use mokume_normalization::{
 };
 use mokume_quant::{direct_lfq_aligned, max_lfq_with_samples, DirectLfqIon, PeptideMeasurement};
 use rayon::prelude::*;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use tracing::{info, warn};
 
 mod de;
@@ -40,6 +39,7 @@ pub use matrix::{impute_matrix, normalize_matrix};
 /// solver. Matches Python's maxlfq delegation, which uses 2 (the streaming path
 /// hardcodes `min_nonan=2`; the class path passes `min_peptides`, default 2).
 const MAXLFQ_DIRECTLFQ_MIN_NONAN: usize = 2;
+const DEFAULT_REFERENCE_REGEX: &str = "pool|powder|ref|reference|bridge";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CellKey {
@@ -144,6 +144,7 @@ impl FeatureToProteinState {
     fn new(
         config: &FeatureToProteinsConfig,
         sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
         pibaq_digest: Option<PibaqDigest>,
     ) -> Result<Self> {
         Ok(Self {
@@ -159,7 +160,7 @@ impl FeatureToProteinState {
             peptide_to_contextual_canonical: HashMap::new(),
             unique_peptides: HashMap::new(),
             export_rows: IntermediateExports::new(config),
-            aggregation: FeatureAggregation::from_config(config, sdrf, pibaq_digest)?,
+            aggregation: FeatureAggregation::from_config(config, sdrf, raw_sdrf, pibaq_digest)?,
             accepted_features: 0,
             accepted_measurements: 0,
             remove_protein_ids: Vec::new(),
@@ -1319,6 +1320,7 @@ impl FeatureAggregation {
     fn from_config(
         config: &FeatureToProteinsConfig,
         sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
         pibaq_digest: Option<PibaqDigest>,
     ) -> Result<Self> {
         match config.quantification {
@@ -1332,7 +1334,9 @@ impl FeatureAggregation {
                     invalid_input("piBAQ requires a runtime pyOpenMS FASTA digest")
                 })?,
             )?)),
-            QuantMethod::Ratio => Ok(Self::Ratio(RatioAggregation::from_config(config, sdrf)?)),
+            QuantMethod::Ratio => Ok(Self::Ratio(RatioAggregation::from_config(
+                config, sdrf, raw_sdrf,
+            )?)),
             QuantMethod::TopN => {
                 if config.topn_peptides == 0 {
                     return Err(invalid_input("topn must be greater than 0"));
@@ -1343,8 +1347,9 @@ impl FeatureAggregation {
                 })
             }
             QuantMethod::MaxLfq | QuantMethod::DirectLfq => {
-                let route_to_directlfq =
-                    config.quantification == QuantMethod::DirectLfq || !config.maxlfq.force_builtin;
+                let route_to_directlfq = config.quantification == QuantMethod::DirectLfq
+                    || (!config.maxlfq.force_builtin
+                        && dataset_sample_normalization_method(config)?.is_none());
                 // Python's maxlfq delegation uses min_nonan=2 (the streaming path
                 // hardcodes it; the class path passes min_peptides, default 2),
                 // whereas the directlfq method keeps its own config default.
@@ -1999,11 +2004,18 @@ struct PibaqDetailedCell {
 }
 
 impl RatioAggregation {
-    fn from_config(config: &FeatureToProteinsConfig, sdrf: Option<&SdrfTable>) -> Result<Self> {
+    fn from_config(
+        config: &FeatureToProteinsConfig,
+        sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
+    ) -> Result<Self> {
         let Some(sdrf) = sdrf else {
             return Err(invalid_input("Ratio quantification requires --sdrf option"));
         };
-        let reference_samples = resolve_ratio_reference_samples(sdrf, config);
+        let raw_sdrf = raw_sdrf.ok_or_else(|| {
+            invalid_input("Ratio quantification requires readable raw SDRF metadata")
+        })?;
+        let reference_samples = resolve_ratio_reference_samples(sdrf, raw_sdrf, config)?;
         if reference_samples.is_empty() {
             return Err(invalid_input(
                 "Ratio quantification requires reference samples; provide --irs-reference-samples or mark references in SDRF",
@@ -3711,24 +3723,16 @@ fn factorize_batch_labels(values: &[String]) -> Vec<usize> {
     mokume_stats::batch::factorize(values)
 }
 
-/// Resolve the configured batch-detection method name like Python's
-/// `_batch_method` (stages.py:1610): parse it case-insensitively (with `-`/space
-/// normalised to `_`), and degrade an unknown name to `sample_prefix` with a
-/// warning rather than erroring.
-fn resolve_batch_method(name: &str) -> mokume_stats::batch::BatchDetectionMethod {
-    match mokume_stats::batch::BatchDetectionMethod::parse_name(name) {
-        Some(method) => method,
-        None => {
-            tracing::warn!("Unknown batch method '{name}', using sample_prefix");
-            mokume_stats::batch::BatchDetectionMethod::SamplePrefix
-        }
-    }
+/// Resolve a configured batch-detection method name case-insensitively, with
+/// `-`/space normalised to `_`. Unknown names are rejected so a requested
+/// strategy is never silently replaced with `sample_prefix`.
+fn resolve_batch_method(name: &str) -> Result<mokume_stats::batch::BatchDetectionMethod> {
+    mokume_stats::batch::BatchDetectionMethod::parse_name(name)
+        .ok_or_else(|| invalid_input(format!("unknown batch method `{name}`")))
 }
 
-/// Run `mokume-stats`'s `detect_batches` for the protein-matrix flow, where no
-/// `run_info` mapping exists (so `run` errors and `fraction`/`techreplicate` are
-/// resolved to `sample_prefix` by the caller before reaching here). Maps the
-/// detection error to a `MokumeError`, mirroring Python's `ValueError`s.
+/// Run `mokume-stats`'s `detect_batches` for the protein-matrix flow. Methods
+/// that require unavailable run metadata are rejected by the caller.
 fn detect_batches_for_method(
     method: mokume_stats::batch::BatchDetectionMethod,
     sample_names: &[&str],
@@ -3753,8 +3757,8 @@ fn detect_batches_for_method(
     })
 }
 
-/// Python `_detect_batch_indices` validation (stages.py:1633): require at least
-/// two distinct batches, each with at least two samples; otherwise skip (`None`).
+/// Batch-layout validation: require at least two distinct batches, each with at
+/// least two samples. The caller turns `None` into an explicit input error.
 fn validate_batch_sizes(batch: Vec<usize>) -> Option<Vec<usize>> {
     let mut counts: HashMap<usize, usize> = HashMap::new();
     for &label in &batch {
@@ -3764,6 +3768,100 @@ fn validate_batch_sizes(batch: Vec<usize>) -> Option<Vec<usize>> {
         return None;
     }
     Some(batch)
+}
+
+fn sorted_batch_labels(batch: &[usize]) -> String {
+    let mut labels = batch.to_vec();
+    labels.sort_unstable();
+    labels.dedup();
+    labels
+        .into_iter()
+        .map(|label| label.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn validate_combat_design(
+    batch: &[usize],
+    covariates: &[Vec<f64>],
+    reference: Option<usize>,
+) -> Result<()> {
+    if covariates.len() != batch.len() {
+        return Err(invalid_input(
+            "batch covariate row count must match the matrix sample count",
+        ));
+    }
+    let columns = covariates.first().map_or(0, Vec::len);
+    if columns == 0 || covariates.iter().any(|row| row.len() != columns) {
+        return Err(invalid_input(
+            "batch covariate matrix must be non-empty and rectangular",
+        ));
+    }
+    let mut labels = batch.to_vec();
+    labels.sort_unstable();
+    labels.dedup();
+    let label_index = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| (*label, index))
+        .collect::<HashMap<_, _>>();
+    let mut design = vec![vec![0.0; batch.len()]; labels.len() + columns];
+    for (sample, label) in batch.iter().enumerate() {
+        design[label_index[label]][sample] = 1.0;
+    }
+    if let Some(reference) = reference {
+        let row = label_index[&reference];
+        design[row].fill(1.0);
+    }
+    for column in 0..columns {
+        for (sample, values) in covariates.iter().enumerate() {
+            design[labels.len() + column][sample] = values[column];
+        }
+    }
+    if row_rank(design) < labels.len() + columns {
+        return Err(invalid_input(
+            "batch covariates are confounded with batches or each other; ComBat design is singular",
+        ));
+    }
+    Ok(())
+}
+
+fn row_rank(mut matrix: Vec<Vec<f64>>) -> usize {
+    let rows = matrix.len();
+    let columns = matrix.first().map_or(0, Vec::len);
+    let mut rank = 0;
+    for column in 0..columns {
+        let Some(pivot) = (rank..rows).max_by(|&left, &right| {
+            matrix[left][column]
+                .abs()
+                .total_cmp(&matrix[right][column].abs())
+        }) else {
+            break;
+        };
+        if matrix[pivot][column].abs() <= 1e-12 {
+            continue;
+        }
+        matrix.swap(rank, pivot);
+        let pivot_value = matrix[rank][column];
+        for value in &mut matrix[rank][column..] {
+            *value /= pivot_value;
+        }
+        let pivot_row = matrix[rank][column..].to_vec();
+        for (row_index, row) in matrix.iter_mut().enumerate() {
+            if row_index == rank {
+                continue;
+            }
+            let factor = row[column];
+            for (value, pivot) in row[column..].iter_mut().zip(&pivot_row) {
+                *value -= factor * pivot;
+            }
+        }
+        rank += 1;
+        if rank == rows {
+            break;
+        }
+    }
+    rank
 }
 
 /// SDRF sample-name columns Python searches in priority order
@@ -3785,14 +3883,16 @@ fn match_sdrf_column(headers: &[String], requested: &str) -> Option<usize> {
 
 /// Per-sample values of one covariate column in matrix-sample order, mirroring
 /// `_sample_covariate_values`: an exact `source name` hit first, else the first
-/// SDRF sample that is a substring of (or contains) the matrix sample name, else
-/// `"unknown"`. Duplicate source names keep the last row (pandas `dict(zip(..))`).
+/// SDRF sample that is a substring of (or contains) the matrix sample name.
+/// Duplicate source names keep the last row (pandas `dict(zip(..))`). An
+/// unmatched matrix sample is rejected so a requested covariate never silently
+/// turns into an artificial `unknown` category.
 fn covariate_values_for_samples(
     raw: &SdrfRawTable,
     sample_col: usize,
     value_col: usize,
     sample_names: &[&str],
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let mut sample_to_value: HashMap<&str, &str> = HashMap::new();
     let mut sdrf_samples: Vec<&str> = Vec::with_capacity(raw.row_count());
     for row in 0..raw.row_count() {
@@ -3804,16 +3904,18 @@ fn covariate_values_for_samples(
         .iter()
         .map(|&name| {
             if let Some(value) = sample_to_value.get(name) {
-                return (*value).to_owned();
+                return Ok((*value).to_owned());
             }
             for sdrf_sample in &sdrf_samples {
                 if sdrf_sample.contains(name) || name.contains(*sdrf_sample) {
                     if let Some(value) = sample_to_value.get(*sdrf_sample) {
-                        return (*value).to_owned();
+                        return Ok((*value).to_owned());
                     }
                 }
             }
-            "unknown".to_owned()
+            Err(invalid_input(format!(
+                "batch covariate SDRF has no sample matching matrix column `{name}`"
+            )))
         })
         .collect()
 }
@@ -3821,36 +3923,38 @@ fn covariate_values_for_samples(
 /// Build the sample-major covariate matrix the covariate-ComBat path consumes,
 /// mirroring `extract_covariates_from_sdrf`. Each requested column is matched,
 /// mapped to matrix samples, factorized (`pd.factorize` first-occurrence codes),
-/// and dropped when it carries at most one unique value. Returns `None` when the
-/// SDRF has no sample column or no covariate survives.
+/// and rejected when it carries at most one unique value. Explicitly requested
+/// columns are never silently dropped.
 fn extract_sdrf_covariates(
     raw: &SdrfRawTable,
     sample_names: &[&str],
     covariate_columns: &[String],
-) -> Option<Vec<Vec<f64>>> {
+) -> Result<Option<Vec<Vec<f64>>>> {
     if covariate_columns.is_empty() {
-        return None;
+        return Ok(None);
     }
     let sample_col = SDRF_SAMPLE_COLUMNS
         .iter()
-        .find_map(|name| raw.column_index(name))?;
+        .find_map(|name| raw.column_index(name))
+        .ok_or_else(|| invalid_input("batch covariates require an SDRF sample-name column"))?;
 
     // Covariate-major encoded columns, then transposed to sample-major below.
     let mut covar_data: Vec<Vec<usize>> = Vec::new();
     for column in covariate_columns {
-        let Some(value_col) = match_sdrf_column(raw.headers(), column) else {
-            continue;
-        };
-        let values = covariate_values_for_samples(raw, sample_col, value_col, sample_names);
+        let value_col = match_sdrf_column(raw.headers(), column).ok_or_else(|| {
+            invalid_input(format!(
+                "batch covariate column `{column}` was not found in SDRF"
+            ))
+        })?;
+        let values = covariate_values_for_samples(raw, sample_col, value_col, sample_names)?;
         if values.iter().collect::<HashSet<_>>().len() <= 1 {
-            continue;
+            return Err(invalid_input(format!(
+                "batch covariate column `{column}` is constant and cannot affect ComBat"
+            )));
         }
         covar_data.push(factorize_batch_labels(&values));
     }
-    if covar_data.is_empty() {
-        return None;
-    }
-    Some(
+    Ok(Some(
         (0..sample_names.len())
             .map(|sample| {
                 covar_data
@@ -3859,7 +3963,7 @@ fn extract_sdrf_covariates(
                     .collect()
             })
             .collect(),
-    )
+    ))
 }
 
 /// Explicit batch-column values per matrix sample, mirroring
@@ -3872,35 +3976,50 @@ fn batch_column_values_for_samples(
     raw: &SdrfRawTable,
     sample_names: &[&str],
     column: &str,
-) -> Option<Vec<String>> {
-    let value_col = raw.column_index(&column.to_ascii_lowercase())?;
-    let sample_col = raw.column_index("source name")?;
+) -> Result<Vec<String>> {
+    let value_col = raw
+        .column_index(&column.to_ascii_lowercase())
+        .ok_or_else(|| invalid_input(format!("Batch column '{column}' not found in SDRF")))?;
+    let sample_col = raw
+        .column_index("source name")
+        .ok_or_else(|| invalid_input("batch column detection requires `source name` in SDRF"))?;
     let mut sample_to_batch: HashMap<&str, &str> = HashMap::new();
     for row in 0..raw.row_count() {
         sample_to_batch.insert(raw.cell(row, sample_col), raw.cell(row, value_col));
     }
-    Some(
-        sample_names
-            .iter()
-            .map(|&name| {
-                sample_to_batch
-                    .get(name)
-                    .copied()
-                    .unwrap_or("unknown")
-                    .to_owned()
-            })
-            .collect(),
-    )
+    sample_names
+        .iter()
+        .map(|&name| {
+            sample_to_batch
+                .get(name)
+                .map(|value| (*value).to_owned())
+                .ok_or_else(|| {
+                    invalid_input(format!(
+                        "batch SDRF column `{column}` has no value for matrix sample `{name}`"
+                    ))
+                })
+        })
+        .collect()
 }
 
 impl ProteinMatrix {
-    fn apply_irs(&mut self, sdrf: Option<&SdrfTable>, config: &IrsConfig) -> Result<()> {
+    fn apply_irs(
+        &mut self,
+        sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
+        config: &IrsConfig,
+    ) -> Result<()> {
         let Some(sdrf) = sdrf else {
             return Err(invalid_input("IRS normalization requires --sdrf option"));
         };
-        let reference_samples = resolve_irs_reference_samples(sdrf, config);
+        let raw_sdrf = raw_sdrf.ok_or_else(|| {
+            invalid_input("IRS normalization requires readable raw SDRF metadata")
+        })?;
+        let reference_samples = resolve_irs_reference_samples(sdrf, raw_sdrf, config)?;
         if reference_samples.is_empty() {
-            return Ok(());
+            return Err(invalid_input(
+                "IRS normalization found no reference samples in the SDRF",
+            ));
         }
 
         let sample_to_plex = sample_to_plex(sdrf);
@@ -3908,7 +4027,9 @@ impl ProteinMatrix {
         plexes.sort();
         plexes.dedup();
         if plexes.is_empty() {
-            return Ok(());
+            return Err(invalid_input(
+                "IRS normalization found no plex assignments in the SDRF",
+            ));
         }
 
         let sample_by_name = self
@@ -3941,6 +4062,11 @@ impl ProteinMatrix {
             &config.stat,
             |protein, sample| self.value(protein, sample),
         );
+        if factors.is_empty() {
+            return Err(invalid_input(
+                "IRS normalization could not compute any finite scaling factors",
+            ));
+        }
         self.scale_by_irs(&sample_to_plex, &factors);
 
         if config.remove_reference {
@@ -4097,7 +4223,7 @@ impl ProteinMatrix {
     /// values back in place. Proteins with any missing cell are kept uncorrected
     /// (`_complete_batch_matrix`, stages.py:1666); fewer than two samples, fewer
     /// than two batches, any batch under two samples, or no complete protein each
-    /// short-circuit to a no-op, matching the Python skips. A cell counts as
+    /// are rejected instead of producing a successful no-op. A cell counts as
     /// present only when finite, so directlfq zeros stay (matching `isna`'s
     /// 0-is-present) while NaN/missing rows drop out.
     ///
@@ -4115,7 +4241,9 @@ impl ProteinMatrix {
     ) -> Result<()> {
         let samples = self.sample_columns(drop_empty_samples);
         if samples.len() < 2 {
-            return Ok(());
+            return Err(invalid_input(
+                "batch correction requires at least two matrix samples",
+            ));
         }
         let sample_ids = samples
             .iter()
@@ -4125,10 +4253,7 @@ impl ProteinMatrix {
 
         use mokume_stats::batch::BatchDetectionMethod;
 
-        // Resolve the detection method like Python's `_batch_method`
-        // (stages.py:1610): an unknown name degrades to `sample_prefix` with a
-        // warning rather than erroring.
-        let method = resolve_batch_method(&config.method);
+        let method = resolve_batch_method(&config.method)?;
 
         // `column` detection and covariate extraction re-read the raw SDRF columns
         // (Python re-reads via `load_sdrf`); `validate_postprocessing_subset`
@@ -4144,10 +4269,6 @@ impl ProteinMatrix {
             None
         };
 
-        // The protein-matrix flow never builds the `run_info` mapping (Python's
-        // `_detect_batch_indices` calls `detect_batches` without `run_info`), so
-        // `run` errors and `fraction`/`techreplicate` fall back to `sample_prefix`
-        // -- exactly the branches `detect_batches` takes when `run_info is None`.
         let batch = match method {
             BatchDetectionMethod::ExplicitColumn => {
                 let column = config.column.as_deref().unwrap_or_default();
@@ -4156,31 +4277,28 @@ impl ProteinMatrix {
                 })?;
                 // Python's `_detect_explicit_batches(None)` raises when the column
                 // is absent; mirror that hard failure rather than silently skipping.
-                let values = batch_column_values_for_samples(raw, &sample_names, column)
-                    .ok_or_else(|| {
-                        invalid_input(format!("Batch column '{column}' not found in SDRF"))
-                    })?;
+                let values = batch_column_values_for_samples(raw, &sample_names, column)?;
                 detect_batches_for_method(method, &sample_names, Some(&values))?
             }
-            BatchDetectionMethod::RunName => {
+            BatchDetectionMethod::RunName
+            | BatchDetectionMethod::Fraction
+            | BatchDetectionMethod::TechReplicate => {
                 return Err(invalid_input(
-                    "batch-method 'run' requires run-level information not available in the protein matrix",
+                    format!(
+                        "batch-method '{}' requires run-level information not available in the protein matrix",
+                        method.as_value()
+                    ),
                 ));
-            }
-            BatchDetectionMethod::Fraction | BatchDetectionMethod::TechReplicate => {
-                tracing::warn!(
-                    "batch-method '{}' has no run-level information in the protein matrix; falling back to sample_prefix",
-                    method.as_value()
-                );
-                detect_batches_for_method(BatchDetectionMethod::SamplePrefix, &sample_names, None)?
             }
             BatchDetectionMethod::SamplePrefix => {
                 detect_batches_for_method(method, &sample_names, None)?
             }
         };
-        let Some(batch) = validate_batch_sizes(batch) else {
-            return Ok(());
-        };
+        let batch = validate_batch_sizes(batch).ok_or_else(|| {
+            invalid_input(
+                "batch correction requires at least two batches with at least two samples each",
+            )
+        })?;
 
         // Split proteins into complete rows (no missing cell -> corrected) and the
         // rest (kept uncorrected). ComBat's empirical-Bayes priors are pooled over
@@ -4209,15 +4327,38 @@ impl ProteinMatrix {
             }
         }
         if complete.is_empty() {
-            return Ok(());
+            return Err(invalid_input(
+                "batch correction requires at least one protein observed in every sample",
+            ));
         }
 
         // Biological covariates to preserve (independent of the batch method),
         // matching `_batch_covariates` at the combat call site.
         let covariates = match (&config.covariates, raw.as_ref()) {
-            (Some(columns), Some(raw)) => extract_sdrf_covariates(raw, &sample_names, columns),
+            (Some(columns), Some(raw)) => extract_sdrf_covariates(raw, &sample_names, columns)?,
             _ => None,
         };
+
+        let ref_batch = match config.ref_batch {
+            Some(label) if label < 0 => {
+                return Err(invalid_input("batch reference label must be non-negative"));
+            }
+            Some(label) => {
+                let label = usize::try_from(label)
+                    .map_err(|_| invalid_input("batch reference label is out of range"))?;
+                if !batch.contains(&label) {
+                    return Err(invalid_input(format!(
+                        "batch reference label `{label}` is not present; detected labels: {}",
+                        sorted_batch_labels(&batch)
+                    )));
+                }
+                Some(label)
+            }
+            None => None,
+        };
+        if let Some(covariates) = covariates.as_deref() {
+            validate_combat_design(&batch, covariates, ref_batch)?;
+        }
 
         let data = complete
             .iter()
@@ -4226,9 +4367,7 @@ impl ProteinMatrix {
         let params = mokume_stats::batch::ComBatParams {
             par_prior: config.parametric,
             mean_only: config.mean_only,
-            ref_batch: config
-                .ref_batch
-                .and_then(|label| usize::try_from(label).ok()),
+            ref_batch,
         };
         let corrected = mokume_stats::batch::combat(&data, &batch, covariates.as_deref(), params);
 
@@ -4245,9 +4384,9 @@ impl ProteinMatrix {
         sdrf: Option<&SdrfTable>,
         threshold: f64,
         drop_empty_samples: bool,
-    ) {
+    ) -> Result<()> {
         let Some(sdrf) = sdrf else {
-            return;
+            return Err(invalid_input("coverage filtering requires --sdrf option"));
         };
         let condition_by_sample = condition_by_sample(sdrf);
         let mut samples_by_condition = HashMap::<String, Vec<SampleId>>::new();
@@ -4264,7 +4403,9 @@ impl ProteinMatrix {
                 .push(sample);
         }
         if samples_by_condition.is_empty() {
-            return;
+            return Err(invalid_input(
+                "coverage filtering found no non-reference samples with condition metadata",
+            ));
         }
 
         self.allowed_proteins = coverage_filtered_proteins(
@@ -4273,6 +4414,7 @@ impl ProteinMatrix {
             threshold,
             |protein, sample| self.value(protein, sample),
         );
+        Ok(())
     }
 
     fn apply_imputation(
@@ -4799,7 +4941,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
             "piBAQ requires the Python wheel's runtime pyOpenMS FASTA digest",
         ));
     }
-    let threads = config.runtime.threads.or(config.directlfq.cores);
+    let threads = configured_threads(config);
     threading::install(threads, || run_features_to_proteins_inner(config, None))
 }
 
@@ -4808,9 +4950,17 @@ pub fn run_features_to_proteins_with_pibaq_digest(
     config: &FeatureToProteinsConfig,
     digest: PibaqDigest,
 ) -> Result<()> {
-    let threads = config.runtime.threads.or(config.directlfq.cores);
+    let threads = configured_threads(config);
     threading::install(threads, move || {
         run_features_to_proteins_inner(config, Some(digest))
+    })
+}
+
+fn configured_threads(config: &FeatureToProteinsConfig) -> Option<usize> {
+    config.runtime.threads.or_else(|| {
+        (config.quantification == QuantMethod::DirectLfq)
+            .then_some(config.directlfq.cores)
+            .flatten()
     })
 }
 
@@ -4832,21 +4982,17 @@ fn run_features_to_proteins_inner(
     validate_de_ensemble_options(config)?;
     validate_features_to_proteins(config)?;
     validate_implemented_subset(config)?;
-    if let Some(method) = ignored_directlfq_sample_normalization(config) {
-        warn!(
-            sample_normalization = method,
-            quant_method = %config.quantification,
-            "`--sample-normalization {method}` has no effect on the DirectLFQ route \
-             (used by `directlfq` and, unless `maxlfq.force_builtin` is set, `maxlfq`): \
-             DirectLFQ performs its own internal sample normalization, so mokume does \
-             not apply another. The protein matrix is unchanged by this option."
-        );
-    }
     let sdrf = config
         .input
         .sdrf
         .as_ref()
         .map(SdrfTable::from_path)
+        .transpose()?;
+    let raw_sdrf = config
+        .input
+        .sdrf
+        .as_ref()
+        .map(SdrfRawTable::from_path)
         .transpose()?;
     // The protein pipeline has no custom contaminant patterns; an empty slice
     // makes the median pre-pass fall back to the default `is_contaminant` path.
@@ -4860,7 +5006,8 @@ fn run_features_to_proteins_inner(
     )?;
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let dataset_normalization = dataset_sample_normalization_method(config)?;
-    let mut state = FeatureToProteinState::new(config, sdrf.as_ref(), pibaq_digest)?;
+    let mut state =
+        FeatureToProteinState::new(config, sdrf.as_ref(), raw_sdrf.as_ref(), pibaq_digest)?;
     stream_input_features(&config.input, sdrf.as_ref(), |feature| {
         state.ingest(&feature, sdrf.as_ref(), config.filtering, intensity_factors)
     })?;
@@ -4891,10 +5038,10 @@ fn run_features_to_proteins_inner(
     let mut matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
     let drop_empty_samples = config.quantification == QuantMethod::Ratio;
     if config.irs.enabled {
-        matrix.apply_irs(sdrf.as_ref(), &config.irs)?;
+        matrix.apply_irs(sdrf.as_ref(), raw_sdrf.as_ref(), &config.irs)?;
     }
     if let Some(threshold) = config.coverage_threshold {
-        matrix.apply_coverage_filter(sdrf.as_ref(), threshold, drop_empty_samples);
+        matrix.apply_coverage_filter(sdrf.as_ref(), threshold, drop_empty_samples)?;
     }
     if config.imputation.enabled {
         matrix.apply_imputation(&config.imputation, drop_empty_samples)?;
@@ -5003,6 +5150,9 @@ fn compile_exclude_sequence_patterns(patterns: &[String]) -> Result<Vec<Regex>> 
 }
 
 fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result<()> {
+    if config.strict_mode || !config.log_filtered_counts {
+        return unsupported("features2peptides filter global logging options");
+    }
     let intensity = &config.intensity;
     // `cv_threshold` is applied via the `collect_intensity_group_filters` pre-pass
     // (per-`(sample, protein, canonical)` CV over the `min_unique`-gated raw
@@ -5030,27 +5180,24 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     // the `min_unique`-gated, post-CV intensities) and the per-row drop in
     // `ingest`; nothing to reject here.
     let peptide = &config.peptide;
-    // `min_search_score` is a no-op on QPX inputs: the QPX schema carries no
-    // per-PSM search-engine score column, so the filter matches Python's
-    // `SearchScoreFilter` column-absent skip (which logs a warning and passes
-    // every row through). Warn to mirror that, rather than failing.
     if peptide.min_search_score.is_some() {
-        warn!(
-            "features2peptides filter min-search-score is a no-op: QPX features carry \
-             no search-engine score column (matches Python's column-absent skip)"
-        );
+        return unsupported("features2peptides filter min-search-score");
+    }
+    if (peptide.fdr_threshold - 0.01).abs() > f64::EPSILON || peptide.require_unique_peptides {
+        return unsupported("features2peptides peptide FDR/unique filters");
     }
     // `exclude_sequence_patterns` is applied per-row during ingest
     // (`passes_peptide_filter_pipeline` -> `filters::sequence_matches_excluded`),
     // compiled once into `excluded_sequence_regexes`; nothing to reject here.
     let protein = &config.protein;
-    // `min_coverage` is a no-op on QPX inputs: the QPX schema carries no coverage
-    // column, matching Python's `CoverageFilter` column-absent skip.
     if protein.min_coverage > 0.0 {
-        warn!(
-            "features2peptides filter min-coverage is a no-op: QPX features carry no \
-             coverage column (matches Python's column-absent skip)"
-        );
+        return unsupported("features2peptides filter min-coverage");
+    }
+    if (protein.fdr_threshold - 0.01).abs() > f64::EPSILON
+        || protein.min_peptides != 1
+        || !protein.protein_grouping.eq_ignore_ascii_case("none")
+    {
+        return unsupported("features2peptides protein FDR/grouping filters");
     }
     // `keep` (no-op), `remove` (drop all rows of a razor peptide), and
     // `assign_to_top` (keep only the top-protein rows, first-appearance tie-break)
@@ -5067,22 +5214,11 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     let run_qc = &config.run_qc;
     // min-total-intensity / min-features / min-proteins are implemented via the
     // Run-QC pre-pass (`collect_run_qc_exclusions`), so they are accepted here.
-    // max-missing-rate and min-sample-correlation are no-ops under Python's
-    // per-sample pipeline application (every kept row has intensity > 0, so the
-    // missing rate is 0; a single-sample frame cannot cross-correlate), so warn
-    // rather than fail -- matching Python's pass-through.
     if run_qc.max_missing_rate < 1.0 {
-        warn!(
-            "features2peptides filter max-missing-rate is a no-op: the long feature \
-             table keeps only intensity > 0 rows, so the per-sample missing rate is 0 \
-             (matches Python's per-sample pipeline application)"
-        );
+        return unsupported("features2peptides filter max-missing-rate");
     }
     if run_qc.min_sample_correlation.is_some() {
-        warn!(
-            "features2peptides filter min-sample-correlation is a no-op: Python applies \
-             the pipeline per single-sample frame, which cannot cross-correlate samples"
-        );
+        return unsupported("features2peptides filter min-sample-correlation");
     }
     Ok(())
 }
@@ -5123,29 +5259,30 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
             stage: "features2peptides run-normalization-method",
         }
     })?;
-    // Sample normalization must parse to a supported method. Only the
-    // factor-based methods (global/condition median) actually change the
-    // exported peptides: Python's `peptide_normalization` (peptide.py:370)
-    // applies them per sample inside the loop. The dataset-level methods
-    // (quantile/hierarchical/rlr/loess/median-center/mean-center) are
-    // accepted but are a deterministic NO-OP here, exactly as in Python: the
-    // standalone command's per-sample loop calls the placeholder fns
-    // (model/normalization.py:416-453) that return the frame unchanged, and the
-    // command has no post-loop dataset pass (the `_apply_dataset_normalization`
-    // pivot lives in `LoadingStage`, used only by `features2proteins`). So a
-    // dataset-level request produces the same matrix as `--sample-normalization
-    // none` (verified byte-identical on PXD003539).
     let sample_method =
         parse_sample_normalization_method(&config.sample_normalization).map_err(|_| {
             MokumeError::NotImplemented {
                 stage: "features2peptides sample-normalization-method",
             }
         })?;
+    if !matches!(
+        sample_method,
+        None | Some(
+            SampleNormalizationMethod::GlobalMedian | SampleNormalizationMethod::ConditionMedian
+        )
+    ) {
+        return unsupported("features2peptides sample-normalization-method");
+    }
     if sample_method == Some(SampleNormalizationMethod::ConditionMedian)
         && config.input.sdrf.is_none()
     {
         return Err(invalid_input(
             "conditionmedian sample normalization requires --sdrf option",
+        ));
+    }
+    if config.skip_normalization && config.irs.is_some() {
+        return Err(invalid_input(
+            "--skip-normalization conflicts with features2peptides IRS options",
         ));
     }
     Ok(())
@@ -5195,18 +5332,11 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             config.keep_shared_peptides,
         )?
     };
-    // Channel IRS is computed independently of run/sample normalization: Python
-    // pre-computes `irs_scale_by_techrep` outside the `skip_normalization` guard
-    // (`peptide.py:215-247`) and applies it even when normalization is skipped
-    // (the application at `peptide.py:333` is unconditional). The IRS pre-pass
-    // reuses the median pre-pass's contaminant settings, which already mirror
-    // Python's `SQLFilterBuilder` (`peptide.py:158-177`): `remove_contaminants`
-    // and `contaminant_patterns` come from the (pipeline-overridden) protein
-    // block; `min_intensity` comes from the pipeline's intensity block, else 0.
+    // The IRS pre-pass reuses the median pre-pass's contaminant settings.
     if let Some(irs) = &config.irs {
         let irs_min_intensity =
             filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
-        intensity_factors.irs_scale_by_techrep = collect_irs_scale(
+        let irs_scale_by_techrep = collect_irs_scale(
             parquet,
             irs,
             sdrf.as_ref(),
@@ -5214,9 +5344,16 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             median_contaminant_patterns,
             irs_min_intensity,
         )?;
+        if irs_scale_by_techrep.is_empty() {
+            return Err(invalid_input(format!(
+                "features2peptides IRS channel `{}` produced no scaling factors",
+                irs.channel
+            )));
+        }
+        intensity_factors.irs_scale_by_techrep = irs_scale_by_techrep;
     }
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
-    let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref(), None)?;
+    let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref(), None, None)?;
     // `--keep-shared-peptides`: keep non-unique rows during ingest (Python skips
     // the `unique == 1` filter) and skip the per-protein `min_unique` gate at
     // export by forcing the effective threshold to 0 (Python skips the
@@ -5504,34 +5641,6 @@ fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
 /// they center the summed-canonical-peptide matrix in log2 space, NOT the raw
 /// per-feature intensities, so they belong on the cell path rather than the
 /// ingest-time factor path.
-/// Returns the requested `--sample-normalization` method name when it is a
-/// dataset-level method that will be silently ignored because the effective
-/// quantification route is DirectLFQ (which performs its own internal sample
-/// normalization; see `Aggregation::applies_dataset_normalization`). Used to warn
-/// the user rather than dropping the option silently.
-fn ignored_directlfq_sample_normalization(config: &FeatureToProteinsConfig) -> Option<&str> {
-    let routes_to_directlfq = config.quantification == QuantMethod::DirectLfq
-        || (config.quantification == QuantMethod::MaxLfq && !config.maxlfq.force_builtin);
-    if !routes_to_directlfq {
-        return None;
-    }
-    match parse_sample_normalization_method(&config.normalization.sample_method)
-        .ok()
-        .flatten()
-    {
-        Some(
-            SampleNormalizationMethod::Quantile
-            | SampleNormalizationMethod::Rlr
-            | SampleNormalizationMethod::Loess
-            | SampleNormalizationMethod::Hierarchical
-            | SampleNormalizationMethod::MedianCenter
-            | SampleNormalizationMethod::MeanCenter
-            | SampleNormalizationMethod::Tmm,
-        ) => Some(config.normalization.sample_method.as_str()),
-        _ => None,
-    }
-}
-
 fn dataset_sample_normalization_method(
     config: &FeatureToProteinsConfig,
 ) -> Result<Option<SampleNormalizationMethod>> {
@@ -5564,6 +5673,26 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
         }
     }
+    if config.directlfq.cores.is_some() && config.quantification != QuantMethod::DirectLfq {
+        return Err(invalid_input(
+            "--directlfq-cores only applies to --quant-method directlfq; use --threads for other methods",
+        ));
+    }
+    if config.directlfq.min_nonan != 1 && config.quantification != QuantMethod::DirectLfq {
+        return Err(invalid_input(
+            "--directlfq-min-nonan only applies to --quant-method directlfq",
+        ));
+    }
+    if config.directlfq.num_samples_quadratic != 50
+        && !matches!(
+            config.quantification,
+            QuantMethod::DirectLfq | QuantMethod::MaxLfq
+        )
+    {
+        return Err(invalid_input(
+            "--directlfq-num-samples-quadratic only applies to DirectLFQ/MaxLFQ",
+        ));
+    }
     if let Some(fasta) = &config.input.fasta {
         if !fasta.exists() {
             return Err(MokumeError::MissingInput {
@@ -5575,14 +5704,63 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
         if !path.exists() {
             return Err(MokumeError::MissingInput { path: path.clone() });
         }
+        if !matches!(
+            config
+                .normalization
+                .sample_method
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "globalmedian" | "conditionmedian"
+        ) {
+            return Err(invalid_input(
+                "--normalization-proteins requires globalmedian or conditionmedian sample normalization",
+            ));
+        }
     }
     if config.quantification == QuantMethod::Pibaq && config.input.fasta.is_none() {
         return Err(invalid_input(
             "piBAQ quantification requires --fasta option",
         ));
     }
+    if config.quantification != QuantMethod::Pibaq
+        && (config.input.fasta.is_some()
+            || !config.pibaq.enzyme.eq_ignore_ascii_case("Trypsin")
+            || config.pibaq.max_aa != 50
+            || config.pibaq.min_shared != 2
+            || config.pibaq.families_yaml.is_some()
+            || config.pibaq.min_anchors != 1
+            || config.pibaq.high_anchor_threshold != 3)
+    {
+        return Err(invalid_input(
+            "piBAQ FASTA/digestion options require --quant-method pibaq",
+        ));
+    }
     if config.quantification == QuantMethod::Ratio && config.input.sdrf.is_none() {
         return Err(invalid_input("Ratio quantification requires --sdrf option"));
+    }
+    if !config.ratio.fraction_merge.eq_ignore_ascii_case("mean")
+        && config.quantification != QuantMethod::Ratio
+    {
+        return Err(invalid_input(
+            "--ratio-fraction-merge only applies to --quant-method ratio",
+        ));
+    }
+    if matches!(
+        config.quantification,
+        QuantMethod::DirectLfq | QuantMethod::Ratio
+    ) && (!config.normalization.run_method.eq_ignore_ascii_case("none")
+        || !config
+            .normalization
+            .sample_method
+            .eq_ignore_ascii_case("none")
+        || config.normalization.normalization_proteins.is_some())
+    {
+        return Err(invalid_input(format!(
+            "{} manages normalization internally; use --run-normalization none and \
+                 --sample-normalization none, and do not pass --normalization-proteins",
+            config.quantification
+        )));
     }
     if config.batch.enabled
         && config.batch.method.eq_ignore_ascii_case("column")
@@ -5590,6 +5768,34 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
     {
         return Err(invalid_input(
             "Batch correction with method 'column' requires --batch-column option",
+        ));
+    }
+    if config.batch.enabled
+        && !matches!(
+            config.batch.method.trim().to_ascii_lowercase().as_str(),
+            "sample_prefix" | "column"
+        )
+    {
+        return Err(invalid_input(
+            "batch-method must be `sample_prefix` or `column` for protein matrices",
+        ));
+    }
+    if !config.batch.enabled
+        && (!config.batch.method.eq_ignore_ascii_case("sample_prefix")
+            || config.batch.column.is_some()
+            || config.batch.covariates.is_some()
+            || !config.batch.parametric
+            || config.batch.mean_only
+            || config.batch.ref_batch.is_some())
+    {
+        return Err(invalid_input("batch options require --batch-correction"));
+    }
+    if config.batch.enabled
+        && !config.batch.method.eq_ignore_ascii_case("column")
+        && config.batch.column.is_some()
+    {
+        return Err(invalid_input(
+            "--batch-column requires --batch-method column",
         ));
     }
     if config.batch.enabled
@@ -5637,11 +5843,27 @@ fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
 }
 
 fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
-    if let Some(memory) = &config.runtime.memory {
-        parse_memory_to_bytes(memory)?;
+    if config.runtime.memory.is_some() {
+        return unsupported("runtime memory limit");
     }
-    if config.output.export_peptides.is_some() && config.quantification == QuantMethod::DirectLfq {
-        return unsupported("directlfq-export-peptides");
+    if config.runtime.threads == Some(0) || config.directlfq.cores == Some(0) {
+        return Err(invalid_input("thread counts must be greater than zero"));
+    }
+    if config.runtime.threads.is_some() && config.directlfq.cores.is_some() {
+        return Err(invalid_input(
+            "choose either runtime threads or directlfq cores, not both",
+        ));
+    }
+    if config.output.export_peptides.is_some()
+        && matches!(
+            config.quantification,
+            QuantMethod::DirectLfq | QuantMethod::Ratio
+        )
+    {
+        return Err(invalid_input(format!(
+            "export-peptides is not supported by {} quantification",
+            config.quantification
+        )));
     }
     // Dataset-level sample normalization is carried into the exported peptides
     // only for the cell-based linear methods (their aggregation and export share
@@ -5684,6 +5906,17 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         if !supports_sample_normalization(&config.normalization.sample_method) {
             return unsupported("sample-normalization-method");
         }
+        if matches!(
+            config.quantification,
+            QuantMethod::Pibaq | QuantMethod::MaxLfq
+        ) && dataset_sample_normalization_method(config)?
+            .is_some_and(|method| method != SampleNormalizationMethod::Quantile)
+        {
+            return Err(invalid_input(format!(
+                "{} supports quantile as its only dataset-level sample normalization",
+                config.quantification
+            )));
+        }
     }
 
     validate_postprocessing_subset(config)
@@ -5695,37 +5928,70 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
     // `column` detection plus SDRF covariate extraction. `run` detection has no
     // run-level mapping in the protein-matrix flow and errors at runtime, the
     // same way Python's `_detect_batch_indices` raises `run_info required`.
-    let uses_irs_options = config.irs.enabled
-        || config.irs.reference_samples.is_some()
-        || config.irs.sdrf_column.is_some()
-        || config.irs.sdrf_values.is_some()
-        || config.irs.stat != "median"
-        || config.irs.remove_reference
-        || config.irs.reference_regex != "pool|powder|ref|reference|bridge";
-    if uses_irs_options {
+    if config
+        .irs
+        .reference_samples
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+    {
+        return Err(invalid_input("IRS reference sample list must not be empty"));
+    }
+    if config.irs.sdrf_column.is_some() != config.irs.sdrf_values.is_some() {
+        return Err(invalid_input(
+            "--irs-sdrf-column and --irs-sdrf-values must be provided together",
+        ));
+    }
+    let custom_regex = config.irs.reference_regex != DEFAULT_REFERENCE_REGEX;
+    let selector_count = usize::from(config.irs.reference_samples.is_some())
+        + usize::from(config.irs.sdrf_column.is_some())
+        + usize::from(custom_regex);
+    if selector_count > 1 {
+        return Err(invalid_input(
+            "choose one reference selector: samples, SDRF column+values, or regex",
+        ));
+    }
+    if config.quantification == QuantMethod::Ratio {
+        if config.irs.enabled {
+            return Err(invalid_input("Ratio quantification cannot also apply IRS"));
+        }
+        if config.irs.sdrf_column.is_some()
+            || !config.irs.stat.eq_ignore_ascii_case("median")
+            || config.irs.remove_reference
+        {
+            return Err(invalid_input(
+                "Ratio accepts IRS reference samples/regex only; IRS normalization options require --irs",
+            ));
+        }
         if config.input.sdrf.is_none() {
-            return Err(invalid_input("IRS options require --sdrf option"));
-        }
-        if !matches!(
-            config.irs.stat.trim().to_ascii_lowercase().as_str(),
-            "median" | "mean"
-        ) {
-            return unsupported("irs-stat");
-        }
-        if config.irs.sdrf_column.is_some() && config.irs.sdrf_values.is_none() {
             return Err(invalid_input(
-                "--irs-sdrf-column requires --irs-sdrf-values option",
+                "Ratio reference detection requires --sdrf option",
             ));
         }
-        if config.irs.sdrf_values.is_some() && config.irs.sdrf_column.is_none() {
-            return Err(invalid_input(
-                "--irs-sdrf-values requires --irs-sdrf-column option",
-            ));
+    } else {
+        let uses_irs_parameters = selector_count > 0
+            || !config.irs.stat.eq_ignore_ascii_case("median")
+            || config.irs.remove_reference;
+        if uses_irs_parameters && !config.irs.enabled {
+            return Err(invalid_input("IRS options require --irs"));
+        }
+        if config.irs.enabled {
+            if config.input.sdrf.is_none() {
+                return Err(invalid_input("IRS options require --sdrf option"));
+            }
+            if !matches!(
+                config.irs.stat.trim().to_ascii_lowercase().as_str(),
+                "median" | "mean"
+            ) {
+                return unsupported("irs-stat");
+            }
         }
     }
     if let Some(threshold) = config.coverage_threshold {
         if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
             return Err(invalid_input("coverage-threshold must be between 0 and 1"));
+        }
+        if config.input.sdrf.is_none() {
+            return Err(invalid_input("coverage-threshold requires --sdrf option"));
         }
     }
     if !matches!(
@@ -5739,41 +6005,67 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
     ) {
         return unsupported("ratio-fraction-merge");
     }
-    if config.imputation.enabled {
-        let method = config.imputation.method.trim().to_ascii_lowercase();
-        match method.as_str() {
-            "" | "none" => {}
-            "mindet" | "minprob" => {
-                if !config.imputation.quantile.is_finite()
-                    || !(0.0..=1.0).contains(&config.imputation.quantile)
-                {
-                    return Err(invalid_input("impute-quantile must be between 0 and 1"));
-                }
-                if method == "minprob"
-                    && (!config.imputation.shift.is_finite()
-                        || !config.imputation.scale.is_finite()
-                        || config.imputation.scale < 0.0)
-                {
-                    return Err(invalid_input(
-                        "minprob imputation requires finite shift and non-negative scale",
-                    ));
-                }
-            }
-            "mean" | "median" | "constant" | "zero" | "most_frequent" | "knn" | "seqknn"
-            | "impseq" | "gms" | "bpca" | "impseqrob" | "qrilc" => {}
-            // missforest wraps a scikit-learn RandomForest whose tree internals and
-            // RNG cannot be reproduced cross-language; the Rust kernel does not
-            // approximate it and the error points at the pure-Python implementation
-            // shipped in the wheel.
-            "missforest" => {
-                return unsupported(
-                    "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume wheel: pip install mokume[analysis]; mokume.impute(matrix, method='missforest')",
-                )
-            }
-            _ => return unsupported("imputation"),
-        }
-    }
+    validate_imputation_config(&config.imputation)?;
     validate_de_subset(config)?;
+    Ok(())
+}
+
+pub(crate) fn validate_imputation_config(config: &ImputationConfig) -> Result<()> {
+    let method = config.method.trim().to_ascii_lowercase();
+    if !config.enabled {
+        if method != "none"
+            || (config.quantile - 0.01).abs() > f64::EPSILON
+            || (config.shift - 1.6).abs() > f64::EPSILON
+            || (config.scale - 0.3).abs() > f64::EPSILON
+            || config.n_neighbors != 5
+        {
+            return Err(invalid_input("imputation options require --impute"));
+        }
+        return Ok(());
+    }
+    if !matches!(method.as_str(), "mindet" | "minprob")
+        && (config.quantile - 0.01).abs() > f64::EPSILON
+    {
+        return Err(invalid_input(
+            "--impute-quantile only applies to mindet/minprob",
+        ));
+    }
+    if method != "minprob"
+        && ((config.shift - 1.6).abs() > f64::EPSILON || (config.scale - 0.3).abs() > f64::EPSILON)
+    {
+        return Err(invalid_input(
+            "--impute-shift/--impute-scale only apply to minprob",
+        ));
+    }
+    if !matches!(method.as_str(), "knn" | "seqknn") && config.n_neighbors != 5 {
+        return Err(invalid_input(
+            "--impute-n-neighbors only applies to knn/seqknn",
+        ));
+    }
+    match method.as_str() {
+        "" | "none" => return Err(invalid_input("--impute requires an explicit method")),
+        "mindet" | "minprob" => {
+            if !config.quantile.is_finite() || !(0.0..=1.0).contains(&config.quantile) {
+                return Err(invalid_input("impute-quantile must be between 0 and 1"));
+            }
+            if method == "minprob"
+                && (!config.shift.is_finite() || !config.scale.is_finite() || config.scale < 0.0)
+            {
+                return Err(invalid_input(
+                    "minprob imputation requires finite shift and non-negative scale",
+                ));
+            }
+        }
+        "knn" | "seqknn" if config.n_neighbors == 0 => {
+            return Err(invalid_input(
+                "impute-n-neighbors must be greater than zero",
+            ));
+        }
+        "mean" | "median" | "constant" | "zero" | "most_frequent" | "knn" | "seqknn" | "impseq"
+        | "gms" | "bpca" | "impseqrob" | "qrilc" => {}
+        "missforest" => return unsupported("missforest imputation is unported"),
+        _ => return unsupported("imputation"),
+    }
     Ok(())
 }
 
@@ -5793,8 +6085,21 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
 fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
     let de = &config.differential_expression;
     if !de.enabled {
-        // DE is off; the remaining DE options have no effect, so accept any
-        // value (matching the Python CLI, which simply ignores them).
+        if de.contrasts.is_some()
+            || de.contrasts_file.is_some()
+            || de.ensemble_methods.is_some()
+            || de.effect_size_gate.is_some()
+            || de.output.is_some()
+            || !de.method.eq_ignore_ascii_case("auto")
+            || de.ensemble_min_k != 2
+            || (de.log2fc_threshold - 0.5).abs() > f64::EPSILON
+            || (de.fdr_threshold - 0.05).abs() > f64::EPSILON
+            || !de.fdr_method.eq_ignore_ascii_case("bh")
+        {
+            return Err(invalid_input(
+                "differential-expression options require --de",
+            ));
+        }
         return Ok(());
     }
 
@@ -5804,7 +6109,31 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         ));
     }
 
+    if de.output.is_none() {
+        return Err(invalid_input(
+            "differential expression requires --de-output so results are not discarded",
+        ));
+    }
+
     de::validate_config(de, true)?;
+    let effective_method = if de.method.eq_ignore_ascii_case("auto") {
+        resolve_de_method(config)
+    } else {
+        de.method.trim().to_ascii_lowercase()
+    };
+    if matches!(effective_method.as_str(), "rots" | "limrots")
+        && !de.fdr_method.eq_ignore_ascii_case("bh")
+    {
+        return Err(invalid_input(format!(
+            "--de-fdr-method {} does not apply to {effective_method}, which retains its permutation FDR",
+            de.fdr_method
+        )));
+    }
+    if !de.method.eq_ignore_ascii_case("ensemble") && de.ensemble_min_k != 2 {
+        return Err(invalid_input(
+            "--de-ensemble-min-k only applies to --de-method ensemble",
+        ));
+    }
 
     // `--de-contrasts-file` is expanded into `contrasts` before validation runs
     // (see `expand_de_contrasts_file`), so by here `contrasts_file` is already
@@ -6184,8 +6513,8 @@ fn irs_mixture_first_token(value: &str) -> &str {
 /// IRS-internal `split_part(run, '_', 2)` ([`irs_tech_replicate_of`]); the
 /// **apply** side keys by the last `_` token ([`tech_replicate_of`]) — both are
 /// reproduced exactly because they diverge for runs with three or more tokens.
-/// An empty map (no reference-channel rows, or none with a positive
-/// `irs_value`) means IRS is a no-op, matching Python's "skip IRS" warning path.
+/// An empty map means no valid scale could be computed; the command layer turns
+/// that into an explicit input error.
 fn collect_irs_scale(
     parquet: &Path,
     irs: &IrsChannelConfig,
@@ -7523,50 +7852,61 @@ fn parse_ratio_fraction_merge(value: &str) -> Result<RatioFractionMerge> {
     }
 }
 
-fn detect_reference_samples(sdrf: &SdrfTable, reference_regex: &str) -> Vec<String> {
-    let tokens = reference_regex
-        .split('|')
-        .map(|token| token.trim().to_ascii_lowercase())
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
-    let mut samples = sdrf
-        .records()
+fn detect_reference_samples(raw: &SdrfRawTable, reference_regex: &str) -> Result<Vec<String>> {
+    let sample_col = raw
+        .column_index("source name")
+        .ok_or_else(|| invalid_input("SDRF reference detection requires a `source name` column"))?;
+    let scan_cols = raw
+        .headers()
         .iter()
-        .filter(|record| {
-            let sample = record.sample_accession.to_ascii_lowercase();
-            let condition = record
-                .condition
-                .as_deref()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            tokens
-                .iter()
-                .any(|token| sample.contains(token) || condition.contains(token))
+        .enumerate()
+        .filter_map(|(index, header)| {
+            (header.starts_with("factor value[") || header.starts_with("characteristics["))
+                .then_some(index)
         })
-        .map(|record| record.sample_accession.clone())
         .collect::<Vec<_>>();
-    samples.sort();
-    samples.dedup();
-    samples
+    let pattern = RegexBuilder::new(reference_regex)
+        .case_insensitive(true)
+        .build()
+        .map_err(|source| {
+            invalid_input(format!(
+                "invalid IRS reference regex `{reference_regex}`: {source}"
+            ))
+        })?;
+    let mut samples = Vec::new();
+    for row in 0..raw.row_count() {
+        if scan_cols
+            .iter()
+            .any(|&column| pattern.is_match(raw.cell(row, column)))
+        {
+            samples.push(raw.cell(row, sample_col));
+        }
+    }
+    Ok(sorted_unique(samples.into_iter()))
 }
 
 /// Detect reference samples for ratio quantification, mirroring Python's
 /// `LoadingStage.load_for_ratio` priority:
-///   1. `characteristics[pooled sample]` column (`detect_pooled_from_sdrf`),
-///   2. explicit `--irs-reference-samples`,
-///   3. regex scan across factor/characteristic values (`detect_reference_by_regex`).
+///   1. explicit `--irs-reference-samples`,
+///   2. an explicitly changed reference regex,
+///   3. `characteristics[pooled sample]` autodetection,
+///   4. the default regex across every factor/characteristic column.
 fn resolve_ratio_reference_samples(
     sdrf: &SdrfTable,
+    raw: &SdrfRawTable,
     config: &FeatureToProteinsConfig,
-) -> Vec<String> {
+) -> Result<Vec<String>> {
+    if let Some(samples) = &config.irs.reference_samples {
+        return Ok(sorted_unique(samples.iter().map(String::as_str)));
+    }
+    if config.irs.reference_regex != DEFAULT_REFERENCE_REGEX {
+        return detect_reference_samples(raw, &config.irs.reference_regex);
+    }
     let pooled = detect_pooled_reference_samples(sdrf);
     if !pooled.is_empty() {
-        return pooled;
+        return Ok(pooled);
     }
-    if let Some(samples) = &config.irs.reference_samples {
-        return sorted_unique(samples.iter().map(String::as_str));
-    }
-    detect_reference_samples(sdrf, &config.irs.reference_regex)
+    detect_reference_samples(raw, DEFAULT_REFERENCE_REGEX)
 }
 
 /// Reproduce Python's `detect_pooled_from_sdrf`: a sample is a reference channel
@@ -7590,92 +7930,55 @@ fn detect_pooled_reference_samples(sdrf: &SdrfTable) -> Vec<String> {
     samples
 }
 
-fn resolve_irs_reference_samples(sdrf: &SdrfTable, config: &IrsConfig) -> Vec<String> {
+fn resolve_irs_reference_samples(
+    sdrf: &SdrfTable,
+    raw: &SdrfRawTable,
+    config: &IrsConfig,
+) -> Result<Vec<String>> {
     if let Some(samples) = &config.reference_samples {
-        return sorted_unique(samples.iter().map(String::as_str));
+        return Ok(sorted_unique(samples.iter().map(String::as_str)));
     }
 
     if let (Some(column), Some(values)) = (&config.sdrf_column, &config.sdrf_values) {
-        let samples = detect_reference_samples_by_sdrf_column(sdrf, column, values);
-        if !samples.is_empty() {
-            return samples;
-        }
+        return detect_reference_samples_by_sdrf_column(raw, column, values);
     }
-
-    detect_reference_samples(sdrf, &config.reference_regex)
+    if config.reference_regex != DEFAULT_REFERENCE_REGEX {
+        return detect_reference_samples(raw, &config.reference_regex);
+    }
+    let pooled = detect_pooled_reference_samples(sdrf);
+    if !pooled.is_empty() {
+        return Ok(pooled);
+    }
+    detect_reference_samples(raw, DEFAULT_REFERENCE_REGEX)
 }
 
 fn detect_reference_samples_by_sdrf_column(
-    sdrf: &SdrfTable,
+    raw: &SdrfRawTable,
     column: &str,
     values: &[String],
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let accepted = values
         .iter()
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .collect::<HashSet<_>>();
     if accepted.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-
-    let mut samples = sdrf
-        .records()
-        .iter()
-        .filter(|record| {
-            sdrf_column_values(record, column)
-                .into_iter()
-                .any(|value| accepted.contains(&value.trim().to_ascii_lowercase()))
-        })
-        .map(|record| record.sample_accession.clone())
-        .collect::<Vec<_>>();
-    samples.sort();
-    samples.dedup();
-    samples
-}
-
-fn sdrf_column_values(record: &SdrfRecord, column: &str) -> Vec<String> {
-    let column = column.trim().to_ascii_lowercase();
-    match column.as_str() {
-        "source name" | "sample" | "sample accession" | "sample_accession" => {
-            vec![record.sample_accession.clone()]
-        }
-        "assay name" | "run accession" | "run_accession" => {
-            record.run_accession.iter().cloned().collect()
-        }
-        "comment[data file]" | "comment[raw file]" | "data file" | "data_file" => {
-            vec![record.data_file.clone()]
-        }
-        "comment[file uri]" | "comment[associated file uri]" | "file uri" | "file_uri" => {
-            record.file_uri.iter().cloned().collect()
-        }
-        "comment[label]" | "label" | "channel" | "comment[channel]" => {
-            record.label.iter().cloned().collect()
-        }
-        "comment[fraction identifier]" | "fraction" | "comment[fraction]" => {
-            record.fraction.iter().cloned().collect()
-        }
-        "characteristics[biological replicate]"
-        | "comment[biological replicate]"
-        | "biological replicate" => record
-            .biological_replicate
-            .map(|value| value.to_string())
-            .into_iter()
-            .collect(),
-        "comment[technical replicate]" | "technical replicate" | "technical_replica" => record
-            .technical_replicate
-            .map(|value| value.to_string())
-            .into_iter()
-            .collect(),
-        value
-            if value.starts_with("factor value[")
-                || value.starts_with("characteristics[")
-                || value == "condition" =>
-        {
-            record.condition.iter().cloned().collect()
-        }
-        _ => Vec::new(),
-    }
+    let requested = column.trim().to_ascii_lowercase();
+    let value_col = raw.column_index(&requested).ok_or_else(|| {
+        invalid_input(format!(
+            "IRS SDRF column `{column}` was not found; available columns: {}",
+            raw.headers().join(", ")
+        ))
+    })?;
+    let sample_col = raw
+        .column_index("source name")
+        .ok_or_else(|| invalid_input("SDRF reference detection requires a `source name` column"))?;
+    let samples = (0..raw.row_count())
+        .filter(|&row| accepted.contains(&raw.cell(row, value_col).trim().to_ascii_lowercase()))
+        .map(|row| raw.cell(row, sample_col));
+    Ok(sorted_unique(samples))
 }
 
 fn sorted_unique<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
@@ -7920,17 +8223,18 @@ mod tests {
         MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PibaqConfig,
         ProteinId, QuantMethod, RatioConfig, RuntimeConfig, SampleId, StringIdRegistry,
     };
-    use mokume_io::{QpxFeatureRecord, SdrfRawTable};
+    use mokume_io::{QpxFeatureRecord, SdrfRawTable, SdrfTable};
     use mokume_normalization::SampleNormalizationMethod;
 
     use super::{
-        batch_column_values_for_samples, expand_de_contrasts_file, extract_sdrf_covariates,
-        factorize_batch_labels, irs_by_mixture_scale_from_runs, irs_global_scale_from_runs,
-        irs_mixture_first_token, irs_tech_replicate_of, irs_two_stage_scale_from_runs,
-        load_normalization_proteins, match_sdrf_column, resolve_de_method,
-        resolve_irs_autodetect_channel, run_features_to_proteins, tech_replicate_of,
-        validate_batch_sizes, validate_features_to_proteins, validate_implemented_subset, CellKey,
-        IrsStat, NormalizationFactorCollector, ProteinMatrix, ProteinValues,
+        batch_column_values_for_samples, detect_reference_samples, expand_de_contrasts_file,
+        extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
+        irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
+        irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
+        resolve_de_method, resolve_irs_autodetect_channel, resolve_irs_reference_samples,
+        run_features_to_proteins, tech_replicate_of, validate_batch_sizes, validate_combat_design,
+        validate_features_to_proteins, validate_implemented_subset, CellKey, IrsStat,
+        NormalizationFactorCollector, ProteinMatrix, ProteinValues,
     };
 
     #[test]
@@ -8152,6 +8456,7 @@ mod tests {
     {
         let parquet = existing_dummy_path("median_center_sample_normalization")?;
         let mut config = base_config(parquet);
+        config.quantification = QuantMethod::Median;
         config.normalization.sample_method = "mediancenter".to_string();
 
         validate_implemented_subset(&config)?;
@@ -8399,6 +8704,52 @@ mod tests {
     }
 
     #[test]
+    fn reference_detection_uses_real_regex_and_explicit_priority(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let text = concat!(
+            "source name\tcomment[data file]\tfactor value[role]\tcharacteristics[pooled sample]\n",
+            "S1\ta.raw\tordinary\tnot pooled\n",
+            "S2\tb.raw\tBridge-42\tpooled\n",
+            "S3\tc.raw\tbridge-X\tnot pooled\n",
+        );
+        let raw = SdrfRawTable::from_reader(text.as_bytes())?;
+        let typed = SdrfTable::from_reader(text.as_bytes())?;
+        assert_eq!(
+            detect_reference_samples(&raw, r"^bridge-\d+$")?,
+            vec!["S2".to_owned()]
+        );
+        assert!(detect_reference_samples(&raw, "[").is_err());
+
+        let explicit = IrsConfig {
+            reference_samples: Some(vec!["S1".to_owned()]),
+            ..IrsConfig::default()
+        };
+        assert_eq!(
+            resolve_irs_reference_samples(&typed, &raw, &explicit)?,
+            vec!["S1".to_owned()]
+        );
+
+        let custom_regex = IrsConfig {
+            reference_regex: "^ordinary$".to_owned(),
+            ..IrsConfig::default()
+        };
+        assert_eq!(
+            resolve_irs_reference_samples(&typed, &raw, &custom_regex)?,
+            vec!["S1".to_owned()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn combat_design_rejects_batch_confounded_covariate() {
+        let batch = [0, 0, 1, 1];
+        let confounded = vec![vec![0.0], vec![0.0], vec![1.0], vec![1.0]];
+        assert!(validate_combat_design(&batch, &confounded, None).is_err());
+        let orthogonal = vec![vec![0.0], vec![1.0], vec![0.0], vec![1.0]];
+        assert!(validate_combat_design(&batch, &orthogonal, None).is_ok());
+    }
+
+    #[test]
     fn accepts_directlfq_option_subset() -> Result<(), Box<dyn std::error::Error>> {
         let parquet = existing_dummy_path("directlfq_options")?;
         let mut config = base_config(parquet);
@@ -8531,6 +8882,7 @@ mod tests {
         config.differential_expression.enabled = true;
         config.differential_expression.method = "auto".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
         config.quantification = QuantMethod::DirectLfq;
         validate_implemented_subset(&config)?;
@@ -8624,22 +8976,18 @@ mod tests {
     }
 
     #[test]
-    fn resolve_batch_method_degrades_unknown_to_sample_prefix() {
+    fn resolve_batch_method_rejects_unknown_values() {
         use mokume_stats::batch::BatchDetectionMethod;
         // Known names parse (case/separator-insensitive).
         assert_eq!(
-            super::resolve_batch_method("Sample-Prefix"),
-            BatchDetectionMethod::SamplePrefix
+            super::resolve_batch_method("Sample-Prefix").ok(),
+            Some(BatchDetectionMethod::SamplePrefix)
         );
         assert_eq!(
-            super::resolve_batch_method("COLUMN"),
-            BatchDetectionMethod::ExplicitColumn
+            super::resolve_batch_method("COLUMN").ok(),
+            Some(BatchDetectionMethod::ExplicitColumn)
         );
-        // Unknown -> sample_prefix fallback (Python `_batch_method`).
-        assert_eq!(
-            super::resolve_batch_method("nonsense"),
-            BatchDetectionMethod::SamplePrefix
-        );
+        assert!(super::resolve_batch_method("nonsense").is_err());
     }
 
     #[test]
@@ -8715,7 +9063,7 @@ mod tests {
                 "characteristics[sex]".into(),
                 "characteristics[organism part]".into(),
             ],
-        );
+        )?;
         assert_eq!(
             covs,
             Some(vec![
@@ -8726,8 +9074,8 @@ mod tests {
             ])
         );
 
-        // Case B: substring column match + single-unique column dropped. Oracle: [[0],[1],[0],[1]].
-        let covs_b = extract_sdrf_covariates(&raw, &names, &["sex".into(), "const_col".into()]);
+        // Case B: substring column match. Oracle: [[0],[1],[0],[1]].
+        let covs_b = extract_sdrf_covariates(&raw, &names, &["sex".into()])?;
         assert_eq!(
             covs_b,
             Some(vec![vec![0.0], vec![1.0], vec![0.0], vec![1.0]])
@@ -8735,54 +9083,42 @@ mod tests {
 
         // Case C: matrix sample name is a superstring of the SDRF source name.
         let names_c = ["S1_frac1", "S2_frac1", "S3_frac1", "S4_frac1"];
-        let covs_c = extract_sdrf_covariates(&raw, &names_c, &["characteristics[sex]".into()]);
+        let covs_c = extract_sdrf_covariates(&raw, &names_c, &["characteristics[sex]".into()])?;
         assert_eq!(
             covs_c,
             Some(vec![vec![0.0], vec![1.0], vec![0.0], vec![1.0]])
         );
 
-        // Case D: an unknown sample -> "unknown" gets its own factorize code. Oracle: [[0],[0],[1],[2]].
+        // Explicitly requested covariates reject unmatched samples and constant
+        // columns instead of silently changing or dropping the design.
         let names_d = ["S1", "S2", "ZZZ", "S4"];
-        let covs_d =
-            extract_sdrf_covariates(&raw, &names_d, &["characteristics[organism part]".into()]);
-        assert_eq!(
-            covs_d,
-            Some(vec![vec![0.0], vec![0.0], vec![1.0], vec![2.0]])
-        );
-
-        // No column survives -> None (every requested column is single-unique/missing).
-        assert_eq!(
-            extract_sdrf_covariates(&raw, &names, &["const_col".into()]),
-            None
-        );
-        assert_eq!(extract_sdrf_covariates(&raw, &names, &[]), None);
+        assert!(extract_sdrf_covariates(
+            &raw,
+            &names_d,
+            &["characteristics[organism part]".into()]
+        )
+        .is_err());
+        assert!(extract_sdrf_covariates(&raw, &names, &["const_col".into()]).is_err());
+        assert_eq!(extract_sdrf_covariates(&raw, &names, &[])?, None);
         Ok(())
     }
 
     #[test]
-    fn batch_column_values_map_source_name_with_unknown_default(
+    fn batch_column_values_require_complete_source_name_mapping(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let raw = covariate_fixture()?;
         // Oracle: ['b1','b1','b2','b2'].
         assert_eq!(
-            batch_column_values_for_samples(&raw, &["S1", "S2", "S3", "S4"], "batch"),
-            Some(vec![
+            batch_column_values_for_samples(&raw, &["S1", "S2", "S3", "S4"], "batch")?,
+            vec![
                 "b1".to_owned(),
                 "b1".to_owned(),
                 "b2".to_owned(),
                 "b2".to_owned()
-            ])
+            ]
         );
-        // Exact-only mapping: an unmatched sample defaults to "unknown".
-        assert_eq!(
-            batch_column_values_for_samples(&raw, &["S1", "ZZZ"], "BATCH"),
-            Some(vec!["b1".to_owned(), "unknown".to_owned()])
-        );
-        // Column absent -> None (Python's not-found branch).
-        assert_eq!(
-            batch_column_values_for_samples(&raw, &["S1"], "nonexistent"),
-            None
-        );
+        assert!(batch_column_values_for_samples(&raw, &["S1", "ZZZ"], "BATCH").is_err());
+        assert!(batch_column_values_for_samples(&raw, &["S1"], "nonexistent").is_err());
         Ok(())
     }
 
@@ -8988,13 +9324,8 @@ mod tests {
     }
 
     #[test]
-    fn apply_batch_correction_fraction_techreplicate_and_unknown_fall_back_to_prefix(
+    fn apply_batch_correction_rejects_removed_and_unknown_methods(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Sample names whose prefixes (before '-') form two batches of two, so
-        // sample_prefix detection runs ComBat. The pipeline has no run_info, so
-        // `fraction`, `techreplicate`, and an unknown method must all degrade to
-        // sample_prefix and produce the identical correction (Python
-        // `_fallback_prefix_batches` / `_batch_method`).
         type BuiltMatrix = (ProteinMatrix, Vec<SampleId>, ProteinId, ProteinId);
         let p1_row = [10.0, 12.0, 30.0, 33.0];
         let p2_row = [5.0, 6.0, 20.0, 19.0];
@@ -9049,27 +9380,11 @@ mod tests {
             ..BatchCorrectionConfig::default()
         };
 
-        // Reference correction: explicit sample_prefix over batch [0,0,1,1].
-        let expected = mokume_stats::batch::combat(
-            &[p1_row.to_vec(), p2_row.to_vec()],
-            &[0, 0, 1, 1],
-            None,
-            mokume_stats::batch::ComBatParams::default(),
-        );
-
         for method in ["fraction", "techreplicate", "totally-unknown"] {
-            let (mut matrix, sample_ids, p1, p2) = build()?;
-            matrix.apply_batch_correction(&method_config(method), None, false)?;
-            for (row, protein) in [p1, p2].into_iter().enumerate() {
-                for (col, sample) in sample_ids.iter().enumerate() {
-                    let got = matrix.value(protein, *sample).ok_or("corrected value")?;
-                    assert!(
-                        (got - expected[row][col]).abs() < 1e-9,
-                        "method {method} row {row} col {col}: got {got}, want {}",
-                        expected[row][col]
-                    );
-                }
-            }
+            let (mut matrix, ..) = build()?;
+            assert!(matrix
+                .apply_batch_correction(&method_config(method), None, false)
+                .is_err());
         }
         Ok(())
     }
@@ -9196,6 +9511,7 @@ mod tests {
             config.differential_expression.ensemble_methods = Some(members);
             config.differential_expression.ensemble_min_k = 1;
             config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+            config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
             let Some(error) = validate_implemented_subset(&config).err() else {
                 return Err("invalid ensemble member configuration was accepted".into());
@@ -9222,6 +9538,7 @@ mod tests {
                 Some(vec!["limma".to_string(), "deqms".to_string()]);
             config.differential_expression.ensemble_min_k = min_k;
             config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+            config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
             let Some(error) = validate_implemented_subset(&config).err() else {
                 return Err("invalid ensemble min-k was accepted".into());
@@ -9288,6 +9605,7 @@ mod tests {
         config.differential_expression.method = "limma".to_string();
         config.differential_expression.fdr_method = "ihw".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
         validate_implemented_subset(&config)?;
         Ok(())
@@ -9303,6 +9621,7 @@ mod tests {
             config.differential_expression.method = "limma".to_string();
             config.differential_expression.fdr_method = method.to_string();
             config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+            config.differential_expression.output = Some(PathBuf::from("de.csv"));
             validate_implemented_subset(&config)?;
         }
         Ok(())
@@ -9317,6 +9636,7 @@ mod tests {
         config.differential_expression.method = "limma".to_string();
         config.differential_expression.fdr_method = "unknown".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
         assert!(matches!(
             validate_implemented_subset(&config),
@@ -9339,15 +9659,18 @@ mod tests {
     }
 
     #[test]
-    fn disabled_de_options_are_ignored() -> Result<(), Box<dyn std::error::Error>> {
-        // With DE disabled, non-default DE options must not block the pipeline.
+    fn disabled_de_options_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        // Non-default DE options must not be accepted when no DE result will run.
         let parquet = existing_dummy_path("de_disabled")?;
         let mut config = base_config(parquet);
         config.differential_expression.method = "deqms".to_string();
         config.differential_expression.fdr_method = "ihw".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
 
-        validate_implemented_subset(&config)?;
+        assert!(matches!(
+            validate_implemented_subset(&config),
+            Err(MokumeError::InvalidInput { .. })
+        ));
         Ok(())
     }
 

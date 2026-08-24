@@ -6,7 +6,7 @@ use std::{
     sync::Mutex,
 };
 
-use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use mokume_core::quant::parse_topn_from_method_name;
 use mokume_core::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
@@ -95,8 +95,12 @@ enum Commands {
 #[allow(dead_code)]
 #[derive(Debug, Args)]
 struct Features2PeptidesArgs {
-    #[arg(short = 'p', long = "parquet")]
-    parquet: PathBuf,
+    #[arg(
+        short = 'p',
+        long = "parquet",
+        required_unless_present = "generate_filter_config"
+    )]
+    parquet: Option<PathBuf>,
 
     #[arg(short = 's', long = "sdrf")]
     sdrf: Option<PathBuf>,
@@ -125,30 +129,31 @@ struct Features2PeptidesArgs {
     )]
     remove_low_frequency_peptides: bool,
 
-    #[arg(short = 'o', long = "output")]
+    #[arg(
+        short = 'o',
+        long = "output",
+        required_unless_present = "generate_filter_config"
+    )]
     output: Option<PathBuf>,
 
-    #[arg(long = "skip_normalization", visible_alias = "skip-normalization")]
+    #[arg(
+        long = "skip_normalization",
+        visible_alias = "skip-normalization",
+        conflicts_with_all = ["run_normalization", "sample_normalization"]
+    )]
     skip_normalization: bool,
 
-    #[arg(long = "run-normalization", default_value = "median", value_parser = [
+    #[arg(long = "run-normalization", value_parser = [
         "none", "mean", "median", "max", "global", "max_min", "iqr",
     ], ignore_case = true)]
-    run_normalization: String,
+    run_normalization: Option<String>,
 
-    #[arg(long = "sample-normalization", default_value = "globalmedian", value_parser = [
+    #[arg(long = "sample-normalization", value_parser = [
         "none",
         "globalmedian",
         "conditionmedian",
-        "hierarchical",
-        "quantile",
-        "mediancenter",
-        "meancenter",
-        "rlr",
-        "loess",
-        "tmm",
     ], ignore_case = true)]
-    sample_normalization: String,
+    sample_normalization: Option<String>,
 
     #[arg(long = "log2")]
     log2: bool,
@@ -197,9 +202,6 @@ struct Features2PeptidesArgs {
 
     #[arg(long = "filter-min-features")]
     filter_min_features: Option<usize>,
-
-    #[arg(long = "filter-max-missing-rate")]
-    filter_max_missing_rate: Option<f64>,
 }
 
 #[allow(dead_code)]
@@ -239,16 +241,16 @@ family spells its peptide count in the name (e.g. top3, top5)"
     #[arg(short = 'r', long = "ruler")]
     ruler: bool,
 
-    #[arg(short = 'i', long = "ploidy", default_value_t = 2)]
-    ploidy: i32,
+    #[arg(short = 'i', long = "ploidy", value_parser = parse_positive_i32)]
+    ploidy: Option<i32>,
 
-    #[arg(short = 'm', long = "organism", default_value = "human")]
-    organism: String,
+    #[arg(short = 'm', long = "organism")]
+    organism: Option<String>,
 
-    #[arg(short = 'c', long = "cpc", default_value_t = 200.0)]
-    cpc: f64,
+    #[arg(short = 'c', long = "cpc", value_parser = parse_positive_f64)]
+    cpc: Option<f64>,
 
-    #[arg(short = 'o', long = "output")]
+    #[arg(short = 'o', long = "output", required = true)]
     output: Option<PathBuf>,
 
     #[arg(long = "verbose")]
@@ -261,7 +263,12 @@ family spells its peptide count in the name (e.g. top3, top5)"
     )]
     qc_report: PathBuf,
 
-    #[arg(long = "threads", default_value_t = -1)]
+    #[arg(
+        long = "threads",
+        default_value_t = -1,
+        value_parser = parse_nonzero_threads,
+        help = "DirectLFQ/MaxLFQ worker count; negative values use joblib CPU-relative semantics"
+    )]
     threads: i32,
 
     #[arg(long = "min_nonan", visible_alias = "min-nonan", default_value_t = 1)]
@@ -377,18 +384,15 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "min-unique", default_value_t = 2)]
     min_unique: usize,
 
-    #[arg(long = "remove-contaminants")]
-    remove_contaminants: bool,
-
     #[arg(long = "keep-contaminants")]
     keep_contaminants: bool,
 
-    #[arg(long = "run-normalization", default_value = "median", value_parser = [
+    #[arg(long = "run-normalization", value_parser = [
         "none", "mean", "median", "max", "global", "max_min", "iqr",
     ], ignore_case = true)]
-    run_normalization: String,
+    run_normalization: Option<String>,
 
-    #[arg(long = "sample-normalization", default_value = "globalmedian", value_parser = [
+    #[arg(long = "sample-normalization", value_parser = [
         "none",
         "globalmedian",
         "conditionmedian",
@@ -400,16 +404,13 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
         "loess",
         "tmm",
     ], ignore_case = true)]
-    sample_normalization: String,
+    sample_normalization: Option<String>,
 
     #[arg(long = "normalization-proteins")]
     normalization_proteins: Option<PathBuf>,
 
     #[arg(long = "fasta")]
     fasta: Option<PathBuf>,
-
-    #[arg(long = "ion-alignment", value_parser = ["none", "hierarchical"], ignore_case = true)]
-    ion_alignment: Option<String>,
 
     #[arg(long = "pibaq-enzyme", default_value = "Trypsin")]
     pibaq_enzyme: String,
@@ -429,14 +430,14 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "pibaq-high-anchor-threshold", default_value_t = 3)]
     pibaq_high_anchor_threshold: usize,
 
-    #[arg(long = "directlfq-cores")]
+    #[arg(long = "directlfq-cores", value_parser = parse_positive_usize)]
     directlfq_cores: Option<usize>,
 
-    #[arg(long = "directlfq-min-nonan", default_value_t = 1)]
-    directlfq_min_nonan: usize,
+    #[arg(long = "directlfq-min-nonan", value_parser = parse_positive_usize)]
+    directlfq_min_nonan: Option<usize>,
 
-    #[arg(long = "directlfq-num-samples-quadratic", default_value_t = 50)]
-    directlfq_num_samples_quadratic: usize,
+    #[arg(long = "directlfq-num-samples-quadratic", value_parser = parse_positive_usize)]
+    directlfq_num_samples_quadratic: Option<usize>,
 
     #[arg(long = "export-peptides")]
     export_peptides: Option<PathBuf>,
@@ -447,8 +448,8 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "batch-correction")]
     batch_correction: bool,
 
-    #[arg(long = "batch-method", default_value = "sample_prefix", value_parser = ["sample_prefix", "run", "column"], ignore_case = true)]
-    batch_method: String,
+    #[arg(long = "batch-method", value_parser = ["sample_prefix", "column"], ignore_case = true)]
+    batch_method: Option<String>,
 
     #[arg(long = "batch-column")]
     batch_column: Option<String>,
@@ -456,16 +457,13 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "batch-covariates")]
     batch_covariates: Option<String>,
 
-    #[arg(long = "batch-parametric", action = ArgAction::SetTrue, default_value_t = true)]
-    batch_parametric: bool,
-
     #[arg(long = "batch-nonparametric")]
     batch_nonparametric: bool,
 
     #[arg(long = "batch-mean-only")]
     batch_mean_only: bool,
 
-    #[arg(long = "batch-ref")]
+    #[arg(long = "batch-ref", value_parser = parse_nonnegative_i32)]
     batch_ref: Option<i32>,
 
     #[arg(long = "irs")]
@@ -489,29 +487,25 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "irs-sdrf-values")]
     irs_sdrf_values: Option<String>,
 
-    #[arg(
-        long = "irs-reference-regex",
-        default_value = "pool|powder|ref|reference|bridge"
-    )]
-    irs_reference_regex: String,
+    #[arg(long = "irs-reference-regex")]
+    irs_reference_regex: Option<String>,
 
-    #[arg(long = "irs-stat", default_value = "median", value_parser = ["median", "mean"], ignore_case = true)]
-    irs_stat: String,
+    #[arg(long = "irs-stat", value_parser = ["median", "mean"], ignore_case = true)]
+    irs_stat: Option<String>,
 
     #[arg(long = "irs-remove-reference")]
     irs_remove_reference: bool,
 
-    #[arg(long = "coverage-threshold")]
+    #[arg(long = "coverage-threshold", value_parser = parse_fraction)]
     coverage_threshold: Option<f64>,
 
-    #[arg(long = "ratio-fraction-merge", default_value = "mean", value_parser = ["mean", "max"], ignore_case = true)]
-    ratio_fraction_merge: String,
+    #[arg(long = "ratio-fraction-merge", value_parser = ["mean", "max"], ignore_case = true)]
+    ratio_fraction_merge: Option<String>,
 
     #[arg(long = "impute")]
     impute: bool,
 
-    #[arg(long = "impute-method", default_value = "none", value_parser = [
-        "none",
+    #[arg(long = "impute-method", value_parser = [
         "mean",
         "median",
         "constant",
@@ -521,26 +515,25 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
         "minprob",
         "mindet",
         "qrilc",
-        "missforest",
         "seqknn",
         "impseq",
         "gms",
         "bpca",
         "impseqrob",
     ], ignore_case = true)]
-    impute_method: String,
+    impute_method: Option<String>,
 
-    #[arg(long = "impute-quantile", default_value_t = 0.01)]
-    impute_quantile: f64,
+    #[arg(long = "impute-quantile", value_parser = parse_fraction)]
+    impute_quantile: Option<f64>,
 
-    #[arg(long = "impute-shift", default_value_t = 1.6)]
-    impute_shift: f64,
+    #[arg(long = "impute-shift", value_parser = parse_finite_f64)]
+    impute_shift: Option<f64>,
 
-    #[arg(long = "impute-scale", default_value_t = 0.3)]
-    impute_scale: f64,
+    #[arg(long = "impute-scale", value_parser = parse_nonnegative_f64)]
+    impute_scale: Option<f64>,
 
-    #[arg(long = "impute-n-neighbors", default_value_t = 5)]
-    impute_n_neighbors: usize,
+    #[arg(long = "impute-n-neighbors", value_parser = parse_positive_usize)]
+    impute_n_neighbors: Option<usize>,
 
     #[arg(long = "de")]
     differential_expression: bool,
@@ -551,7 +544,7 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "de-contrasts-file")]
     de_contrasts_file: Option<PathBuf>,
 
-    #[arg(long = "de-method", default_value = "auto", value_parser = [
+    #[arg(long = "de-method", value_parser = [
         "auto",
         "limrots",
         "limma",
@@ -560,44 +553,43 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
         "rots",
         "ensemble",
     ], ignore_case = true)]
-    de_method: String,
+    de_method: Option<String>,
 
     #[arg(long = "de-ensemble-methods")]
     de_ensemble_methods: Option<String>,
 
-    #[arg(long = "de-ensemble-min-k", default_value_t = 2)]
-    de_ensemble_min_k: usize,
+    #[arg(
+        long = "de-ensemble-min-k",
+        value_parser = parse_positive_usize,
+        help = "Minimum agreeing ensemble members (default: 2; ensemble only)"
+    )]
+    de_ensemble_min_k: Option<usize>,
 
-    #[arg(long = "de-log2fc", default_value = "0.5", value_parser = parse_de_log2fc)]
-    de_log2fc_threshold: DeLog2FcArg,
+    #[arg(long = "de-log2fc", value_parser = parse_de_log2fc)]
+    de_log2fc_threshold: Option<DeLog2FcArg>,
 
     #[arg(long = "de-effect-size-gate", value_parser = ["mixture", "null_quantile"], ignore_case = true)]
     de_effect_size_gate: Option<String>,
 
-    #[arg(long = "de-fdr", default_value_t = 0.05)]
-    de_fdr_threshold: f64,
+    #[arg(long = "de-fdr", value_parser = parse_fraction)]
+    de_fdr_threshold: Option<f64>,
 
-    #[arg(long = "de-fdr-method", default_value = "bh", value_parser = ["bh", "ihw", "bky", "storey"], ignore_case = true)]
-    de_fdr_method: String,
+    #[arg(long = "de-fdr-method", value_parser = ["bh", "ihw", "bky", "storey"], ignore_case = true)]
+    de_fdr_method: Option<String>,
 
     #[arg(long = "de-output")]
     de_output: Option<PathBuf>,
 
-    #[arg(long = "memory", visible_alias = "duckdb-memory")]
-    memory: Option<String>,
-
-    #[arg(long = "threads", visible_alias = "duckdb-threads")]
+    #[arg(
+        long = "threads",
+        visible_alias = "duckdb-threads",
+        value_parser = parse_positive_usize
+    )]
     threads: Option<usize>,
 }
 
 impl Features2ProteinsArgs {
-    fn into_config(self) -> FeatureToProteinsConfig {
-        let remove_contaminants = if self.keep_contaminants {
-            false
-        } else {
-            self.remove_contaminants || !self.keep_contaminants
-        };
-
+    fn into_config(self) -> mokume_core::Result<FeatureToProteinsConfig> {
         // `top<N>` is the only spelling of a TopN method, so N comes from the
         // method name; the pipeline reads it from `topn_peptides`.
         let QuantMethodArg {
@@ -605,10 +597,210 @@ impl Features2ProteinsArgs {
             topn,
         } = self.quant_method;
         let topn_peptides = topn.unwrap_or(DEFAULT_TOPN_PEPTIDES);
-        let (log2fc_threshold, auto_effect_size_gate) = self.de_log2fc_threshold.into_config();
+        let remove_contaminants = !self.keep_contaminants;
+
+        if self.threads.is_some() && self.directlfq_cores.is_some() {
+            return Err(MokumeError::InvalidInput {
+                message: "choose either --threads or --directlfq-cores, not both".to_owned(),
+            });
+        }
+        if quantification != QuantMethod::DirectLfq
+            && (self.directlfq_cores.is_some() || self.directlfq_min_nonan.is_some())
+        {
+            return Err(MokumeError::InvalidInput {
+                message: "--directlfq-cores/--directlfq-min-nonan require --quant-method directlfq"
+                    .to_owned(),
+            });
+        }
+        if !matches!(quantification, QuantMethod::DirectLfq | QuantMethod::MaxLfq)
+            && self.directlfq_num_samples_quadratic.is_some()
+        {
+            return Err(MokumeError::InvalidInput {
+                message: "--directlfq-num-samples-quadratic only applies to DirectLFQ/MaxLFQ"
+                    .to_owned(),
+            });
+        }
+
+        let quantification_manages_normalization =
+            matches!(quantification, QuantMethod::DirectLfq | QuantMethod::Ratio);
+        let run_normalization = self.run_normalization.unwrap_or_else(|| {
+            if quantification_manages_normalization {
+                "none".to_owned()
+            } else {
+                "median".to_owned()
+            }
+        });
+        let sample_normalization = self.sample_normalization.unwrap_or_else(|| {
+            if quantification_manages_normalization {
+                "none".to_owned()
+            } else {
+                "globalmedian".to_owned()
+            }
+        });
+
+        let batch_method_supplied = self.batch_method.is_some();
+        let batch_method = self
+            .batch_method
+            .unwrap_or_else(|| "sample_prefix".to_owned());
+        if !self.batch_correction
+            && (batch_method_supplied
+                || self.batch_column.is_some()
+                || self.batch_covariates.is_some()
+                || self.batch_nonparametric
+                || self.batch_mean_only
+                || self.batch_ref.is_some())
+        {
+            return Err(MokumeError::InvalidInput {
+                message: "batch options require --batch-correction".to_owned(),
+            });
+        }
+
+        let reference_samples = if self.irs_reference_sample.is_empty() {
+            split_csv_option(self.irs_reference_samples)
+        } else {
+            Some(self.irs_reference_sample)
+        };
+        if self.irs_sdrf_column.is_some() != self.irs_sdrf_values.is_some() {
+            return Err(MokumeError::InvalidInput {
+                message: "--irs-sdrf-column and --irs-sdrf-values must be provided together"
+                    .to_owned(),
+            });
+        }
+        let selector_count = usize::from(reference_samples.is_some())
+            + usize::from(self.irs_sdrf_column.is_some())
+            + usize::from(self.irs_reference_regex.is_some());
+        if selector_count > 1 {
+            return Err(MokumeError::InvalidInput {
+                message: "choose one reference selector: samples, SDRF column+values, or regex"
+                    .to_owned(),
+            });
+        }
+        if quantification == QuantMethod::Ratio {
+            if self.irs {
+                return Err(MokumeError::InvalidInput {
+                    message: "Ratio quantification cannot also apply IRS".to_owned(),
+                });
+            }
+            if self.irs_sdrf_column.is_some()
+                || self.irs_sdrf_values.is_some()
+                || self.irs_stat.is_some()
+                || self.irs_remove_reference
+            {
+                return Err(MokumeError::InvalidInput {
+                    message: "Ratio accepts --irs-reference-samples or --irs-reference-regex; IRS-only options require --irs"
+                        .to_owned(),
+                });
+            }
+        } else if !self.irs
+            && (selector_count > 0 || self.irs_stat.is_some() || self.irs_remove_reference)
+        {
+            return Err(MokumeError::InvalidInput {
+                message: "IRS options require --irs".to_owned(),
+            });
+        }
+        let irs_reference_regex = self
+            .irs_reference_regex
+            .unwrap_or_else(|| "pool|powder|ref|reference|bridge".to_owned());
+        let irs_stat = self.irs_stat.unwrap_or_else(|| "median".to_owned());
+
+        if self.ratio_fraction_merge.is_some() && quantification != QuantMethod::Ratio {
+            return Err(MokumeError::InvalidInput {
+                message: "--ratio-fraction-merge only applies to --quant-method ratio".to_owned(),
+            });
+        }
+        let ratio_fraction_merge = self
+            .ratio_fraction_merge
+            .unwrap_or_else(|| "mean".to_owned());
+
+        let imputation_options_supplied = self.impute_method.is_some()
+            || self.impute_quantile.is_some()
+            || self.impute_shift.is_some()
+            || self.impute_scale.is_some()
+            || self.impute_n_neighbors.is_some();
+        if !self.impute && imputation_options_supplied {
+            return Err(MokumeError::InvalidInput {
+                message: "imputation options require --impute".to_owned(),
+            });
+        }
+        let impute_method = self.impute_method.unwrap_or_else(|| "none".to_owned());
+        if self.impute && impute_method.eq_ignore_ascii_case("none") {
+            return Err(MokumeError::InvalidInput {
+                message: "--impute requires --impute-method".to_owned(),
+            });
+        }
+        let impute_method_lower = impute_method.to_ascii_lowercase();
+        if self.impute_quantile.is_some()
+            && !matches!(impute_method_lower.as_str(), "mindet" | "minprob")
+        {
+            return Err(MokumeError::InvalidInput {
+                message: "--impute-quantile only applies to mindet/minprob".to_owned(),
+            });
+        }
+        if (self.impute_shift.is_some() || self.impute_scale.is_some())
+            && impute_method_lower != "minprob"
+        {
+            return Err(MokumeError::InvalidInput {
+                message: "--impute-shift/--impute-scale only apply to minprob".to_owned(),
+            });
+        }
+        if self.impute_n_neighbors.is_some()
+            && !matches!(impute_method_lower.as_str(), "knn" | "seqknn")
+        {
+            return Err(MokumeError::InvalidInput {
+                message: "--impute-n-neighbors only applies to knn/seqknn".to_owned(),
+            });
+        }
+
+        let de_options_supplied = self.de_contrasts.is_some()
+            || self.de_contrasts_file.is_some()
+            || self.de_method.is_some()
+            || self.de_ensemble_methods.is_some()
+            || self.de_ensemble_min_k.is_some()
+            || self.de_log2fc_threshold.is_some()
+            || self.de_effect_size_gate.is_some()
+            || self.de_fdr_threshold.is_some()
+            || self.de_fdr_method.is_some()
+            || self.de_output.is_some();
+        if !self.differential_expression && de_options_supplied {
+            return Err(MokumeError::InvalidInput {
+                message: "differential-expression options require --de".to_owned(),
+            });
+        }
+        let de_method = self.de_method.unwrap_or_else(|| "auto".to_owned());
+        if self.de_ensemble_min_k.is_some() && !de_method.eq_ignore_ascii_case("ensemble") {
+            return Err(MokumeError::InvalidInput {
+                message: "--de-ensemble-min-k only applies to --de-method ensemble".to_owned(),
+            });
+        }
+        let resolved_de_method = if de_method.eq_ignore_ascii_case("auto") {
+            if quantification == QuantMethod::DirectLfq {
+                "deqms"
+            } else {
+                "limrots"
+            }
+        } else {
+            de_method.as_str()
+        };
+        if self.de_fdr_method.is_some()
+            && matches!(
+                resolved_de_method.to_ascii_lowercase().as_str(),
+                "rots" | "limrots"
+            )
+        {
+            return Err(MokumeError::InvalidInput {
+                message: format!(
+                    "--de-fdr-method does not apply to {resolved_de_method}, which retains its permutation FDR"
+                ),
+            });
+        }
+        let de_fdr_method = self.de_fdr_method.unwrap_or_else(|| "bh".to_owned());
+        let (log2fc_threshold, auto_effect_size_gate) = self
+            .de_log2fc_threshold
+            .unwrap_or(DeLog2FcArg::Fixed(0.5))
+            .into_config();
         let effect_size_gate = self.de_effect_size_gate.or(auto_effect_size_gate);
 
-        FeatureToProteinsConfig {
+        Ok(FeatureToProteinsConfig {
             input: InputConfig {
                 parquet: self.parquet,
                 msstats: self.msstats,
@@ -627,14 +819,14 @@ impl Features2ProteinsArgs {
                 remove_contaminants,
             },
             normalization: NormalizationConfig {
-                run_method: self.run_normalization,
-                sample_method: self.sample_normalization,
+                run_method: run_normalization,
+                sample_method: sample_normalization,
                 normalization_proteins: self.normalization_proteins,
             },
             quantification,
             topn_peptides,
             maxlfq: MaxLfqConfig {
-                ion_alignment: self.ion_alignment,
+                ion_alignment: None,
                 force_builtin: false,
             },
             pibaq: PibaqConfig {
@@ -647,65 +839,57 @@ impl Features2ProteinsArgs {
             },
             directlfq: DirectLfqConfig {
                 cores: self.directlfq_cores,
-                min_nonan: self.directlfq_min_nonan,
-                num_samples_quadratic: self.directlfq_num_samples_quadratic,
+                min_nonan: self.directlfq_min_nonan.unwrap_or(1),
+                num_samples_quadratic: self.directlfq_num_samples_quadratic.unwrap_or(50),
             },
             batch: BatchCorrectionConfig {
                 enabled: self.batch_correction,
-                method: self.batch_method,
+                method: batch_method,
                 column: self.batch_column,
                 covariates: split_csv_option(self.batch_covariates),
-                parametric: if self.batch_nonparametric {
-                    false
-                } else {
-                    self.batch_parametric
-                },
+                parametric: !self.batch_nonparametric,
                 mean_only: self.batch_mean_only,
                 ref_batch: self.batch_ref,
             },
             irs: IrsConfig {
                 enabled: self.irs,
-                reference_samples: if self.irs_reference_sample.is_empty() {
-                    split_csv_option(self.irs_reference_samples)
-                } else {
-                    Some(self.irs_reference_sample)
-                },
+                reference_samples,
                 sdrf_column: self.irs_sdrf_column,
                 sdrf_values: split_csv_option(self.irs_sdrf_values),
-                reference_regex: self.irs_reference_regex,
-                stat: self.irs_stat,
+                reference_regex: irs_reference_regex,
+                stat: irs_stat,
                 remove_reference: self.irs_remove_reference,
             },
             coverage_threshold: self.coverage_threshold,
             ratio: RatioConfig {
-                fraction_merge: self.ratio_fraction_merge,
+                fraction_merge: ratio_fraction_merge,
             },
             imputation: ImputationConfig {
                 enabled: self.impute,
-                method: self.impute_method,
-                quantile: self.impute_quantile,
-                shift: self.impute_shift,
-                scale: self.impute_scale,
-                n_neighbors: self.impute_n_neighbors,
+                method: impute_method,
+                quantile: self.impute_quantile.unwrap_or(0.01),
+                shift: self.impute_shift.unwrap_or(1.6),
+                scale: self.impute_scale.unwrap_or(0.3),
+                n_neighbors: self.impute_n_neighbors.unwrap_or(5),
             },
             differential_expression: DifferentialExpressionConfig {
                 enabled: self.differential_expression,
                 contrasts: split_csv_option(self.de_contrasts),
                 contrasts_file: self.de_contrasts_file,
-                method: self.de_method,
+                method: de_method,
                 ensemble_methods: split_ensemble_methods(self.de_ensemble_methods),
-                ensemble_min_k: self.de_ensemble_min_k,
+                ensemble_min_k: self.de_ensemble_min_k.unwrap_or(2),
                 log2fc_threshold,
                 effect_size_gate,
-                fdr_threshold: self.de_fdr_threshold,
-                fdr_method: self.de_fdr_method,
+                fdr_threshold: self.de_fdr_threshold.unwrap_or(0.05),
+                fdr_method: de_fdr_method,
                 output: self.de_output,
             },
             runtime: RuntimeConfig {
-                memory: self.memory,
+                memory: None,
                 threads: self.threads,
             },
-        }
+        })
     }
 }
 
@@ -860,6 +1044,82 @@ fn parse_peptides2protein_method(value: &str) -> std::result::Result<String, Str
     ))
 }
 
+fn parse_nonzero_threads(value: &str) -> std::result::Result<i32, String> {
+    let threads = value
+        .parse::<i32>()
+        .map_err(|_| format!("invalid thread count `{value}`: expected a non-zero integer"))?;
+    if threads == 0 {
+        return Err("invalid thread count `0`: expected a non-zero integer".to_owned());
+    }
+    Ok(threads)
+}
+
+fn parse_positive_i32(value: &str) -> std::result::Result<i32, String> {
+    let parsed = value
+        .parse::<i32>()
+        .map_err(|_| format!("invalid positive integer `{value}`"))?;
+    if parsed <= 0 {
+        return Err(format!("expected a positive integer, got `{value}`"));
+    }
+    Ok(parsed)
+}
+
+fn parse_positive_f64(value: &str) -> std::result::Result<f64, String> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| format!("invalid positive number `{value}`"))?;
+    if !parsed.is_finite() || parsed <= 0.0 {
+        return Err(format!("expected a finite positive number, got `{value}`"));
+    }
+    Ok(parsed)
+}
+
+fn parse_nonnegative_i32(value: &str) -> std::result::Result<i32, String> {
+    let parsed = value
+        .parse::<i32>()
+        .map_err(|_| format!("invalid non-negative integer `{value}`"))?;
+    if parsed < 0 {
+        return Err(format!("expected a non-negative integer, got `{value}`"));
+    }
+    Ok(parsed)
+}
+
+fn parse_finite_f64(value: &str) -> std::result::Result<f64, String> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| format!("invalid finite number `{value}`"))?;
+    if !parsed.is_finite() {
+        return Err(format!("expected a finite number, got `{value}`"));
+    }
+    Ok(parsed)
+}
+
+fn parse_nonnegative_f64(value: &str) -> std::result::Result<f64, String> {
+    let parsed = parse_finite_f64(value)?;
+    if parsed < 0.0 {
+        return Err(format!("expected a non-negative number, got `{value}`"));
+    }
+    Ok(parsed)
+}
+
+fn parse_fraction(value: &str) -> std::result::Result<f64, String> {
+    let parsed = parse_finite_f64(value)?;
+    if !(0.0..=1.0).contains(&parsed) {
+        return Err(format!("expected a number between 0 and 1, got `{value}`"));
+    }
+    Ok(parsed)
+}
+
+fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid positive integer `{value}`"))?;
+    if parsed == 0 {
+        return Err("invalid positive integer `0`".to_owned());
+    }
+    Ok(parsed)
+}
+
 /// Error for a `top`-prefixed name that is not a valid `top<N>` (`top0`, `topx`).
 fn invalid_topn_message(value: &str) -> String {
     format!(
@@ -901,9 +1161,9 @@ fn split_ensemble_methods(value: Option<String>) -> Option<Vec<String>> {
 /// Dispatch a fully-built [`Cli`] to its subcommand.
 fn dispatch(cli: Cli, pibaq_digest: Option<PibaqDigest>) -> mokume_core::Result<()> {
     init_logging(cli.log_level, cli.log_file).and_then(|()| match cli.command {
-        Commands::Features2Proteins(args) => {
-            dispatch_features_to_proteins(args.into_config(), pibaq_digest)
-        }
+        Commands::Features2Proteins(args) => args
+            .into_config()
+            .and_then(|config| dispatch_features_to_proteins(config, pibaq_digest)),
         Commands::Features2Peptides(args) => dispatch_features_to_peptides(&args),
         Commands::Peptides2Protein(args) => {
             peptides2protein::run_peptides_to_protein_with_digest(&args, pibaq_digest)
@@ -1042,21 +1302,28 @@ fn dispatch_features_to_proteins(
 }
 
 fn dispatch_features_to_peptides(args: &Features2PeptidesArgs) -> mokume_core::Result<()> {
-    if !args.parquet.exists() {
+    // `--generate-filter-config` writes the example config and exits, mirroring
+    // the Python command's early return.
+    if let Some(path) = &args.generate_filter_config {
+        generate_filter_config(path)?;
+        return Ok(());
+    }
+
+    let parquet = args
+        .parquet
+        .as_ref()
+        .ok_or_else(|| MokumeError::InvalidInput {
+            message: "features2peptides requires --parquet".to_owned(),
+        })?;
+    if !parquet.exists() {
         return Err(MokumeError::MissingInput {
-            path: args.parquet.clone(),
+            path: parquet.clone(),
         });
     }
     if let Some(sdrf) = &args.sdrf {
         if !sdrf.exists() {
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
         }
-    }
-    // `--generate-filter-config` writes the example config and exits, mirroring
-    // the Python command's early return.
-    if let Some(path) = &args.generate_filter_config {
-        generate_filter_config(path)?;
-        return Ok(());
     }
 
     // `--remove_ids` reads a file of protein IDs to drop; validate it exists up
@@ -1069,16 +1336,45 @@ fn dispatch_features_to_peptides(args: &Features2PeptidesArgs) -> mokume_core::R
         }
     }
 
+    if args.irs_channel.is_some() && args.irs_autodetect_regex.is_some() {
+        return Err(MokumeError::InvalidInput {
+            message: "choose either --irs_channel or --irs_autodetect_regex, not both".to_owned(),
+        });
+    }
+    if args.irs_autodetect_regex.is_some() && args.sdrf.is_none() {
+        return Err(MokumeError::InvalidInput {
+            message: "--irs_autodetect_regex requires --sdrf".to_owned(),
+        });
+    }
+    let irs_requested = args.irs_channel.is_some() || args.irs_autodetect_regex.is_some();
+    if !irs_requested
+        && (!args.irs_stat.eq_ignore_ascii_case("median")
+            || !args.irs_scope.eq_ignore_ascii_case("global"))
+    {
+        return Err(MokumeError::InvalidInput {
+            message: "--irs_stat/--irs_scope require --irs_channel or --irs_autodetect_regex"
+                .to_owned(),
+        });
+    }
+
     // Channel IRS (Python `get_irs_scaling_factors`). All three scopes
     // (`global` / `by_mixture` / `two_stage`) are ported. The reference channel
     // is taken from `--irs_channel`; when that is absent but
     // `--irs_autodetect_regex` and `--sdrf` are given, it is autodetected from
-    // the SDRF exactly as Python does (`peptide.py:219-233`). An autodetect that
-    // finds no channel leaves IRS disabled, matching Python's warning path.
+    // the SDRF exactly as Python does (`peptide.py:219-233`). A requested rule
+    // that finds no channel is rejected instead of becoming a successful no-op.
     // `--save_parquet` and `--aggregation_level run` are implemented below.
     let irs_channel = match (&args.irs_channel, &args.irs_autodetect_regex, &args.sdrf) {
         (Some(channel), _, _) => Some(channel.clone()),
-        (None, Some(regex), Some(sdrf)) => resolve_irs_autodetect_channel(sdrf, regex)?,
+        (None, Some(regex), Some(sdrf)) => {
+            Some(resolve_irs_autodetect_channel(sdrf, regex)?.ok_or_else(|| {
+                MokumeError::InvalidInput {
+                    message: format!(
+                        "--irs_autodetect_regex `{regex}` matched no reference channel"
+                    ),
+                }
+            })?)
+        }
         _ => None,
     };
     let irs = irs_channel.map(|channel| {
@@ -1116,7 +1412,7 @@ fn dispatch_features_to_peptides(args: &Features2PeptidesArgs) -> mokume_core::R
 
     let config = FeatureToPeptidesConfig {
         input: InputConfig {
-            parquet: Some(args.parquet.clone()),
+            parquet: Some(parquet.clone()),
             msstats: None,
             sdrf: args.sdrf.clone(),
             fasta: None,
@@ -1131,8 +1427,14 @@ fn dispatch_features_to_peptides(args: &Features2PeptidesArgs) -> mokume_core::R
         remove_low_frequency_peptides: args.remove_low_frequency_peptides,
         keep_shared_peptides: args.keep_shared_peptides,
         skip_normalization: args.skip_normalization,
-        run_normalization: args.run_normalization.clone(),
-        sample_normalization: args.sample_normalization.clone(),
+        run_normalization: args
+            .run_normalization
+            .clone()
+            .unwrap_or_else(|| "median".to_owned()),
+        sample_normalization: args
+            .sample_normalization
+            .clone()
+            .unwrap_or_else(|| "globalmedian".to_owned()),
         log2: args.log2,
         save_parquet: args.save_parquet,
         aggregation_level,
@@ -1157,8 +1459,7 @@ fn build_filter_pipeline(
         || args.filter_max_missed_cleavages.is_some()
         || args.filter_exclude_modifications.is_some()
         || args.filter_min_unique_peptides.is_some()
-        || args.filter_min_features.is_some()
-        || args.filter_max_missing_rate.is_some();
+        || args.filter_min_features.is_some();
 
     let mut config = match &args.filter_config {
         Some(path) => load_filter_config(path)?,
@@ -1195,10 +1496,6 @@ fn build_filter_pipeline(
     if let Some(value) = args.filter_min_features {
         config.run_qc.min_identified_features = value;
     }
-    if let Some(value) = args.filter_max_missing_rate {
-        config.run_qc.max_missing_rate = value;
-    }
-
     Ok(Some(config))
 }
 
@@ -1346,8 +1643,6 @@ name: example_config
 
 # Global options
 enabled: true              # Set to false to disable all filtering
-strict_mode: false         # If true, fail on any filter error
-log_filtered_counts: true  # Log how many items each filter removes
 
 # Intensity-based filters
 intensity:
@@ -1360,24 +1655,17 @@ intensity:
 
 # Peptide-level filters
 peptide:
-  min_search_score: null          # Min search engine score (null = no filter)
   allowed_charge_states: null     # e.g., [2, 3, 4] or null for all charges
   exclude_modifications: []       # Modification names to exclude, e.g., ["Oxidation"]
   max_missed_cleavages: null      # Max missed cleavages (null = no filter)
-  fdr_threshold: 0.01             # Peptide FDR threshold (requires q_value column)
   min_peptide_length: 7           # Minimum peptide length in amino acids
   max_peptide_length: 50          # Maximum peptide length in amino acids
   exclude_sequence_patterns: []   # Regex patterns to exclude
-  require_unique_peptides: false  # Require peptides unique to one protein
 
 # Protein-level filters
 protein:
-  fdr_threshold: 0.01         # Protein FDR threshold
-  min_coverage: 0.0           # Minimum sequence coverage (0-1)
-  min_peptides: 1             # Minimum total peptides per protein
   min_unique_peptides: 2      # Minimum unique peptides per protein
   razor_peptide_handling: keep   # How to handle shared peptides: keep, remove, assign_to_top
-  protein_grouping: none         # Grouping strategy: none, subsumption, parsimony
   remove_contaminants: true      # Remove contaminant proteins
   remove_decoys: true            # Remove decoy proteins
   contaminant_patterns:          # Patterns identifying contaminants
@@ -1390,8 +1678,6 @@ run_qc:
   min_total_intensity: 0.0      # Min total intensity per run
   min_identified_features: 0    # Min features per run
   min_identified_proteins: 0    # Min proteins per run
-  min_sample_correlation: null  # Min correlation between samples (null = no filter)
-  max_missing_rate: 1.0         # Max missing value rate (0-1)
 "#;
 
 const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
@@ -1405,23 +1691,16 @@ const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
     "remove_zero_intensity": true
   },
   "peptide": {
-    "min_search_score": null,
     "allowed_charge_states": null,
     "exclude_modifications": [],
     "max_missed_cleavages": null,
-    "fdr_threshold": 0.01,
     "min_peptide_length": 7,
     "max_peptide_length": 50,
-    "exclude_sequence_patterns": [],
-    "require_unique_peptides": false
+    "exclude_sequence_patterns": []
   },
   "protein": {
-    "fdr_threshold": 0.01,
-    "min_coverage": 0.0,
-    "min_peptides": 1,
     "min_unique_peptides": 2,
     "razor_peptide_handling": "keep",
-    "protein_grouping": "none",
     "remove_contaminants": true,
     "remove_decoys": true,
     "contaminant_patterns": [
@@ -1433,13 +1712,9 @@ const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
   "run_qc": {
     "min_total_intensity": 0.0,
     "min_identified_features": 0,
-    "min_identified_proteins": 0,
-    "min_sample_correlation": null,
-    "max_missing_rate": 1.0
+    "min_identified_proteins": 0
   },
-  "enabled": true,
-  "strict_mode": false,
-  "log_filtered_counts": true
+  "enabled": true
 }
 "#;
 
@@ -1448,6 +1723,8 @@ mod tests {
     use std::path::Path;
 
     use clap::{CommandFactory, Parser};
+
+    use mokume_core::{MokumeError, PreprocessingFilterConfig};
 
     use super::{Cli, Commands};
 
@@ -1513,12 +1790,14 @@ mod tests {
             "--impute-method",
             "knn",
             "--de",
+            "--de-method",
+            "limma",
             "--de-contrasts",
             "NASH-HL,NASH-Ctrl",
             "--de-fdr-method",
             "ihw",
-            "--duckdb-memory",
-            "80GB",
+            "--de-output",
+            "de.csv",
             "--duckdb-threads",
             "24",
         ]);
@@ -1526,7 +1805,9 @@ mod tests {
         let Commands::Features2Proteins(args) = cli.command else {
             panic!("expected features2proteins command");
         };
-        let config = args.into_config();
+        let Ok(config) = args.into_config() else {
+            panic!("expected a valid features2proteins config");
+        };
 
         assert_eq!(config.directlfq.min_nonan, 3);
         assert!(config.batch.enabled);
@@ -1556,7 +1837,7 @@ mod tests {
         assert_eq!(config.imputation.method, "knn");
         assert!(config.differential_expression.enabled);
         assert_eq!(config.differential_expression.fdr_method, "ihw");
-        assert_eq!(config.runtime.memory.as_deref(), Some("80GB"));
+        assert_eq!(config.runtime.memory, None);
         assert_eq!(config.runtime.threads, Some(24));
     }
 
@@ -1597,6 +1878,8 @@ mod tests {
             "-s",
             "input.sdrf.tsv",
             "--de",
+            "--de-method",
+            "limma",
             "--de-contrasts",
             "A vs B",
             "--de-log2fc",
@@ -1607,7 +1890,9 @@ mod tests {
         let Commands::Features2Proteins(args) = cli.command else {
             panic!("expected features2proteins command");
         };
-        let config = args.into_config();
+        let Ok(config) = args.into_config() else {
+            panic!("expected a valid features2proteins config");
+        };
 
         assert_eq!(config.differential_expression.log2fc_threshold, 0.5);
         assert_eq!(
@@ -1626,6 +1911,7 @@ mod tests {
             "input.parquet",
             "-o",
             "protein.csv",
+            "--de",
             "--de-log2fc",
             "0.25",
             "--de-effect-size-gate",
@@ -1634,7 +1920,9 @@ mod tests {
         let Commands::Features2Proteins(args) = cli.command else {
             panic!("expected features2proteins command");
         };
-        let config = args.into_config();
+        let Ok(config) = args.into_config() else {
+            panic!("expected a valid features2proteins config");
+        };
 
         assert_eq!(config.differential_expression.log2fc_threshold, 0.25);
         assert_eq!(
@@ -1658,7 +1946,9 @@ mod tests {
         let Commands::Features2Proteins(args) = cli.command else {
             panic!("expected features2proteins command");
         };
-        let config = args.into_config();
+        let Ok(config) = args.into_config() else {
+            panic!("expected a valid features2proteins config");
+        };
 
         assert_eq!(
             config.input.msstats.as_deref(),
@@ -1696,13 +1986,19 @@ mod tests {
                 "input.parquet",
                 "-o",
                 "protein.csv",
+                "--de",
+                "--de-method",
+                "ensemble",
                 "--de-ensemble-methods",
                 value,
             ]);
             let Commands::Features2Proteins(args) = cli.command else {
                 panic!("expected features2proteins command");
             };
-            let methods = args.into_config().differential_expression.ensemble_methods;
+            let Ok(config) = args.into_config() else {
+                panic!("expected a valid features2proteins config");
+            };
+            let methods = config.differential_expression.ensemble_methods;
 
             assert!(
                 methods
@@ -1714,6 +2010,30 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ensemble_min_k_for_single_de_method() {
+        let cli = Cli::parse_from([
+            "mokume",
+            "features2proteins",
+            "-p",
+            "input.parquet",
+            "-o",
+            "protein.csv",
+            "--de-method",
+            "limma",
+            "--de-ensemble-min-k",
+            "2",
+        ]);
+        let Commands::Features2Proteins(args) = cli.command else {
+            panic!("expected features2proteins command");
+        };
+
+        assert!(matches!(
+            args.into_config(),
+            Err(MokumeError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
     fn repeatable_reference_sample_preserves_commas() {
         let cli = Cli::parse_from([
             "mokume",
@@ -1722,6 +2042,7 @@ mod tests {
             "input.parquet",
             "-o",
             "protein.csv",
+            "--irs",
             "--irs-reference-sample",
             "Pool, batch A",
             "--irs-reference-sample",
@@ -1731,7 +2052,9 @@ mod tests {
         let Commands::Features2Proteins(args) = cli.command else {
             panic!("expected features2proteins command");
         };
-        let config = args.into_config();
+        let Ok(config) = args.into_config() else {
+            panic!("expected a valid features2proteins config");
+        };
 
         assert_eq!(
             config.irs.reference_samples.as_deref(),
@@ -1793,13 +2116,11 @@ mod tests {
             "--quant-method",
             "--min-aa",
             "--min-unique",
-            "--remove-contaminants",
             "--keep-contaminants",
             "--run-normalization",
             "--sample-normalization",
             "--normalization-proteins",
             "--fasta",
-            "--ion-alignment",
             "--pibaq-enzyme",
             "--pibaq-max-aa",
             "--pibaq-min-shared",
@@ -1815,7 +2136,6 @@ mod tests {
             "--batch-method",
             "--batch-column",
             "--batch-covariates",
-            "--batch-parametric",
             "--batch-nonparametric",
             "--batch-mean-only",
             "--batch-ref",
@@ -1845,7 +2165,6 @@ mod tests {
             "--de-fdr",
             "--de-fdr-method",
             "--de-output",
-            "--duckdb-memory",
             "--duckdb-threads",
         ] {
             assert!(
@@ -1856,6 +2175,12 @@ mod tests {
         // The plotting / interactive-report flags moved to the Python wheel; clap
         // must reject them now.
         for option in [
+            "--ion-alignment",
+            "--memory",
+            "--duckdb-memory",
+            "--remove-contaminants",
+            "--batch-parametric",
+            "--impute-method missforest",
             "--plot-dir",
             "--plot-volcano",
             "--plot-heatmap",
@@ -1910,12 +2235,22 @@ mod tests {
             "--filter-exclude-modifications",
             "--filter-min-unique-peptides",
             "--filter-min-features",
-            "--filter-max-missing-rate",
         ] {
             assert!(
                 help.contains(option),
                 "missing option `{option}` in help:\n{help}"
             );
+        }
+    }
+
+    #[test]
+    fn filter_config_rejects_unknown_keys() {
+        for yaml in [
+            "unknown_option: true\n",
+            "intensity:\n  min_intensitty: 5\n",
+        ] {
+            let parsed = serde_yaml::from_str::<PreprocessingFilterConfig>(yaml);
+            assert!(parsed.is_err(), "unknown filter key was accepted: {yaml}");
         }
     }
 

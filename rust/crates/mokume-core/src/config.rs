@@ -201,9 +201,10 @@ impl Default for FilterConfig {
 /// the Python dataclasses so a partial YAML/JSON file (or no file at all, just
 /// CLI overrides) fills the rest exactly as `from_dict` does. `#[serde(default)]`
 /// makes every missing key fall back to the corresponding `Default`, matching
-/// Python's `data.get(block, {})` + dataclass defaults; unknown keys are ignored.
+/// Python's `data.get(block, {})` + dataclass defaults. Unknown keys are rejected
+/// so a misspelled filter never degrades to a silent no-op.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PreprocessingFilterConfig {
     pub name: String,
     pub enabled: bool,
@@ -231,7 +232,7 @@ impl Default for PreprocessingFilterConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct IntensityFilterConfig {
     pub min_intensity: f64,
     pub cv_threshold: Option<f64>,
@@ -255,7 +256,7 @@ impl Default for IntensityFilterConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PeptideFilterConfig {
     pub min_search_score: Option<f64>,
     pub allowed_charge_states: Option<Vec<i32>>,
@@ -285,7 +286,7 @@ impl Default for PeptideFilterConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProteinFilterConfig {
     pub fdr_threshold: f64,
     pub min_coverage: f64,
@@ -319,7 +320,7 @@ impl Default for ProteinFilterConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RunQcFilterConfig {
     pub min_total_intensity: f64,
     pub min_identified_features: usize,

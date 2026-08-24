@@ -181,16 +181,12 @@ P1\tB2-s2\t21.0\nP2\tB2-s2\t7.5\nP3\tB2-s2\t2.5\n",
 fn features2peptides_generates_filter_config() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
-    let parquet = root.join("input.parquet");
     let yaml = root.join("filters.yaml");
     let json = root.join("filters.json");
-    write(&parquet, [])?;
 
     for output_path in [&yaml, &json] {
         run(&[
             "features2peptides",
-            "--parquet",
-            path_str(&parquet)?,
             "--generate-filter-config",
             path_str(output_path)?,
         ])?;
@@ -214,31 +210,6 @@ fn features2peptides_generates_filter_config() -> Result<(), Box<dyn std::error:
     assert!(
         json.contains(r#""min_unique_peptides": 2"#),
         "json config is missing protein min_unique_peptides:\n{json}"
-    );
-    Ok(())
-}
-
-#[test]
-fn features2peptides_generate_filter_config_requires_existing_parquet(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let root = temp_root()?;
-    create_dir_all(&root)?;
-    let output_path = root.join("filters.yaml");
-
-    let error = match run(&[
-        "features2peptides",
-        "--parquet",
-        "missing.parquet",
-        "--generate-filter-config",
-        path_str(&output_path)?,
-    ]) {
-        Ok(()) => panic!("generate-filter-config must fail for a missing parquet"),
-        Err(error) => error,
-    };
-    let message = error.to_string();
-    assert!(
-        message.contains("input file does not exist: missing.parquet"),
-        "unexpected error: {message}"
     );
     Ok(())
 }
@@ -273,22 +244,9 @@ fn unimplemented_features2proteins_options_return_stable_error(
             ],
             stage: "dataset-normalization-export-peptides",
         },
-        FeatureToProteinsCase {
-            args: &["--impute", "--impute-method", "missforest"],
-            stage: "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume wheel: pip install mokume[analysis]; mokume.impute(matrix, method='missforest')",
-        },
         // The `--plot-*` / `--interactive-report` / `--report-output` flags were
         // removed from the Rust command interface (plotting / reports moved to
         // the Python periphery), so they are no longer exercised here.
-        FeatureToProteinsCase {
-            args: &[
-                "--quant-method",
-                "directlfq",
-                "--export-peptides",
-                "peptides.csv",
-            ],
-            stage: "directlfq-export-peptides",
-        },
         FeatureToProteinsCase {
             args: &["--quant-method", "sum", "--export-ions", "ions.csv"],
             stage: "export-ions",
@@ -316,6 +274,25 @@ fn unimplemented_features2proteins_options_return_stable_error(
             case.args
         );
     }
+    let error = match run(&[
+        "features2proteins",
+        "--parquet",
+        parquet,
+        "--sdrf",
+        sdrf,
+        "--output",
+        "protein.csv",
+        "--quant-method",
+        "directlfq",
+        "--export-peptides",
+        "peptides.csv",
+    ]) {
+        Ok(()) => panic!("DirectLFQ peptide export must fail"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("export-peptides is not supported by directlfq"));
     Ok(())
 }
 

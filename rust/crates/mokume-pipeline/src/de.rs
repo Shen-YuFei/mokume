@@ -85,6 +85,7 @@ pub(crate) fn run_differential_expression(
     config: &DifferentialExpressionConfig,
     drop_empty_samples: bool,
 ) -> Result<()> {
+    validate_config(config, false)?;
     let Some(sdrf) = sdrf else {
         return Err(invalid_input(
             "differential expression requires an SDRF file (--sdrf)",
@@ -617,9 +618,22 @@ pub(crate) fn validate_config(
             stage: "differential-expression-fdr-method",
         });
     }
+    if matches!(method.as_str(), "rots" | "limrots")
+        && !config.fdr_method.trim().eq_ignore_ascii_case("bh")
+    {
+        return Err(invalid_input(format!(
+            "--de-fdr-method {} does not apply to {method}, which retains its permutation FDR",
+            config.fdr_method
+        )));
+    }
     if config.ensemble_methods.is_some() && !is_ensemble {
         return Err(invalid_input(
             "--de-ensemble-methods only applies to --de-method ensemble",
+        ));
+    }
+    if !is_ensemble && config.ensemble_min_k != 2 {
+        return Err(invalid_input(
+            "--de-ensemble-min-k only applies to --de-method ensemble",
         ));
     }
     if is_ensemble {
@@ -1005,37 +1019,32 @@ fn write_de_csv(
         path: path.to_path_buf(),
         source,
     })?;
-    let mut writer = BufWriter::new(file);
-
-    let header = match method {
-        MemberMethod::Limma => format!(
-            "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,AveExpr,B,mean_{},mean_{},n_a,n_b,significance",
-            contrast.cond_a, contrast.cond_b
-        ),
-        MemberMethod::Deqms => format!(
-            "ProteinName,log2FC,pvalue,adj_pvalue,sca_t,sca_pvalue,sca_adj_pvalue,mean_{},mean_{},n_a,n_b,peptide_count,log_pvalue,significance",
-            contrast.cond_a, contrast.cond_b
-        ),
-        // rots' finalize_de_result uses extra_cols=("d_stat",) (rots.py:331), so
-        // a single d_stat column sits between adj_pvalue and the mean columns.
-        MemberMethod::Rots => format!(
-            "ProteinName,log2FC,pvalue,adj_pvalue,d_stat,mean_{},mean_{},n_a,n_b,significance",
-            contrast.cond_a, contrast.cond_b
-        ),
-        // limrots emits a single `t_stat` column (== the LimROTS d-statistic)
-        // between adj_pvalue and the mean columns (limrots.py:319-329).
-        MemberMethod::Limrots => format!(
-            "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,mean_{},mean_{},n_a,n_b,significance",
-            contrast.cond_a, contrast.cond_b
-        ),
-        // proda emits the Wald `t_stat` as its single extra column
-        // (proda.py:700-714 lists `t_stat` right after adj_pvalue).
-        MemberMethod::Proda => format!(
-            "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,mean_{},mean_{},n_a,n_b,significance",
-            contrast.cond_a, contrast.cond_b
-        ),
-    };
-    write_line(&mut writer, path, &header)?;
+    let mut writer = csv::WriterBuilder::new().from_writer(file);
+    let mut header = vec!["ProteinName", "log2FC", "pvalue", "adj_pvalue"]
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    match method {
+        MemberMethod::Limma => header.extend(["t_stat", "AveExpr", "B"].map(ToOwned::to_owned)),
+        MemberMethod::Deqms => {
+            header.extend(["sca_t", "sca_pvalue", "sca_adj_pvalue"].map(ToOwned::to_owned))
+        }
+        MemberMethod::Rots => header.push("d_stat".to_owned()),
+        MemberMethod::Limrots | MemberMethod::Proda => header.push("t_stat".to_owned()),
+    }
+    header.extend([
+        format!("mean_{}", contrast.cond_a),
+        format!("mean_{}", contrast.cond_b),
+        "n_a".to_owned(),
+        "n_b".to_owned(),
+    ]);
+    if method == MemberMethod::Deqms {
+        header.extend(["peptide_count".to_owned(), "log_pvalue".to_owned()]);
+    }
+    header.push("significance".to_owned());
+    writer
+        .write_record(&header)
+        .map_err(|source| crate::csv_error(path, source))?;
 
     // deqms emits a per-protein `peptide_count` column; resolve the same aligned
     // count map `build_count_vector` uses (default 1 for absent proteins) so the
@@ -1047,57 +1056,47 @@ fn write_de_csv(
     };
 
     for row in results {
-        let prefix = format!(
-            "{},{},{},{}",
-            row.protein,
+        let mut record = vec![
+            row.protein.clone(),
             format_float(row.log2_fold_change),
             format_float(row.p_value),
             format_float(row.adj_p_value),
-        );
-        let extras = match method {
-            MemberMethod::Limma => format!(
-                "{},{},{},",
+        ];
+        match method {
+            MemberMethod::Limma => record.extend([
                 format_float(row.t_statistic),
                 format_float(row.ave_expr),
                 format_float(row.b),
-            ),
-            // sca_t, sca_pvalue (== pvalue), sca_adj_pvalue (== adj_pvalue).
-            MemberMethod::Deqms => format!(
-                "{},{},{},",
+            ]),
+            MemberMethod::Deqms => record.extend([
                 format_float(row.t_statistic),
                 format_float(row.p_value),
                 format_float(row.adj_p_value),
-            ),
-            // rots' single d_stat extra column (carried in t_statistic).
-            MemberMethod::Rots => format!("{},", format_float(row.t_statistic)),
-            // limrots' single t_stat extra column (== d_stat, carried in
-            // t_statistic).
-            MemberMethod::Limrots => format!("{},", format_float(row.t_statistic)),
-            // proda's single Wald t_stat extra column (carried in t_statistic).
-            MemberMethod::Proda => format!("{},", format_float(row.t_statistic)),
-        };
-        // deqms appends a `peptide_count` column before `significance`; it carries
-        // the per-protein unique-peptide count aligned by name (default 1 for any
-        // protein with no recorded count), matching Python's `_build_count_vector`.
-        let suffix = match method {
-            MemberMethod::Deqms => {
-                format!(
-                    ",{},{}",
-                    counts_by_name.get(&row.protein).copied().unwrap_or(1),
-                    format_float(row.log_p_value),
-                )
+            ]),
+            MemberMethod::Rots | MemberMethod::Limrots | MemberMethod::Proda => {
+                record.push(format_float(row.t_statistic));
             }
-            _ => String::new(),
-        };
-        let line = format!(
-            "{prefix},{extras}{},{},{},{}{suffix},{}",
+        }
+        record.extend([
             format_float(row.mean_a),
             format_float(row.mean_b),
-            row.n_a,
-            row.n_b,
-            significance_label(row.significance),
-        );
-        write_line(&mut writer, path, &line)?;
+            row.n_a.to_string(),
+            row.n_b.to_string(),
+        ]);
+        if method == MemberMethod::Deqms {
+            record.extend([
+                counts_by_name
+                    .get(&row.protein)
+                    .copied()
+                    .unwrap_or(1)
+                    .to_string(),
+                format_float(row.log_p_value),
+            ]);
+        }
+        record.push(significance_label(row.significance).to_owned());
+        writer
+            .write_record(&record)
+            .map_err(|source| crate::csv_error(path, source))?;
     }
     writer.flush().map_err(|source| MokumeError::Io {
         path: path.to_path_buf(),
@@ -1107,10 +1106,10 @@ fn write_de_csv(
 
 /// Write the ensemble DE table, reproducing the column set and order of
 /// `combine_de_results` (ensemble.py:158-199). The Python frame builds the
-/// `rows` dict first (`Protein, log2FC, pvalue, n_methods_up, n_methods_down,
+/// `rows` dict first (`ProteinName, log2FC, pvalue, n_methods_up, n_methods_down,
 /// methods_significant`), then assigns `adj_pvalue` and `significance` as new
 /// columns, so the emitted order is:
-/// `Protein, log2FC, pvalue, n_methods_up, n_methods_down, methods_significant,
+/// `ProteinName, log2FC, pvalue, n_methods_up, n_methods_down, methods_significant,
 ///  adj_pvalue, significance`. Rows arrive already sorted by `adj_pvalue`.
 ///
 /// `methods_significant` joins member names with commas and so is CSV-quoted
@@ -1131,7 +1130,7 @@ fn write_ensemble_csv(path: &Path, results: &[EnsembleResult], contrast: &Contra
     write_line(
         &mut writer,
         path,
-        "Protein,log2FC,pvalue,n_methods_up,n_methods_down,methods_significant,adj_pvalue,significance",
+        "ProteinName,log2FC,pvalue,n_methods_up,n_methods_down,methods_significant,adj_pvalue,significance",
     )?;
 
     for row in results {
@@ -1201,15 +1200,15 @@ mod tests {
     use std::error::Error;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use mokume_core::{DifferentialExpressionConfig, ProteinId, SampleId};
+    use mokume_core::{DifferentialExpressionConfig, MokumeError, ProteinId, SampleId};
     use mokume_io::SdrfTable;
     use mokume_stats::de::{DeResult, EnsembleResult, Significance};
 
     use super::{
         available_conditions, build_count_vector, classify_significance, condition_by_sample,
         differential_expression_matrix, finalize_ensemble_results, finalize_member_results,
-        run_differential_expression, shorten_factor_label, split_contrast,
-        validated_ensemble_member_names, MemberMethod,
+        run_differential_expression, shorten_factor_label, split_contrast, validate_config,
+        validated_ensemble_member_names, write_de_csv, Contrast, MemberMethod,
     };
     use crate::{CellKey, ProteinMatrix, ProteinValues};
 
@@ -1343,6 +1342,42 @@ mod tests {
             peptide_counts: HashMap::new(),
             values: ProteinValues::Cells(values),
         })
+    }
+
+    #[test]
+    fn standard_de_csv_quotes_identifiers_and_dynamic_headers() -> TestResult<()> {
+        let dir = temp_dir("quoted-standard-csv")?;
+        let output = dir.join("quoted.csv");
+        let matrix = fixture_matrix()?;
+        let rows = vec![DeResult {
+            protein: "P,\"quoted\"\nline".to_owned(),
+            log2_fold_change: 1.0,
+            p_value: 0.01,
+            log_p_value: 0.01_f64.ln(),
+            adj_p_value: 0.02,
+            t_statistic: 3.0,
+            ave_expr: 4.0,
+            b: 5.0,
+            mean_a: 6.0,
+            mean_b: 7.0,
+            n_a: 3,
+            n_b: 3,
+            significance: Significance::Up,
+        }];
+        let contrast = Contrast {
+            cond_a: "A,one".to_owned(),
+            cond_b: "B\"two".to_owned(),
+        };
+        write_de_csv(&output, &rows, &contrast, MemberMethod::Limma, &matrix)?;
+
+        let mut reader = csv::Reader::from_path(&output)?;
+        let headers = reader.headers()?.clone();
+        assert!(headers.iter().any(|value| value == "mean_A,one"));
+        assert!(headers.iter().any(|value| value == "mean_B\"two"));
+        let record = reader.records().next().ok_or("missing DE row")??;
+        assert_eq!(record.get(0), Some("P,\"quoted\"\nline"));
+        assert_eq!(record.len(), headers.len());
+        Ok(())
     }
 
     // KERNEL pin for the DEqMS count vector: when a protein name is present in
@@ -1692,137 +1727,21 @@ mod tests {
         Ok(())
     }
 
-    // ===== IHW (--de-fdr-method ihw) dispatcher fixtures =====
-    //
-    // A 12-protein / 3-vs-3 fixture (>= 2 * n_bins = 10, so IHW actually runs
-    // rather than falling back to BH) with a spread of effect sizes AND mean
-    // intensities, so the IHW covariate (the row-mean of the two mean_ columns)
-    // bins informatively. Shared by the LimROTS/ROTS "preserve own FDR under
-    // ihw" regression below.
-    const IHW_SAMPLES: [&str; 6] = ["A1", "A2", "A3", "B1", "B2", "B3"];
-    const IHW_PROTEINS: [&str; 12] = [
-        "P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10", "P11", "P12",
-    ];
-    const IHW_RAW: [[f64; 6]; 12] = [
-        [1000.0, 1149.0, 870.0, 4000.0, 4290.0, 3732.0],
-        [32000.0, 34000.0, 30000.0, 8000.0, 9200.0, 6800.0],
-        [256.0, 270.0, 244.0, 257.0, 248.0, 256.0],
-        [
-            1048576.0, 4194304.0, 262144.0, 2097152.0, 524288.0, 8388608.0,
-        ],
-        [32.0, 32.2, 31.8, 64.0, 64.4, 63.6],
-        [512.0, 724.0, 362.0, 480.0, 660.0, 350.0],
-        [5000.0, 5100.0, 4900.0, 5050.0, 4950.0, 5000.0],
-        [200.0, 205.0, 195.0, 410.0, 400.0, 420.0],
-        [90000.0, 92000.0, 88000.0, 45000.0, 46000.0, 44000.0],
-        [1500.0, 1520.0, 1480.0, 1505.0, 1495.0, 1500.0],
-        [700.0, 690.0, 710.0, 1400.0, 1390.0, 1410.0],
-        [60000.0, 61000.0, 59000.0, 60500.0, 59500.0, 60000.0],
-    ];
-
-    /// Build a 12-protein `ProteinMatrix` from `IHW_RAW` (every protein kept,
-    /// every sample present), mirroring `fixture_matrix` for the wider fixture.
-    fn ihw_fixture_matrix() -> TestResult<ProteinMatrix> {
-        let mut proteins = mokume_core::StringIdRegistry::<ProteinId>::new();
-        let mut samples = mokume_core::StringIdRegistry::<SampleId>::new();
-        let mut sample_ids = Vec::with_capacity(IHW_SAMPLES.len());
-        for name in IHW_SAMPLES {
-            sample_ids.push(samples.get_or_insert(name).ok_or("sample id overflow")?);
-        }
-        let mut values = HashMap::new();
-        let mut allowed = HashSet::new();
-        for (row, name) in IHW_PROTEINS.iter().enumerate() {
-            let protein = proteins.get_or_insert(name).ok_or("protein id overflow")?;
-            allowed.insert(protein);
-            for (col, sample) in sample_ids.iter().enumerate() {
-                values.insert(
-                    CellKey {
-                        protein,
-                        sample: *sample,
-                    },
-                    IHW_RAW[row][col],
-                );
-            }
-        }
-        Ok(ProteinMatrix {
-            proteins,
-            samples,
-            allowed_proteins: allowed,
-            excluded_samples: HashSet::new(),
-            peptide_counts: HashMap::new(),
-            values: ProteinValues::Cells(values),
-        })
-    }
-
-    fn ihw_fixture_sdrf() -> TestResult<SdrfTable> {
-        let mut tsv = String::from("source name\tcomment[data file]\tfactor value[phenotype]\n");
-        for name in IHW_SAMPLES {
-            let condition = if name.starts_with('A') {
-                "groupA"
-            } else {
-                "groupB"
-            };
-            tsv.push_str(&format!("{name}\t{name}.raw\t{condition}\n"));
-        }
-        Ok(SdrfTable::from_reader(tsv.as_bytes())?)
-    }
-
-    // Regression: LimROTS and ROTS carry their own permutation-based FDR (a
-    // `bh_adjust` over the permutation p-values), so another FDR request must
-    // NOT overwrite it -- mirroring the Python
-    // `_run_limrots`/`_run_rots` routing through `_classify_and_sort` instead of
-    // `_finalize_results`. The internal PRNG is deterministic run-to-run, so the
-    // permutation FDR is stable: running each method under `bh` and every
-    // alternative must yield identical adj_pvalues per protein.
+    // LimROTS and ROTS retain their permutation FDR, so accepting another FDR
+    // method would create a user-visible no-op. Reject that combination.
     #[test]
-    fn de_dispatcher_limrots_rots_preserve_own_fdr() -> TestResult<()> {
-        fn adj_pvalues(method: &str, fdr_method: &str) -> TestResult<HashMap<String, f64>> {
-            let dir = temp_dir(&format!("preserve-fdr-{method}-{fdr_method}"))?;
-            let output = dir.join("de_results.csv");
-            let matrix = ihw_fixture_matrix()?;
-            let sdrf = ihw_fixture_sdrf()?;
-            let config = DifferentialExpressionConfig {
-                enabled: true,
-                contrasts: Some(vec!["groupA vs groupB".to_string()]),
-                method: method.to_string(),
-                fdr_method: fdr_method.to_string(),
-                output: Some(output.clone()),
-                ..DifferentialExpressionConfig::default()
-            };
-            run_differential_expression(&matrix, Some(&sdrf), &config, false)?;
-            let text = std::fs::read_to_string(&output)?;
-            let mut lines = text.lines();
-            lines.next().ok_or("missing header")?;
-            let mut adj = HashMap::new();
-            for line in lines {
-                let fields = line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>();
-                let protein = fields.first().ok_or("empty row")?.clone();
-                adj.insert(protein, parse(&fields, 3)?);
-            }
-            Ok(adj)
-        }
-
+    fn de_dispatcher_rejects_unused_fdr_for_limrots_and_rots() -> TestResult<()> {
         for method in ["limrots", "rots"] {
-            let bh = adj_pvalues(method, "bh")?;
             for fdr_method in ["ihw", "bky", "storey"] {
-                let alternative = adj_pvalues(method, fdr_method)?;
-                assert!(!bh.is_empty(), "{method}: produced no rows");
-                assert_eq!(
-                    bh.len(),
-                    alternative.len(),
-                    "{method}: bh/{fdr_method} row count differs"
-                );
-                for (protein, bh_adj) in &bh {
-                    let alternative_adj = alternative
-                        .get(protein)
-                        .ok_or_else(|| format!("{method}: missing {protein} under {fdr_method}"))?;
-                    assert_exact(
-                        *alternative_adj,
-                        *bh_adj,
-                        "permutation_fdr_preserved",
-                        protein,
-                    );
-                }
+                let config = DifferentialExpressionConfig {
+                    method: method.to_string(),
+                    fdr_method: fdr_method.to_string(),
+                    ..DifferentialExpressionConfig::default()
+                };
+                assert!(matches!(
+                    validate_config(&config, false),
+                    Err(MokumeError::InvalidInput { .. })
+                ));
             }
         }
         Ok(())
@@ -2189,7 +2108,7 @@ mod tests {
         let header = lines.next().ok_or("missing header")?;
         assert_eq!(
             header,
-            "Protein,log2FC,pvalue,n_methods_up,n_methods_down,methods_significant,adj_pvalue,significance"
+            "ProteinName,log2FC,pvalue,n_methods_up,n_methods_down,methods_significant,adj_pvalue,significance"
         );
 
         let mut prev_adj = f64::NEG_INFINITY;

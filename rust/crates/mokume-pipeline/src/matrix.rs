@@ -4,7 +4,8 @@ use mokume_core::{ImputationConfig, PeptideId, ProteinId, Result, SampleId, Stri
 use mokume_normalization::SampleNormalizationMethod;
 
 use super::{
-    apply_dataset_norm_to_peptide_cells, imputed_values, invalid_input, threading, CellKey,
+    apply_dataset_norm_to_peptide_cells, imputed_values, invalid_input, threading,
+    validate_imputation_config, CellKey,
 };
 
 /// Normalize a row-major linear-intensity matrix without running quantification.
@@ -18,6 +19,9 @@ pub fn normalize_matrix(
     method: &str,
     threads: Option<usize>,
 ) -> Result<Vec<Vec<f64>>> {
+    if threads == Some(0) {
+        return Err(invalid_input("thread count must be greater than zero"));
+    }
     let width = validate_rectangular(values)?;
     if width != sample_names.len() {
         return Err(invalid_input(format!(
@@ -114,8 +118,12 @@ pub fn impute_matrix(
     config: &ImputationConfig,
     threads: Option<usize>,
 ) -> Result<Vec<Vec<f64>>> {
+    if threads == Some(0) {
+        return Err(invalid_input("thread count must be greater than zero"));
+    }
     validate_rectangular(values)?;
     validate_no_infinite(values, "imputation")?;
+    validate_imputation_config(config)?;
     if !config.enabled
         || matches!(
             config.method.trim().to_ascii_lowercase().as_str(),

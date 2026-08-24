@@ -5,7 +5,12 @@ where
     T: Send,
     F: FnOnce() -> Result<T> + Send,
 {
-    let Some(threads) = threads.filter(|threads| *threads > 0) else {
+    if threads == Some(0) {
+        return Err(MokumeError::InvalidInput {
+            message: "thread count must be greater than zero".to_owned(),
+        });
+    }
+    let Some(threads) = threads else {
         return operation();
     };
     let pool = rayon::ThreadPoolBuilder::new()

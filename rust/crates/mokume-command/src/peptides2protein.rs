@@ -111,12 +111,51 @@ pub fn run_peptides_to_protein_with_digest(
         });
     };
 
-    // `--verbose` in Python writes the `--qc_report` QC PDF, and this happens
-    // *only* on the piBAQ path (`pibaq.py:969`); the generic / LFQ branches in
-    // `commands/peptides2protein.py` never touch `verbose`/`qc_report`. The QC
-    // plotting itself moved to the Python wheel, so the piBAQ path prints a pointer
-    // to the wheel command instead of drawing a PDF (see `run_pibaq`); `--verbose`
-    // on any other method stays the same no-op it is in Python.
+    let is_lfq = matches!(method.as_str(), "maxlfq" | "directlfq");
+    if !is_lfq && args.threads != -1 {
+        return Err(MokumeError::InvalidInput {
+            message: "--threads only applies to peptides2protein DirectLFQ/MaxLFQ".to_owned(),
+        });
+    }
+    if method != "directlfq" && args.min_nonan != 1 {
+        return Err(MokumeError::InvalidInput {
+            message: "--min-nonan only applies to peptides2protein DirectLFQ".to_owned(),
+        });
+    }
+    if method != "pibaq"
+        && (args.fasta.is_some()
+            || !args.enzyme.eq_ignore_ascii_case("Trypsin")
+            || args.min_aa != 7
+            || args.max_aa != 30
+            || args.tpa
+            || args.ruler
+            || args.ploidy.is_some()
+            || args.organism.is_some()
+            || args.cpc.is_some()
+            || args.families_yaml.is_some()
+            || args.min_shared != 2
+            || args.min_anchors != 1
+            || args.high_anchor_threshold != 3
+            || args.verbose
+            || args.qc_report != Path::new("QCprofile.pdf"))
+    {
+        return Err(MokumeError::InvalidInput {
+            message: "piBAQ digestion/TPA/ruler/QC options require --method pibaq".to_owned(),
+        });
+    }
+    if method == "pibaq"
+        && !args.ruler
+        && (args.ploidy.is_some() || args.organism.is_some() || args.cpc.is_some())
+    {
+        return Err(MokumeError::InvalidInput {
+            message: "--ploidy/--organism/--cpc only apply with --ruler".to_owned(),
+        });
+    }
+    if method == "pibaq" && !args.verbose && args.qc_report != Path::new("QCprofile.pdf") {
+        return Err(MokumeError::InvalidInput {
+            message: "--qc-report requires --verbose".to_owned(),
+        });
+    }
 
     match method.as_str() {
         "pibaq" => run_pibaq(args, output, pibaq_digest),
@@ -235,12 +274,13 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
 /// The Python wheel supplies the complete theoretical-peptide map from its
 /// installed pyOpenMS catalog before this Rust aggregation path starts.
 fn resolve_pibaq_organism(args: &Peptides2ProteinArgs) -> Result<Option<pibaq_extras::Organism>> {
-    let organism = if args.organism.is_empty() {
-        None
-    } else {
-        Some(pibaq_extras::resolve_organism(&args.organism)?)
-    };
-    if args.ruler && (!args.tpa || args.ploidy == 0 || args.cpc == 0.0 || organism.is_none()) {
+    if !args.ruler {
+        return Ok(None);
+    }
+    let organism = Some(pibaq_extras::resolve_organism(
+        args.organism.as_deref().unwrap_or("human"),
+    )?);
+    if !args.tpa {
         return Err(MokumeError::InvalidInput {
             message:
                 "`ploidy`, `cpc`, `organism` and `tpa` are required to calculate protein weight and concentration"
@@ -313,7 +353,12 @@ fn prepare_pibaq_records(
                 message: "the --organism option is required for the proteomic ruler".to_owned(),
             });
         };
-        pibaq_extras::apply_ruler(&mut records, organism, args.ploidy, args.cpc);
+        pibaq_extras::apply_ruler(
+            &mut records,
+            organism,
+            args.ploidy.unwrap_or(2),
+            args.cpc.unwrap_or(200.0),
+        );
     }
     records.sort_by(|left, right| {
         left.protein
@@ -355,20 +400,6 @@ fn run_pibaq(
         args.normalize,
         args.ruler,
     )?;
-
-    // The Rust kernel owns the numbers (the table just written). The QC report
-    // PDF is plotting periphery and now lives in the Python wheel, so `--verbose`
-    // writes no PDF here; it only prints a one-line pointer to the wheel command
-    // that draws the same density + box plots from the table.
-    if args.verbose {
-        eprintln!(
-            "note: QC report generation moved to the Python wheel: \
-pip install mokume[plotting]; \
-mokume.peptides2protein_qc(protein_table=\"{}\", qc_report=\"{}\")",
-            output.display(),
-            args.qc_report.display()
-        );
-    }
 
     Ok(())
 }
@@ -1155,9 +1186,9 @@ P3,THIDPECK,S1,A,900.0\n";
             max_aa: 30,
             tpa: false,
             ruler: false,
-            ploidy: 2,
-            organism: "human".to_owned(),
-            cpc: 200.0,
+            ploidy: None,
+            organism: None,
+            cpc: None,
             output: Some(output.to_path_buf()),
             verbose: false,
             qc_report: std::path::PathBuf::from("QCprofile.pdf"),
@@ -1656,9 +1687,9 @@ P3,THIDPECK,S1,A,900.0\n";
         args.fasta = Some(fasta);
         args.tpa = true;
         args.ruler = true;
-        args.organism = "human".to_owned();
-        args.ploidy = 2;
-        args.cpc = 200.0;
+        args.organism = Some("human".to_owned());
+        args.ploidy = Some(2);
+        args.cpc = Some(200.0);
         run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         let (headers, rows) = read_table(&output)?;
@@ -1700,7 +1731,7 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let mut args = base_args(&peptides, &output);
         args.fasta = Some(fasta);
-        args.organism = "martian".to_owned();
+        args.organism = Some("martian".to_owned());
         assert!(matches!(
             run_peptides_to_protein_with_digest(&args, None),
             Err(MokumeError::InvalidInput { .. })
@@ -1756,11 +1787,9 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     #[test]
-    fn peptides2protein_verbose_writes_table_no_qc_pdf() -> TestResult<()> {
-        // `--verbose` on the piBAQ path computes the protein table in Rust and, since
-        // the QC plotting moved to the Python wheel, writes no QC PDF: it only
-        // prints a pointer to the wheel command. The run must still succeed and the
-        // protein table must contain the `PiBAQ` column.
+    fn peptides2protein_kernel_leaves_verbose_qc_to_python_wrapper() -> TestResult<()> {
+        // The native kernel writes the data table; the Python console wrapper renders
+        // the optional PDF from those exact values after a successful native run.
         let dir = temp_dir("verbose")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
