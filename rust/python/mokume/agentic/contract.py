@@ -108,7 +108,7 @@ def method_contract() -> dict[str, Any]:
         "quantification": [*QUANTIFICATION_METHODS, "top<N>"],
         "ensemble": list(ENSEMBLE_PRESETS),
         "log2fc_threshold": {"number": [0.0, 10.0], "sentinels": ["auto"]},
-        "ensemble_k": [1, 5],
+        "ensemble_k": {"ensemble": [1, 5], "non_ensemble": None},
         "generated_config_fields": list(GENERATED_CONFIG_FIELDS),
         "generated_block_fields": list(GENERATED_BLOCK_FIELDS),
         "executable_axes": list(EXECUTABLE_AXES),
@@ -128,37 +128,35 @@ def requires_peptide_counts(de_method: str, ensemble: str) -> bool:
     )
 
 
-def validate_config_values(item: Mapping[str, Any]) -> None:
-    """Reject a generated configuration that violates the runtime contract."""
-    _require_member(item, "de_method", DE_METHODS)
-    _require_member(item, "fdr_method", FDR_METHODS)
-    _require_member(item, "normalization", NORMALIZATION_METHODS)
-    _require_member(item, "imputation", IMPUTATION_METHODS)
-    _require_member(item, "ensemble", ENSEMBLE_PRESETS)
-
-    de_method = item["de_method"]
-    fdr_method = item["fdr_method"]
-    ensemble = item["ensemble"]
-    ensemble_k = item["ensemble_k"]
+def _validate_de_settings(
+    de_method: str,
+    fdr_method: str,
+    ensemble: str,
+    ensemble_k: Any,
+) -> None:
     if de_method in {"rots", "limrots"} and fdr_method != "bh":
         raise ValueError(
             f"de_method={de_method!r} requires fdr_method='bh' because standalone "
             "ROTS-family methods preserve their native permutation FDR"
         )
-    if isinstance(ensemble_k, bool) or not isinstance(ensemble_k, int):
-        raise ValueError("ensemble_k must be an integer")
-    if not 1 <= ensemble_k <= 5:
-        raise ValueError("ensemble_k must be between 1 and 5")
     if de_method == "ensemble":
         if ensemble == "none":
             raise ValueError("de_method=ensemble requires an ensemble preset")
+        if isinstance(ensemble_k, bool) or not isinstance(ensemble_k, int):
+            raise ValueError("de_method=ensemble requires an integer ensemble_k")
+        if not 1 <= ensemble_k <= 5:
+            raise ValueError("ensemble_k must be between 1 and 5")
         member_count = len(ensemble.split(","))
         if ensemble_k > member_count:
             raise ValueError("ensemble_k cannot exceed the ensemble member count")
-    elif ensemble != "none":
-        raise ValueError("ensemble must be 'none' unless de_method=ensemble")
+    else:
+        if ensemble != "none":
+            raise ValueError("ensemble must be 'none' unless de_method=ensemble")
+        if ensemble_k is not None:
+            raise ValueError("ensemble_k must be null unless de_method=ensemble")
 
-    gate = item["log2fc_threshold"]
+
+def _validate_log2fc_threshold(gate: Any) -> None:
     if isinstance(gate, str):
         if gate.lower() != "auto":
             raise ValueError("log2fc_threshold string must be 'auto'")
@@ -166,6 +164,22 @@ def validate_config_values(item: Mapping[str, Any]) -> None:
         raise ValueError("log2fc_threshold must be a number or 'auto'")
     elif not 0 <= float(gate) <= 10:
         raise ValueError("log2fc_threshold must be between 0 and 10")
+
+
+def validate_config_values(item: Mapping[str, Any]) -> None:
+    """Reject a generated configuration that violates the runtime contract."""
+    _require_member(item, "de_method", DE_METHODS)
+    _require_member(item, "fdr_method", FDR_METHODS)
+    _require_member(item, "normalization", NORMALIZATION_METHODS)
+    _require_member(item, "imputation", IMPUTATION_METHODS)
+    _require_member(item, "ensemble", ENSEMBLE_PRESETS)
+    _validate_de_settings(
+        item["de_method"],
+        item["fdr_method"],
+        item["ensemble"],
+        item["ensemble_k"],
+    )
+    _validate_log2fc_threshold(item["log2fc_threshold"])
 
 
 def _require_member(

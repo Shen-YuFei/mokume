@@ -49,7 +49,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       projects: 5
       declared_candidates_per_project: 320
@@ -88,7 +88,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       projects: 6
       declared_candidates_per_project: 320
@@ -128,7 +128,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       projects: 3
       declared_candidates_per_project: 320
@@ -164,7 +164,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       NMCC005: 0.790
       PAUC001: 0.767
@@ -191,7 +191,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       NMCC005: 0.786
       PAUC001: 0.743
@@ -218,7 +218,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       NMCC005: 0.765
       PAUC001: 0.713
@@ -245,7 +245,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       NMCC005: 0.768
       PAUC001: 0.719
@@ -272,7 +272,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       NMCC005: 0.875
       PAUC001: 0.809
@@ -299,7 +299,7 @@ evidence:
       fdr_method: bh
       log2fc_threshold: 0.5
       ensemble: none
-      ensemble_k: 2
+      ensemble_k: null
     metrics:
       NMCC005: 0.886
       PAUC001: 0.818

@@ -259,7 +259,7 @@ def test_deqms_candidates_require_peptide_count_sidecar(
         name=f"missing-counts-{de_method}",
         de_method=de_method,
         ensemble=ensemble,
-        ensemble_k=2,
+        ensemble_k=2 if de_method == "ensemble" else None,
     )
     recommendation["configs"] = [config]
     output_dir = tmp_path / f"missing-counts-{de_method}"

@@ -40,3 +40,21 @@ def test_method_contract_exposes_conditional_fdr_catalog() -> None:
         "bky",
         "storey",
     ]
+
+
+def test_nonensemble_rejects_fake_ensemble_k_axis() -> None:
+    """Single-method candidates must not expose an inactive ensemble axis."""
+    config = CandidateConfig(name="single-method", ensemble_k=2)
+    with pytest.raises(ValueError, match="must be null"):
+        validate_config_values(config.to_dict())
+
+
+def test_ensemble_requires_bounded_ensemble_k() -> None:
+    """Ensemble candidates must accept a valid bounded voting threshold."""
+    config = CandidateConfig(
+        name="ensemble",
+        de_method="ensemble",
+        ensemble="limma,deqms,proda",
+        ensemble_k=2,
+    )
+    validate_config_values(config.to_dict())

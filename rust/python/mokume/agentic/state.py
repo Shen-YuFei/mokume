@@ -16,7 +16,7 @@ class CandidateConfig(NamedTuple):
     log2fc_threshold: float | str = 0.5
     fdr_threshold: float = 0.05
     ensemble: str = "none"
-    ensemble_k: int = 2
+    ensemble_k: int | None = None
     reasoning: str = ""
     expected_outcome: str = ""
     evidence_refs: tuple[str, ...] | list[str] = ()
@@ -55,7 +55,7 @@ class CandidateConfig(NamedTuple):
                 f"fc{self.log2fc_threshold}",
                 f"a{self.fdr_threshold:g}",
                 self.ensemble,
-                f"k{self.ensemble_k}",
+                f"k{self.ensemble_k if self.ensemble_k is not None else 'none'}",
             ]
         )
 

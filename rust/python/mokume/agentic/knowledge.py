@@ -105,7 +105,7 @@ class PipelineConfig(NamedTuple):
     fdr_method: str
     log2fc_threshold: float | str
     ensemble: str = "none"
-    ensemble_k: int = 2
+    ensemble_k: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the full pipeline without dropping frozen axes."""

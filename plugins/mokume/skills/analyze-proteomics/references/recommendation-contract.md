@@ -128,7 +128,7 @@ Pass `mokume.evaluate_recommendation` an object with exactly this shape:
       "normalization": "none",
       "imputation": "none",
       "ensemble": "none",
-      "ensemble_k": 2,
+      "ensemble_k": null,
       "log2fc_threshold": 0.5,
       "reasoning": "Why this candidate should be tested.",
       "expected_outcome": "What the evaluation is expected to clarify."
@@ -155,7 +155,7 @@ Normalization supports `none`, `median`, `quantile`, `mean`, `rlr`, and
 
 For `de_method="ensemble"`, choose one returned ensemble preset and set
 `ensemble_k` no higher than its member count. For every other DE method,
-`ensemble` must be `none`. DEqMS and every ensemble preset containing DEqMS
+`ensemble` must be `none` and `ensemble_k` must be `null`. DEqMS and every ensemble preset containing DEqMS
 require `options.peptide_counts`. `log2fc_threshold` is either a number from 0 to
 10 or `auto`.
 

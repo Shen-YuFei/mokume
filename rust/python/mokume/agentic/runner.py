@@ -184,14 +184,15 @@ def _run_rust_de(
     ordered = protein_df[[protein_col, *samples_a, *samples_b]]
     proteins = ordered[protein_col].astype(str).tolist()
     options: dict[str, Any] = {
-        "ensemble_methods": ensemble_methods,
-        "ensemble_min_k": config.ensemble_k,
         "fdr_threshold": config.fdr_threshold,
         "fdr_method": config.fdr_method,
         "condition_a": group_a,
         "condition_b": group_b,
         "threads": context.threads,
     }
+    if config.de_method == "ensemble":
+        options["ensemble_methods"] = ensemble_methods
+        options["ensemble_min_k"] = config.ensemble_k
     if config.log2fc_threshold == "auto":
         options["effect_size_gate"] = "auto"
     else:
