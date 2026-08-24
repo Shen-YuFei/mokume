@@ -450,14 +450,12 @@ def normalized_mcc(tp: int, fp: int, fn: int, tn: int) -> float:
 def compute_score_ground_truth(
     result: EvaluationResult,
 ) -> float | None:
-    """Mean of OpDEA's ranking metrics: pAUC at three cutoffs plus nMCC.
+    """Return the absolute Score A compatibility summary.
 
-    Follows OpDEA (Nat Commun 2024), which ranks differential-expression
-    workflows on partial AUC at 1%/5%/10% false-positive cutoffs together with
-    a normalized MCC. OpDEA averages per-metric *ranks*; averaging the metrics
-    directly gives the same winner on our benchmarks (verified on PXD070151
-    and PXD040449, where both pick the F1-optimal config) and keeps this a
-    per-candidate function, which ranking cannot be.
+    This is the arithmetic mean of pAUC at the 1%, 5%, and 10% false-positive
+    cutoffs plus normalized MCC. Candidate selection is deliberately separate:
+    the service ranks all candidates per metric, includes G-mean, and then
+    averages those ranks.
 
     A candidate is scorable only when all four terms are finite. Averaging a
     partial subset would make candidates with different available evidence
@@ -465,15 +463,11 @@ def compute_score_ground_truth(
     already live on [0, 1].
     """
     metrics = result.truth_metrics
-    counts = (metrics.tp, metrics.fp, metrics.fn, metrics.tn)
-    if any(value is None for value in counts):
-        return None
-    tp, fp, fn, tn = (int(value) for value in counts)
     terms = [
         metrics.pauc001,
         metrics.pauc005,
         metrics.pauc,
-        normalized_mcc(tp, fp, fn, tn),
+        metrics.nmcc,
     ]
     if any(term is None or not math.isfinite(term) for term in terms):
         return None
@@ -488,6 +482,8 @@ def _ground_truth_metrics(
 ) -> tuple[GroundTruthMetrics, FdrCalibrationMetrics]:
     """Build OpDEA-style Score A metrics and directional diagnostics."""
     tp, fp, fn, tn = _de_tp_fp(de_df, ground_truth)
+    sensitivity = tp / max(tp + fn, 1)
+    specificity = tn / max(tn + fp, 1)
     direction_correct, direction_incorrect, direction_accuracy = (
         _truth_direction_diagnostics(de_df, ground_truth, expected_direction)
     )
@@ -497,8 +493,8 @@ def _ground_truth_metrics(
         fn=fn,
         tn=tn,
         auc=_compute_auc(de_df, ground_truth),
-        sensitivity=tp / max(tp + fn, 1),
-        specificity=tn / max(tn + fp, 1),
+        sensitivity=sensitivity,
+        specificity=specificity,
         truth_direction_correct=direction_correct,
         truth_direction_incorrect=direction_incorrect,
         truth_direction_accuracy=direction_accuracy,
@@ -508,6 +504,8 @@ def _ground_truth_metrics(
         pauc=_pauc(de_df, ground_truth),
         pauc001=_pauc(de_df, ground_truth, max_fpr=0.01),
         pauc005=_pauc(de_df, ground_truth, max_fpr=0.05),
+        nmcc=normalized_mcc(tp, fp, fn, tn),
+        gmean=math.sqrt(sensitivity * specificity),
         recall_emp_fdr_curve=tuple(
             recall_at_emp_fdr_curve(
                 de_df,

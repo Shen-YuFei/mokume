@@ -118,9 +118,12 @@ the inspection scale, sidecar, and metadata inside evaluation so both calls bind
 the same policy context.
 
 With relevant ground truth and an explicit `UP` or `DOWN` expected direction,
-the tool ranks measured candidates with Score A.
+the tool ranks candidates separately on pAUC at 1%, 5%, and 10% false-positive
+cutoffs, normalized MCC, and G-mean, then selects the lowest five-metric
+`benchmark_mean_rank`. The returned `score_a` remains the absolute arithmetic
+mean of the three pAUC values and normalized MCC; it is not the winner field.
 Without ground truth, set the expected direction to null; the tool returns
-exploratory diagnostics and no winner. For a Score A result, report each
+exploratory diagnostics and no winner. For a ground-truth result, report each
 candidate's tested universe (`TP + FP + FN + TN`). If those totals differ, the
 ranking is candidate-universe-specific and must not be presented as general
 method superiority.

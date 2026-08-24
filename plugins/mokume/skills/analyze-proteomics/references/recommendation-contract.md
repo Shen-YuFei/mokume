@@ -105,10 +105,14 @@ policy context. `options.peptide_counts` is required if any candidate uses
 staging directory and publishes `output_dir` only after every artifact succeeds;
 on failure, the target remains absent and may be retried.
 
-For a Score A result, calculate each candidate's tested-universe size as
-`TP + FP + FN + TN` and report it with the ranking. Unequal totals mean that the
-candidates were scored over different measurable universes; preserve the returned
-ranking, but do not describe it as general superiority without this limitation.
+For a ground-truth result, use the returned `benchmark_mean_rank`, which averages
+candidate ranks for pAUC001, pAUC005, pAUC01, normalized MCC, and G-mean; lower is
+better. `score_a` is the absolute arithmetic mean of the three pAUC values and
+normalized MCC and does not select the winner. Calculate each candidate's
+tested-universe size as `TP + FP + FN + TN` and report it with the ranking.
+Unequal totals mean that the candidates were scored over different measurable
+universes; preserve the returned ranking, but do not describe it as general
+superiority without this limitation.
 
 ## Recommendation block
 

@@ -12,7 +12,7 @@ plugin knowledge snapshot
   -> host-written GeneratedRecommendationBlock
   -> semantic validation
   -> Rust-backed normalization / imputation / DEA
-  -> Score A ranking or exploratory unranked results
+  -> five-metric benchmark mean rank or exploratory unranked results
 ```
 
 ## Plugin boundary
@@ -71,8 +71,11 @@ JSON audit artifact containing the knowledge fingerprint, evidence references,
 confidence, limitations, diagnostics, input scale, measurements, and cache
 statistics. Exploratory rounds also write a signed-call method-sensitivity table.
 
-Ground-truth datasets use Score A. If Score A is not measurable, the service
-does not manufacture a winner. Datasets without ground truth are always
+Ground-truth datasets rank pAUC001, pAUC005, pAUC01, normalized MCC, and G-mean
+separately and average those ranks. The four-metric `score_a` remains an
+absolute compatibility summary and never selects the winner. If all ranking
+metrics are not measurable, the service does not manufacture a winner. Datasets
+without ground truth are always
 `exploratory_unranked`; method sensitivity, DE count, CV, and missingness remain
 diagnostics only.
 

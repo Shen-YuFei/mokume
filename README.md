@@ -265,7 +265,8 @@ matrix, bind traceable benchmark evidence, and evaluate bounded normalization,
 imputation, and differential-expression candidates through the Rust kernel.
 The host owns the model and credentials; Mokume contains no BYOK model client.
 Its bundled local MCP server starts automatically when the plugin is enabled.
-With ground truth it ranks by Score A; without ground truth it reports
+With ground truth it ranks the five Score A metrics by benchmark mean rank;
+without ground truth it reports
 exploratory diagnostics without selecting a winner. See the
 [Mokume Plugin guide](docs/user-guide/agentic-plugin.md).
 

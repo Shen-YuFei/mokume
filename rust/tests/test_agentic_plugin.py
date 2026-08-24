@@ -136,8 +136,11 @@ def test_service_ranks_only_with_ground_truth(
         )
     )
     assert ranked["status"] == "ranked"
-    assert ranked["ranking_objective"] == "score_a"
+    assert ranked["ranking_objective"] == "benchmark_mean_rank"
     assert ranked["ranking"][0]["score_a"] is not None
+    assert ranked["ranking"][0]["benchmark_mean_rank"] == 1.0
+    assert ranked["ranking"][0]["nmcc"] is not None
+    assert ranked["ranking"][0]["gmean"] is not None
     assert ranked["best_config"] == recommendation["configs"][0]["name"]
     assert (tmp_path / "ranked" / "evaluation.json").is_file()
 

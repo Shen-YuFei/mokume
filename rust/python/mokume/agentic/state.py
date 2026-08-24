@@ -77,6 +77,8 @@ class GroundTruthMetrics(NamedTuple):
     pauc: float | None = None
     pauc001: float | None = None
     pauc005: float | None = None
+    nmcc: float | None = None
+    gmean: float | None = None
     recall_emp_fdr_curve: tuple[tuple[float, float], ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +98,8 @@ class GroundTruthMetrics(NamedTuple):
             "pauc": self.pauc,
             "pauc001": self.pauc001,
             "pauc005": self.pauc005,
+            "nmcc": self.nmcc,
+            "gmean": self.gmean,
             "recall_emp_fdr_curve": (
                 [[alpha, recall] for alpha, recall in self.recall_emp_fdr_curve]
                 if self.recall_emp_fdr_curve is not None

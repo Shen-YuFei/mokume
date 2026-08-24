@@ -43,11 +43,14 @@ different Mokume CLI path.
    sidecar is mandatory when any candidate uses `deqms` directly or through an
    ensemble; evaluation rejects the whole round when it is absent. Keep
    `threads=24` unless the user explicitly chooses another value.
-6. Compare results. With ground truth, use the returned Score A ranking. Without
-   ground truth, inspect `method_sensitivity.tsv` and report shared versus
+6. Compare results. With ground truth, use the returned five-metric
+   `benchmark_mean_rank` ranking; `score_a` is an absolute compatibility summary,
+   not the winner field. Without ground truth, inspect `method_sensitivity.tsv`
+   and report shared versus
    method-sensitive signed calls without selecting or implying a winner. For a
-   Score A ranking, report each candidate's tested universe (`TP + FP + FN + TN`);
-   if those totals differ, qualify the ranking as candidate-universe-specific.
+   ground-truth ranking, report each candidate's tested universe
+   (`TP + FP + FN + TN`); if those totals differ, qualify the ranking as
+   candidate-universe-specific.
 7. Report the knowledge fingerprint, evidence references, confidence, limitations,
    input scale, output paths, and whether the result is ranked or exploratory.
 
