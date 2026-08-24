@@ -99,6 +99,10 @@ def method_contract() -> dict[str, Any]:
     return {
         "de_method": list(DE_METHODS),
         "fdr_method": list(FDR_METHODS),
+        "fdr_method_by_de_method": {
+            method: ["bh"] if method in {"rots", "limrots"} else list(FDR_METHODS)
+            for method in DE_METHODS
+        },
         "normalization": list(NORMALIZATION_METHODS),
         "imputation": list(IMPUTATION_METHODS),
         "quantification": [*QUANTIFICATION_METHODS, "top<N>"],
@@ -133,8 +137,14 @@ def validate_config_values(item: Mapping[str, Any]) -> None:
     _require_member(item, "ensemble", ENSEMBLE_PRESETS)
 
     de_method = item["de_method"]
+    fdr_method = item["fdr_method"]
     ensemble = item["ensemble"]
     ensemble_k = item["ensemble_k"]
+    if de_method in {"rots", "limrots"} and fdr_method != "bh":
+        raise ValueError(
+            f"de_method={de_method!r} requires fdr_method='bh' because standalone "
+            "ROTS-family methods preserve their native permutation FDR"
+        )
     if isinstance(ensemble_k, bool) or not isinstance(ensemble_k, int):
         raise ValueError("ensemble_k must be an integer")
     if not 1 <= ensemble_k <= 5:

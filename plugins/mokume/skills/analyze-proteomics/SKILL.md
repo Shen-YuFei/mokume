@@ -33,7 +33,10 @@ different Mokume CLI path.
    profile or evidence supports the change. Preserve the exact block contract in
    [recommendation-contract.md](references/recommendation-contract.md). Without a
    peptide-count sidecar, do not add `deqms` or an ensemble containing `deqms`;
-   deterministic policy omits those candidates.
+   deterministic policy omits those candidates. Standalone `rots` and `limrots`
+   candidates must use `fdr_method="bh"` because their native permutation FDR is
+   not replaced by another correction; this restriction does not apply to an
+   `ensemble` candidate.
 5. Call `mokume.evaluate_recommendation` with exactly two canonical condition
    labels returned by inspection and in the same order used for inspection. Do
    not substitute longer raw SDRF values when inspection normalized them. Put a
