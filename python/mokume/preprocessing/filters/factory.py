@@ -23,22 +23,17 @@ from mokume.preprocessing.filters.peptide import (
     ChargeStateFilter,
     ModificationFilter,
     MissedCleavageFilter,
-    SearchScoreFilter,
     SequencePatternFilter,
-    FDRFilter as PeptideFDRFilter,
 )
 from mokume.preprocessing.filters.protein import (
     ContaminantFilter,
     MinPeptideFilter,
-    ProteinFDRFilter,
-    CoverageFilter,
     RazorPeptideFilter,
 )
 from mokume.preprocessing.filters.run_qc import (
     RunIntensityFilter,
     MinFeaturesFilter,
     MissingRateFilter,
-    SampleCorrelationFilter,
 )
 from mokume.preprocessing.filters.pipeline import FilterPipeline
 
@@ -59,11 +54,8 @@ def create_intensity_filters(config: IntensityFilterConfig) -> List[BaseFilter]:
     """
     filters = []
 
-    if config.remove_zero_intensity or config.min_intensity > 0:
-        min_val = max(
-            config.min_intensity, 1e-10 if config.remove_zero_intensity else 0
-        )
-        filters.append(MinIntensityFilter(min_intensity=min_val))
+    if config.min_intensity > 0:
+        filters.append(MinIntensityFilter(min_intensity=config.min_intensity))
 
     if config.cv_threshold is not None:
         filters.append(CVThresholdFilter(cv_threshold=config.cv_threshold))
@@ -121,17 +113,10 @@ def create_peptide_filters(config: PeptideFilterConfig) -> List[BaseFilter]:
             MissedCleavageFilter(max_missed_cleavages=config.max_missed_cleavages)
         )
 
-    if config.min_search_score is not None:
-        filters.append(SearchScoreFilter(min_score=config.min_search_score))
-
     if config.exclude_sequence_patterns:
         filters.append(
             SequencePatternFilter(exclude_patterns=config.exclude_sequence_patterns)
         )
-
-    # Peptide FDR filter - only add if column exists (checked at apply time)
-    if config.fdr_threshold < 1.0:
-        filters.append(PeptideFDRFilter(fdr_threshold=config.fdr_threshold))
 
     return filters
 
@@ -153,9 +138,10 @@ def create_protein_filters(config: ProteinFilterConfig) -> List[BaseFilter]:
     filters = []
 
     if config.remove_contaminants or config.remove_decoys:
+        active_patterns = config.active_contaminant_patterns()
         filters.append(
             ContaminantFilter(
-                patterns=config.contaminant_patterns,
+                patterns=active_patterns,
                 remove_decoys=config.remove_decoys,
             )
         )
@@ -167,12 +153,6 @@ def create_protein_filters(config: ProteinFilterConfig) -> List[BaseFilter]:
                 min_unique_peptides=config.min_unique_peptides,
             )
         )
-
-    if config.fdr_threshold < 1.0:
-        filters.append(ProteinFDRFilter(fdr_threshold=config.fdr_threshold))
-
-    if config.min_coverage > 0:
-        filters.append(CoverageFilter(min_coverage=config.min_coverage))
 
     if config.razor_peptide_handling != "keep":
         filters.append(RazorPeptideFilter(handling=config.razor_peptide_handling))
@@ -209,11 +189,6 @@ def create_run_qc_filters(config: RunQCFilterConfig) -> List[BaseFilter]:
 
     if config.max_missing_rate < 1.0:
         filters.append(MissingRateFilter(max_missing_rate=config.max_missing_rate))
-
-    if config.min_sample_correlation is not None:
-        filters.append(
-            SampleCorrelationFilter(min_correlation=config.min_sample_correlation)
-        )
 
     return filters
 

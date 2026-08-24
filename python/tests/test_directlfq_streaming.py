@@ -8,12 +8,18 @@ import pandas as pd
 import pytest
 
 from mokume.pipeline.directlfq_streaming import estimate_protein_intensities_streamed
+from mokume.quantification import get_quantification_method
 from mokume.quantification.directlfq import DirectLFQQuantification
 from mokume.quantification.maxlfq import MaxLFQQuantification
 
 lfq_estimation = pytest.importorskip("directlfq.protein_intensity_estimation")
 lfq_config = pytest.importorskip("directlfq.config")
 lfq_manager = pytest.importorskip("directlfq.lfq_manager")
+
+
+def test_maxlfq_factory_forwards_threads_keyword():
+    quantifier = get_quantification_method("maxlfq", threads=3)
+    assert quantifier.threads == 3
 
 
 def _make_normed_directlfq_frame() -> pd.DataFrame:

@@ -800,7 +800,7 @@ class TestDEEnsemble:
         with pytest.raises(ValueError, match="ensemble methods only apply"):
             QuantificationPipeline(config)
 
-    def test_pipeline_ignores_ensemble_options_when_de_is_disabled(self, tmp_path):
+    def test_pipeline_rejects_ensemble_options_when_de_is_disabled(self, tmp_path):
         config = PipelineConfig(
             input=InputConfig(parquet=str(tmp_path / "missing.parquet")),
             de=DEConfig(
@@ -811,7 +811,7 @@ class TestDEEnsemble:
             ),
         )
 
-        with pytest.raises(FileNotFoundError, match="Parquet file not found"):
+        with pytest.raises(ValueError, match="options require DE to be enabled"):
             QuantificationPipeline(config)
 
     def test_pipeline_uses_canonical_explicit_deqms_member_counts(self, monkeypatch):

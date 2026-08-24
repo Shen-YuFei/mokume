@@ -12,7 +12,6 @@ and preprocessing of proteomics data at multiple levels:
 from mokume.preprocessing.filters.base import BaseFilter, FilterResult
 from mokume.preprocessing.filters.enums import (
     RazorPeptideHandling,
-    ProteinGroupingStrategy,
     FilterLevel,
     FilterAction,
 )
@@ -38,7 +37,6 @@ __all__ = [
     "FilterPipeline",
     # Enums
     "RazorPeptideHandling",
-    "ProteinGroupingStrategy",
     "FilterLevel",
     "FilterAction",
     # I/O functions

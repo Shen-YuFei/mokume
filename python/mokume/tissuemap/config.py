@@ -145,10 +145,8 @@ def _parse_sections(raw: dict[str, Any]) -> dict[str, Any]:
         }
         unknown = set(section_data) - valid_fields
         if unknown:
-            logger.warning(
-                "Unknown keys in '%s' section (ignored): %s",
-                section_name,
-                ", ".join(sorted(unknown)),
+            raise ValueError(
+                f"Unknown keys in '{section_name}' section: {', '.join(sorted(unknown))}"
             )
         sections[section_name] = cls(**kwargs)
     return sections
@@ -191,6 +189,13 @@ def load_config(
     """
     with open(yaml_path, encoding="utf-8") as fh:
         raw: dict[str, Any] = yaml.safe_load(fh) or {}
+
+    known_top_level = {"n_jobs", *_SECTION_MAP}
+    unknown_top_level = sorted(set(raw) - known_top_level)
+    if unknown_top_level:
+        raise ValueError(
+            f"Unknown TissueMap config keys: {', '.join(unknown_top_level)}"
+        )
 
     sections = _parse_sections(raw)
 

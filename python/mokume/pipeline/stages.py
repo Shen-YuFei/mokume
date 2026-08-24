@@ -57,6 +57,8 @@ from mokume.pipeline.config import PipelineConfig, validate_de_config
 
 logger = get_logger("mokume.pipeline")
 
+_DEFAULT_REFERENCE_REGEX = "pool|powder|ref|reference|bridge"
+
 # Per-(sample, tech_rep) replicate metric expressions for SQL-first run
 # normalization. Each value must produce a scalar metric per group so that the
 # cross-replicate factor ``intensity * sample_avg / run_metric`` matches the
@@ -921,17 +923,20 @@ class LoadingStage:
                 "sample detection. Use --sdrf to provide one."
             )
 
-        # Detect reference samples (reuse IRS detection logic)
-        ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
-
-        if ref_samples is None and self.config.irs.reference_samples:
-            ref_samples = self.config.irs.reference_samples
+        # Explicit selectors take precedence over metadata autodetection.
+        ref_samples = self.config.irs.reference_samples
+        if ref_samples:
             logger.info("Using explicit reference samples: %s", ref_samples)
-
-        if ref_samples is None:
+        elif self.config.irs.reference_regex != _DEFAULT_REFERENCE_REGEX:
             ref_samples = detect_reference_by_regex(
                 self.config.input.sdrf, self.config.irs.reference_regex
             )
+        else:
+            ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
+            if not ref_samples:
+                ref_samples = detect_reference_by_regex(
+                    self.config.input.sdrf, _DEFAULT_REFERENCE_REGEX
+                )
 
         if not ref_samples:
             raise ValueError(
@@ -1122,41 +1127,34 @@ class NormalizationStage:
         if not self.config.input.sdrf:
             raise ValueError("IRS normalization requires an SDRF file (--sdrf)")
 
-        # Detect reference samples (priority order)
-        ref_samples = None
-
-        # 1. Check for characteristics[pooled sample] column
-        ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
-
-        # 2. Explicit sample names override
-        if ref_samples is None and self.config.irs.reference_samples:
+        # Explicit selectors take precedence over pooled-sample autodetection.
+        if self.config.irs.reference_samples:
             ref_samples = self.config.irs.reference_samples
             logger.info("Using explicit reference samples: %s", ref_samples)
-
-        # 3. Explicit column + values
-        if (
-            ref_samples is None
-            and self.config.irs.sdrf_column
-            and self.config.irs.sdrf_values
-        ):
+        elif self.config.irs.sdrf_column and self.config.irs.sdrf_values:
             ref_samples = detect_reference_by_column(
                 self.config.input.sdrf,
                 self.config.irs.sdrf_column,
                 self.config.irs.sdrf_values,
             )
-
-        # 4. Regex fallback
-        if ref_samples is None:
+        elif self.config.irs.reference_regex != _DEFAULT_REFERENCE_REGEX:
             ref_samples = detect_reference_by_regex(
                 self.config.input.sdrf, self.config.irs.reference_regex
             )
+        else:
+            ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
+            if not ref_samples:
+                ref_samples = detect_reference_by_regex(
+                    self.config.input.sdrf, _DEFAULT_REFERENCE_REGEX
+                )
 
         if not ref_samples:
-            logger.warning("No reference samples detected for IRS, skipping")
-            return protein_df
+            raise ValueError("IRS normalization found no reference samples in the SDRF")
 
         # Detect plexes
         sample_to_plex = detect_plexes_from_sdrf(self.config.input.sdrf)
+        if not sample_to_plex:
+            raise ValueError("IRS normalization found no plex assignments in the SDRF")
 
         # Apply IRS
         normalizer = IRSNormalizer(
@@ -1213,6 +1211,10 @@ class NormalizationStage:
             and "powder" not in c.lower()
             and "pool" not in c.lower()
         }
+        if not sample_to_condition:
+            raise ValueError(
+                "Coverage filtering found no non-reference samples with condition metadata"
+            )
 
         return apply_coverage_filter(
             protein_df,
@@ -1580,16 +1582,9 @@ class PostprocessingStage:
 
     def _batch_method(self) -> BatchDetectionMethod:
         """Resolve the configured batch-detection method."""
-        try:
-            return BatchDetectionMethod.from_str(self.config.batch.method)
-        except ValueError:
-            logger.warning(
-                "Unknown batch method '%s', using sample_prefix",
-                self.config.batch.method,
-            )
-            return BatchDetectionMethod.SAMPLE_PREFIX
+        return BatchDetectionMethod.from_str(self.config.batch.method)
 
-    def _detect_batch_indices(self, sample_cols: list) -> Optional[list]:
+    def _detect_batch_indices(self, sample_cols: list) -> list:
         """Detect and validate batch assignments for sample columns."""
         batch_indices = detect_batches(
             sample_ids=sample_cols,
@@ -1604,17 +1599,14 @@ class PostprocessingStage:
         unique_batches = len(set(batch_indices))
         logger.info("Detected %d batches for batch correction", unique_batches)
         if unique_batches < 2:
-            logger.warning("Only 1 batch detected, skipping batch correction")
-            return None
+            raise ValueError("Batch correction requires at least two batches")
 
         min_samples = min(Counter(batch_indices).values())
         if min_samples < 2:
-            logger.warning(
-                "Some batches have fewer than 2 samples (min=%d), "
-                "skipping batch correction",
-                min_samples,
+            raise ValueError(
+                "Batch correction requires at least two samples in every batch; "
+                f"minimum observed batch size is {min_samples}"
             )
-            return None
         return batch_indices
 
     def _batch_covariates(self, sample_cols: list) -> Optional[list]:
@@ -1634,18 +1626,55 @@ class PostprocessingStage:
             )
         return covariates
 
+    def _validate_combat_request(
+        self,
+        batch_indices: list[int],
+        covariates: Optional[list],
+    ) -> None:
+        """Reject invalid reference labels and singular ComBat designs."""
+        ref_batch = self.config.batch.ref_batch
+        if ref_batch is not None and (
+            ref_batch < 0 or ref_batch not in set(batch_indices)
+        ):
+            raise ValueError(
+                f"Batch reference '{ref_batch}' is not present; "
+                f"detected labels are {sorted(set(batch_indices))}"
+            )
+        if covariates is None:
+            return
+        covariate_matrix = np.asarray(covariates, dtype=float)
+        if covariate_matrix.ndim != 2 or covariate_matrix.shape[0] != len(
+            batch_indices
+        ):
+            raise ValueError(
+                "Batch covariate row count must match the matrix sample count"
+            )
+        labels = sorted(set(batch_indices))
+        batch_rows = np.vstack(
+            [np.asarray(batch_indices) == label for label in labels]
+        ).astype(float)
+        if ref_batch is not None:
+            batch_rows[labels.index(ref_batch), :] = 1.0
+        design = np.vstack([batch_rows, covariate_matrix.T])
+        if np.linalg.matrix_rank(design) < design.shape[0]:
+            raise ValueError(
+                "Batch covariates are confounded with batches or each other; "
+                "ComBat design is singular"
+            )
+
     def _complete_batch_matrix(
         self,
         intensity_matrix: pd.DataFrame,
-    ) -> Optional[tuple[pd.DataFrame, pd.DataFrame]]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Split complete and incomplete rows before ComBat correction."""
         has_nan = intensity_matrix.isna().any(axis=1)
         complete_matrix = intensity_matrix[~has_nan]
         incomplete_matrix = intensity_matrix[has_nan]
 
         if len(complete_matrix) == 0:
-            logger.warning("No proteins with complete data for ComBat, skipping")
-            return None
+            raise ValueError(
+                "Batch correction requires at least one protein observed in every sample"
+            )
 
         if len(incomplete_matrix) > 0:
             logger.info(
@@ -1688,17 +1717,14 @@ class PostprocessingStage:
 
         protein_col, sample_cols = self._protein_and_sample_columns(protein_df)
         if len(sample_cols) < 2:
-            logger.warning("Not enough samples for batch correction, skipping")
-            return protein_df
+            raise ValueError("Batch correction requires at least two matrix samples")
 
         intensity_matrix = protein_df.set_index(protein_col)[sample_cols]
         batch_indices = self._detect_batch_indices(sample_cols)
-        if batch_indices is None:
-            return protein_df
+        covariates = self._batch_covariates(sample_cols)
+        self._validate_combat_request(batch_indices, covariates)
 
         matrices = self._complete_batch_matrix(intensity_matrix)
-        if matrices is None:
-            return protein_df
         complete_matrix, incomplete_matrix = matrices
 
         logger.info("Applying ComBat batch correction...")
@@ -1706,7 +1732,7 @@ class PostprocessingStage:
             corrected_matrix = apply_batch_correction(
                 df=complete_matrix,
                 batch=batch_indices,
-                covs=self._batch_covariates(sample_cols),
+                covs=covariates,
                 kwargs={
                     "par_prior": self.config.batch.parametric,
                     "mean_only": self.config.batch.mean_only,
@@ -1727,9 +1753,7 @@ class PostprocessingStage:
             return corrected_df
 
         except Exception as e:
-            logger.error("Batch correction failed: %s", e)
-            logger.warning("Returning uncorrected protein intensities")
-            return protein_df
+            raise ValueError(f"Batch correction failed: {e}") from e
 
     def _parse_de_contrasts(self, sample_to_condition: dict) -> list[tuple[str, str]]:
         """Parse configured DE contrasts into condition pairs."""
@@ -1749,11 +1773,9 @@ class PostprocessingStage:
             elif "-" in contrast_text:
                 parts = contrast_text.split("-", 1)
             else:
-                logger.warning(
-                    "Invalid contrast format '%s', expected 'A vs B' or 'A-B'",
-                    contrast_text,
+                raise ValueError(
+                    f"Invalid contrast format '{contrast_text}', expected 'A vs B' or 'A-B'"
                 )
-                continue
             contrasts.append((parts[0].strip(), parts[1].strip()))
         return contrasts
 
@@ -1926,6 +1948,14 @@ class PostprocessingStage:
             return None
 
         de_method = self._resolve_de_method(protein_df, sample_to_condition)
+        if (
+            de_method in {"rots", "limrots"}
+            and self.config.de.fdr_method.lower() != "bh"
+        ):
+            raise ValueError(
+                f"FDR method '{self.config.de.fdr_method}' does not apply to "
+                f"{de_method}, which retains its permutation FDR"
+            )
         peptide_counts = self._load_de_peptide_counts(de_method)
 
         if de_method == "ensemble":
@@ -2155,23 +2185,16 @@ class PostprocessingStage:
         if not self.config.input.sdrf or not self.config.batch.column:
             return None
 
-        try:
-            from mokume.core.constants import load_sdrf as _load_sdrf
+        from mokume.core.constants import load_sdrf as _load_sdrf
 
-            sdrf = _load_sdrf(self.config.input.sdrf)
-
-            batch_col = self.config.batch.column.lower()
-            if batch_col not in sdrf.columns:
-                logger.warning(
-                    "Batch column '%s' not in SDRF",
-                    self.config.batch.column,
-                )
-                return None
-
-            # Map sample IDs to batch values
-            sample_to_batch = dict(zip(sdrf["source name"], sdrf[batch_col]))
-            return [sample_to_batch.get(s, "unknown") for s in sample_ids]
-
-        except Exception as e:
-            logger.warning("Failed to extract batch column: %s", e)
-            return None
+        sdrf = _load_sdrf(self.config.input.sdrf)
+        batch_col = self.config.batch.column.lower()
+        if batch_col not in sdrf.columns:
+            raise ValueError(f"Batch column '{self.config.batch.column}' not in SDRF")
+        sample_to_batch = dict(zip(sdrf["source name"], sdrf[batch_col]))
+        missing = [sample for sample in sample_ids if sample not in sample_to_batch]
+        if missing:
+            raise ValueError(
+                f"Batch SDRF column '{self.config.batch.column}' has no values for: {missing}"
+            )
+        return [sample_to_batch[sample] for sample in sample_ids]

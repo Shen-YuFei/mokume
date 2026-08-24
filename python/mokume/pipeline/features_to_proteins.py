@@ -113,30 +113,188 @@ class QuantificationPipeline:
             self.config.normalization.run_method,
             self.config.normalization.sample_method,
         )
+        quant_method = self.config.quantification.method.lower()
+        self._validate_normalization_config(quant_method)
+        self._validate_reference_config(quant_method)
+        self._validate_imputation_config()
+        self._validate_batch_config()
+        self._validate_de_output_config()
+        self._validate_input_config(quant_method)
+
+    def _validate_normalization_config(self, quant_method: str) -> None:
+        run_method = self.config.normalization.run_method.lower()
+        sample_method = self.config.normalization.sample_method.lower()
+        if quant_method in {"directlfq", "ratio"} and (
+            run_method != "none" or sample_method != "none"
+        ):
+            raise ValueError(
+                f"{quant_method} manages normalization internally; "
+                "use run/sample normalization 'none'"
+            )
+        if self.config.normalization.proteins_file and sample_method != "hierarchical":
+            raise ValueError(
+                "normalization_proteins_file requires hierarchical sample "
+                "normalization in mokume-py"
+            )
+        if self.config.output.export_peptides and quant_method in {
+            "directlfq",
+            "ratio",
+        }:
+            raise ValueError(
+                f"export_peptides is not supported by the {quant_method} pipeline"
+            )
+        if self.config.output.export_ions:
+            raise ValueError("export_ions is not supported by the streaming pipelines")
+
+    def _validate_reference_config(self, quant_method: str) -> None:
+        selectors = self._reference_selector_count()
+        self._validate_reference_selectors(selectors)
+        if quant_method == "ratio":
+            self._validate_ratio_reference_config()
+        else:
+            self._validate_irs_reference_config(selectors)
+        if (
+            self.config.quantification.coverage_threshold is not None
+            and not self.config.input.sdrf
+        ):
+            raise ValueError("Coverage filtering requires an SDRF file")
+
+    def _reference_selector_count(self) -> int:
+        default_reference_regex = "pool|powder|ref|reference|bridge"
+        return sum(
+            (
+                bool(self.config.irs.reference_samples),
+                bool(self.config.irs.sdrf_column or self.config.irs.sdrf_values),
+                self.config.irs.reference_regex != default_reference_regex,
+            )
+        )
+
+    def _validate_reference_selectors(self, selectors: int) -> None:
+        if selectors > 1:
+            raise ValueError(
+                "Choose one reference selector: samples, SDRF column+values, or regex"
+            )
+        if bool(self.config.irs.sdrf_column) != bool(self.config.irs.sdrf_values):
+            raise ValueError("IRS SDRF column and values must be provided together")
+
+    def _validate_ratio_reference_config(self) -> None:
+        if self.config.irs.enabled:
+            raise ValueError("Ratio quantification cannot also apply IRS")
+        if (
+            self.config.irs.sdrf_column
+            or self.config.irs.sdrf_values
+            or self.config.irs.stat.lower() != "median"
+            or self.config.irs.remove_reference
+        ):
+            raise ValueError(
+                "Ratio accepts reference_samples/reference_regex, not IRS-only options"
+            )
+
+    def _validate_irs_reference_config(self, selectors: int) -> None:
+        if not self.config.irs.enabled and (
+            selectors
+            or self.config.irs.stat.lower() != "median"
+            or self.config.irs.remove_reference
+        ):
+            raise ValueError("IRS options require IRS normalization to be enabled")
+        if self.config.irs.enabled and not self.config.input.sdrf:
+            raise ValueError("IRS normalization requires an SDRF file")
+
+    def _validate_imputation_config(self) -> None:
+        options_changed = any(
+            (
+                self.config.imputation.method.lower() != "none",
+                self.config.imputation.quantile != 0.01,
+                self.config.imputation.shift != 1.6,
+                self.config.imputation.scale != 0.3,
+                self.config.imputation.n_neighbors != 5,
+            )
+        )
+        if not self.config.imputation.enabled and options_changed:
+            raise ValueError("Imputation options require imputation to be enabled")
+        if (
+            self.config.imputation.enabled
+            and self.config.imputation.method.lower() == "none"
+        ):
+            raise ValueError("Imputation requires an explicit method")
+
+    def _validate_batch_config(self) -> None:
+        options_changed = any(
+            (
+                self.config.batch.method.lower() != "sample_prefix",
+                self.config.batch.column,
+                self.config.batch.covariates,
+                not self.config.batch.parametric,
+                self.config.batch.mean_only,
+                self.config.batch.ref_batch is not None,
+            )
+        )
+        if not self.config.batch.enabled and options_changed:
+            raise ValueError("Batch options require batch correction to be enabled")
+        if self.config.batch.enabled:
+            if self.config.batch.method.lower() not in {"sample_prefix", "column"}:
+                raise ValueError("Batch method must be sample_prefix or column")
+            if (
+                self.config.batch.method.lower() == "column"
+                and not self.config.batch.column
+            ):
+                raise ValueError("Batch method 'column' requires a batch column")
+            if (
+                self.config.batch.method.lower() != "column"
+                and self.config.batch.column
+            ):
+                raise ValueError("A batch column requires batch method 'column'")
+
+    def _validate_de_output_config(self) -> None:
+        de_output_requested = bool(
+            self.config.de.output
+            or self.config.output.plot_volcano
+            or self.config.output.interactive_report
+        )
+        if self.config.de.enabled and not de_output_requested:
+            raise ValueError(
+                "Differential expression requires a DE output, volcano plot, or interactive report"
+            )
+        options_changed = any(
+            (
+                self.config.de.contrasts,
+                self.config.de.method.lower() != "auto",
+                self.config.de.log2fc_threshold != 0.5,
+                self.config.de.fdr_threshold != 0.05,
+                self.config.de.fdr_method.lower() != "bh",
+                self.config.de.output,
+                self.config.de.ensemble_methods,
+                self.config.de.ensemble_min_k != 2,
+            )
+        )
+        if not self.config.de.enabled and options_changed:
+            raise ValueError("Differential-expression options require DE to be enabled")
+        if self.config.output.plot_volcano and not self.config.de.enabled:
+            raise ValueError("Volcano plots require differential expression")
+        if self.config.output.interactive_report and not self.config.de.enabled:
+            raise ValueError("Interactive reports require differential expression")
+        if (
+            self.config.output.report_output
+            and not self.config.output.interactive_report
+        ):
+            raise ValueError("report_output requires interactive_report")
+
+    def _validate_input_config(self, quant_method: str) -> None:
         source_path = self.config.input.msstats or self.config.input.parquet
         if not Path(source_path).exists():
             source_name = "MSstats" if self.config.input.msstats else "Parquet"
             raise FileNotFoundError(f"{source_name} file not found: {source_path}")
 
-        if (
-            self.config.input.msstats
-            and self.config.quantification.method.lower() == "ratio"
-        ):
+        if self.config.input.msstats and quant_method == "ratio":
             raise ValueError(
                 "Ratio quantification requires PSM-level QPX input; "
                 "MSstats feature tables do not contain the required PSM evidence"
             )
 
-        if (
-            self.config.quantification.method.lower() == "pibaq"
-            and not self.config.input.fasta_file
-        ):
+        if quant_method == "pibaq" and not self.config.input.fasta_file:
             raise ValueError("piBAQ quantification requires --fasta-file")
 
-        if (
-            self.config.quantification.method.lower() == "ratio"
-            and not self.config.input.sdrf
-        ):
+        if quant_method == "ratio" and not self.config.input.sdrf:
             raise ValueError("Ratio quantification requires an SDRF file (--sdrf)")
 
         if (
@@ -492,8 +650,8 @@ def features_to_proteins(
     min_aa: int = 7,
     min_unique_peptides: int = 2,
     remove_contaminants: bool = True,
-    run_normalization: str = "median",
-    sample_normalization: str = "globalMedian",
+    run_normalization: Optional[str] = None,
+    sample_normalization: Optional[str] = None,
     normalization_proteins_file: Optional[str] = None,
     fasta_file: Optional[str] = None,
     ion_alignment: Optional[str] = None,
@@ -594,21 +752,23 @@ def features_to_proteins(
         Whether to remove contaminants and decoys. Default: True.
     run_normalization : str
         Run/technical replicate normalization method. Options:
-        none, median, mean, max, global, max_min, IQR.
-        Ignored when quant_method='directlfq'.
+        none, median, mean, max, global, max_min, IQR. DirectLFQ and Ratio
+        manage normalization internally and therefore require ``none``.
     sample_normalization : str
         Sample-to-sample normalization method. Options:
         - 'none': No normalization
         - 'globalMedian': Sample median / global median
         - 'conditionMedian': Condition-specific median
         - 'hierarchical': DirectLFQ-style hierarchical clustering
-        Ignored when quant_method='directlfq'.
+        DirectLFQ and Ratio manage normalization internally and therefore
+        require ``none``.
     normalization_proteins_file : str, optional
-        File with protein IDs to use for normalization (one per line).
+        File with protein IDs to use for hierarchical normalization (one per
+        line). Requires ``sample_normalization='hierarchical'``.
     fasta_file : str, optional
         FASTA file path. Required for piBAQ quantification.
     ion_alignment : str, optional
-        Ion alignment method for MaxLFQ: none, hierarchical.
+        Removed compatibility argument. Passing a value raises ``ValueError``.
     pibaq_enzyme : str
         Protease used to digest the FASTA for the piBAQ denominator.
         Default: 'Trypsin'.
@@ -655,6 +815,15 @@ def features_to_proteins(
     pd.DataFrame
         Protein intensities matrix.
     """
+    quant_method_lower = quant_method.lower()
+    manages_normalization = quant_method_lower in {"directlfq", "ratio"}
+    if run_normalization is None:
+        run_normalization = "none" if manages_normalization else "median"
+    if sample_normalization is None:
+        sample_normalization = "none" if manages_normalization else "globalMedian"
+    if ion_alignment is not None:
+        raise ValueError("ion_alignment is no longer supported")
+
     config = PipelineConfig(
         input=InputConfig(
             parquet=parquet,
@@ -744,7 +913,10 @@ def features_to_proteins(
     protein_df = pipeline.run()
 
     # Save output
-    protein_df.to_csv(output, index=False)
+    if output.lower().endswith(".parquet"):
+        protein_df.to_parquet(output, index=False)
+    else:
+        protein_df.to_csv(output, index=False)
     logger.info("Protein intensities saved to %s", output)
 
     return protein_df

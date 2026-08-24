@@ -36,6 +36,60 @@ QUANTIFICATION_METHODS = ["pibaq", "maxlfq", "sum", "directlfq"]
 TOPN_METHOD_RE = re.compile(r"top(\d+)")
 
 
+def _nonzero_threads(_ctx, _param, value):
+    if value == 0:
+        raise click.BadParameter("must be a non-zero integer")
+    return value
+
+
+def _supplied(ctx: click.Context, *names: str) -> bool:
+    return any(
+        ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+        for name in names
+    )
+
+
+def _validate_method_options(
+    ctx: click.Context,
+    method: str,
+    *,
+    verbose: bool,
+    tpa: bool,
+    ruler: bool,
+) -> None:
+    pibaq_options = (
+        "fasta",
+        "enzyme",
+        "min_aa",
+        "max_aa",
+        "tpa",
+        "ruler",
+        "organism",
+        "ploidy",
+        "cpc",
+        "verbose",
+        "qc_report",
+        "families_yaml",
+        "min_shared",
+        "min_anchors",
+        "high_anchor_threshold",
+    )
+    if method != "pibaq" and _supplied(ctx, *pibaq_options):
+        raise click.UsageError(
+            "piBAQ digestion/TPA/ruler/QC options require --method pibaq"
+        )
+    if method != "maxlfq" and _supplied(ctx, "threads"):
+        raise click.UsageError("--threads only applies to --method maxlfq")
+    if method != "directlfq" and _supplied(ctx, "min_nonan"):
+        raise click.UsageError("--min_nonan only applies to --method directlfq")
+    if method == "pibaq" and _supplied(ctx, "qc_report") and not verbose:
+        raise click.UsageError("--qc_report requires --verbose")
+    if ruler and not tpa:
+        raise click.UsageError("--ruler requires --tpa")
+    if not ruler and _supplied(ctx, "ploidy", "organism", "cpc"):
+        raise click.UsageError("--ploidy/--organism/--cpc require --ruler")
+
+
 def get_available_methods():
     """Get list of available quantification methods based on installed packages."""
     methods = ["pibaq", "top3", "maxlfq", "sum"]
@@ -148,7 +202,10 @@ class QuantMethodParam(click.ParamType):
     default=200,
 )
 @click.option(
-    "-o", "--output", help="Output file with the proteins and quantification values"
+    "-o",
+    "--output",
+    help="Output file with the proteins and quantification values",
+    required=True,
 )
 @click.option(
     "--verbose",
@@ -165,6 +222,7 @@ class QuantMethodParam(click.ParamType):
     help="Number of parallel threads for MaxLFQ (-1 for all cores, default: -1)",
     default=-1,
     type=int,
+    callback=_nonzero_threads,
 )
 @click.option(
     "--min_nonan",
@@ -215,7 +273,9 @@ class QuantMethodParam(click.ParamType):
         "EvidenceLevel='high' (piBAQ only)."
     ),
 )
+@click.pass_context
 def peptides2protein(
+    ctx: click.Context,
     fasta: str,
     peptides: str,
     method: str,
@@ -269,6 +329,13 @@ def peptides2protein(
         mokume peptides2protein --method top5 -p peptides.csv -o proteins.tsv
     """
     method_lower = method.lower()
+    _validate_method_options(
+        ctx,
+        method_lower,
+        verbose=verbose,
+        tpa=tpa,
+        ruler=ruler,
+    )
 
     # Check DirectLFQ availability
     if method_lower == "directlfq" and not is_directlfq_available():
@@ -380,11 +447,8 @@ def peptides2protein(
                 ].transform(lambda x: x / x.sum())
 
         # Save output
-        if output:
-            if output.endswith(".parquet"):
-                result_df.to_parquet(output, index=False)
-            else:
-                result_df.to_csv(output, sep="\t", index=False)
-            click.echo(f"Results saved to {output}")
+        if output.endswith(".parquet"):
+            result_df.to_parquet(output, index=False)
         else:
-            click.echo(result_df.to_string())
+            result_df.to_csv(output, sep="\t", index=False)
+        click.echo(f"Results saved to {output}")

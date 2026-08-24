@@ -2,17 +2,125 @@
 CLI command for converting features to peptides.
 """
 
-import sys
-
 import click
 
 from mokume.normalization.peptide import peptide_normalization
-from mokume.model.normalization import (
-    FeatureNormalizationMethod,
-    PeptideNormalizationMethod,
-)
 from mokume.preprocessing.filters.io import generate_example_config, load_filter_config
 from mokume.model.filters import PreprocessingFilterConfig
+
+
+def _command_line_value(ctx: click.Context, name: str) -> bool:
+    return ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+
+
+def _validate_required_io(ctx: click.Context) -> None:
+    params = ctx.params
+    if params["parquet"] is None:
+        raise click.UsageError(
+            "--parquet is required unless --generate-filter-config is used"
+        )
+    if params["output"] is None:
+        raise click.UsageError(
+            "--output is required unless --generate-filter-config is used"
+        )
+
+
+def _validate_normalization_options(ctx: click.Context) -> None:
+    params = ctx.params
+    irs_names = ("irs_channel", "irs_autodetect_regex", "irs_stat", "irs_scope")
+    if params["skip_normalization"] and any(
+        _command_line_value(ctx, name) for name in irs_names
+    ):
+        raise click.UsageError(
+            "--skip_normalization conflicts with features2peptides IRS options"
+        )
+    active_normalization = any(
+        _command_line_value(ctx, name) and params[name].lower() != "none"
+        for name in ("run_normalization", "sample_normalization")
+    )
+    if params["skip_normalization"] and active_normalization:
+        raise click.UsageError(
+            "--skip_normalization conflicts with active run/sample normalization"
+        )
+
+
+def _validate_irs_options(ctx: click.Context) -> None:
+    params = ctx.params
+    if params["irs_channel"] and params["irs_autodetect_regex"]:
+        raise click.UsageError(
+            "Choose either --irs_channel or --irs_autodetect_regex, not both"
+        )
+    if params["irs_autodetect_regex"] and not params["sdrf"]:
+        raise click.UsageError("--irs_autodetect_regex requires --sdrf")
+    if not (params["irs_channel"] or params["irs_autodetect_regex"]) and any(
+        _command_line_value(ctx, name) for name in ("irs_stat", "irs_scope")
+    ):
+        raise click.UsageError(
+            "--irs_stat/--irs_scope require --irs_channel or --irs_autodetect_regex"
+        )
+
+
+def _validate_features2peptides_options(ctx: click.Context) -> None:
+    _validate_required_io(ctx)
+    _validate_normalization_options(ctx)
+    _validate_irs_options(ctx)
+
+
+def _filter_overrides(ctx: click.Context) -> dict:
+    params = ctx.params
+    overrides = {}
+    direct = {
+        "filter_min_intensity": "min_intensity",
+        "filter_cv_threshold": "cv_threshold",
+        "filter_max_missed_cleavages": "max_missed_cleavages",
+        "filter_min_unique_peptides": "min_unique_peptides",
+        "filter_min_features": "min_features",
+    }
+    for source, target in direct.items():
+        if params[source] is not None:
+            overrides[target] = params[source]
+    if params["filter_charge_states"] is not None:
+        overrides["charge_states"] = [
+            int(value.strip()) for value in params["filter_charge_states"].split(",")
+        ]
+    if params["filter_exclude_modifications"] is not None:
+        overrides["exclude_modifications"] = [
+            value.strip() for value in params["filter_exclude_modifications"].split(",")
+        ]
+    return overrides
+
+
+def _preprocessing_config(ctx: click.Context) -> PreprocessingFilterConfig | None:
+    overrides = _filter_overrides(ctx)
+    config_path = ctx.params["filter_config"]
+    if config_path:
+        config = load_filter_config(config_path)
+    elif overrides:
+        config = PreprocessingFilterConfig(name="cli_config")
+    else:
+        return None
+    if overrides:
+        config.apply_overrides(overrides)
+    return config
+
+
+def _resolved_filter_thresholds(
+    ctx: click.Context,
+    config: PreprocessingFilterConfig | None,
+) -> tuple[int, int]:
+    if ctx.params["filter_min_unique_peptides"] is not None and _command_line_value(
+        ctx, "min_unique"
+    ):
+        raise click.UsageError(
+            "Choose either --min_unique or --filter-min-unique-peptides, not both"
+        )
+    min_aa = ctx.params["min_aa"]
+    min_unique = ctx.params["min_unique"]
+    if config is not None and not _command_line_value(ctx, "min_aa"):
+        min_aa = config.peptide.min_peptide_length
+    if config is not None and not _command_line_value(ctx, "min_unique"):
+        min_unique = config.protein.min_unique_peptides
+    return min_aa, min_unique
 
 
 @click.command("features2peptides", short_help="Convert features to parquet file.")
@@ -20,7 +128,7 @@ from mokume.model.filters import PreprocessingFilterConfig
     "-p",
     "--parquet",
     help="Parquet file import generated by quantms.io",
-    required=True,
+    required=False,
     type=click.Path(exists=True),
 )
 @click.option(
@@ -78,24 +186,25 @@ from mokume.model.filters import PreprocessingFilterConfig
 @click.option(
     "--run-normalization",
     "run_normalization",
-    help="Normalization method for technical replicates/runs within each sample (options: mean, median, iqr, none)",
+    help="Normalization method for technical replicates/runs within each sample",
     default="median",
     type=click.Choice(
-        [f.name.lower() for f in FeatureNormalizationMethod], case_sensitive=False
+        ["none", "mean", "median", "max", "global", "iqr"],
+        case_sensitive=False,
     ),
 )
 @click.option(
     "--sample-normalization",
     "sample_normalization",
-    help="Normalization method for samples relative to each other (options: globalMedian, conditionMedian, hierarchical)",
+    help="Streaming sample normalization method",
     default="globalMedian",
     type=click.Choice(
-        [p.name.lower() for p in PeptideNormalizationMethod], case_sensitive=False
+        ["none", "globalmedian", "conditionmedian"], case_sensitive=False
     ),
 )
 @click.option(
     "--log2",
-    help="Transform to log2 the peptide intensity values before normalization",
+    help="Transform normalized peptide intensities to log2 before writing",
     is_flag=True,
 )
 @click.option(
@@ -188,12 +297,6 @@ from mokume.model.filters import PreprocessingFilterConfig
     type=int,
     help="Override: minimum identified features per run",
 )
-@click.option(
-    "--filter-max-missing-rate",
-    "filter_max_missing_rate",
-    type=float,
-    help="Override: maximum missing rate per run (0.0-1.0)",
-)
 @click.pass_context
 def features2parquet(
     ctx,
@@ -226,7 +329,6 @@ def features2parquet(
     filter_exclude_modifications: str,
     filter_min_unique_peptides: int,
     filter_min_features: int,
-    filter_max_missing_rate: float,
 ) -> None:
     """
     Convert feature data to a parquet file with optional normalization and filtering steps.
@@ -234,46 +336,14 @@ def features2parquet(
     Supports filter configuration via YAML/JSON files or CLI overrides.
     Use --generate-filter-config to create an example configuration file.
     """
-    # Handle --generate-filter-config
     if generate_filter_config:
         generate_example_config(generate_filter_config)
         click.echo(f"Generated example filter config at: {generate_filter_config}")
-        sys.exit(0)
+        return
 
-    # Build filter overrides dict from CLI options
-    filter_overrides = {}
-    if filter_min_intensity is not None:
-        filter_overrides["min_intensity"] = filter_min_intensity
-    if filter_cv_threshold is not None:
-        filter_overrides["cv_threshold"] = filter_cv_threshold
-    if filter_charge_states is not None:
-        filter_overrides["charge_states"] = [
-            int(x.strip()) for x in filter_charge_states.split(",")
-        ]
-    if filter_max_missed_cleavages is not None:
-        filter_overrides["max_missed_cleavages"] = filter_max_missed_cleavages
-    if filter_exclude_modifications is not None:
-        filter_overrides["exclude_modifications"] = [
-            x.strip() for x in filter_exclude_modifications.split(",")
-        ]
-    if filter_min_unique_peptides is not None:
-        filter_overrides["min_unique_peptides"] = filter_min_unique_peptides
-    if filter_min_features is not None:
-        filter_overrides["min_features"] = filter_min_features
-    if filter_max_missing_rate is not None:
-        filter_overrides["max_missing_rate"] = filter_max_missing_rate
-
-    # Load filter config if provided
-    preprocessing_config = None
-    if filter_config:
-        preprocessing_config = load_filter_config(filter_config)
-        # Apply CLI overrides
-        if filter_overrides:
-            preprocessing_config.apply_overrides(filter_overrides)
-    elif filter_overrides:
-        # Create config from overrides only
-        preprocessing_config = PreprocessingFilterConfig(name="cli_config")
-        preprocessing_config.apply_overrides(filter_overrides)
+    _validate_features2peptides_options(ctx)
+    preprocessing_config = _preprocessing_config(ctx)
+    min_aa, min_unique = _resolved_filter_thresholds(ctx, preprocessing_config)
 
     peptide_normalization(
         parquet=parquet,

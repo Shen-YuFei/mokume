@@ -114,6 +114,7 @@ class TestFilterConfigurations:
             {
                 "min_intensity": 500.0,
                 "cv_threshold": 0.25,
+                "min_replicate_agreement": 2,
                 "charge_states": [2, 3],
                 "min_unique_peptides": 3,
                 "max_missing_rate": 0.4,
@@ -122,9 +123,72 @@ class TestFilterConfigurations:
 
         assert config.intensity.min_intensity == 500.0
         assert config.intensity.cv_threshold == 0.25
+        assert config.intensity.min_replicate_agreement == 2
         assert config.peptide.allowed_charge_states == [2, 3]
         assert config.protein.min_unique_peptides == 3
         assert config.run_qc.max_missing_rate == 0.4
+
+    def test_unknown_top_level_key_is_rejected(self):
+        """A misspelled config key must not become a silent no-op."""
+        with pytest.raises(ValueError, match="Unknown preprocessing filter keys"):
+            PreprocessingFilterConfig.from_dict({"min_intensitty": 100.0})
+
+    @pytest.mark.parametrize(
+        ("section", "key"),
+        [
+            (None, "strict_mode"),
+            ("intensity", "remove_zero_intensity"),
+            ("peptide", "min_search_score"),
+            ("peptide", "fdr_threshold"),
+            ("peptide", "require_unique_peptides"),
+            ("protein", "fdr_threshold"),
+            ("protein", "min_coverage"),
+            ("protein", "protein_grouping"),
+            ("run_qc", "min_sample_correlation"),
+        ],
+    )
+    def test_unimplemented_filter_options_are_rejected(self, section, key):
+        """Filter configs must reject options with no execution path."""
+        data = {key: False} if section is None else {section: {key: False}}
+
+        with pytest.raises((TypeError, ValueError)):
+            PreprocessingFilterConfig.from_dict(data)
+
+    @pytest.mark.parametrize(
+        ("remove_contaminants", "remove_decoys", "removed", "retained"),
+        [
+            (False, True, "DECOY_P1", "CONTAMINANT_P2"),
+            (True, False, "CONTAMINANT_P2", "DECOY_P1"),
+        ],
+    )
+    def test_contaminant_and_decoy_switches_are_independent(
+        self,
+        remove_contaminants,
+        remove_decoys,
+        removed,
+        retained,
+    ):
+        """Each protein-filter switch changes the applied pattern set."""
+        import pandas as pd
+
+        config = PreprocessingFilterConfig(name="pattern_switch")
+        config.protein.remove_contaminants = remove_contaminants
+        config.protein.remove_decoys = remove_decoys
+        pipeline = get_filter_pipeline(config)
+        contaminant_filter = next(
+            item for item in pipeline.filters if item.name == "ContaminantFilter"
+        )
+        frame = pd.DataFrame(
+            {
+                "ProteinName": ["DECOY_P1", "CONTAMINANT_P2", "P3"],
+                "PeptideCanonical": ["PEPTIDEA", "PEPTIDEB", "PEPTIDEC"],
+            }
+        )
+
+        filtered, _result = contaminant_filter.apply(frame)
+
+        assert removed not in set(filtered["ProteinName"])
+        assert retained in set(filtered["ProteinName"])
 
 
 class TestFilterPipeline:
@@ -161,3 +225,97 @@ class TestFilterPipeline:
         filter_names = [f.name for f in pipeline.filters]
         assert "ContaminantFilter" in filter_names
         assert "MinPeptideFilter" in filter_names
+
+    def test_min_peptides_is_applied_when_stricter_than_unique_threshold(self):
+        """The total-peptide threshold must not be ignored when sequences exist."""
+        import pandas as pd
+
+        config = PreprocessingFilterConfig(name="min_peptide_threshold")
+        config.protein.remove_contaminants = False
+        config.protein.remove_decoys = False
+        config.protein.min_peptides = 3
+        config.protein.min_unique_peptides = 1
+        pipeline = get_filter_pipeline(config)
+        peptide_filter = next(
+            item for item in pipeline.filters if item.name == "MinPeptideFilter"
+        )
+        frame = pd.DataFrame(
+            {
+                "ProteinName": ["P1", "P1", "P2", "P2", "P2"],
+                "PeptideCanonical": ["A", "B", "A", "B", "C"],
+            }
+        )
+
+        filtered, _result = peptide_filter.apply(frame)
+
+        assert set(filtered["ProteinName"]) == {"P2"}
+
+    def test_replicate_agreement_counts_technical_replicates(self):
+        """Per-sample filtering must not group on the constant SampleID."""
+        import pandas as pd
+
+        config = PreprocessingFilterConfig(name="replicate_agreement")
+        config.intensity.min_replicate_agreement = 2
+        pipeline = get_filter_pipeline(config)
+        replicate_filter = next(
+            item for item in pipeline.filters if item.name == "ReplicateAgreementFilter"
+        )
+        frame = pd.DataFrame(
+            {
+                "ProteinName": ["P1", "P1", "P2"],
+                "PeptideCanonical": ["A", "A", "B"],
+                "Condition": ["control", "control", "control"],
+                "TechReplicate": [1, 2, 1],
+                "NormIntensity": [10.0, 11.0, 12.0],
+            }
+        )
+
+        filtered, _result = replicate_filter.apply(frame)
+
+        assert set(filtered["ProteinName"]) == {"P1"}
+
+    def test_missing_rate_uses_the_complete_feature_universe(self):
+        """Absent long-format rows must contribute to per-run missingness."""
+        import pandas as pd
+
+        config = PreprocessingFilterConfig(name="missing_rate")
+        config.run_qc.max_missing_rate = 0.4
+        pipeline = get_filter_pipeline(config)
+        missing_filter = next(
+            item for item in pipeline.filters if item.name == "MissingRateFilter"
+        )
+        frame = pd.DataFrame(
+            {
+                "ProteinName": ["P1", "P2", "P3", "P1"],
+                "PeptideCanonical": ["A", "B", "C", "A"],
+                "TechReplicate": [1, 1, 1, 2],
+                "NormIntensity": [10.0, 11.0, 12.0, 9.0],
+            }
+        )
+
+        filtered, _result = missing_filter.apply(frame)
+
+        assert set(filtered["TechReplicate"]) == {1}
+
+    def test_min_features_counts_distinct_features_per_technical_run(self):
+        """Duplicate rows must not inflate a run's identified-feature count."""
+        import pandas as pd
+
+        config = PreprocessingFilterConfig(name="min_features")
+        config.run_qc.min_identified_features = 3
+        pipeline = get_filter_pipeline(config)
+        feature_filter = next(
+            item for item in pipeline.filters if item.name == "MinFeaturesFilter"
+        )
+        frame = pd.DataFrame(
+            {
+                "ProteinName": ["P1", "P1", "P2", "P1", "P2", "P3"],
+                "PeptideCanonical": ["A", "A", "B", "A", "B", "C"],
+                "TechReplicate": [1, 1, 1, 2, 2, 2],
+                "NormIntensity": [10.0, 10.0, 11.0, 9.0, 12.0, 13.0],
+            }
+        )
+
+        filtered, _result = feature_filter.apply(frame)
+
+        assert set(filtered["TechReplicate"]) == {2}

@@ -213,7 +213,7 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
     if method_lower == "maxlfq":
         return __getattr__("MaxLFQQuantification")(
             min_peptides=kwargs.get("min_peptides", 2),
-            threads=kwargs.get("n_jobs", -1),
+            threads=kwargs.get("threads", kwargs.get("n_jobs", -1)),
             verbose=kwargs.get("verbose", 0),
         )
 

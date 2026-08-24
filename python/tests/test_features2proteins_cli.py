@@ -48,6 +48,11 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
             "--batch-mean-only",
             "--batch-ref",
             "2",
+            "--de",
+            "--de-contrasts",
+            "A vs B",
+            "--de-output",
+            "de.csv",
             "--de-fdr-method",
             "ihw",
         ],
@@ -92,7 +97,7 @@ def test_features2proteins_requires_batch_column_for_column_method(tmp_path):
 
 
 def test_features2proteins_preserves_empty_ensemble_members(monkeypatch, tmp_path):
-    parquet, _ = _make_input_files(tmp_path)
+    parquet, sdrf = _make_input_files(tmp_path)
     captured = {}
 
     def fake_run_pipeline(**kwargs):
@@ -108,6 +113,15 @@ def test_features2proteins_preserves_empty_ensemble_members(monkeypatch, tmp_pat
             parquet,
             "-o",
             "out.csv",
+            "-s",
+            sdrf,
+            "--de",
+            "--de-method",
+            "ensemble",
+            "--de-contrasts",
+            "A vs B",
+            "--de-output",
+            "de.csv",
             "--de-ensemble-methods",
             "",
         ],
@@ -115,6 +129,35 @@ def test_features2proteins_preserves_empty_ensemble_members(monkeypatch, tmp_pat
 
     assert result.exit_code == 0
     assert captured["de_ensemble_methods"] == [""]
+
+
+def test_features2proteins_rejects_ensemble_k_for_single_method(tmp_path):
+    parquet, sdrf = _make_input_files(tmp_path)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "-s",
+            sdrf,
+            "--de",
+            "--de-method",
+            "limma",
+            "--de-contrasts",
+            "A vs B",
+            "--de-output",
+            "de.csv",
+            "--de-ensemble-min-k",
+            "2",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "require --de-method ensemble" in result.output
 
 
 def test_features2proteins_accepts_msstats_with_sdrf(monkeypatch, tmp_path):

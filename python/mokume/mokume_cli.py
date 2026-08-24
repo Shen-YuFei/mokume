@@ -56,6 +56,7 @@ def cli(log_level: str = "debug", log_file: Optional[Path] = None):
     logging.basicConfig(
         format="%(asctime)s [%(funcName)s] - %(message)s",
         level=LOG_LEVELS_TO_LEVELS[log_level.lower()],
+        force=True,
     )
     logging.captureWarnings(True)
 

@@ -223,7 +223,11 @@ def _sample_covariate_values(
                 if sample_id in sdrf_sample or sdrf_sample in sample_id:
                     value = sample_to_value.get(sdrf_sample)
                     break
-        values.append(value if value is not None else "unknown")
+        if value is None:
+            raise ValueError(
+                f"SDRF covariates have no sample matching matrix column '{sample_id}'"
+            )
+        values.append(value)
     return values
 
 
@@ -291,15 +295,13 @@ def extract_covariates_from_sdrf(
     try:
         sdrf = pd.read_csv(sdrf_path, sep="\t")
     except Exception as e:
-        logger.warning("Failed to read SDRF file: %s", e)
-        return None
+        raise ValueError(f"Failed to read SDRF file: {e}") from e
 
     sdrf.columns = [c.lower() for c in sdrf.columns]
 
     sample_col = _find_sdrf_sample_column(sdrf)
     if sample_col is None:
-        logger.warning("Could not find sample name column in SDRF")
-        return None
+        raise ValueError("Could not find sample name column in SDRF")
 
     sdrf_samples = sdrf[sample_col].tolist()
     covar_data = []
@@ -308,19 +310,16 @@ def extract_covariates_from_sdrf(
     for col in covariate_columns:
         matched_col = _match_sdrf_column(sdrf.columns, col)
         if matched_col is None:
-            logger.warning("Covariate column '%s' not found in SDRF, skipping", col)
-            continue
+            raise ValueError(f"Covariate column '{col}' not found in SDRF")
 
         sample_to_value = dict(zip(sdrf[sample_col], sdrf[matched_col]))
         values = _sample_covariate_values(sample_ids, sdrf_samples, sample_to_value)
 
         unique_values = set(values)
         if len(unique_values) <= 1:
-            logger.warning(
-                "Covariate '%s' has only one unique value, skipping (no information)",
-                col,
+            raise ValueError(
+                f"Covariate '{col}' has only one unique value and cannot affect ComBat"
             )
-            continue
 
         encoded, _ = pd.factorize(pd.array(values))
         covar_data.append(encoded.tolist())
@@ -330,7 +329,7 @@ def extract_covariates_from_sdrf(
         )
 
     if not covar_data:
-        return None
+        raise ValueError("No usable batch covariates were produced")
 
     n_samples = len(sample_ids)
     n_covariates = len(covar_data)
@@ -358,7 +357,8 @@ def remove_single_sample_batches(df: pd.DataFrame, batch: list) -> pd.DataFrame:
 class TooFewSamplesInBatch(ValueError):
     def __init__(self, batches):
         super().__init__(
-            f"Batches must contain at least two samples, the following batch factors did not: {batches}"
+            "Batches must contain at least two samples, the following batch "
+            f"factors did not: {batches}"
         )
 
 

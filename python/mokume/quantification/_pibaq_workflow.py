@@ -252,13 +252,19 @@ def _resolve_organism(name: str) -> Optional[OrganismDescription]:
 def _validate_ruler_request(request: _PeptidesToProteinRequest) -> None:
     """Validate the four inputs required by the proteomic ruler."""
     options = request.postprocess
-    if options.ruler and not all(
-        (options.ploidy, options.cpc, options.organism, options.tpa)
+    if options.ruler and (
+        not options.tpa
+        or options.ploidy <= 0
+        or options.cpc <= 0
+        or not options.organism
     ):
         raise ValueError(
-            "Arguments `ploidy`, `cpc`, `organism` and `tpa` are required "
-            "for calculate protein weight(ng) and concentration(nM)"
+            "Proteomic ruler requires --tpa, a positive ploidy/CPC, and an organism"
         )
+    if not options.ruler and (
+        options.ploidy != 2 or options.cpc != 200 or options.organism != "human"
+    ):
+        raise ValueError("ploidy, CPC, and organism only apply to proteomic ruler")
 
 
 def _load_peptide_data(path: str) -> DataFrame:
@@ -373,8 +379,12 @@ def _plot_pibaq_report(
 
 def _run_peptides_to_protein(request: _PeptidesToProteinRequest) -> None:
     """Execute the legacy driver after binding its public arguments."""
-    organism = _resolve_organism(request.postprocess.organism)
     _validate_ruler_request(request)
+    organism = (
+        _resolve_organism(request.postprocess.organism)
+        if request.postprocess.ruler
+        else None
+    )
     data = _load_peptide_data(request.source.peptides)
     result = _compute_pibaq_table(data, _table_request(request))
     result, plot_column = _postprocess_pibaq(result, request, organism)

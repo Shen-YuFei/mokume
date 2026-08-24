@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pandas as pd
+import yaml
 
+from mokume.commands.tissuemap import _build_config
 from mokume.tissuemap import loader
 from mokume.tissuemap.loader import (
     _aggregate_tmt_with_duckdb as aggregate_tmt_with_duckdb,
@@ -19,6 +21,30 @@ def _write_samples(tmp_path, rows: list[dict[str, str]]) -> None:
     qpx_dir = tmp_path / "qpx_output"
     qpx_dir.mkdir()
     pd.DataFrame(rows).to_parquet(qpx_dir / "TEST.sample.parquet", index=False)
+
+
+def test_cli_defaults_do_not_override_tissuemap_yaml(tmp_path):
+    """Omitted CLI options preserve scan_dir, output_dir, and n_jobs from YAML."""
+    scan_dir = tmp_path / "yaml-scan"
+    scan_dir.mkdir()
+    output_dir = tmp_path / "yaml-output"
+    config_path = tmp_path / "tissuemap.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "n_jobs": 17,
+                "input": {"scan_dir": str(scan_dir)},
+                "output": {"output_dir": str(output_dir)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = _build_config(None, None, config_path, (), None, None, None, None)
+
+    assert config.n_jobs == 17
+    assert config.input.scan_dir == scan_dir
+    assert config.output.output_dir == output_dir
 
 
 def test_detect_gis_from_qpx_pooled_sample_metadata(tmp_path):
