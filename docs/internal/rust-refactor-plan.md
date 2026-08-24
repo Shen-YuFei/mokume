@@ -529,8 +529,10 @@ Tasks:
   filtering, stable CSV ordering, and the `ProteinName`/`protein` output columns
   are covered by tests; `PXD003539 sum + none + none` is cell-for-cell
   identical, while full real-data parity has not yet been accepted.]
-- Remove the Rust `--memory` compatibility flag because the streaming path
-  cannot enforce it; document external cgroup/scheduler/container limits.
+- Restore `--memory` as a Linux soft-RSS planner/guard rather than a compatibility
+  no-op: reduce QPX batch/read-ahead memory, check RSS between batches/phases,
+  fail explicitly when aggregate state cannot fit, and document that external
+  cgroup/scheduler/container limits remain necessary for a hard ceiling.
 
 Acceptance:
 
@@ -915,8 +917,11 @@ Then extend to:
   aggregation, increasing IO cost.
 - FASTA is currently read fully into memory; a large FASTA carries a fixed memory
   pressure.
-- The Rust CLI no longer exposes `--memory`/`--duckdb-memory`; use an external
-  cgroup, scheduler, or container limit for process memory.
+- The Rust CLI exposes Linux-only `--memory` as a soft RSS planner/guard. It
+  reduces QPX batch/read-ahead memory and fails when a checkpoint observes an
+  over-budget process, but in-memory aggregation is not spilled and transient
+  overshoot remains possible. `--duckdb-memory` stays removed; use an external
+  cgroup, scheduler, or container limit for a hard ceiling.
 - Output ordering guarantees stability, but sorting a large matrix has a cost.
 - A real performance report must record both runtime and peak memory, not just
   wall time.

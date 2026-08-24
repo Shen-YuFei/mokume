@@ -9,11 +9,11 @@ use std::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use mokume_core::quant::parse_topn_from_method_name;
 use mokume_core::{
-    AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
-    IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig, MokumeError, NormalizationConfig,
-    OutputConfig, OutputFormat, PibaqConfig, PreprocessingFilterConfig, QuantMethod, RatioConfig,
-    RuntimeConfig,
+    parse_memory_to_bytes, AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig,
+    DirectLfqConfig, FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig,
+    ImputationConfig, InputConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
+    MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PibaqConfig,
+    PreprocessingFilterConfig, QuantMethod, RatioConfig, RuntimeConfig,
 };
 use mokume_pipeline::{
     resolve_irs_autodetect_channel, run_features_to_peptides, run_features_to_proteins,
@@ -590,6 +590,13 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     de_output: Option<PathBuf>,
 
     #[arg(
+        long = "memory",
+        value_parser = parse_memory,
+        help = "Linux-only soft process RSS budget (for example 1GB or 512MB); also reduces QPX batch/read-ahead memory"
+    )]
+    memory: Option<String>,
+
+    #[arg(
         long = "threads",
         visible_alias = "duckdb-threads",
         value_parser = parse_positive_usize
@@ -895,7 +902,7 @@ impl Features2ProteinsArgs {
                 output: self.de_output,
             },
             runtime: RuntimeConfig {
-                memory: None,
+                memory: self.memory,
                 threads: self.threads,
             },
         })
@@ -1061,6 +1068,14 @@ fn parse_nonzero_threads(value: &str) -> std::result::Result<i32, String> {
         return Err("invalid thread count `0`: expected a non-zero integer".to_owned());
     }
     Ok(threads)
+}
+
+fn parse_memory(value: &str) -> std::result::Result<String, String> {
+    parse_memory_to_bytes(value)
+        .map(|_| value.to_owned())
+        .map_err(|_| {
+            format!("invalid memory value `{value}`: expected a positive size such as 1GB or 512MB")
+        })
 }
 
 fn parse_positive_i32(value: &str) -> std::result::Result<i32, String> {
@@ -1833,6 +1848,8 @@ mod tests {
             "ihw",
             "--de-output",
             "de.csv",
+            "--memory",
+            "1GB",
             "--duckdb-threads",
             "24",
         ]);
@@ -1872,7 +1889,7 @@ mod tests {
         assert_eq!(config.imputation.method, "knn");
         assert!(config.differential_expression.enabled);
         assert_eq!(config.differential_expression.fdr_method, "ihw");
-        assert_eq!(config.runtime.memory, None);
+        assert_eq!(config.runtime.memory.as_deref(), Some("1GB"));
         assert_eq!(config.runtime.threads, Some(24));
     }
 
@@ -1899,6 +1916,25 @@ mod tests {
             "ibaq",
         ]);
         assert!(peptides.is_err());
+    }
+
+    #[test]
+    fn rejects_nonpositive_memory_budget() {
+        let parsed = Cli::try_parse_from([
+            "mokume",
+            "features2proteins",
+            "--parquet",
+            "input.parquet",
+            "--output",
+            "protein.csv",
+            "--memory",
+            "0GB",
+        ]);
+
+        let Err(error) = parsed else {
+            panic!("zero memory budget was accepted");
+        };
+        assert!(error.to_string().contains("invalid memory value `0GB`"));
     }
 
     #[test]
@@ -2200,6 +2236,7 @@ mod tests {
             "--de-fdr",
             "--de-fdr-method",
             "--de-output",
+            "--memory",
             "--duckdb-threads",
         ] {
             assert!(
@@ -2211,7 +2248,6 @@ mod tests {
         // must reject them now.
         for option in [
             "--ion-alignment",
-            "--memory",
             "--duckdb-memory",
             "--remove-contaminants",
             "--batch-parametric",

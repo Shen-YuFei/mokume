@@ -128,13 +128,22 @@ exclusive, so the requested worker count can never be shadowed:
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq \
-    --threads 24
+    --threads 24 \
+    --memory 1GB
 ```
 
-The Rust CLI does not expose a memory-limit flag because it cannot enforce one.
-Use an external cgroup, scheduler, or container limit when a hard ceiling is
-required. `--duckdb-threads` remains an alias for the effective Rayon
-`--threads` setting.
+On Linux, `--memory` sets a soft process RSS budget. It reduces the QPX Arrow
+batch size, disables read-ahead, and checks RSS after input batches and major
+pipeline phases. If in-memory aggregation state cannot fit, Mokume exits with a
+clear budget-exceeded error rather than silently ignoring the option. The guard
+can observe a transient overshoot only at the next checkpoint, and smaller
+synchronous batches may reduce throughput. Use an external cgroup, scheduler,
+or container limit when a hard ceiling is required.
+
+`--duckdb-memory` is intentionally not an alias: the Rust path does not use
+DuckDB. `--duckdb-threads` remains an alias for the effective Rayon `--threads`
+setting. Runtime pyOpenMS FASTA digestion for piBAQ occurs before the Rust
+pipeline starts, so it is not covered by `--memory`.
 
 ## Normalization Options
 

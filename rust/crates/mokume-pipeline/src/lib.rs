@@ -30,7 +30,10 @@ use tracing::{info, warn};
 mod de;
 pub mod filters;
 mod matrix;
+mod memory;
 mod threading;
+
+use memory::MemoryPlan;
 
 pub use de::{differential_expression_matrix, MatrixDifferentialExpressionResults};
 pub use matrix::{impute_matrix, normalize_matrix};
@@ -5010,6 +5013,21 @@ fn configured_threads(config: &FeatureToProteinsConfig) -> Option<usize> {
     })
 }
 
+fn initialize_memory_plan(runtime: &RuntimeConfig) -> Result<MemoryPlan> {
+    let memory = MemoryPlan::from_runtime(runtime)?;
+    memory.check("startup")?;
+    if let Some(limit_bytes) = memory.limit_bytes() {
+        info!(
+            limit_bytes,
+            qpx_batch_size = memory.qpx_batch_size(),
+            qpx_window = memory.qpx_window(),
+            qpx_read_ahead = memory.channel_capacity(),
+            "using soft runtime memory budget"
+        );
+    }
+    Ok(memory)
+}
+
 fn run_features_to_proteins_inner(
     config: &FeatureToProteinsConfig,
     pibaq_digest: Option<PibaqDigest>,
@@ -5028,6 +5046,7 @@ fn run_features_to_proteins_inner(
     validate_de_ensemble_options(config)?;
     validate_features_to_proteins(config)?;
     validate_implemented_subset(config)?;
+    let memory = initialize_memory_plan(&config.runtime)?;
     let sdrf = config
         .input
         .sdrf
@@ -5049,14 +5068,17 @@ fn run_features_to_proteins_inner(
         sdrf.as_ref(),
         &[],
         config.quantification == QuantMethod::Pibaq,
+        &memory,
     )?;
+    memory.check("normalization pre-pass")?;
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let dataset_normalization = dataset_sample_normalization_method(config)?;
     let mut state =
         FeatureToProteinState::new(config, sdrf.as_ref(), raw_sdrf.as_ref(), pibaq_digest)?;
-    stream_input_features(&config.input, sdrf.as_ref(), |feature| {
+    stream_input_features(&config.input, sdrf.as_ref(), &memory, |feature| {
         state.ingest(&feature, sdrf.as_ref(), config.filtering, intensity_factors)
     })?;
+    memory.check("feature aggregation")?;
 
     info!(
         accepted_features = state.accepted_features,
@@ -5082,6 +5104,7 @@ fn run_features_to_proteins_inner(
         dataset_normalization,
     )?;
     let mut matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
+    memory.check("protein matrix materialization")?;
     let drop_empty_samples = config.quantification == QuantMethod::Ratio;
     if config.irs.enabled {
         matrix.apply_irs(sdrf.as_ref(), raw_sdrf.as_ref(), &config.irs)?;
@@ -5099,6 +5122,7 @@ fn run_features_to_proteins_inner(
             drop_empty_samples,
         )?;
     }
+    memory.check("matrix post-processing")?;
     // Missing protein x sample cells follow Python's per-method convention: the
     // additive methods write `0`, the average/ratio methods leave the cell empty.
     let missing_fill = match config.quantification {
@@ -5382,6 +5406,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             sdrf.as_ref(),
             median_contaminant_patterns,
             config.keep_shared_peptides,
+            &MemoryPlan::unlimited(),
         )?
     };
     // The IRS pre-pass reuses the median pre-pass's contaminant settings.
@@ -5661,23 +5686,58 @@ fn stream_qpx_features<F>(mut reader: QpxParquetReader, mut consume: F) -> Resul
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
-    // Batches flattened together per window; bounds the Rayon fan-out and the
-    // number of decoded batches held in memory at once. Two batches are enough
-    // to keep the background reader ahead of the serial consumer (the
-    // wall-clock bottleneck); larger windows add little speed but cost
-    // proportionally more transient memory.
-    const WINDOW: usize = 2;
-    // Bounded channel applies backpressure so the background reader stays at
-    // most one window ahead of the consumer, keeping transient memory low.
-    const CHANNEL_CAPACITY: usize = 1;
+    stream_qpx_features_with_plan(&mut reader, &MemoryPlan::unlimited(), &mut consume)
+}
 
-    let (tx, rx) =
-        std::sync::mpsc::sync_channel::<Result<Vec<mokume_io::RecordBatch>>>(CHANNEL_CAPACITY);
+fn stream_qpx_features_with_plan<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    if memory.channel_capacity() == 0 {
+        stream_qpx_features_synchronously(reader, memory, consume)
+    } else {
+        stream_qpx_features_buffered(reader, memory, consume)
+    }
+}
+
+fn stream_qpx_features_synchronously<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    while let Some(batch) = reader.next_raw_batch() {
+        for feature in mokume_io::flatten_qpx_batch(&batch?)? {
+            consume(feature)?;
+        }
+        memory.check("QPX streaming")?;
+    }
+    Ok(())
+}
+
+fn stream_qpx_features_buffered<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    let window_size = memory.qpx_window();
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<mokume_io::RecordBatch>>>(
+        memory.channel_capacity(),
+    );
 
     std::thread::scope(|scope| -> Result<()> {
         scope.spawn(move || loop {
-            let mut window: Vec<mokume_io::RecordBatch> = Vec::with_capacity(WINDOW);
-            for _ in 0..WINDOW {
+            let mut window: Vec<mokume_io::RecordBatch> = Vec::with_capacity(window_size);
+            for _ in 0..window_size {
                 match reader.next_raw_batch() {
                     Some(Ok(batch)) => window.push(batch),
                     Some(Err(error)) => {
@@ -5695,24 +5755,42 @@ where
             }
         });
 
-        for message in &rx {
-            let flattened: Result<Vec<Vec<QpxFeatureRecord>>> = message?
-                .into_par_iter()
-                .map(|batch| mokume_io::flatten_qpx_batch(&batch))
-                .collect();
-            for features in flattened? {
-                for feature in features {
-                    consume(feature)?;
-                }
-            }
-        }
-        Ok(())
+        let result = consume_qpx_windows(&rx, memory, consume);
+        // A consumer or RSS-budget error must drop the receiver before the
+        // scoped reader thread is joined. This wakes a sender blocked by the
+        // bounded channel instead of deadlocking on scope exit.
+        drop(rx);
+        result
     })
+}
+
+fn consume_qpx_windows<F>(
+    receiver: &std::sync::mpsc::Receiver<Result<Vec<mokume_io::RecordBatch>>>,
+    memory: &MemoryPlan,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    for message in receiver {
+        let flattened: Result<Vec<Vec<QpxFeatureRecord>>> = message?
+            .into_par_iter()
+            .map(|batch| mokume_io::flatten_qpx_batch(&batch))
+            .collect();
+        for features in flattened? {
+            for feature in features {
+                consume(feature)?;
+            }
+            memory.check("QPX streaming")?;
+        }
+    }
+    Ok(())
 }
 
 fn stream_input_features<F>(
     input: &InputConfig,
     sdrf: Option<&SdrfTable>,
+    memory: &MemoryPlan,
     mut consume: F,
 ) -> Result<()>
 where
@@ -5720,13 +5798,16 @@ where
 {
     match (&input.parquet, &input.msstats) {
         (Some(parquet), None) => {
-            let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-            stream_qpx_features(reader, consume)
+            let mut reader = QpxParquetReader::open(parquet, memory.qpx_batch_size())?;
+            stream_qpx_features_with_plan(&mut reader, memory, &mut consume)
         }
         (None, Some(msstats)) => {
             let sdrf = sdrf.ok_or_else(|| invalid_input("MSstats input requires --sdrf option"))?;
-            for feature in MsstatsReader::open(msstats, sdrf)? {
+            for (index, feature) in MsstatsReader::open(msstats, sdrf)?.enumerate() {
                 consume(feature?)?;
+                if index % 4096 == 0 {
+                    memory.check("MSstats streaming")?;
+                }
             }
             Ok(())
         }
@@ -5971,9 +6052,6 @@ fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
 }
 
 fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
-    if config.runtime.memory.is_some() {
-        return unsupported("runtime memory limit");
-    }
     if config.runtime.threads == Some(0) || config.directlfq.cores == Some(0) {
         return Err(invalid_input("thread counts must be greater than zero"));
     }
@@ -7075,6 +7153,7 @@ fn collect_intensity_factors(
     sdrf: Option<&SdrfTable>,
     contaminant_patterns: &[String],
     keep_shared_peptides: bool,
+    memory: &MemoryPlan,
 ) -> Result<IntensityFactors> {
     if matches!(
         config.quantification,
@@ -7118,7 +7197,7 @@ fn collect_intensity_factors(
     // forwards the `--keep-shared-peptides` flag from `FeatureToPeptidesConfig`,
     // which `peptide_export_config` cannot represent (it pins quantification to
     // `Sum`, so the old in-function `== Pibaq` derivation always read `false`).
-    stream_input_features(&config.input, sdrf, |feature| {
+    stream_input_features(&config.input, sdrf, memory, |feature| {
         collector.push(feature, config.filtering, keep_shared_peptides)
     })?;
     if collector.normalization_proteins.is_some()

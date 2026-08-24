@@ -217,9 +217,20 @@ represent the normalized protein matrix.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--threads` | Rayon default | Size the Rayon thread pool used by parallel Rust sections; alias: `--duckdb-threads` |
+| `--memory` | none | Linux-only soft process RSS budget, such as `512MB` or `1GB`; reduces QPX batch size/read-ahead and fails when a checkpoint observes RSS above the budget |
 
-The Rust stream does not expose a memory-limit option because it cannot enforce
-one. Use systemd/cgroup, SLURM, or container resource limits for a hard ceiling.
+`--memory` is a planner and runtime guard, not an operating-system hard limit.
+The Rust pipeline checks Linux `VmRSS` at startup, after decoded input batches,
+and between major phases. A batch may transiently cross the requested value,
+and dataset-sized aggregation state is not spilled to disk; if that state no
+longer fits, the command exits with an explicit error instead of continuing to
+grow unchecked. The smaller synchronous batches may reduce throughput. Use
+systemd/cgroup, SLURM, or container limits when the process must never exceed a
+hard ceiling.
+
+`--duckdb-memory` is not an alias because the Rust path does not use DuckDB.
+For piBAQ, runtime pyOpenMS FASTA digestion happens before dispatch to the Rust
+pipeline and therefore lies outside this soft budget.
 
 ---
 
