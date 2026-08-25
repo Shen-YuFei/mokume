@@ -34,7 +34,7 @@ Covers all three surfaces and how the quant method is selected.
 ### [Differential Expression](differential-expression.md)
 
 Test proteins for abundance changes between conditions. Covers the kernel's
-`--de` flags, the Python `DifferentialExpression` class, standalone `run_*`
+`--de-contrast` flags, the Python `DifferentialExpression` class, standalone `run_*`
 functions, and the separate Mokume Plugin workflow.
 
 ### [Absolute Expression](absolute-expression.md)

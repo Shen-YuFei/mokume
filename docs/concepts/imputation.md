@@ -9,7 +9,7 @@ missingness very differently, so imputation is often required.
 
 mokume runs imputation in the native Rust kernel **after** coverage
 filtering and **before** batch correction in the `features2proteins`
-pipeline (the `--impute` flag), plus a wheel-only standalone helper
+pipeline (selecting `--impute-method` enables it), plus a wheel-only standalone helper
 `mokume.impute` for the methods the kernel does not reproduce.
 
 ## Pipeline Position
@@ -46,8 +46,8 @@ intensities, `shift` is `--impute-shift` standard deviations and
 `sigma_scaled = sample_sd * --impute-scale`.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method minprob \
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method minprob \
     --impute-quantile 0.01 --impute-shift 1.6 --impute-scale 0.3
 ```
 
@@ -58,8 +58,8 @@ quantile of that sample's observed values. More conservative than
 MinProb because it does not introduce sample-level variance.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method mindet --impute-quantile 0.01
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method mindet --impute-quantile 0.01
 ```
 
 ### QRILC
@@ -70,8 +70,8 @@ values from the truncated lower tail. Theoretically more principled
 than MinProb when the MNAR assumption holds.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method qrilc
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method qrilc
 ```
 
 ## Local-Similarity Methods
@@ -82,8 +82,8 @@ mokume features2proteins -p data.parquet -o out.csv \
 per-protein vectors across samples; suitable when proteins co-vary.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method knn --impute-n-neighbors 5
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method knn --impute-n-neighbors 5
 ```
 
 ### SeqKNN
@@ -93,8 +93,8 @@ using already-imputed values as features for the next step (Kim et al.
 2004). Runs natively in the Rust kernel.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method seqknn --impute-n-neighbors 5
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method seqknn --impute-n-neighbors 5
 ```
 
 ## Iterative Model Methods
@@ -121,8 +121,8 @@ Runs natively in the Rust kernel. In the OpDEA benchmark BPCA is a top-tier
 imputer (best on MaxQuant TMT).
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method bpca
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method bpca
 ```
 
 ### GMS
@@ -133,8 +133,8 @@ Runs natively in the Rust kernel. In the OpDEA benchmark GMS is the
 best-performing imputer for FragPipe TMT data.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method gms
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method gms
 ```
 
 ### impSeq / impSeqRob
@@ -144,8 +144,8 @@ ordering of the rrcovNA package; `impseqrob` uses MCD-based robust
 regression to resist outliers. Both run natively in the Rust kernel.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --impute --impute-method impseq   # or: impseqrob
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --impute-method impseq   # or: impseqrob
 ```
 
 ## Choosing a Method
@@ -188,7 +188,7 @@ mokume.impute("proteins.csv", method="knn", n_neighbors=5, output="imputed.csv")
 mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
 ```
 
-The same methods run inside the pipeline via `--impute --impute-method <name>`,
+The same methods run inside the pipeline via `--impute-method <name>`,
 which is the single-sourced path for the kernel-ported imputers.
 
 ## Caveats

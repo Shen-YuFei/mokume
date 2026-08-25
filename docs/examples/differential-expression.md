@@ -4,13 +4,13 @@ Test proteins for abundance changes between two conditions. mokume offers severa
 DE methods — `limma`, `deqms`, `proda`, `limrots`, `rots`, a top-k `ensemble`, and
 `auto` (pick a method from the data shape) — reachable from three surfaces:
 
-- the kernel's `features2proteins --de ...` flags (single-sourced Rust);
+- the kernel's `mokume quantify features2proteins` DE flags (single-sourced Rust);
 - the pure-Python `mokume.analysis.DifferentialExpression` class and the
   standalone `run_deqms` / `run_limma` / `run_limrots` / `run_proda` functions;
 - the Mokume Plugin, which binds traceable evidence and evaluates bounded
   preprocessing + DE candidates through the Rust kernel.
 
-## (a) Kernel DE via `features2proteins --de`
+## (a) Kernel DE via `mokume quantify features2proteins`
 
 The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
 (named from `--de-output`). A contrast is written `GroupA vs GroupB` (or
@@ -20,22 +20,22 @@ The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
 
     ```bash
     # One inline contrast, limma, one result CSV per contrast
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \
         --quant-method maxlfq \
-        --de --de-contrasts "NASH vs HL" \
+        --de-contrast "NASH" "HL" \
         --de-method limma \
         --de-fdr-method bh \
         --de-output de_results.csv
 
     # Many contrasts from a TSV file (columns: group1<TAB>group2)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \
-        --de --de-contrasts-file contrasts.tsv \
+        --de-contrast-file contrasts.tsv \
         --de-method ensemble \
         --de-output de_results.csv
     ```
@@ -54,14 +54,13 @@ The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
     ```python
     import mokume
 
-    # de_contrasts takes a list; each entry is "GroupA vs GroupB".
+    # de_contrast takes a list of two-item condition pairs.
     mokume.features2proteins(
         parquet="features.parquet",
         output="proteins.csv",
         sdrf="experiment.sdrf.tsv",
         quant_method="maxlfq",
-        de=True,
-        de_contrasts=["NASH vs HL"],
+        de_contrast=[("NASH", "HL")],
         de_method="limma",
         de_fdr_method="bh",
         de_output="de_results.csv",
@@ -72,8 +71,7 @@ The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
         parquet="features.parquet",
         output="proteins.csv",
         sdrf="experiment.sdrf.tsv",
-        de=True,
-        de_contrasts_file="contrasts.tsv",
+        de_contrast_file="contrasts.tsv",
         de_method="ensemble",
         de_output="de_results.csv",
     )

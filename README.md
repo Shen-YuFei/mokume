@@ -82,7 +82,7 @@ pip install "mokume[all]"        # all Python periphery dependencies
 
 The installed `mokume --help` lists both the Rust-native compute commands and
 the optional wheel workflows. After installing the matching extra, run
-`mokume tsne-visualization`, `mokume tissuemap`, `mokume de-plots`, or
+`mokume plot tsne`, `mokume tissuemap`, `mokume plot de`, or
 `mokume interactive-report` directly.
 
 The optional Plugin/MCP workflow requires Python 3.10 or newer.
@@ -99,7 +99,7 @@ See [Installation](docs/installation.md).
 Run the full pipeline from a quantms feature table to a protein matrix:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet features.parquet \
   --sdrf samples.sdrf.tsv \
   --quant-method maxlfq \
@@ -110,15 +110,16 @@ mokume features2proteins \
 > Starting with 0.2.0, `mokume` is Rust-backed and the pure-Python package is
 > named `mokume-py`.
 
-Add differential expression by passing `--de` with one or more contrasts:
+Add differential expression by passing one or more contrasts; a DE option
+enables the stage directly:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet features.parquet \
   --sdrf samples.sdrf.tsv \
   --quant-method maxlfq \
-  --de --de-contrasts "Treatment-Control" \
-  --output proteins.csv
+  --de-contrast "Treatment" "Control" \
+  --output proteins.csv --de-output de_results.csv
 ```
 
 Both computation implementations expose the `features2proteins` command, but
@@ -152,7 +153,7 @@ the analysis. Each snippet is a complete run; deeper options are one link away.
 `directlfq`, `top3` / `top5` / any `top<N>`, `sum`, ...):
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet features.parquet --sdrf samples.sdrf.tsv \
   --quant-method maxlfq \
   --output proteins.csv
@@ -162,21 +163,21 @@ mokume features2proteins \
 ProteomicRuler abundances instead of relative intensities:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet features.parquet --sdrf samples.sdrf.tsv \
   --quant-method pibaq --fasta proteome.fasta \
   --output proteins_pibaq.csv
 ```
 
-**Differential expression** — append `--de` and one or more contrasts to any of
+**Differential expression** — append one or more contrasts to any of
 the above (see [Differential expression](#differential-expression) for methods
 and FDR control):
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet features.parquet --sdrf samples.sdrf.tsv \
   --quant-method maxlfq \
-  --de --de-contrasts "Treatment-Control" \
+  --de-contrast "Treatment" "Control" \
   --output proteins.csv --de-output de_results
 ```
 
@@ -205,9 +206,9 @@ Runnable examples per analysis: [quantification methods](docs/examples/quantific
 
 | Command | What it does |
 | --- | --- |
-| `features2proteins` | Full pipeline: feature table → protein quantification matrix |
-| `features2peptides` | Aggregate features to peptide-level intensities |
-| `peptides2protein` | Roll peptide intensities up to protein quantities |
+| `quantify features2proteins` | Full pipeline: feature table → protein quantification matrix |
+| `quantify features2peptides` | Aggregate features to peptide-level intensities |
+| `quantify peptides2protein` | Roll peptide intensities up to protein quantities |
 | `correct-batches` | Standalone ComBat batch correction (with AnnData export) |
 
 ## Quantification and methods
@@ -215,13 +216,13 @@ Runnable examples per analysis: [quantification methods](docs/examples/quantific
 `features2proteins` runs these stages in order:
 
 <p align="center">
-  <img src="docs/assets/pipeline.svg" alt="The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
+  <img src="docs/assets/pipeline.svg" alt="The mokume quantify features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
 </p>
 
 - **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top<N>` (`top3`, `top5`,
   `top10`, ... — the N is part of the method name), `sum` (also `median`,
-  `ratio`, `abd`, `intensity`, `peptide_count`, `spectral_count`). `peptide_count`
-  counts distinct canonical peptides from feature QPX; true `spectral_count`
+  `ratio`, `abd`, `intensity`, `peptide-count`, `spectral-count`). `peptide-count`
+  counts distinct canonical peptides from feature QPX; true `spectral-count`
   reads PSM QPX with `--psm` and deduplicates `(run_file_name, scan)`. piBAQ
   requires a FASTA; TopN, MaxLFQ, and Sum do not. The two count methods reject
   intensity normalization and IRS rather than silently accepting no-op scaling.

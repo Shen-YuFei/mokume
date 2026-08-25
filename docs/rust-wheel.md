@@ -15,7 +15,7 @@ executable.
 === "Console command"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
       --parquet features.parquet \
       --sdrf experiment.sdrf.tsv \
       --output proteins.csv \
@@ -43,6 +43,7 @@ executable.
     import mokume
 
     mokume.run([
+        "quantify",
         "features2proteins",
         "--parquet", "features.parquet",
         "--sdrf", "experiment.sdrf.tsv",
@@ -59,7 +60,7 @@ executable.
 | Shell pipelines and CI | `mokume` console command |
 | Python scripting | `mokume.features2proteins(...)` or another keyword wrapper |
 | Flags not expressible as keyword arguments | `mokume.run([...])` |
-| Plots | `mokume tsne-visualization` or `mokume de-plots` |
+| Plots | `mokume plot tsne`, `mokume plot pca`, or `mokume plot de` |
 | Tissue proteome maps | `mokume tissuemap` |
 | Interactive HTML DE report | `mokume interactive-report` |
 | piBAQ QC report PDF | `mokume.peptides2protein_qc` |
@@ -67,7 +68,8 @@ executable.
 | piBAQ with any installed pyOpenMS protease | `mokume.peptides2protein(...)` or `mokume.features2proteins(...)` |
 | Agent-host method recommendation | Mokume Plugin + local MCP service |
 
-The unified wheel CLI separates four Rust-native compute commands from its
+The unified wheel CLI groups three Rust-native quantification commands under
+`mokume quantify`, alongside standalone batch correction and the
 optional Python periphery commands. The latter are still part of the installed
 `mokume` command, but they do not move plotting or TissueMap computation into
 Rust. The hidden `mokume mcp serve` service belongs to the `agentic` extra and
@@ -83,14 +85,14 @@ and then translate them into command flags:
 | --- | --- |
 | `key="value"` | `--key value` (`_` becomes `-`) |
 | `key=True` | `--key` |
-| a CSV-valued `key=[a, b]` | `--key a,b` |
 | a repeatable `key=[a, b]` | `--key a --key b` |
+| a paired repeatable `key=[(a, b)]` | `--key a b` |
 | `key=None` or `key=False` | skipped |
 
 For example, `quant_method="maxlfq"` becomes `--quant-method maxlfq` and
-`de_contrasts=["A vs B", "C vs D"]` becomes
-`--de-contrasts "A vs B,C vs D"`. Compatibility aliases and inverted booleans
-are explicit; unknown keywords and list values on scalar-only fields raise
+`de_contrast=[("A", "B"), ("C", "D")]` becomes repeated
+`--de-contrast A B` flags. The wrapper accepts only canonical names; unknown
+keywords and list values on scalar-only fields raise
 `TypeError` before kernel dispatch.
 
 ## Capability locations
@@ -104,7 +106,7 @@ are explicit; unknown keywords and list values on scalar-only fields raise
 | Matrix normalization | Rust kernel | `mokume.normalize_matrix` |
 | Matrix imputation | Rust kernel | `mokume.impute_matrix` |
 | Matrix differential expression | Rust kernel | `mokume.differential_expression` |
-| t-SNE and DE plots | Python periphery | `mokume tsne-visualization` / `mokume de-plots` |
+| t-SNE, PCA, and DE plots | Python periphery | `mokume plot tsne` / `mokume plot pca` / `mokume plot de` |
 | piBAQ-QC plots | Python periphery | `peptides2protein --qc-report` |
 | Tissue proteome maps | Python periphery | `mokume tissuemap` |
 | Interactive HTML DE report | Python periphery | `mokume interactive-report` |

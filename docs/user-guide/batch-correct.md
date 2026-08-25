@@ -19,7 +19,7 @@ running this command. An explicit numeric zero remains a valid observed value.
 
     ```bash
     mokume correct-batches \
-        -f pibaq_folder/ \
+        -i pibaq_folder/ \
         -p "*pibaq.tsv" \
         -o corrected_pibaq.tsv
     ```
@@ -33,7 +33,7 @@ running this command. An explicit numeric zero remains a valid observed value.
     import mokume
 
     mokume.correct_batches(
-        folder="pibaq_folder/",
+        input="pibaq_folder/",
         pattern="*pibaq.tsv",
         output="corrected_pibaq.tsv",
     )
@@ -46,7 +46,7 @@ running this command. An explicit numeric zero remains a valid observed value.
 
     mokume.run([
         "correct-batches",
-        "--folder", "pibaq_folder/",
+        "--input", "pibaq_folder/",
         "--pattern", "*pibaq.tsv",
         "--output", "corrected_pibaq.tsv",
     ])
@@ -56,16 +56,16 @@ running this command. An explicit numeric zero remains a valid observed value.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-f/--folder` | required | Folder containing TSV files |
+| `-i/--input` | required | Folder containing TSV files |
 | `-p/--pattern` | `*pibaq.tsv` | File matching pattern |
 | `-o/--output` | required | Output file path |
-| `--sample_id_column` / `--sid` | `SampleID` | Sample ID column name |
-| `--protein_id_column` / `--pid` | `ProteinName` | Protein ID column name |
-| `--pibaq_raw_column` / `--pibaq` | `PiBAQ` | Raw intensity column |
-| `--pibaq_corrected_column` | `PiBAQBec` | Corrected intensity column |
+| `--sample-id-column` | `SampleID` | Sample ID column name |
+| `--protein-id-column` | `ProteinName` | Protein ID column name |
+| `--pibaq-raw-column` | `PiBAQ` | Raw intensity column |
+| `--pibaq-corrected-column` | `PiBAQBec` | Corrected intensity column |
 | `--comment` | `#` | Comment character in files |
 | `--sep` | `\t` | Field separator |
-| `--export_anndata` | off | Export to AnnData h5ad format |
+| `--export-anndata` | off | Export to AnnData h5ad format |
 
 ## With Covariates
 
@@ -76,12 +76,13 @@ is driven from the [`features2proteins`](features2proteins.md#batch-correction)
 flow, which extracts the covariates from the SDRF:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
     --batch-correction \
-    --batch-method sample_prefix \
-    --batch-covariates "characteristics[sex],characteristics[tissue]"
+    --batch-method sample-prefix \
+    --batch-covariate "characteristics[sex]" \
+    --batch-covariate "characteristics[tissue]"
 ```
 
 ```python
@@ -93,8 +94,8 @@ mokume.features2proteins(
     sdrf="experiment.sdrf.tsv",
     quant_method="maxlfq",
     batch_correction=True,
-    batch_method="sample_prefix",
-    batch_covariates="characteristics[sex],characteristics[tissue]",
+    batch_method="sample-prefix",
+    batch_covariate=["characteristics[sex]", "characteristics[tissue]"],
 )
 ```
 
@@ -106,11 +107,11 @@ mokume.features2proteins(
 Export corrected data to AnnData format for downstream analysis with scanpy or other single-cell/proteomics tools:
 
 ```bash
-mokume correct-batches \
-    -f pibaq_folder/ \
+    mokume correct-batches \
+    -i pibaq_folder/ \
     -p "*pibaq.tsv" \
     -o corrected_pibaq.tsv \
-    --export_anndata
+    --export-anndata
 ```
 
 This creates a `.h5ad` file alongside the TSV output.

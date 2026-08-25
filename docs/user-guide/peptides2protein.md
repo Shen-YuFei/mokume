@@ -8,18 +8,18 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
 
     ```bash
     # piBAQ (default, requires FASTA)
-    mokume peptides2protein --method pibaq \
+    mokume quantify peptides2protein --quant-method pibaq \
         -f proteome.fasta \
         -p peptides.csv \
         -o proteins-pibaq.tsv
 
     # TopN (no FASTA needed)
-    mokume peptides2protein --method top3 \
+    mokume quantify peptides2protein --quant-method top3 \
         -p peptides.csv \
         -o proteins-top3.tsv
 
     # MaxLFQ with parallelization
-    mokume peptides2protein --method maxlfq \
+    mokume quantify peptides2protein --quant-method maxlfq \
         --threads 4 \
         -p peptides.csv \
         -o proteins-maxlfq.tsv
@@ -35,14 +35,14 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
 
     # piBAQ (requires FASTA)
     mokume.peptides2protein(
-        method="pibaq",
+        quant_method="pibaq",
         fasta="proteome.fasta",
         peptides="peptides.csv",
         output="proteins-pibaq.tsv",
     )
 
     # TopN (no FASTA needed)
-    mokume.peptides2protein(method="top3", peptides="peptides.csv",
+    mokume.peptides2protein(quant_method="top3", peptides="peptides.csv",
                             output="proteins-top3.tsv")
     ```
 
@@ -58,10 +58,10 @@ split equally. Each shared intensity is allocated exactly once. See
 for the underlying algorithm. **Requires a FASTA file**.
 
 ```bash
-mokume peptides2protein --method pibaq \
+mokume quantify peptides2protein --quant-method pibaq \
     -f proteome.fasta \
     -p peptides.csv \
-    -e Trypsin \
+    --enzyme Trypsin \
     --normalize \
     --output proteins-pibaq.tsv
 ```
@@ -74,11 +74,11 @@ Families are discovered automatically by collapsing UniProt isoform suffixes (`-
 
 ```bash
 # Lower the shared-peptide threshold for very tightly homologous families
-mokume peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
+mokume quantify peptides2protein --quant-method pibaq -f proteome.fasta -p peptides.csv \
     --min-shared 1 -o out.tsv
 
 # Pin specific families with an audit-friendly YAML override
-mokume peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
+mokume quantify peptides2protein --quant-method pibaq -f proteome.fasta -p peptides.csv \
     --families families.yaml -o out.tsv
 ```
 
@@ -95,10 +95,11 @@ families:
 #### Full piBAQ with TPA and ProteomicRuler
 
 ```bash
-mokume peptides2protein \
+mokume quantify peptides2protein \
+    --quant-method pibaq \
     -f proteome.fasta \
     -p peptides.csv \
-    -e Trypsin \
+    --enzyme Trypsin \
     --normalize \
     --tpa \
     --ruler \
@@ -106,8 +107,7 @@ mokume peptides2protein \
     --cpc 200 \
     --organism human \
     --output proteins-pibaq.tsv \
-    --verbose \
-    --qc_report QC.pdf
+    --qc-report QC.pdf
 ```
 
 ```python
@@ -124,6 +124,7 @@ mokume.peptides2protein(
     cpc=200,
     organism="human",
     output="proteins-pibaq.tsv",
+    qc_report="QC.pdf",
     min_aa=7,
     max_aa=30,
 )
@@ -134,9 +135,8 @@ mokume.peptides2protein(
     including context-dependent rules, unspecific cleavage, and no cleavage. Python
     supplies the theoretical-peptide map; Rust performs shared-peptide allocation,
     family handling, denominators, TPA, normalization, and output. With the
-    plotting dependencies installed, `--verbose --qc_report QC.pdf` writes the
-    PDF after the native table has been produced. A custom `--qc_report` path
-    requires `--verbose`.
+    plotting dependencies installed, `--qc-report QC.pdf` writes the PDF after
+    the native table has been produced; the path itself enables rendering.
 
 ### TopN
 
@@ -144,13 +144,13 @@ Averages the N most intense peptides per protein per sample.
 
 ```bash
 # Top3 (most common) -- the named method from Silva et al. 2006
-mokume peptides2protein --method top3 -p peptides.csv -o out.tsv
+mokume quantify peptides2protein --quant-method top3 -p peptides.csv -o out.tsv
 
 # Top5
-mokume peptides2protein --method top5 -p peptides.csv -o out.tsv
+mokume quantify peptides2protein --quant-method top5 -p peptides.csv -o out.tsv
 
 # Top10
-mokume peptides2protein --method top10 -p peptides.csv -o out.tsv
+mokume quantify peptides2protein --quant-method top10 -p peptides.csv -o out.tsv
 ```
 
 N is spelled in the method name, so any N works the same way and there is no
@@ -159,8 +159,8 @@ companion option to keep in sync.
 ```python
 import mokume
 
-mokume.peptides2protein(method="top3", peptides="peptides.csv", output="out.tsv")
-mokume.peptides2protein(method="top5", peptides="peptides.csv", output="out.tsv")
+mokume.peptides2protein(quant_method="top3", peptides="peptides.csv", output="out.tsv")
+mokume.peptides2protein(quant_method="top5", peptides="peptides.csv", output="out.tsv")
 ```
 
 ### MaxLFQ
@@ -168,7 +168,7 @@ mokume.peptides2protein(method="top5", peptides="peptides.csv", output="out.tsv"
 Delayed normalization with pairwise peptide ratios. `maxlfq` rolls the peptide matrix up with the native Rust DirectLFQ estimator (delegating to it with `min_nonan = 2`).
 
 ```bash
-mokume peptides2protein --method maxlfq \
+mokume quantify peptides2protein --quant-method maxlfq \
     --threads 4 \
     -p peptides.csv \
     -o proteins-maxlfq.tsv
@@ -177,7 +177,7 @@ mokume peptides2protein --method maxlfq \
 ```python
 import mokume
 
-mokume.peptides2protein(method="maxlfq", threads=4, peptides="peptides.csv",
+mokume.peptides2protein(quant_method="maxlfq", threads=4, peptides="peptides.csv",
                         output="proteins-maxlfq.tsv")
 ```
 
@@ -186,8 +186,8 @@ mokume.peptides2protein(method="maxlfq", threads=4, peptides="peptides.csv",
 Uses hierarchical normalization with variance-guided pairwise alignment, native in the Rust kernel (no extra dependency).
 
 ```bash
-mokume peptides2protein --method directlfq \
-    --min_nonan 2 \
+mokume quantify peptides2protein --quant-method directlfq \
+    --directlfq-min-nonan 2 \
     -p peptides.csv \
     -o proteins-directlfq.tsv
 ```
@@ -195,7 +195,7 @@ mokume peptides2protein --method directlfq \
 ```python
 import mokume
 
-mokume.peptides2protein(method="directlfq", min_nonan=2, peptides="peptides.csv",
+mokume.peptides2protein(quant_method="directlfq", directlfq_min_nonan=2, peptides="peptides.csv",
                         output="proteins-directlfq.tsv")
 ```
 
@@ -204,7 +204,7 @@ mokume.peptides2protein(method="directlfq", min_nonan=2, peptides="peptides.csv"
 Sums all peptide intensities per protein per sample.
 
 ```bash
-mokume peptides2protein --method sum \
+mokume quantify peptides2protein --quant-method sum \
     -p peptides.csv \
     -o proteins-sum.tsv
 ```
@@ -212,7 +212,7 @@ mokume peptides2protein --method sum \
 ```python
 import mokume
 
-mokume.peptides2protein(method="sum", peptides="peptides.csv",
+mokume.peptides2protein(quant_method="sum", peptides="peptides.csv",
                         output="proteins-sum.tsv")
 ```
 
@@ -222,26 +222,25 @@ mokume.peptides2protein(method="sum", peptides="peptides.csv",
 |--------|---------|-------------|
 | `-f/--fasta` | none | FASTA file (required for piBAQ) |
 | `-p/--peptides` | required | Input peptide intensity file |
-| `--method` | `pibaq` | Quantification method: pibaq, `top<N>` (for example top3 or top5), maxlfq, sum, directlfq |
-| `-e/--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
-| `-n/--normalize` | off | Normalize quantification values |
-| `--min_aa` | 7 | Minimum amino acid length |
-| `--max_aa` | 30 | Maximum amino acid length |
-| `-t/--tpa` | off | Calculate TPA (piBAQ only) |
-| `-r/--ruler` | off | Use ProteomicRuler (piBAQ only) |
-| `-i/--ploidy` | 2 with `--ruler` | Positive ploidy number (ruler only) |
-| `-m/--organism` | `human` with `--ruler` | Organism for histone data (ruler only) |
-| `-c/--cpc` | 200 with `--ruler` | Positive cellular protein concentration in g/L (ruler only) |
-| `--threads` | -1 | Rayon workers for MaxLFQ and DirectLFQ; positive values set the pool, negative values use CPU-relative semantics, and `0` is rejected |
-| `--min_nonan` | 1 | Min non-NaN values (DirectLFQ) |
+| `--quant-method` | `pibaq` | Quantification method: pibaq, `top<N>` (for example top3 or top5), maxlfq, sum, directlfq |
+| `--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
+| `--normalize` | off | Normalize quantification values |
+| `--min-aa` | 7 | Minimum amino acid length |
+| `--max-aa` | 30 | Maximum amino acid length |
+| `--tpa` | off | Calculate TPA (piBAQ only) |
+| `--ruler` | off | Use ProteomicRuler (piBAQ only) |
+| `--ploidy` | 2 with `--ruler` | Positive ploidy number (ruler only) |
+| `--organism` | `human` with `--ruler` | Organism for histone data (ruler only) |
+| `--cpc` | 200 with `--ruler` | Positive cellular protein concentration in g/L (ruler only) |
+| `-t/--threads` | automatic | Positive worker count for MaxLFQ and DirectLFQ |
+| `--directlfq-min-nonan` | 1 | Min non-NaN values (DirectLFQ) |
 | `--families` | none | Optional YAML file with explicit family overrides (piBAQ only) |
 | `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (piBAQ only) |
 | `-o/--output` | required | Output file path |
-| `--verbose` | off | Print distribution info |
-| `--qc_report` | QCprofile.pdf | Path for QC report PDF |
+| `--qc-report` | none | Path for the piBAQ QC report PDF; providing it enables rendering |
 
 Method-specific options are rejected for other methods instead of being
 accepted and ignored. For example, `--threads` applies only to LFQ methods,
-`--min_nonan` only to DirectLFQ, and FASTA/digestion/family/QC options only to
+`--directlfq-min-nonan` only to DirectLFQ, and FASTA/digestion/family/QC options only to
 piBAQ. `--ploidy`, `--organism`, and `--cpc` require `--ruler`, and invalid or
 non-positive values are rejected.

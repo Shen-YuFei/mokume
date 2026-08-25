@@ -17,7 +17,7 @@ class-based pipeline uses its own implementation. Select one distribution per
 environment; they share the `mokume` import package and cannot be installed
 together safely.
 
-![The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage](assets/pipeline.svg){ width="100%" }
+![The mokume quantify features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage](assets/pipeline.svg){ width="100%" }
 
 ---
 
@@ -113,7 +113,7 @@ together safely.
 
     ```bash
     # MaxLFQ quantification with normalization
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \

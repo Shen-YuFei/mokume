@@ -43,8 +43,8 @@ periphery command.
 !!! note "Console command"
 
     The wheel installs one `mokume` console command. Its root help lists the
-    four Rust-native compute commands plus the optional Python periphery
-    workflows supplied by the installed wheel.
+    `quantify` command group, standalone batch correction, and the optional
+    Python periphery workflows supplied by the installed wheel.
 
 ### Optional Extras
 
@@ -56,7 +56,7 @@ mokume uses optional dependencies for the periphery commands:
     pip install mokume[plotting]
     ```
 
-    Enables `mokume tsne-visualization`, `mokume de-plots`, and the piBAQ QC
+    Enables `mokume plot tsne`, `mokume plot pca`, `mokume plot de`, and the piBAQ QC
     report (numpy, pandas, scipy, scikit-learn, matplotlib, seaborn).
 
 === "Interactive Reports"

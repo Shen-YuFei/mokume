@@ -31,9 +31,9 @@ libraries. Install just the extra for the command you run.
 
 | Command | Extra | Third-party libraries |
 | --- | --- | --- |
-| `mokume tsne-visualization` | `plotting` | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
+| `mokume plot tsne` | `plotting` | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
 | `mokume.peptides2protein_qc` | `plotting` | numpy, pandas, matplotlib, seaborn |
-| `mokume de-plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
+| `mokume plot pca` / `mokume plot de` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
 | `mokume interactive-report` | `reports` | numpy, pandas, plotly |
 | `mokume tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
@@ -62,9 +62,9 @@ The public plotting, report, and TissueMap workflows are available directly
 from the wheel console command:
 
 ```bash
-mokume tsne-visualization --folder ./proteins --pattern proteins.tsv
-mokume tissuemap --scan-dir ./data --output-dir ./out
-mokume de-plots --help
+mokume plot tsne --input ./proteins --pattern proteins.tsv
+mokume tissuemap --input ./data --outdir ./out
+mokume plot de --help
 mokume interactive-report --help
 ```
 
@@ -74,13 +74,13 @@ Most also have an ergonomic wrapper on the top-level `mokume` package:
 import mokume
 
 # kwarg wrappers (the kwargs -> flags rule applies):
-mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")
-mokume.tissuemap(scan_dir="./data", output_dir="./out")
+mokume.tsne_visualization(input="./proteins", pattern="proteins.tsv")
+mokume.tissuemap(input="./data", outdir="./out")
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
 
 # de_plots / interactive_report take an explicit argv (the per-contrast
 # --contrast KEY A B CSV flag repeats, which keyword arguments cannot express):
-mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
+mokume.de_plots(["--protein-matrix", "proteins.csv", "--outdir", "plots",
                  "--volcano", "--contrast", "c1", "A", "B", "de.csv"])
 
 # QC / comparison reports + the pure-Python method fallbacks (analysis extra):

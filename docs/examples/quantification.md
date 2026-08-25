@@ -21,8 +21,8 @@ CSV: the first column is `ProteinName`, the remaining columns are one per sample
 | `sum` | Sum of all peptide intensities |
 | `median` | Median peptide intensity |
 
-`pibaq`, `ratio`, `abd`, `intensity`, and `peptide_count` are also valid for
-feature input. True `spectral_count` uses `--psm` plus SDRF; piBAQ is
+`pibaq`, `ratio`, `abd`, `intensity`, and `peptide-count` are also valid for
+feature input. True `spectral-count` uses `--psm` plus SDRF; piBAQ is
 covered on the [Absolute Expression](absolute-expression.md) page. Both count
 methods use `none` for run/sample intensity normalization and reject IRS.
 
@@ -32,35 +32,35 @@ methods use `none` for run/sample intensity normalization and reject IRS.
 
     ```bash
     # MaxLFQ (default) — omit --quant-method to get the same result
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_maxlfq.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method maxlfq
 
     # DirectLFQ (native Rust)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_directlfq.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method directlfq
 
     # Top3
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_top3.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method top3
 
     # Sum
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_sum.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method sum
 
     # Median
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_median.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \

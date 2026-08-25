@@ -157,6 +157,6 @@ From SCP benchmarks:
 
 ### Integration
 
-- [x] Export to AnnData format — via tissuemap pipeline (`.h5ad`) and `correct-batches --export_anndata`
-- [x] Differential expression (limma, DEqMS, proDA, LimROTS, ROTS) — in the Rust kernel (`features2proteins --de`)
+- [x] Export to AnnData format — via tissuemap pipeline (`.h5ad`) and `correct-batches --export-anndata`
+- [x] Differential expression (limma, DEqMS, proDA, LimROTS, ROTS) — in the Rust kernel (`quantify features2proteins --de-contrast A B`)
 - [ ] Nextflow/Snakemake workflow templates

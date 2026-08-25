@@ -2,7 +2,7 @@
 
 This guide shows how to go from raw feature data to protein intensities using mokume.
 
-![The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression](assets/pipeline.svg){ width="100%" }
+![The mokume quantify features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression](assets/pipeline.svg){ width="100%" }
 
 ## Prerequisites
 
@@ -31,30 +31,30 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
 
     ```bash
     # MaxLFQ quantification (default)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv
 
     # With TMT IRS normalization + differential expression
     # (the kernel writes one DE result CSV per contrast via --de-output)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \
         --quant-method median \
         --irs --irs-remove-reference \
-        --de --de-contrasts "NASH-HL" \
+        --de-contrast "NASH" "HL" \
         --de-output de_results.csv
 
     # DirectLFQ (native Rust)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         --quant-method directlfq
 
     # piBAQ (requires FASTA)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         --quant-method pibaq \
@@ -85,8 +85,7 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
         quant_method="median",
         irs=True,
         irs_remove_reference=True,
-        de=True,
-        de_contrasts=["NASH-HL"],
+        de_contrast=[("NASH", "HL")],
         de_output="de_results.csv",
     )
     ```
@@ -121,8 +120,8 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
     `features2proteins` no longer accepts `--plot-*` / `--interactive-report`
     flags — the kernel is pure-compute and only writes tables (the protein matrix
     and, with `--de-output`, the DE result CSVs). Render figures afterward from
-    those tables with the Python periphery: `mokume de-plots` for volcano / PCA /
-    heatmap plots and `mokume interactive-report` for the HTML report (they need
+    those tables with the Python periphery: `mokume plot de` for volcano/heatmap,
+    `mokume plot pca` for PCA, and `mokume interactive-report` for the HTML report (they need
     the `plotting` / `reports` extras).
 
 ## Two-Step Pipeline
@@ -131,16 +130,16 @@ For more control, use the peptide normalization step separately:
 
 ```bash
 # Step 1: Normalize peptides
-mokume features2peptides \
+mokume quantify features2peptides \
     -p features.parquet \
     -s experiment.sdrf.tsv \
     --run-normalization median \
-    --sample-normalization globalMedian \
+    --sample-normalization global-median \
     --output peptides.csv
 
 # Step 2: Quantify proteins
-mokume peptides2protein \
-    --method maxlfq \
+mokume quantify peptides2protein \
+    --quant-method maxlfq \
     -p peptides.csv \
     -o proteins.tsv
 ```
@@ -154,8 +153,8 @@ periphery, rather than a Rust-native compute command:
 ```bash
 # Install the optional dependencies first: pip install "mokume[tissuemap]"
 mokume tissuemap \
-    --scan-dir QPX_data/tissues-mq/PXD016999 \
-    --output-dir ./tissuemap_results
+    --input QPX_data/tissues-mq/PXD016999 \
+    --outdir ./tissuemap_results
 ```
 
 This workflow generates batch-corrected AnnData outputs, tissue-specificity scores, and atlas-style plots.

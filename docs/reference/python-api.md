@@ -45,11 +45,11 @@ mokume.features2proteins(parquet="features.parquet", output="proteins.csv")
 mokume.features2peptides(parquet="features.parquet", output="peptides.csv")
 
 # peptide-level input -> protein quantities
-mokume.peptides2protein(method="pibaq", peptides="peptides.parquet",
+mokume.peptides2protein(quant_method="pibaq", peptides="peptides.parquet",
                         fasta="proteome.fasta", output="proteins.tsv")
 
 # ComBat batch-effect correction on piBAQ output
-mokume.correct_batches(folder="pibaq_dir", output="corrected.tsv")
+mokume.correct_batches(input="pibaq_dir", output="corrected.tsv")
 ```
 
 ### kwargs → flags rule
@@ -60,7 +60,8 @@ Each wrapper translates its documented `**kwargs` into a CLI argument list:
 |--------------|---------|---------|
 | `key=value` | `--key value` (`_` → `-`) | `quant_method="pibaq"` → `--quant-method pibaq` |
 | `key=True` | `--key` (a bare flag) | `batch_correction=True` → `--batch-correction` |
-| `key=[a, b]` | field-specific CSV or repeated flags | `de_contrasts=["A-B", "C-D"]` → `--de-contrasts A-B,C-D` |
+| `key=[a, b]` | repeated singular flags | `batch_covariate=["sex", "tissue"]` → `--batch-covariate sex --batch-covariate tissue` |
+| `key=[(a, b)]` | repeated two-value flags | `de_contrast=[("A", "B")]` → `--de-contrast A B` |
 | `key=None` / `key=False` | skipped | omitted entirely |
 
 ```python
@@ -70,32 +71,31 @@ mokume.features2proteins(
     sdrf="experiment.sdrf.tsv",
     quant_method="maxlfq",
     batch_correction=True,
-    batch_covariates="characteristics[sex]",
-    de=True,
-    de_contrasts="NASH vs HL",
+    batch_covariate=["characteristics[sex]"],
+    de_contrast=[("NASH", "HL")],
     threads=24,
 )
 ```
 
-Compatibility aliases such as `method` → `--quant-method` are explicit. A
-sequence is accepted only for fields whose CLI contract is CSV or repeatable;
-all other sequence-valued keywords raise `TypeError`.
+The wrappers accept canonical keyword names only. A sequence is accepted only
+for repeatable fields; all other sequence-valued keywords raise `TypeError`.
 
 ### `mokume.run([...])` — full control
 
 When you need flags a keyword cannot express (e.g. a repeated `--contrast KEY A B CSV`), pass the argument vector verbatim. `run` accepts the subcommand name as the first element:
 
 ```python
-mokume.run(["features2proteins", "--parquet", "x.parquet", "--output", "y.csv"])
-mokume.run(["correct-batches", "--folder", "pibaq_dir", "--output", "corrected.tsv"])
+mokume.run(["quantify", "features2proteins", "--parquet", "x.parquet",
+            "--output", "y.csv"])
+mokume.run(["correct-batches", "--input", "pibaq_dir", "--output", "corrected.tsv"])
 ```
 
 `mokume.run` and the four wrappers raise on a dispatch failure and surface clap's usage errors; they never tear down the hosting interpreter.
 
-Rust tracing is process-global. Set `log_level` and `log_file` on the first
-in-process compute call when you need non-default logging. Later calls may reuse
-that exact logging configuration; requesting a different level or file raises a
-clear error instead of silently ignoring the new values.
+Rust tracing is process-global. Put `--log-level` and `--log-file` in an explicit
+`mokume.run([...])` call when you need non-default logging, and repeat that exact
+configuration on later in-process calls. Requesting a different level or file
+raises a clear error instead of silently ignoring the new values.
 
 ---
 
@@ -156,10 +156,11 @@ top-level package.
 import mokume
 
 # t-SNE over a folder of protein files (plotting extra)
-mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")
+mokume.tsne_visualization(input="./proteins", pattern="proteins.tsv",
+                          output="tsne.pdf")
 
 # per-dataset tissue proteome analysis (tissuemap extra)
-mokume.tissuemap(scan_dir="./data", output_dir="./out")
+mokume.tissuemap(input="./data", outdir="./out", threads=24)
 
 # piBAQ QC report from a protein table (plotting extra)
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
@@ -168,20 +169,20 @@ mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
 `de_plots` and `interactive_report` take an explicit argv (the per-contrast `--contrast KEY A B CSV` flag repeats, which keyword arguments cannot express):
 
 ```python
-# DE volcano / heatmap / PCA from kernel-written CSVs (plotting extra)
-mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
+# DE volcano / heatmap from kernel-written CSVs (plotting extra)
+mokume.de_plots(["--protein-matrix", "proteins.csv", "--outdir", "plots",
                  "--volcano", "--contrast", "c1", "A", "B", "de.csv"])
 
 # interactive HTML report from kernel CSVs (reports extra)
 mokume.interactive_report([
     "--protein-matrix", "proteins.csv",
     "--sdrf", "experiment.sdrf.tsv",
-    "--report-output", "report.html",
+    "--output", "report.html",
     "--contrast", "c1", "A", "B", "de.csv",
 ])
 ```
 
-Run `mokume de-plots --help` / `mokume interactive-report --help` for the flags.
+Run `mokume plot de --help` / `mokume interactive-report --help` for the flags.
 
 ### QC and workflow-comparison reports
 

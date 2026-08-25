@@ -9,7 +9,7 @@ Two entry points:
 
 - **`features2proteins --quant-method pibaq --fasta ...`** — piBAQ inside the
   unified pipeline (loads features, filters, normalizes, then computes piBAQ).
-- **`peptides2protein --method pibaq ...`** — the standalone step that takes an
+- **`peptides2protein --quant-method pibaq ...`** — the standalone step that takes an
   already-normalized peptide table and adds all the absolute columns (TPA,
   ProteomicRuler, ...).
 
@@ -24,7 +24,7 @@ the complete theoretical-peptide map to the Rust aggregation kernel.
 === "CLI"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_pibaq.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
@@ -85,8 +85,8 @@ the histone reference used by the ruler.
 === "CLI"
 
     ```bash
-    mokume peptides2protein \
-        --method pibaq \
+    mokume quantify peptides2protein \
+        --quant-method pibaq \
         --tpa --ruler --organism human \
         -f python/tests/example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta \
         -p python/tests/example/PXD017834-peptides.csv \
@@ -99,7 +99,7 @@ the histone reference used by the ruler.
     import mokume
 
     mokume.peptides2protein(
-        method="pibaq",
+        quant_method="pibaq",
         tpa=True,
         ruler=True,
         organism="human",
@@ -158,7 +158,7 @@ the PRIDE/ProteomicsDB-normalized columns.
 
 ## Computed columns
 
-`peptides2protein --method pibaq --tpa --ruler` produces these columns. The
+`peptides2protein --quant-method pibaq --tpa --ruler` produces these columns. The
 `EvidenceLevel` records the strength of member-resolving anchor evidence.
 `family_only` means that no family member reaches the minimum anchor threshold;
 shared signal is split equally rather than duplicated across the family.

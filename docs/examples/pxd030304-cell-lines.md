@@ -24,7 +24,7 @@ export CELL_LINE_QPX="$CELL_LINE_ROOT/qpx/PXD030304.feature.parquet"
 export CELL_LINE_SDRF="$CELL_LINE_ROOT/mokume/sdrf/PXD030304.sdrf.tsv"
 
 mkdir -p "$CELL_LINE_OUT"
-RAYON_NUM_THREADS=24 mokume features2proteins \
+RAYON_NUM_THREADS=24 mokume quantify features2proteins \
     --parquet "$CELL_LINE_QPX" \
     --sdrf "$CELL_LINE_SDRF" \
     --output "$CELL_LINE_OUT/PXD030304.directlfq.csv" \

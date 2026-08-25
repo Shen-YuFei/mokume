@@ -21,9 +21,9 @@ recomputes the numbers).
 !!! warning "The `--plot-*` / `--interactive-report` flags are gone"
     `features2proteins` no longer accepts `--plot-dir`, `--plot-volcano`,
     `--plot-heatmap`, `--plot-pca`, `--highlight-genes`, `--interactive-report`,
-    or `--report-output`. The Rust kernel returns `NotImplemented` for plotting
-    and report output. Run the kernel to produce the protein matrix and DE CSVs,
-    then call `mokume de-plots` or `mokume interactive-report` on those files.
+    or `--report-output`. The CLI rejects these removed options. Run the kernel
+    to produce the protein matrix and DE CSVs, then call `mokume plot de`,
+    `mokume plot pca`, or `mokume interactive-report` on those files.
 
 ## DE Plots from features2proteins Output
 
@@ -31,10 +31,11 @@ First run the kernel to write the protein matrix and one DE result CSV per
 contrast:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
-    --de --de-contrasts "NASH vs HL,NASH vs Control" \
+    --de-contrast "NASH" "HL" \
+    --de-contrast "NASH" "Control" \
     --de-output de_results
 ```
 
@@ -42,12 +43,14 @@ Then render the plots from those CSVs with the periphery command. Repeat
 `--contrast KEY A B CSV` for every comparison:
 
 ```bash
-mokume de-plots \
+mokume plot de \
     --protein-matrix proteins.csv \
-    --plot-dir plots \
+    --outdir plots \
     --sdrf experiment.sdrf.tsv \
-    --volcano --heatmap --pca \
-    --highlight-genes COL10A1,FN1,ALB \
+    --volcano --heatmap \
+    --highlight-protein COL10A1 \
+    --highlight-protein FN1 \
+    --highlight-protein ALB \
     --contrast NASH-HL NASH HL de_results_NASH-HL.csv \
     --contrast NASH-Control NASH Control de_results_NASH-Control.csv
 ```
@@ -56,13 +59,20 @@ This generates:
 
 - `plots/volcano_NASH-HL.png` -- Volcano plot for each contrast
 - `plots/heatmap_NASH-HL.png` -- Per-contrast heatmap showing top 50 significant proteins (by |log2FC|) and only the two compared conditions. Skipped if no significant proteins exist for that contrast.
-- `plots/pca_conditions.png` -- PCA colored by experimental condition (all samples)
-
-The `--volcano` / `--heatmap` / `--pca` flags select which plots to render;
-`--log2fc-threshold` (default 0.5) and `--fdr-threshold` (default 0.05) mirror the
+The `--volcano` / `--heatmap` flags select which plots to render;
+`--log2fc` (default 0.5) and `--fdr` (default 0.05) mirror the
 kernel's `--de-log2fc` / `--de-fdr` so the significance cutoffs match. Volcano
-and heatmap require at least one `--contrast`; heatmap and PCA require `--sdrf`.
+and heatmap require at least one `--contrast`; heatmap requires `--sdrf`.
 Invalid option scopes are rejected instead of producing an empty plot directory.
+
+Render PCA as a separate command because it produces one output file:
+
+```bash
+mokume plot pca \
+    --protein-matrix proteins.csv \
+    --sdrf experiment.sdrf.tsv \
+    --output pca_conditions.png
+```
 
 ## Interactive HTML Report
 
@@ -72,13 +82,13 @@ Generate a comprehensive interactive QC + DE report from the same kernel CSVs:
 mokume interactive-report \
     --protein-matrix proteins.csv \
     --sdrf experiment.sdrf.tsv \
-    --report-output qc_report.html \
-    --highlight-genes COL10A1,FN1 \
+    --output qc_report.html \
+    --highlight-protein COL10A1 \
+    --highlight-protein FN1 \
     --contrast NASH-HL NASH HL de_results/NASH_vs_HL.csv
 ```
 
-Use either `--report-output` or `--plot-dir`; supplying both is rejected because
-the explicit report path otherwise makes the plot directory ineffective.
+Omit `--output` to write `report_<contrast>.html` in the current directory.
 
 The interactive report includes:
 
@@ -153,8 +163,8 @@ files (`plotting` extra). It is exposed by the wheel CLI while remaining outside
 the Rust compute kernel:
 
 ```bash
-mokume tsne-visualization \
-    --folder protein_folder/ \
+mokume plot tsne \
+    --input protein_folder/ \
     --pattern proteins.tsv
 ```
 

@@ -41,18 +41,17 @@ TMT assignments, and all 408 QPX run names agree.
 ## Quantify, normalize, and test
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     --parquet "$CPTAC_QPX" \
     --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \
     --output "$CPTAC_OUT/PDC000125.proteins.csv" \
     --quant-method intensity \
     --run-normalization none \
-    --sample-normalization globalmedian \
+    --sample-normalization global-median \
     --irs \
     --irs-remove-reference \
     --coverage-threshold 0.65 \
-    --de \
-    --de-contrasts "Primary Tumor vs Solid Tissue Normal" \
+    --de-contrast "Primary Tumor" "Solid Tissue Normal" \
     --de-method limma \
     --de-log2fc 0.5 \
     --de-fdr 0.05 \
@@ -75,19 +74,24 @@ the downstream DE and plotting interfaces.
 ```bash
 OMP_NUM_THREADS=24 OPENBLAS_NUM_THREADS=24 MKL_NUM_THREADS=24 \
 MPLCONFIGDIR="$CPTAC_OUT/matplotlib" \
-mokume de-plots \
+mokume plot de \
     --protein-matrix "$CPTAC_OUT/PDC000125.proteins.csv" \
-    --plot-dir "$CPTAC_OUT/plots" \
+    --outdir "$CPTAC_OUT/plots" \
     --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \
     --volcano \
-    --pca \
-    --irs-remove-reference \
-    --log2fc-threshold 0.5 \
-    --fdr-threshold 0.05 \
+    --log2fc 0.5 \
+    --fdr 0.05 \
     --contrast PDC000125-UCEC \
         "Primary Tumor" \
         "Solid Tissue Normal" \
         "$CPTAC_OUT/PDC000125.primary-tumor-vs-normal.csv"
+
+OMP_NUM_THREADS=24 OPENBLAS_NUM_THREADS=24 MKL_NUM_THREADS=24 \
+MPLCONFIGDIR="$CPTAC_OUT/matplotlib" \
+mokume plot pca \
+    --protein-matrix "$CPTAC_OUT/PDC000125.proteins.csv" \
+    --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \
+    --output "$CPTAC_OUT/plots/PDC000125.pca.pdf"
 
 OMP_NUM_THREADS=24 OPENBLAS_NUM_THREADS=24 MKL_NUM_THREADS=24 \
 MPLCONFIGDIR="$CPTAC_OUT/matplotlib" \
@@ -99,7 +103,7 @@ python docs/examples/render_cptac_ucec.py \
     --threads 24
 ```
 
-The first command retains the standalone Mokume PCA and volcano files. The
+The first two commands retain the standalone Mokume volcano and PCA files. The
 example renderer writes matching overview and biological six-panel composites
 without recomputing either the protein matrix or differential expression.
 
@@ -120,7 +124,7 @@ mkdir -p "$CPTAC_PERF"
 
 /usr/bin/time -f "raw_intensity,%e,%M" \
     -o "$CPTAC_PERF/raw_intensity.time" \
-    mokume features2proteins \
+    mokume quantify features2proteins \
     --parquet "$CPTAC_QPX" \
     --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \
     --output "$CPTAC_PERF/PDC000125.intensity.raw.csv" \
@@ -131,30 +135,30 @@ mkdir -p "$CPTAC_PERF"
 
 /usr/bin/time -f "globalmedian,%e,%M" \
     -o "$CPTAC_PERF/globalmedian.time" \
-    mokume features2proteins \
+    mokume quantify features2proteins \
     --parquet "$CPTAC_QPX" \
     --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \
     --output "$CPTAC_PERF/PDC000125.intensity.globalmedian.csv" \
     --quant-method intensity \
     --run-normalization none \
-    --sample-normalization globalmedian \
+    --sample-normalization global-median \
     --threads 24
 
 /usr/bin/time -f "globalmedian_irs,%e,%M" \
     -o "$CPTAC_PERF/globalmedian_irs.time" \
-    mokume features2proteins \
+    mokume quantify features2proteins \
     --parquet "$CPTAC_QPX" \
     --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \
     --output "$CPTAC_PERF/PDC000125.intensity.globalmedian-irs.csv" \
     --quant-method intensity \
     --run-normalization none \
-    --sample-normalization globalmedian \
+    --sample-normalization global-median \
     --irs \
     --threads 24
 
 /usr/bin/time -f "ratio,%e,%M" \
     -o "$CPTAC_PERF/ratio.time" \
-    mokume features2proteins \
+    mokume quantify features2proteins \
     --parquet "$CPTAC_QPX" \
     --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \
     --output "$CPTAC_PERF/PDC000125.ratio.csv" \

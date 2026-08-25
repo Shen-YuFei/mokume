@@ -39,11 +39,11 @@ so flags stay single-sourced in Rust:
 import mokume
 
 mokume.features2proteins(parquet="features.parquet", output="proteins.csv")
-mokume.peptides2protein(method="pibaq", peptides="peptides.parquet",
+mokume.peptides2protein(quant_method="pibaq", peptides="peptides.parquet",
                         fasta="proteome.fasta", output="proteins.tsv")
 catalog = mokume.protease_catalog()  # installed pyOpenMS ProteaseDB
 # full control over the argument vector:
-mokume.run(["correct-batches", "--folder", "pibaq", "--output", "corrected.tsv"])
+mokume.run(["correct-batches", "--input", "pibaq", "--output", "corrected.tsv"])
 ```
 
 Each wrapper maps keyword arguments to CLI flags (`key=value` → `--key value`
@@ -72,12 +72,12 @@ runnable as `python -m mokume.commands.<name>`, and most have an ergonomic
 wrapper on the top-level package:
 
 ```python
-mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")
-mokume.tissuemap(scan_dir="./data", output_dir="./out")
+mokume.tsne_visualization(input="./proteins", pattern="proteins.tsv")
+mokume.tissuemap(input="./data", outdir="./out")
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
 # de_plots / interactive_report take an explicit argv (the per-contrast
 # --contrast KEY A B CSV flag repeats, which keyword arguments cannot express):
-mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
+mokume.de_plots(["--protein-matrix", "proteins.csv", "--outdir", "plots",
                  "--volcano", "--contrast", "c1", "A", "B", "de.csv"])
 
 # QC / comparison reports + the pure-Python method fallbacks (analysis extra):

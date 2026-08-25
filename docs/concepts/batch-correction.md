@@ -36,17 +36,18 @@ mokume uses the **ComBat algorithm** to remove batch effects while preserving bi
 
 Run ComBat as part of `features2proteins` with `--batch-correction`. Batches are
 detected from the sample-name prefix (or an explicit SDRF column), and
-`--batch-covariates` names the SDRF columns whose biological signal to preserve.
+Repeat `--batch-covariate` for each SDRF column whose biological signal to preserve.
 
 === "CLI"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
         --quant-method maxlfq \
         --batch-correction \
-        --batch-method sample_prefix \
-        --batch-covariates "characteristics[sex],characteristics[organism part]"
+        --batch-method sample-prefix \
+        --batch-covariate "characteristics[sex]" \
+        --batch-covariate "characteristics[organism part]"
     ```
 
 === "Python (wheel)"
@@ -60,8 +61,8 @@ detected from the sample-name prefix (or an explicit SDRF column), and
         sdrf="experiment.sdrf.tsv",
         quant_method="maxlfq",
         batch_correction=True,
-        batch_method="sample_prefix",
-        batch_covariates="characteristics[sex],characteristics[organism part]",
+        batch_method="sample-prefix",
+        batch_covariate=["characteristics[sex]", "characteristics[organism part]"],
     )
     ```
 
@@ -81,7 +82,7 @@ over a folder of piBAQ TSVs:
 
     ```bash
     mokume correct-batches \
-        --folder ./pibaq_outputs --pattern "*pibaq.tsv" \
+        --input ./pibaq_outputs --pattern "*pibaq.tsv" \
         --output corrected.tsv
     ```
 
@@ -90,7 +91,7 @@ over a folder of piBAQ TSVs:
     ```python
     import mokume
 
-    mokume.correct_batches(folder="./pibaq_outputs", pattern="*pibaq.tsv",
+    mokume.correct_batches(input="./pibaq_outputs", pattern="*pibaq.tsv",
                            output="corrected.tsv")
     ```
 
@@ -102,7 +103,7 @@ cells rather than silently filling them with zero.
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `sample_prefix` | Extract from sample name prefix | `PXD001-S1` &rarr; batch `PXD001` |
+| `sample-prefix` | Extract from sample name prefix | `PXD001-S1` &rarr; batch `PXD001` |
 | `column` | Explicit values from SDRF column (`--batch-column`) | User-specified |
 
 The protein-matrix CLI exposes only methods with available sample-level

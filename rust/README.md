@@ -62,22 +62,22 @@ is provided in `environment.yaml`. See
 Run the full pipeline from a quantms feature table to a protein matrix:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet features.parquet \
   --sdrf samples.sdrf.tsv \
   --quant-method maxlfq \
   --output proteins.csv
 ```
 
-Add differential expression by passing `--de` with one or more contrasts:
+Add differential expression by passing one or more contrasts:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet features.parquet \
   --sdrf samples.sdrf.tsv \
   --quant-method maxlfq \
-  --de --de-contrasts "Treatment-Control" \
-  --output proteins.csv
+  --de-contrast "Treatment" "Control" \
+  --output proteins.csv --de-output de_results.csv
 ```
 
 The same kernel runs in-process from Python. Each keyword argument maps to a CLI
@@ -101,9 +101,9 @@ produced through either interface is the same.
 
 | Command | What it does |
 | --- | --- |
-| `features2proteins` | Full pipeline: feature table to a protein quantification matrix |
-| `features2peptides` | Aggregate features to peptide-level intensities |
-| `peptides2protein` | Roll peptide intensities up to protein quantities |
+| `quantify features2proteins` | Full pipeline: feature table to a protein quantification matrix |
+| `quantify features2peptides` | Aggregate features to peptide-level intensities |
+| `quantify peptides2protein` | Roll peptide intensities up to protein quantities |
 | `correct-batches` | Standalone ComBat batch correction (with AnnData export) |
 
 ## Quantification and methods
@@ -115,12 +115,12 @@ steps around them. The full catalog of methods is documented in the
 `features2proteins` runs these stages in order:
 
 <p align="center">
-  <img src="../docs/assets/pipeline.svg" alt="The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
+  <img src="../docs/assets/pipeline.svg" alt="The mokume quantify features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage" width="100%">
 </p>
 
-- **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top3`/`topn`, `sum`
-  (also `median`, `ratio`, `abd`, `intensity`, `peptide_count`,
-  `spectral_count`). `peptide_count` uses feature QPX; true `spectral_count`
+- **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top<N>`, `sum`
+  (also `median`, `ratio`, `abd`, `intensity`, `peptide-count`,
+  `spectral-count`). `peptide-count` uses feature QPX; true `spectral-count`
   requires PSM QPX via `--psm`. piBAQ requires a FASTA; TopN, MaxLFQ, and Sum
   do not. Both count methods require run/sample normalization `none` and reject
   IRS.

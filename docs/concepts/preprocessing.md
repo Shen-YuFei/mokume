@@ -65,7 +65,7 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 Generate an example configuration:
 
 ```bash
-mokume features2peptides --generate-filter-config filters.yaml
+mokume quantify features2peptides --generate-filter-config filters.yaml
 ```
 
 Example `basic_qc.yaml`:
@@ -97,13 +97,13 @@ protein:
 
 ```bash
 # From config file
-mokume features2peptides \
+mokume quantify features2peptides \
     -p features.parquet -s experiment.sdrf.tsv \
     --filter-config filters.yaml \
     --output peptides.csv
 
 # CLI overrides (take precedence over config file)
-mokume features2peptides \
+mokume quantify features2peptides \
     -p features.parquet -s experiment.sdrf.tsv \
     --filter-config filters.yaml \
     --filter-min-intensity 1000 \
@@ -112,10 +112,10 @@ mokume features2peptides \
     --output peptides.csv
 
 # CLI-only filtering (no config file)
-mokume features2peptides \
+mokume quantify features2peptides \
     -p features.parquet -s experiment.sdrf.tsv \
     --filter-min-intensity 500 \
-    --filter-min-unique-peptides 2 \
+    --min-unique 2 \
     --output peptides.csv
 ```
 
@@ -141,13 +141,14 @@ mokume.features2peptides(
     sdrf="experiment.sdrf.tsv",
     filter_config="filters.yaml",
     filter_min_intensity=1000,
-    filter_min_unique_peptides=2,
+    min_unique=2,
     output="peptides.csv",
 )
 ```
 
-Charge states and excluded modifications are passed as comma-separated strings
-(`filter_charge_states="2,3,4"`), matching the CLI flags.
+Charge states and excluded modifications are Python sequences, which the wrapper
+translates to repeated `--filter-charge-state` and
+`--filter-exclude-modification` flags.
 
 ## Pre-configured Templates
 

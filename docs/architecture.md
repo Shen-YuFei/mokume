@@ -57,7 +57,8 @@ flowchart TB
     periphery --> figs["plots · tissue maps · HTML reports"]
 ```
 
-The wheel entry point routes the four compute commands through the same `clap`
+The wheel entry point routes the three commands under `mokume quantify` and
+`correct-batches` through the same `clap`
 definition as the Python compute wrappers, so their flag handling stays
 single-sourced in Rust. It routes the optional plotting, reporting, and
 TissueMap commands to their Python periphery modules.
@@ -82,11 +83,11 @@ The periphery lives in `rust/python/mokume/commands/` and is reached **only**
 through the wheel. Its public workflows are available from both the unified CLI
 and Python API:
 
-- `mokume tsne-visualization`, `mokume de-plots`, `mokume interactive-report` —
+- `mokume plot tsne`, `mokume plot pca`, `mokume plot de`, `mokume interactive-report` —
   plots and the HTML report built from the `features2proteins` matrix / DE CSVs.
 - `mokume tissuemap` — downstream per-dataset normalization, batch correction,
   tissue-specificity scoring, embeddings, and atlas plots from QPX outputs.
-- `mokume.peptides2protein_qc` — the piBAQ `--verbose` QC report PDF.
+- `mokume.peptides2protein_qc` — the piBAQ `--qc-report` PDF renderer.
 
 Plotting and reporting render kernel tables without re-running the
 kernel-supported computation. TissueMap performs its documented downstream

@@ -82,8 +82,8 @@ where $\alpha_1$ and $\alpha_2$ are optimized via bootstrap to maximize reproduc
 - Computationally more expensive due to bootstrap iterations
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method limrots \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -110,8 +110,8 @@ where $d_0$ and $s^2_0$ are prior degrees of freedom and variance estimated via 
 - LOESS variance fitting can be unstable on small datasets, falling back to constant variance
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method deqms \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -140,8 +140,8 @@ where $\rho$ and $\zeta$ are per-sample dropout midpoint and width parameters es
 - Dropout model adds computational overhead and may over-regularize on clean datasets with few missing values
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method proda \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -166,8 +166,8 @@ mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.
 - May be less powerful than DEqMS when peptide counts are available
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method limma \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -188,8 +188,8 @@ mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.
 - May be redundant with LimROTS in most scenarios
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method rots \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -220,10 +220,12 @@ the protein).
 - May lose sensitivity for proteins that only one method can detect
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method ensemble \
-    --de-ensemble-methods limrots,deqms,proda \
+    --de-ensemble-method limrots \
+    --de-ensemble-method deqms \
+    --de-ensemble-method proda \
     --de-ensemble-min-k 2 \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv

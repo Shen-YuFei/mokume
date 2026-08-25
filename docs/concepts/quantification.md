@@ -15,8 +15,8 @@ mokume supports multiple protein quantification methods, each suited to differen
 | **TMT Abundance** | Median of log2 peptide intensities | No | `abd` |
 | **TMT Reporter Intensity** | Sum of raw reporter intensities | No | `intensity` |
 | **Median** | Median of peptide intensities | No | `median` |
-| **Peptide Count** | Distinct canonical peptides per (protein, sample) from feature QPX | No | `peptide_count` |
-| **Spectral Count** | Unique spectra per (protein group, sample) from PSM QPX | No | `spectral_count` |
+| **Peptide Count** | Distinct canonical peptides per (protein, sample) from feature QPX | No | `peptide-count` |
+| **Spectral Count** | Unique spectra per (protein group, sample) from PSM QPX | No | `spectral-count` |
 
 All aggregation methods run in the Rust kernel. piBAQ obtains its theoretical
 peptide map from the base pyOpenMS dependency; the other methods need no Python
@@ -94,12 +94,12 @@ piBAQ requires a **FASTA file** to compute theoretical peptide counts via in-sil
 === "CLI"
 
     ```bash
-    mokume peptides2protein \
+    mokume quantify peptides2protein \
         --fasta proteome.fasta \
         --peptides peptides.csv \
         --enzyme Trypsin \
         --normalize \
-        --method pibaq \
+        --quant-method pibaq \
         --output proteins-pibaq.tsv
     ```
 
@@ -113,7 +113,7 @@ piBAQ requires a **FASTA file** to compute theoretical peptide counts via in-sil
         peptides="peptides.csv",
         enzyme="Trypsin",
         normalize=True,
-        method="pibaq",
+        quant_method="pibaq",
         output="proteins-pibaq.tsv",
     )
     ```
@@ -158,11 +158,11 @@ tryptic peptides scales with protein amount.
 
 ```bash
 # Top3 (Silva et al. 2006)
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method top3
 
 # Any other N — just write it in the method name
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method top5
 ```
 
@@ -176,7 +176,7 @@ The **MaxLFQ algorithm** (Cox et al., 2014) uses delayed normalization with pair
 In the native Rust kernel, MaxLFQ rolls the peptide matrix up with the DirectLFQ estimator (delegating with `min_nonan = 2`). It is real-data compatibility-checked against frozen Python-generated output — cell-exact on PXD003539 within the f32 tolerance tier.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method maxlfq
 ```
 
@@ -190,7 +190,7 @@ mokume features2proteins -p features.parquet -o proteins.csv \
     normalization defaults to `none`; non-`none` values are rejected.
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq
 ```
@@ -217,7 +217,7 @@ imputation, and batch correction, so neither imputed values nor batch-adjusted
 values can inflate the QC score.
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method ratio \
     --coverage-threshold 0.65
@@ -232,7 +232,7 @@ mokume features2proteins \
 The `abd` method computes protein abundance as the **median of log2-transformed peptide intensities** per (protein, sample). Non-positive intensities are treated as missing.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method abd
 ```
 
@@ -241,35 +241,35 @@ mokume features2proteins -p features.parquet -o proteins.csv \
 The `intensity` method computes protein abundance as the **sum of raw reporter intensities** per (protein, sample) in linear space — no log transform, no aggregation choice.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method intensity
 ```
 
 ## Peptide and Spectral Counts
 
-`peptide_count` is the feature-level identification-depth metric: it counts
+`peptide-count` is the feature-level identification-depth metric: it counts
 distinct modification-stripped sequences per protein/sample. It requires
 run/sample normalization `none` and does not accept IRS because intensity
 scaling cannot change peptide membership.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
-    --quant-method peptide_count
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
+    --quant-method peptide-count
 ```
 
-`spectral_count` instead requires a PSM-level QPX parquet and SDRF. It removes
+`spectral-count` instead requires a PSM-level QPX parquet and SDRF. It removes
 decoys, identifies a spectrum by `(run_file_name, scan)`, maps runs to samples
 through the SDRF, and counts each unique spectrum once. If multiple accepted PSM
 rows describe the same spectrum, Mokume unions their peptide sequences and
 protein accessions before forming one sorted protein-group key; it does not
 double-count the spectrum or explode a shared group into independent proteins.
-Rows need non-empty `protein_accessions`. As with `peptide_count`, intensity
+Rows need non-empty `protein_accessions`. As with `peptide-count`, intensity
 normalization and IRS are rejected.
 
 ```bash
-mokume features2proteins --psm identifications.psm.parquet \
+mokume quantify features2proteins --psm identifications.psm.parquet \
     --sdrf experiment.sdrf.tsv -o spectral_counts.csv \
-    --quant-method spectral_count
+    --quant-method spectral-count
 ```
 
 ## Standard Output Format

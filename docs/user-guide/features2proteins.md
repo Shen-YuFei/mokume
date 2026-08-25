@@ -9,7 +9,7 @@ The `features2proteins` command is the recommended way to go from raw feature da
 === "CLI"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \
@@ -38,6 +38,7 @@ The `features2proteins` command is the recommended way to go from raw feature da
     import mokume
 
     mokume.run([
+        "quantify",
         "features2proteins",
         "--parquet", "features.parquet",
         "--output", "proteins.csv",
@@ -53,11 +54,11 @@ Provide exactly one input:
 - `--parquet` accepts a quantms.io/QPX feature parquet file.
 - `--msstats` accepts a native MSstats CSV and requires `--sdrf` so runs and
   channels can be mapped to samples.
-- `--psm` accepts a PSM-level QPX parquet for true `spectral_count` and requires
+- `--psm` accepts a PSM-level QPX parquet for true `spectral-count` and requires
   `--sdrf`.
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     --msstats msstats.csv \
     --sdrf experiment.sdrf.tsv \
     --output proteins.csv \
@@ -82,8 +83,8 @@ therefore cannot use an MSstats feature table.
 | Ratio | `--quant-method ratio` | No | Log2 sample/reference (TMT) |
 | TMT Abundance | `--quant-method abd` | No | Median of log2 peptide intensities (TMT) |
 | TMT Reporter Intensity | `--quant-method intensity` | No | Sum of raw reporter intensities (TMT) |
-| Peptide Count | `--quant-method peptide_count` | No | Distinct canonical peptides from feature QPX |
-| Spectral Count | `--quant-method spectral_count --psm FILE` | No | Unique `(run_file_name, scan)` spectra from PSM QPX; requires SDRF |
+| Peptide Count | `--quant-method peptide-count` | No | Distinct canonical peptides from feature QPX |
+| Spectral Count | `--quant-method spectral-count --psm FILE` | No | Unique `(run_file_name, scan)` spectra from PSM QPX; requires SDRF |
 
 In practice:
 
@@ -98,25 +99,25 @@ In practice:
   pipeline output retains per-protein `PiBAQ` values but does not surface the
   `FamilyId` / `EvidenceLevel` metadata columns.
 - Use `ratio` for TMT PS-style reference-based analysis.
-- Use `peptide_count` for distinct peptide identifications from feature QPX;
-  use `spectral_count` for unique spectra from PSM QPX. Both are integer
+- Use `peptide-count` for distinct peptide identifications from feature QPX;
+  use `spectral-count` for unique spectra from PSM QPX. Both are integer
   evidence counts, so run/sample intensity normalization and IRS are rejected.
 - Use `top<N>` for the classic Top3-style summary; `top3` is the method from
   Silva et al. 2006, and any other N works the same way (`top5`, `top10`, ...).
 
 ```bash
 # piBAQ (requires FASTA)
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method pibaq --fasta proteome.fasta
 
 # TopN — the N lives in the method name (top3, top5, top10, ...)
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method top5
 
 # DirectLFQ (native Rust, no extra dependency)
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq --threads 24
 ```
@@ -127,13 +128,10 @@ The Rust kernel reads QPX parquet data in Arrow record batches and accumulates
 the compact peptide, protein, and sample structures needed by the selected
 method. It does not load the input through DuckDB or build a pandas pivot.
 
-Use `--threads` to size the Rayon thread pool used by parallel Rust sections.
-The hidden compatibility options `--duckdb-threads` and, for DirectLFQ,
-`--directlfq-cores` map to the same runtime setting; do not combine either with
-`--threads`:
+Use `--threads` to size the Rayon thread pool used by parallel Rust sections:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq \
     --threads 24 \
@@ -148,9 +146,8 @@ can observe a transient overshoot only at the next checkpoint, and smaller
 synchronous batches may reduce throughput. Use an external cgroup, scheduler,
 or container limit when a hard ceiling is required.
 
-`--duckdb-memory` is intentionally not an alias: the Rust path does not use
-DuckDB. `--duckdb-threads` remains an alias for the effective Rayon `--threads`
-setting. Runtime pyOpenMS FASTA digestion for piBAQ occurs before the Rust
+The removed `--duckdb-memory` and `--duckdb-threads` options do not apply to the
+Rust path because it does not use DuckDB. Runtime pyOpenMS FASTA digestion for piBAQ occurs before the Rust
 pipeline starts, so it is not covered by `--memory`.
 
 ## Normalization Options
@@ -160,9 +157,9 @@ pipeline starts, so it is not covered by `--memory`.
 Adjusts for intensity differences between MS runs within each sample.
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
-    --run-normalization median  # median, mean, max, global, max_min, iqr, none
+    --run-normalization median  # median, mean, max, global, max-min, iqr, none
 ```
 
 ### Sample-Level Normalization
@@ -171,31 +168,31 @@ Adjusts for systematic differences across samples.
 
 ```bash
 # Global median (default)
-mokume features2proteins -p data.parquet -o out.csv \
-    --sample-normalization globalMedian
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --sample-normalization global-median
 
 # Hierarchical (DirectLFQ-style)
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical
 
 # With specific normalization proteins
-mokume features2proteins -p data.parquet -o out.csv \
-    --sample-normalization globalmedian \
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --sample-normalization global-median \
     --normalization-proteins housekeeping.txt
 
 # Quantile / MedianCenter / MeanCenter / RLR / LOESS / TMM (dataset-level)
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization quantile
 
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization loess
 
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization tmm
 ```
 
 !!! note "Dataset-level normalizers"
-    `quantile`, `mediancenter`, `meancenter`, `rlr`, `loess`, and `tmm` are
+    `quantile`, `median-center`, `mean-center`, `rlr`, `loess`, and `tmm` are
     dataset-level normalizers applied after peptide aggregation, all native in
     the Rust kernel. `tmm` (Trimmed Mean of M-values,
     `mokume.normalization.tmm.TMMNormalizer`) is robust to composition bias from
@@ -206,7 +203,7 @@ mokume features2proteins -p data.parquet -o out.csv \
     is rejected before input loading. For MaxLFQ + quantile, Mokume selects the
     built-in MaxLFQ path so the requested normalization is actually applied.
 
-- `globalMedian` is the default and a good general-purpose starting point.
+- `global-median` is the default and a good general-purpose starting point.
 - `hierarchical` is useful when you want DirectLFQ-style normalization with a non-DirectLFQ quantification method.
 
 ## IRS Normalization (Multi-Plex TMT)
@@ -215,19 +212,20 @@ For TMT experiments with shared reference channels across plexes:
 
 ```bash
 # Auto-detect references from SDRF
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method median \
     --irs --irs-remove-reference
 
 # Explicit reference samples
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method median \
-    --irs --irs-reference-samples "p1_11,p2_11"
+    --irs --irs-reference-sample "p1_11" \
+    --irs-reference-sample "p2_11"
 
 # Custom regex for reference detection
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --irs --irs-reference-regex "pool|bridge|control"
 ```
@@ -235,18 +233,17 @@ mokume features2proteins \
 | IRS Option | Default | Description |
 |------------|---------|-------------|
 | `--irs` | off | Enable IRS normalization |
-| `--irs-reference-samples` | auto | Comma-separated reference sample names |
-| `--irs-reference-sample` | none | Repeatable single reference sample name; conflicts with `--irs-reference-samples` |
+| `--irs-reference-sample` | auto | Reference sample name; repeat for multiple samples |
 | `--irs-sdrf-column` | auto | SDRF column for reference detection |
-| `--irs-sdrf-values` | auto | Values indicating reference samples |
+| `--irs-sdrf-value` | auto | Value indicating reference samples; repeat for multiple values |
 | `--irs-reference-regex` | `pool\|powder\|ref\|reference\|bridge` | Regex for auto-detection |
 | `--irs-stat` | `median` | Statistic for plex reference: median or mean |
 | `--irs-remove-reference` | off | Remove reference samples from output |
 
 Every IRS sub-option requires `--irs` and an SDRF. If reference detection finds
 no usable sample/plex mapping or no finite scale, the command fails rather than
-returning an unscaled matrix. IRS is not applicable to `peptide_count` or
-`spectral_count` and is rejected for both methods.
+returning an unscaled matrix. IRS is not applicable to `peptide-count` or
+`spectral-count` and is rejected for both methods.
 
 ## Sample Correlation QC
 
@@ -255,7 +252,7 @@ correlation to the other samples in the same SDRF condition falls below a
 threshold:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --min-sample-correlation 0.8
 ```
@@ -273,7 +270,7 @@ conditions are retained but are not scored.
 For multi-plex TMT with per-plex reference division:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method ratio \
     --coverage-threshold 0.65 \
@@ -291,12 +288,13 @@ ComBat runs as a native Rust kernel (oracle-verified vs inmoose), so no extra de
 === "CLI"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
         --quant-method maxlfq \
         --batch-correction \
-        --batch-method sample_prefix \
-        --batch-covariates "characteristics[sex],characteristics[organism part]"
+        --batch-method sample-prefix \
+        --batch-covariate "characteristics[sex]" \
+        --batch-covariate "characteristics[organism part]"
     ```
 
 === "Python (wheel)"
@@ -310,28 +308,33 @@ ComBat runs as a native Rust kernel (oracle-verified vs inmoose), so no extra de
         sdrf="experiment.sdrf.tsv",
         quant_method="maxlfq",
         batch_correction=True,
-        batch_method="sample_prefix",
-        batch_covariates="characteristics[sex],characteristics[organism part]",
+        batch_method="sample-prefix",
+        batch_covariate=[
+            "characteristics[sex]",
+            "characteristics[organism part]",
+        ],
     )
     ```
 
-Only `sample_prefix` and `column` (with `--batch-column`) are exposed in this
+Only `sample-prefix` and `column` (with `--batch-column`) are exposed in this
 protein-matrix flow. ComBat requires at least two batches with two samples each
 and at least one protein observed in every sample; otherwise it fails instead
 of returning unchanged values. PCA + HDBSCAN outlier removal is not ported.
 
 ## Differential Expression
 
-Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-contrasts-file` (TSV). Both can be combined.
+Contrasts must be explicitly specified via repeated `--de-contrast GROUP_A GROUP_B`
+options or `--de-contrast-file` (TSV). Both can be combined, and any DE option
+enables differential expression without a separate switch.
 
 === "Inline contrasts"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
         --quant-method maxlfq \
-        --de \
-        --de-contrasts "NASH vs HL,NASH vs Control" \
+        --de-contrast "NASH" "HL" \
+        --de-contrast "NASH" "Control" \
         --de-method deqms \
         --de-fdr-method ihw \
         --de-output de_results.csv
@@ -340,11 +343,10 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 === "Contrasts file"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
         --quant-method maxlfq \
-        --de \
-        --de-contrasts-file contrasts.tsv \
+        --de-contrast-file contrasts.tsv \
         --de-method deqms \
         --de-fdr-method ihw \
         --de-output de_results.csv
@@ -361,24 +363,21 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 
 | DE Option | Default | Description |
 |-----------|---------|-------------|
-| `--de` | off | Enable differential expression |
-| `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
-| `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
+| `--de-contrast` | — | Two condition labels; repeat the option for multiple contrasts |
+| `--de-contrast-file` | — | TSV file with columns `group1`, `group2` |
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
-| `--de-ensemble-methods` | `limrots,deqms,proda` | Comma-separated DE methods used when `--de-method=ensemble` |
+| `--de-ensemble-method` | `limrots`, `deqms`, `proda` | Ensemble member; repeat to override the defaults |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction (ensemble only) |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
-| `--de-effect-size-gate` | — | Explicit data-driven gate: `mixture` or `null_quantile`; a numeric `--de-log2fc` becomes its fallback |
+| `--de-effect-size-gate` | — | Explicit data-driven gate: `mixture` or `null-quantile`; a numeric `--de-log2fc` becomes its fallback |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
 | `--de-fdr-method` | `bh` | FDR correction: bh, ihw, bky, or storey |
 | `--de-output` | — | DE results file; with multiple contrasts each is written as `<stem>_<A-B>.<ext>` |
 
 !!! warning "Contrasts are required"
-    If `--de` is enabled but no contrasts are provided
-    (neither `--de-contrasts` nor `--de-contrasts-file`),
-    the pipeline raises an error listing available conditions.
-    Use `" vs "` as the delimiter to support hyphenated
-    condition names.
+    If DE options are supplied without `--de-contrast` or `--de-contrast-file`,
+    the pipeline raises an error. Each inline contrast receives two distinct
+    arguments, so hyphenated condition names are unambiguous.
     A DE output path is also required, so completed results cannot be discarded.
 
 !!! tip
@@ -395,12 +394,14 @@ Contrasts must be explicitly specified via `--de-contrasts` (inline) or `--de-co
 
 ```bash
 # Top-k consensus across multiple methods
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
-    --de --de-contrasts "NASH vs HL" \
+    --de-contrast "NASH" "HL" \
     --de-method ensemble \
-    --de-ensemble-methods "limrots,deqms,proda" \
+    --de-ensemble-method limrots \
+    --de-ensemble-method deqms \
+    --de-ensemble-method proda \
     --de-ensemble-min-k 2 \
     --de-output ensemble_de.csv
 ```
@@ -414,23 +415,22 @@ MinDet, QRILC) behave correctly.
 
 ```bash
 # MinProb low-tail draw (Perseus style)
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
-    --impute --impute-method minprob \
+    --impute-method minprob \
     --impute-quantile 0.01 --impute-shift 1.6 --impute-scale 0.3
 
 # KNN imputation
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
-    --impute --impute-method knn --impute-n-neighbors 5
+    --impute-method knn --impute-n-neighbors 5
 ```
 
 | Imputation Option | Default | Description |
 |-------------------|---------|-------------|
-| `--impute` | off | Enable imputation; requires `--impute-method` |
-| `--impute-method` | none | Select a method and enable imputation; `constant` is a compatibility alias for `zero` |
+| `--impute-method` | none | Select a method and enable imputation; use `zero` for zero filling |
 | `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet |
 | `--impute-shift` | 1.6 | MinProb shift in standard deviations |
 | `--impute-scale` | 0.3 | MinProb scale factor for sigma |
@@ -462,13 +462,13 @@ and/or `reports` extra:
 ```python
 import mokume
 
-# DE plots (volcano / heatmap / PCA) — explicit argv: the per-contrast
+# DE plots (volcano / heatmap) — explicit argv: the per-contrast
 # --contrast KEY A B CSV flag repeats, which keyword arguments cannot express.
 mokume.de_plots([
     "--protein-matrix", "proteins.csv",
-    "--plot-dir", "plots",
+    "--outdir", "plots",
     "--sdrf", "experiment.sdrf.tsv",
-    "--volcano", "--heatmap", "--pca",
+    "--volcano", "--heatmap",
     "--contrast", "NASH-HL", "NASH", "HL", "de_results.csv",
 ])
 
@@ -476,7 +476,7 @@ mokume.de_plots([
 mokume.interactive_report([
     "--protein-matrix", "proteins.csv",
     "--sdrf", "experiment.sdrf.tsv",
-    "--report-output", "qc_report.html",
+    "--output", "qc_report.html",
     "--contrast", "NASH-HL", "NASH", "HL", "de_results.csv",
 ])
 ```
@@ -488,13 +488,13 @@ cells in the kernel matrix.
 
 ```bash
 # Export normalized peptides from a non-DirectLFQ aggregation
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method sum \
     --export-peptides peptides.csv
 
 # Export the normalized ion table used by DirectLFQ
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq \
     --export-ions ions.csv
@@ -512,16 +512,16 @@ A complete TMT multi-plex analysis (kernel compute; render plots separately with
 the wheel periphery as shown in [Plots and Reports](#plots-and-reports)):
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet \
     -o proteins.csv \
     -s experiment.sdrf.tsv \
     --quant-method median \
     --run-normalization median \
-    --sample-normalization globalMedian \
+    --sample-normalization global-median \
     --min-unique 2 \
     --irs --irs-remove-reference \
-    --batch-correction --batch-method sample_prefix \
-    --de --de-contrasts "NASH vs HL" --de-method deqms --de-fdr-method ihw \
+    --batch-correction --batch-method sample-prefix \
+    --de-contrast "NASH" "HL" --de-method deqms --de-fdr-method ihw \
     --de-output de_results.csv
 ```

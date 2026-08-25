@@ -27,7 +27,7 @@ If your goal is standard LFQ or TMT protein quantification, start with
 
 ## Expected Input Layout
 
-`scan_dir` can point to either:
+`--input` can point to either:
 
 - a single dataset directory containing `qpx_output/`
 - a parent directory containing multiple dataset directories, each with `qpx_output/`
@@ -42,20 +42,20 @@ with repeated `tmt_dataset` values.
 mokume tissuemap --generate-config tissuemap.yaml
 
 # Run a single dataset directory
-mokume tissuemap --scan-dir QPX_data/tissues-mq/PXD016999 \
-    --output-dir ./results
+mokume tissuemap --input QPX_data/tissues-mq/PXD016999 \
+    --outdir ./results
 
 # Run a parent directory and identify a TMT dataset explicitly
-mokume tissuemap --scan-dir QPX_data/tissues-mq \
-    --tmt-dataset PXD016999 --output-dir ./results --n-jobs 8
+mokume tissuemap --input QPX_data/tissues-mq \
+    --tmt-dataset PXD016999 --outdir ./results --threads 8
 
 # Run with a custom YAML configuration
-mokume tissuemap --scan-dir QPX_data/tissues-mq \
-    --config tissuemap.yaml --output-dir ./results
+mokume tissuemap --input QPX_data/tissues-mq \
+    --config tissuemap.yaml --outdir ./results
 ```
 
 The equivalent Python API is `mokume.tissuemap(**kwargs)`. Its wrapper validates
-keyword arguments and maps them to the command's exact flags; a `tmt_datasets`
+keyword arguments and maps them to the command's exact flags; a `tmt_dataset`
 list repeats `--tmt-dataset`.
 
 ## What the Pipeline Does
@@ -77,14 +77,14 @@ The current TissueMap workflow is organized around per-dataset processing:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--scan-dir` | required unless `--generate-config` | Dataset directory or parent directory containing datasets |
-| `--output-dir` | `tissuemap_output` | Output directory for all results |
+| `-i`, `--input` | required unless `--generate-config` | Dataset directory or parent directory containing datasets |
+| `-o`, `--outdir` | `tissuemap_output` | Output directory for all results |
 | `--config` | none | YAML configuration file |
 | `--generate-config` | none | Write a default YAML template and exit |
 | `--tmt-dataset` | auto | Mark one or more dataset IDs as TMT; repeat for multiple datasets |
-| `--n-jobs` | `8` | Threads for dataset processing and embedding |
+| `-t`, `--threads` | `8` | Threads for dataset processing and embedding |
 | `--dpi` | `250` | Plot resolution override |
-| `--imputation-method` | config default | Imputation method used before embedding |
+| `--impute-method` | config default | Imputation method used before embedding |
 | `--embedding-method` | config default | `tsne` or `umap` |
 
 ## Configuration Workflow
@@ -107,7 +107,7 @@ The generated YAML exposes the main configuration groups:
 - `plotting` — DPI, PDF export, marker plot controls
 - `output` — output directory
 
-CLI values such as `--scan-dir`, `--output-dir`, `--n-jobs`, and `--dpi`
+CLI values such as `--input`, `--outdir`, `--threads`, and `--dpi`
 override the YAML file.
 
 ## Output Files
@@ -158,7 +158,7 @@ GMM-fitted thresholds) and the tissue-specific protein count per tissue.*
 
 ## Practical Tips
 
-- Use `features2proteins` for standard quantification workflows; use `tissuemap`
+- Use `quantify features2proteins` for standard quantification workflows; use `tissuemap`
   for atlas-style tissue analysis.
 - Start with the generated YAML template if you expect to rerun multiple datasets.
 - Pass a list to `tmt_dataset` when one or more datasets should be treated as TMT
