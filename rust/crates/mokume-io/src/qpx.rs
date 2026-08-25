@@ -118,101 +118,181 @@ fn flatten_qpx_batch_inner(
     batch: &RecordBatch,
     score_name: Option<&str>,
 ) -> Result<Vec<QpxFeatureRecord>> {
-    let sequence = column_by_names(batch, &["sequence", "Sequence"])?;
-    let peptidoform = column_by_names(batch, &["peptidoform", "modified_sequence"])?;
-    let charge = column_by_names(batch, &["charge", "precursor_charge"])?;
-    let run_file_name = column_by_names(
-        batch,
-        &["run_file_name", "reference_file_name", "run", "raw_file"],
-    )?;
-    let intensities = column_by_names(batch, &["intensities", "primary_intensities"])?;
-    let protein_groups =
-        column_by_names(batch, &["pg_accessions", "protein_accessions", "proteins"])?;
-    let anchor_protein = optional_column_by_names(batch, &["anchor_protein", "protein"]);
-    let unique = optional_column_by_names(batch, &["unique", "is_unique"]);
-    let is_decoy = optional_column_by_names(batch, &["is_decoy", "decoy"]);
-    let peptide_qvalue = optional_column_by_names(batch, &["peptide_qvalue", "peptide_q_value"]);
-    let pg_global_qvalue = optional_column_by_names(batch, &["pg_global_qvalue", "protein_qvalue"]);
-    let additional_scores = requested_score_column(batch, score_name)?;
-
+    let columns = QpxBatchColumns::from_batch(batch, score_name)?;
     let mut records = Vec::new();
     for row in 0..batch.num_rows() {
-        let sequence = required_string_value(sequence, row, "sequence")?;
-        let peptidoform = required_string_value(peptidoform, row, "peptidoform")?;
-        let charge = required_i32_value(charge, row, "charge")?;
-        let run_file_name = required_string_value(run_file_name, row, "run_file_name")?;
+        flatten_qpx_row(&columns, score_name, row, &mut records)?;
+    }
+    Ok(records)
+}
+
+struct QpxBatchColumns<'a> {
+    sequence: &'a dyn Array,
+    peptidoform: &'a dyn Array,
+    charge: &'a dyn Array,
+    run_file_name: &'a dyn Array,
+    intensities: &'a dyn Array,
+    protein_groups: &'a dyn Array,
+    anchor_protein: Option<&'a dyn Array>,
+    unique: Option<&'a dyn Array>,
+    is_decoy: Option<&'a dyn Array>,
+    peptide_qvalue: Option<&'a dyn Array>,
+    pg_global_qvalue: Option<&'a dyn Array>,
+    additional_scores: Option<&'a dyn Array>,
+}
+
+impl<'a> QpxBatchColumns<'a> {
+    fn from_batch(batch: &'a RecordBatch, score_name: Option<&str>) -> Result<Self> {
+        Ok(Self {
+            sequence: column_by_names(batch, &["sequence", "Sequence"])?,
+            peptidoform: column_by_names(batch, &["peptidoform", "modified_sequence"])?,
+            charge: column_by_names(batch, &["charge", "precursor_charge"])?,
+            run_file_name: column_by_names(
+                batch,
+                &["run_file_name", "reference_file_name", "run", "raw_file"],
+            )?,
+            intensities: column_by_names(batch, &["intensities", "primary_intensities"])?,
+            protein_groups: column_by_names(
+                batch,
+                &["pg_accessions", "protein_accessions", "proteins"],
+            )?,
+            anchor_protein: optional_column_by_names(batch, &["anchor_protein", "protein"]),
+            unique: optional_column_by_names(batch, &["unique", "is_unique"]),
+            is_decoy: optional_column_by_names(batch, &["is_decoy", "decoy"]),
+            peptide_qvalue: optional_column_by_names(batch, &["peptide_qvalue", "peptide_q_value"]),
+            pg_global_qvalue: optional_column_by_names(
+                batch,
+                &["pg_global_qvalue", "protein_qvalue"],
+            ),
+            additional_scores: requested_score_column(batch, score_name)?,
+        })
+    }
+}
+
+struct QpxRowMetadata {
+    sequence: String,
+    peptidoform: String,
+    charge: i32,
+    run_file_name: String,
+    protein_accessions: Vec<String>,
+    anchor_protein: Option<String>,
+    unique: Option<bool>,
+    is_decoy: Option<bool>,
+    peptide_qvalue: Option<f64>,
+    pg_global_qvalue: Option<f64>,
+    selected_score: Option<QpxScoreValue>,
+}
+
+impl QpxRowMetadata {
+    fn from_columns(
+        columns: &QpxBatchColumns<'_>,
+        score_name: Option<&str>,
+        row: usize,
+    ) -> Result<Self> {
+        let anchor_protein = columns
+            .anchor_protein
+            .map(|column| optional_string_value(column, row, "anchor_protein"))
+            .transpose()?
+            .flatten();
         let mut protein_accessions = list_string_values(
-            protein_groups,
+            columns.protein_groups,
             row,
             "pg_accessions",
             &["accession", "protein_accession", "protein"],
         )?;
-        let anchor_protein = anchor_protein
-            .map(|column| optional_string_value(column, row, "anchor_protein"))
-            .transpose()?
-            .flatten();
         if protein_accessions.is_empty() {
-            if let Some(anchor_protein) = anchor_protein.as_ref() {
-                protein_accessions.push(anchor_protein.clone());
-            }
+            protein_accessions.extend(anchor_protein.iter().cloned());
         }
-        let unique = unique
-            .map(|column| optional_bool_value(column, row, "unique"))
-            .transpose()?
-            .flatten();
-        let is_decoy = is_decoy
-            .map(|column| optional_bool_value(column, row, "is_decoy"))
-            .transpose()?
-            .flatten();
         let (peptide_qvalue, pg_global_qvalue) =
-            optional_qvalue_values(peptide_qvalue, pg_global_qvalue, row)?;
-        let selected_score = selected_score_value(additional_scores, score_name, row)?;
+            optional_qvalue_values(columns.peptide_qvalue, columns.pg_global_qvalue, row)?;
+        Ok(Self {
+            sequence: required_string_value(columns.sequence, row, "sequence")?,
+            peptidoform: required_string_value(columns.peptidoform, row, "peptidoform")?,
+            charge: required_i32_value(columns.charge, row, "charge")?,
+            run_file_name: required_string_value(columns.run_file_name, row, "run_file_name")?,
+            protein_accessions,
+            anchor_protein,
+            unique: optional_bool_column_value(columns.unique, row, "unique")?,
+            is_decoy: optional_bool_column_value(columns.is_decoy, row, "is_decoy")?,
+            peptide_qvalue,
+            pg_global_qvalue,
+            selected_score: selected_score_value(columns.additional_scores, score_name, row)?,
+        })
+    }
+}
 
-        let entries = intensity_entries(intensities, row)?;
-        // In quantms.io LFQ the per-run intensities are labeled by run file (the
-        // row's anchor run appears among them); in isobaric (TMT/iTRAQ) the labels
-        // are reporter channels and never equal a run file. When the labels are
-        // runs, the run/sample for each intensity is its own `label`, not the row's
-        // anchor `run_file_name` -- otherwise every run collapses onto the anchor
-        // sample and all other runs are dropped (see mokume-io qpx tests).
-        let row_key = crate::sdrf::normalize_file_key(&run_file_name);
-        let labels_are_runs = entries.iter().any(|entry| {
+fn optional_bool_column_value(
+    column: Option<&dyn Array>,
+    row: usize,
+    name: &str,
+) -> Result<Option<bool>> {
+    column
+        .map(|column| optional_bool_value(column, row, name))
+        .transpose()
+        .map(Option::flatten)
+}
+
+fn flatten_qpx_row(
+    columns: &QpxBatchColumns<'_>,
+    score_name: Option<&str>,
+    row: usize,
+    records: &mut Vec<QpxFeatureRecord>,
+) -> Result<()> {
+    let metadata = QpxRowMetadata::from_columns(columns, score_name, row)?;
+    let entries = intensity_entries(columns.intensities, row)?;
+    let labels_are_runs = intensity_labels_are_runs(&entries, &metadata.run_file_name);
+    records.extend(
+        entries
+            .into_iter()
+            .filter(|entry| entry.intensity.is_finite())
+            .map(|entry| qpx_feature_record(&metadata, entry, labels_are_runs)),
+    );
+    Ok(())
+}
+
+/// LFQ intensities are labeled by run file; isobaric intensities are labeled
+/// by reporter channel. Matching the anchor run distinguishes the two layouts.
+fn intensity_labels_are_runs(entries: &[QpxIntensityEntry], run_file_name: &str) -> bool {
+    let row_key = crate::sdrf::normalize_file_key(run_file_name);
+    entries.iter().any(|entry| {
+        entry
+            .label
+            .as_deref()
+            .is_some_and(|label| crate::sdrf::normalize_file_key(label) == row_key)
+    })
+}
+
+fn qpx_feature_record(
+    metadata: &QpxRowMetadata,
+    entry: QpxIntensityEntry,
+    labels_are_runs: bool,
+) -> QpxFeatureRecord {
+    let (run_file_name, label) = if labels_are_runs {
+        (
             entry
                 .label
-                .as_deref()
-                .is_some_and(|label| crate::sdrf::normalize_file_key(label) == row_key)
-        });
-        for entry in entries {
-            if entry.intensity.is_finite() {
-                let (entry_run_file_name, entry_label) = if labels_are_runs {
-                    (
-                        entry.label.clone().unwrap_or_else(|| run_file_name.clone()),
-                        None,
-                    )
-                } else {
-                    (run_file_name.clone(), entry.label)
-                };
-                records.push(QpxFeatureRecord {
-                    sequence: sequence.clone(),
-                    peptidoform: peptidoform.clone(),
-                    charge,
-                    run_file_name: entry_run_file_name,
-                    sample_accession: entry.sample_accession,
-                    protein_accessions: protein_accessions.clone(),
-                    anchor_protein: anchor_protein.clone(),
-                    unique,
-                    is_decoy,
-                    peptide_qvalue,
-                    pg_global_qvalue,
-                    selected_score,
-                    label: entry_label,
-                    intensity: entry.intensity,
-                });
-            }
-        }
+                .unwrap_or_else(|| metadata.run_file_name.clone()),
+            None,
+        )
+    } else {
+        (metadata.run_file_name.clone(), entry.label)
+    };
+    QpxFeatureRecord {
+        sequence: metadata.sequence.clone(),
+        peptidoform: metadata.peptidoform.clone(),
+        charge: metadata.charge,
+        run_file_name,
+        sample_accession: entry.sample_accession,
+        protein_accessions: metadata.protein_accessions.clone(),
+        anchor_protein: metadata.anchor_protein.clone(),
+        unique: metadata.unique,
+        is_decoy: metadata.is_decoy,
+        peptide_qvalue: metadata.peptide_qvalue,
+        pg_global_qvalue: metadata.pg_global_qvalue,
+        selected_score: metadata.selected_score,
+        label,
+        intensity: entry.intensity,
     }
-
-    Ok(records)
 }
 
 fn requested_score_column<'a>(
