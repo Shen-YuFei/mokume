@@ -37,6 +37,8 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
             "directlfq",
             "--directlfq-min-nonan",
             "3",
+            "--export-ions",
+            "ions.csv",
             "--batch-correction",
             "--batch-method",
             "column",
@@ -60,6 +62,7 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
 
     assert result.exit_code == 0
     assert captured["directlfq_min_nonan"] == 3
+    assert captured["export_ions"] == "ions.csv"
     assert captured["batch_correction"] is True
     assert captured["batch_method"] == "column"
     assert captured["batch_column"] == "characteristics[batch]"
@@ -117,6 +120,27 @@ def test_features2proteins_requires_sdrf_for_sample_correlation(tmp_path):
 
     assert result.exit_code != 0
     assert "--min-sample-correlation requires --sdrf" in result.output
+
+
+def test_features2proteins_rejects_ion_export_for_non_directlfq(tmp_path):
+    parquet, _ = _make_input_files(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "--quant-method",
+            "sum",
+            "--export-ions",
+            "ions.csv",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--export-ions require --quant-method directlfq" in result.output
 
 
 def test_features2proteins_requires_batch_column_for_column_method(tmp_path):

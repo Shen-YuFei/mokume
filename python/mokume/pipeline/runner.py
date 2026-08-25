@@ -73,6 +73,8 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
         and not config.input.sdrf
     ):
         raise ValueError("Sample correlation filtering requires an SDRF file")
+    if config.output.export_ions and quant_method_name != "directlfq":
+        raise ValueError("export_ions is supported only by the directlfq pipeline")
 
     # Ensure built-in methods are registered
     import mokume.quantification  # noqa: F401

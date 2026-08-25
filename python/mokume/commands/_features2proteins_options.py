@@ -71,10 +71,11 @@ def _validate_pibaq_options(ctx: click.Context, quant_method: str) -> None:
 
 def _validate_directlfq_options(ctx: click.Context, quant_method: str) -> None:
     if quant_method != "directlfq" and _supplied(
-        ctx, "directlfq_cores", "directlfq_min_nonan"
+        ctx, "directlfq_cores", "directlfq_min_nonan", "export_ions"
     ):
         raise click.UsageError(
-            "--directlfq-cores/--directlfq-min-nonan require --quant-method directlfq"
+            "--directlfq-cores/--directlfq-min-nonan/--export-ions require "
+            "--quant-method directlfq"
         )
 
 

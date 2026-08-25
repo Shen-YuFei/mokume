@@ -22,6 +22,7 @@ with its SDRF), so the test is self-contained.
 import os
 
 import numpy as np
+import pandas as pd
 import pytest
 
 # Paths ---------------------------------------------------------------
@@ -124,6 +125,22 @@ class TestRunPipelineMatchesRunDataset:
         pytest.importorskip("directlfq")
         pytest.importorskip("polars")
         assert _max_abs_diff("directlfq") < 1e-9
+
+    def test_directlfq_ion_export_matches(self, tmp_path):
+        pytest.importorskip("directlfq")
+        pytest.importorskip("polars")
+        run_config = _make_config("directlfq")
+        reference_config = _make_config("directlfq")
+        run_config.output.export_ions = str(tmp_path / "run-ions.csv")
+        reference_config.output.export_ions = str(tmp_path / "reference-ions.csv")
+
+        run_pipeline(run_config)
+        QuantificationPipeline(reference_config).run_dataset()
+
+        pd.testing.assert_frame_equal(
+            pd.read_csv(run_config.output.export_ions),
+            pd.read_csv(reference_config.output.export_ions),
+        )
 
     def test_directlfq_rejects_external_normalization(self):
         config = _make_config("directlfq")

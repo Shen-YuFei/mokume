@@ -272,6 +272,13 @@ QUANT_METHOD = QuantMethodParamType()
     default=None,
 )
 @click.option(
+    "--export-ions",
+    "export_ions",
+    help="Export the normalized DirectLFQ ion matrix to this CSV file",
+    type=click.Path(),
+    default=None,
+)
+@click.option(
     "--batch-correction",
     "batch_correction",
     help="Enable ComBat batch correction after quantification",
@@ -633,6 +640,7 @@ def features2proteins(
     directlfq_cores: int,
     directlfq_min_nonan: int,
     export_peptides: str,
+    export_ions: str,
     # Batch correction
     batch_correction: bool,
     batch_method: str,
@@ -796,6 +804,7 @@ def features2proteins(
         directlfq_num_cores=directlfq_cores,
         directlfq_min_nonan=directlfq_min_nonan,
         export_peptides=export_peptides,
+        export_ions=export_ions,
         # Batch correction
         batch_correction=batch_correction,
         batch_method=batch_method,

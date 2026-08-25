@@ -143,8 +143,8 @@ class QuantificationPipeline:
             raise ValueError(
                 f"export_peptides is not supported by the {quant_method} pipeline"
             )
-        if self.config.output.export_ions:
-            raise ValueError("export_ions is not supported by the streaming pipelines")
+        if self.config.output.export_ions and quant_method != "directlfq":
+            raise ValueError("export_ions is supported only by the directlfq pipeline")
 
     def _validate_reference_config(self, quant_method: str) -> None:
         selectors = self._reference_selector_count()
@@ -487,11 +487,6 @@ class QuantificationPipeline:
         gc.collect()
 
         # Configure DirectLFQ
-        if self.config.output.export_ions:
-            raise ValueError(
-                "--export-ions is not supported by streaming DirectLFQ estimation; "
-                "normalized ion tables can be much larger than the protein matrix."
-            )
         lfq_config.set_global_protein_and_ion_id(protein_id="protein", quant_id="ion")
         lfq_config.set_compile_normalized_ion_table(False)
 
@@ -510,6 +505,7 @@ class QuantificationPipeline:
             min_nonan=self.config.quantification.directlfq_min_nonan,
             num_samples_quadratic=self.config.quantification.directlfq_num_samples_quadratic,
             num_cores=self.config.quantification.directlfq_num_cores,
+            export_ions=self.config.output.export_ions,
         )
 
         logger.info("DirectLFQ complete: %d proteins", len(protein_df))

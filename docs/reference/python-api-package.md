@@ -71,6 +71,24 @@ method = PluginRegistry.get("quantification", "maxlfq")
 
 ::: mokume.pipeline.runner.run_pipeline
 
+### DirectLFQ ion export
+
+The pure-Python command can stream the normalized ion matrix produced during
+DirectLFQ protein estimation without retaining the full ion result in memory:
+
+```bash
+mokume features2proteins \
+    --parquet features.parquet \
+    --output proteins.csv \
+    --quant-method directlfq \
+    --export-ions normalized-ions.csv
+```
+
+The CSV contains `protein`, `ion`, and one linear-intensity column per sample.
+The same output is available through `OutputConfig(export_ions=...)` when using
+`run_pipeline` or `QuantificationPipeline` directly. Other quantification
+methods reject `export_ions`.
+
 ## Runtime resources
 
 `RuntimeConfig` controls the DuckDB memory and thread hints used by the
