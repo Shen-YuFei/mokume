@@ -215,8 +215,11 @@ Runnable examples per analysis: [quantification methods](docs/examples/quantific
 
 - **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top<N>` (`top3`, `top5`,
   `top10`, ... — the N is part of the method name), `sum` (also `median`,
-  `ratio`, `abd`, `intensity`, `spectral_count`). piBAQ requires a FASTA; TopN,
-  MaxLFQ, and Sum do not.
+  `ratio`, `abd`, `intensity`, `peptide_count`, `spectral_count`). `peptide_count`
+  counts distinct canonical peptides from feature QPX; true `spectral_count`
+  reads PSM QPX with `--psm` and deduplicates `(run_file_name, scan)`. piBAQ
+  requires a FASTA; TopN, MaxLFQ, and Sum do not. The two count methods reject
+  intensity normalization and IRS rather than silently accepting no-op scaling.
 - **Normalization:** run-level and sample-level options including `median`,
   `quantile`, `rlr`, and `loess`.
 - **Imputation:** a wide set of imputers, from simple (`mindet`, `knn`) to

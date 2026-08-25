@@ -67,8 +67,8 @@ mokume.tissuemap(
 )
 ```
 
-The wrapper maps keyword arguments to the command's flags (`key=value` →
-`--key value` with `_` rewritten to `-`; a list repeats the flag). The same
+The wrapper validates keyword arguments and maps them to the command's exact
+flags; a `tmt_datasets` list repeats `--tmt-dataset`. The same
 command is runnable from a shell as `python -m mokume.commands.tissuemap
 --scan-dir ... --output-dir ...`.
 

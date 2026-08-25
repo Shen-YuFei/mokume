@@ -18,7 +18,8 @@ The `features2proteins` command is the recommended way to go from raw feature da
 
 === "Python (wheel)"
 
-    The wheel wrapper maps keyword arguments to CLI flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`) and runs the same kernel in-process:
+    The wheel wrapper validates documented keyword arguments, maps them to the
+    command's exact CLI flags, and runs the same kernel in-process:
 
     ```python
     import mokume
@@ -47,11 +48,13 @@ The `features2proteins` command is the recommended way to go from raw feature da
 
 ## Input Formats
 
-Provide exactly one feature input:
+Provide exactly one input:
 
 - `--parquet` accepts a quantms.io/QPX feature parquet file.
 - `--msstats` accepts a native MSstats CSV and requires `--sdrf` so runs and
   channels can be mapped to samples.
+- `--psm` accepts a PSM-level QPX parquet for true `spectral_count` and requires
+  `--sdrf`.
 
 ```bash
 mokume features2proteins \
@@ -79,7 +82,8 @@ therefore cannot use an MSstats feature table.
 | Ratio | `--quant-method ratio` | No | Log2 sample/reference (TMT) |
 | TMT Abundance | `--quant-method abd` | No | Median of log2 peptide intensities (TMT) |
 | TMT Reporter Intensity | `--quant-method intensity` | No | Sum of raw reporter intensities (TMT) |
-| Spectral Count | `--quant-method spectral_count` | No | Count of distinct peptides per (protein, sample) |
+| Peptide Count | `--quant-method peptide_count` | No | Distinct canonical peptides from feature QPX |
+| Spectral Count | `--quant-method spectral_count --psm FILE` | No | Unique `(run_file_name, scan)` spectra from PSM QPX; requires SDRF |
 
 In practice:
 
@@ -94,6 +98,9 @@ In practice:
   pipeline output retains per-protein `PiBAQ` values but does not surface the
   `FamilyId` / `EvidenceLevel` metadata columns.
 - Use `ratio` for TMT PS-style reference-based analysis.
+- Use `peptide_count` for distinct peptide identifications from feature QPX;
+  use `spectral_count` for unique spectra from PSM QPX. Both are integer
+  evidence counts, so run/sample intensity normalization and IRS are rejected.
 - Use `top<N>` for the classic Top3-style summary; `top3` is the method from
   Silva et al. 2006, and any other N works the same way (`top5`, `top10`, ...).
 
@@ -111,7 +118,7 @@ mokume features2proteins \
 # DirectLFQ (native Rust, no extra dependency)
 mokume features2proteins \
     -p features.parquet -o proteins.csv \
-    --quant-method directlfq --directlfq-cores 4
+    --quant-method directlfq --threads 24
 ```
 
 ## Memory & Performance for Large Studies
@@ -121,8 +128,9 @@ the compact peptide, protein, and sample structures needed by the selected
 method. It does not load the input through DuckDB or build a pandas pivot.
 
 Use `--threads` to size the Rayon thread pool used by parallel Rust sections.
-`--threads` and the DirectLFQ-specific `--directlfq-cores` are mutually
-exclusive, so the requested worker count can never be shadowed:
+The hidden compatibility options `--duckdb-threads` and, for DirectLFQ,
+`--directlfq-cores` map to the same runtime setting; do not combine either with
+`--threads`:
 
 ```bash
 mokume features2proteins \
@@ -237,7 +245,8 @@ mokume features2proteins \
 
 Every IRS sub-option requires `--irs` and an SDRF. If reference detection finds
 no usable sample/plex mapping or no finite scale, the command fails rather than
-returning an unscaled matrix.
+returning an unscaled matrix. IRS is not applicable to `peptide_count` or
+`spectral_count` and is rejected for both methods.
 
 ## Sample Correlation QC
 
@@ -420,8 +429,8 @@ mokume features2proteins \
 
 | Imputation Option | Default | Description |
 |-------------------|---------|-------------|
-| `--impute` | off | Enable imputation on the protein matrix |
-| `--impute-method` | required with `--impute` | mean, median, constant, zero, most_frequent, knn, minprob, mindet, qrilc, seqknn, impseq, gms, bpca, impseqrob |
+| `--impute` | off | Enable imputation; requires `--impute-method` |
+| `--impute-method` | none | Select a method and enable imputation; `constant` is a compatibility alias for `zero` |
 | `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet |
 | `--impute-shift` | 1.6 | MinProb shift in standard deviations |
 | `--impute-scale` | 0.3 | MinProb scale factor for sigma |

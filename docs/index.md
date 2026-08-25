@@ -125,8 +125,8 @@ together safely.
     ```python
     import mokume
 
-    # The wheel runs the same Rust kernel in-process (no subprocess); kwargs map
-    # to CLI flags (key=value -> --key value, with _ rewritten to -).
+    # The wheel runs the same Rust kernel in-process (no subprocess) and
+    # validates kwargs against the command's exact CLI schema.
     mokume.features2proteins(
         parquet="features.parquet",
         output="proteins.csv",

@@ -17,7 +17,8 @@ The `features2peptides` command normalizes feature-level mass spectrometry data 
 
 === "Python (wheel)"
 
-    The wheel wrapper maps keyword arguments to CLI flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`) and runs the same kernel in-process:
+    The wheel wrapper validates documented keyword arguments, maps them to the
+    command's exact CLI flags, and runs the same kernel in-process:
 
     ```python
     import mokume
@@ -224,7 +225,8 @@ fails instead of writing an unscaled result.
 ## Python API
 
 The wheel exposes the same command as a thin wrapper; keyword arguments map to CLI
-flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`).
+validated command flags; unknown keywords and invalid value shapes fail before
+dispatch.
 
 ```python
 import mokume

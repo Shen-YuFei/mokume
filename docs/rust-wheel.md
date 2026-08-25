@@ -75,17 +75,22 @@ installed Mokume Plugin; users do not configure or launch it manually.
 
 ## The kwargs &rarr; flags rule
 
-The compute wrappers turn keyword arguments into command flags by a fixed rule:
+The compute wrappers validate keyword arguments against a per-command schema
+and then translate them into command flags:
 
 | Python keyword argument | Command flag |
 | --- | --- |
 | `key="value"` | `--key value` (`_` becomes `-`) |
 | `key=True` | `--key` |
-| `key=[a, b]` | `--key a --key b` (the flag repeats) |
+| a CSV-valued `key=[a, b]` | `--key a,b` |
+| a repeatable `key=[a, b]` | `--key a --key b` |
 | `key=None` or `key=False` | skipped |
 
 For example, `quant_method="maxlfq"` becomes `--quant-method maxlfq` and
-`de_contrasts=["A vs B", "C vs D"]` becomes two `--de-contrasts` flags.
+`de_contrasts=["A vs B", "C vs D"]` becomes
+`--de-contrasts "A vs B,C vs D"`. Compatibility aliases and inverted booleans
+are explicit; unknown keywords and list values on scalar-only fields raise
+`TypeError` before kernel dispatch.
 
 ## Capability locations
 

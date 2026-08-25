@@ -15,7 +15,8 @@ mokume supports multiple protein quantification methods, each suited to differen
 | **TMT Abundance** | Median of log2 peptide intensities | No | `abd` |
 | **TMT Reporter Intensity** | Sum of raw reporter intensities | No | `intensity` |
 | **Median** | Median of peptide intensities | No | `median` |
-| **Spectral Count** | Count of distinct peptides per (protein, sample) | No | `spectral_count` |
+| **Peptide Count** | Distinct canonical peptides per (protein, sample) from feature QPX | No | `peptide_count` |
+| **Spectral Count** | Unique spectra per (protein group, sample) from PSM QPX | No | `spectral_count` |
 
 All aggregation methods run in the Rust kernel. piBAQ obtains its theoretical
 peptide map from the base pyOpenMS dependency; the other methods need no Python
@@ -44,6 +45,13 @@ The original **iBAQ** definition divides summed peptide intensities by the
 number of theoretically observable peptides per protein:
 
 $$\text{iBAQ} = \frac{\sum \text{peptide intensities}}{\text{theoretical peptide count}}$$
+
+The commonly cited observable window is stated in the Usage Notes of
+[Krey et al. 2018 *Scientific Data*](https://www.nature.com/articles/sdata2018128):
+the denominator counts theoretical tryptic peptides between 6 and 30 amino
+acids. Mokume now uses 30 as the upper-bound default everywhere. Its shared
+feature-filter default remains `--min-aa 7`, so the out-of-the-box Mokume
+window is 7–30; pass `--min-aa 6` when reproducing the cited 6–30 definition.
 
 Mokume calls its family-aware extension **piBAQ**. It retains that iBAQ
 scaling while assigning shared peptides explicitly. Peptides are assigned to
@@ -237,28 +245,32 @@ mokume features2proteins -p features.parquet -o proteins.csv \
     --quant-method intensity
 ```
 
-## Spectral Count
+## Peptide and Spectral Counts
 
-The simplest count-based quantification: protein abundance is the number of
-distinct peptides (modification-stripped sequences) per (protein, sample).
-Useful as a baseline for label-free
-workflows and for sanity-checking peptide identification depth across
-samples.
+`peptide_count` is the feature-level identification-depth metric: it counts
+distinct modification-stripped sequences per protein/sample. It requires
+run/sample normalization `none` and does not accept IRS because intensity
+scaling cannot change peptide membership.
 
 ```bash
 mokume features2proteins -p features.parquet -o proteins.csv \
-    --quant-method spectral_count
+    --quant-method peptide_count
 ```
 
-!!! note
-    Because the `features2proteins` pipeline aggregates features to the
-    canonical peptide before quantification, the count returned here is
-    **distinct peptides (modification-stripped sequences) per (protein,
-    sample)**, not a raw PSM count. Two peptidoforms of the same sequence
-    (e.g. with and without a modification) collapse to one, and both the
-    Rust and Python implementations use this count definition. Use it as an
-    identification-depth indicator rather than as a strict spectral-count
-    quantification.
+`spectral_count` instead requires a PSM-level QPX parquet and SDRF. It removes
+decoys, identifies a spectrum by `(run_file_name, scan)`, maps runs to samples
+through the SDRF, and counts each unique spectrum once. If multiple accepted PSM
+rows describe the same spectrum, Mokume unions their peptide sequences and
+protein accessions before forming one sorted protein-group key; it does not
+double-count the spectrum or explode a shared group into independent proteins.
+Rows need non-empty `protein_accessions`. As with `peptide_count`, intensity
+normalization and IRS are rejected.
+
+```bash
+mokume features2proteins --psm identifications.psm.parquet \
+    --sdrf experiment.sdrf.tsv -o spectral_counts.csv \
+    --quant-method spectral_count
+```
 
 ## Standard Output Format
 

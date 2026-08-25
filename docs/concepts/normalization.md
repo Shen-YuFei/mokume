@@ -173,3 +173,9 @@ mokume features2proteins -p data.parquet -o out.csv \
     quantification through the native Rust DirectLFQ estimator. The CLI defaults
     both external normalization settings to `none` and rejects any non-`none`
     value instead of ignoring it.
+
+!!! note "Count methods do not normalize intensities"
+    `peptide_count` and `spectral_count` count distinct evidence identities,
+    not intensity values. Their run/sample normalization defaults are `none`,
+    and active intensity normalization or IRS options are rejected instead of
+    being silently ignored.

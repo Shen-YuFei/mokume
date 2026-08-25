@@ -66,9 +66,8 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
     ```python
     import mokume
 
-    # The wheel runs the same Rust kernel in-process (no subprocess); kwargs map
-    # to CLI flags (key=value -> --key value, key=True -> --key, a list repeats
-    # the flag, with _ rewritten to -).
+    # The wheel runs the same Rust kernel in-process (no subprocess) and
+    # validates kwargs against the command's exact CLI schema.
 
     # Simple MaxLFQ
     mokume.features2proteins(

@@ -30,7 +30,10 @@ mokume.version()   # the kernel version string
 
 ## Compute wrappers
 
-Each compute wrapper maps keyword arguments to CLI flags and runs the kernel in-process. The flags are exactly those documented in the [CLI Reference](cli.md) — the wrappers add no surface of their own.
+Each compute wrapper validates keyword arguments against that command's schema,
+maps them to the exact flags documented in the [CLI Reference](cli.md), and runs
+the kernel in-process. Unknown keywords and invalid boolean/list shapes fail
+before dispatch instead of being converted into accidental CLI flags.
 
 ```python
 import mokume
@@ -51,13 +54,13 @@ mokume.correct_batches(folder="pibaq_dir", output="corrected.tsv")
 
 ### kwargs → flags rule
 
-Each wrapper translates `**kwargs` into a CLI argument list:
+Each wrapper translates its documented `**kwargs` into a CLI argument list:
 
 | keyword form | becomes | example |
 |--------------|---------|---------|
 | `key=value` | `--key value` (`_` → `-`) | `quant_method="pibaq"` → `--quant-method pibaq` |
 | `key=True` | `--key` (a bare flag) | `batch_correction=True` → `--batch-correction` |
-| `key=[a, b]` | the flag repeated | `de=[...]` style list → flag once per item |
+| `key=[a, b]` | field-specific CSV or repeated flags | `de_contrasts=["A-B", "C-D"]` → `--de-contrasts A-B,C-D` |
 | `key=None` / `key=False` | skipped | omitted entirely |
 
 ```python
@@ -70,9 +73,13 @@ mokume.features2proteins(
     batch_covariates="characteristics[sex]",
     de=True,
     de_contrasts="NASH vs HL",
-    duckdb_threads=24,
+    threads=24,
 )
 ```
+
+Compatibility aliases such as `method` → `--quant-method` are explicit. A
+sequence is accepted only for fields whose CLI contract is CSV or repeatable;
+all other sequence-valued keywords raise `TypeError`.
 
 ### `mokume.run([...])` — full control
 

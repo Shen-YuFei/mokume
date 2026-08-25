@@ -81,9 +81,8 @@ mokume.qc_report(protein_matrix="proteins.csv", sdrf="x.sdrf.tsv", output="qc.ht
 mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
 ```
 
-The kwarg wrappers follow the [kwargs &rarr; flags rule](../rust-wheel.md)
-(`key=value` &rarr; `--key value` with `_` rewritten to `-`; `key=True` &rarr;
-`--key`; a list repeats the flag; `None` / `False` skipped). `de_plots` and
+The kwarg wrappers follow the validated per-command
+[kwargs &rarr; flags rule](../rust-wheel.md). `de_plots` and
 `interactive_report` take a literal argument list because their per-contrast
 flag repeats in a shape keyword arguments cannot express.
 

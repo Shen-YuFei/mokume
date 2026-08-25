@@ -27,12 +27,14 @@ mokume features2proteins [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-p/--parquet` | none | Input quantms.io/QPX feature parquet; mutually exclusive with `--msstats` |
-| `--msstats` | none | Input MSstats CSV; mutually exclusive with `--parquet` and requires `--sdrf` |
+| `-p/--parquet` | none | Input quantms.io/QPX feature parquet; mutually exclusive with the other inputs |
+| `--msstats` | none | Input MSstats CSV; mutually exclusive with the other inputs and requires `--sdrf` |
+| `--psm` | none | PSM-level QPX parquet for `spectral_count`; mutually exclusive with the other inputs and requires `--sdrf` |
 | `-o/--output` | required | Output protein intensities CSV |
 | `--output-format` | `python-compatible` | Protein identifier header: `ProteinName` for `python-compatible`, `protein` for `rust-native` |
 
-Provide exactly one of `--parquet` or `--msstats`. MSstats input requires
+Provide exactly one of `--parquet`, `--msstats`, or `--psm`. `--psm` is the
+PSM-level QPX input used only by true `spectral_count` and requires SDRF. MSstats input requires
 `ProteinName`, `PeptideSequence`, `Intensity`, `Charge` or `PrecursorCharge`,
 and `Run` or `Reference`; isobaric data also requires `Channel`. Ratio
 quantification requires PSM-level QPX evidence and does not accept MSstats
@@ -44,24 +46,23 @@ feature tables.
 |--------|---------|-------------|
 | `-s/--sdrf` | none | SDRF file for sample metadata |
 | `--min-aa` | 7 | Minimum amino acid length |
-| `--min-unique` | 2 | Minimum unique peptides per protein |
-| `--keep-contaminants` | off | Keep contaminants and decoys instead of removing them |
+| `--min-unique` | 2 | Minimum unique peptides per protein/sample; piBAQ uses its method-specific value 0 and rejects this option |
+| `--keep-contaminants` | off | Keep contaminants; rows marked `is_decoy=true` are always removed |
 
 ### Quantification
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, pibaq, `top<N>` (top3, top5, top10, ...), sum, median, ratio, abd (TMT abundance), intensity (TMT reporter), spectral_count |
+| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, pibaq, `top<N>`, sum, median, ratio, abd, intensity, peptide_count, spectral_count |
 | `--fasta` | none | FASTA file (required for piBAQ) |
-| `--directlfq-cores` | auto | Fallback Rayon thread count for DirectLFQ when `--threads` is omitted |
+| `--threads` | auto | Shared Rust worker count for all methods, including DirectLFQ |
 | `--directlfq-min-nonan` | 1 | Min non-NaN values for DirectLFQ |
 | `--directlfq-num-samples-quadratic` | 50 | Maximum samples in DirectLFQ's quadratic global-alignment subset |
 | `--pibaq-enzyme` | `Trypsin` | Protease name from the installed pyOpenMS catalog |
-| `--pibaq-max-aa` | 50 | Maximum theoretical peptide length |
+| `--pibaq-max-aa` | 30 | Maximum theoretical peptide length |
 | `--pibaq-min-shared` | 2 | Minimum shared peptides for automatic family discovery |
 | `--pibaq-families` | none | YAML file with explicit family overrides |
 | `--pibaq-min-anchors` | 1 | Minimum unique-peptide anchors required before proportional family allocation |
-| `--pibaq-high-anchor-threshold` | 3 | Anchor threshold used to classify high-evidence family members |
 
 !!! note "Write the N in the method name: `--quant-method top<N>`"
     TopN quantification takes its N from the method name — `--quant-method top3`,
@@ -80,9 +81,11 @@ feature tables.
 | `--sample-normalization` | method-dependent | Sample-level: globalMedian, conditionMedian, hierarchical, quantile, mediancenter, meancenter, rlr, loess, tmm, none |
 | `--normalization-proteins` | none | File with protein IDs for normalization |
 
-DirectLFQ and Ratio manage normalization internally and therefore default both
-normalization layers to `none`; passing a non-`none` value is rejected. Other
-methods default to `median` / `globalMedian`.
+DirectLFQ and Ratio manage normalization internally. `peptide_count` and
+`spectral_count` count evidence identities and do not use intensity
+normalization. All four therefore default both normalization layers to `none`;
+passing a non-`none` value is rejected. Other methods default to `median` /
+`globalMedian`.
 
 ### IRS (Multi-Plex TMT)
 
@@ -98,7 +101,9 @@ methods default to `median` / `globalMedian`.
 | `--irs-remove-reference` | off | Remove reference samples from output |
 
 IRS options require `--irs` and an SDRF. Reference detection must find usable
-reference samples and plex assignments; otherwise the command fails.
+reference samples and plex assignments; otherwise the command fails. IRS is
+rejected for `peptide_count` and `spectral_count` because scaling count evidence
+would no longer represent an integer evidence count.
 
 ### Matrix QC and Coverage Filter
 
@@ -123,20 +128,21 @@ reference samples and plex assignments; otherwise the command fails.
 | `--batch-covariates` | none | Comma-separated SDRF columns to preserve |
 | `--batch-nonparametric` | off | Use non-parametric ComBat instead of the parametric default |
 | `--batch-mean-only` | off | Only adjust batch means |
-| `--batch-ref` | none | Reference batch ID |
+| `--batch-ref` | none | Original sample-prefix or SDRF-column batch label; numeric encoded IDs remain deprecated compatibility input |
 
 ComBat is a native Rust implementation, oracle-verified against inmoose
 (parametric ~1e-6, covariate / non-parametric / `ref_batch` / `mean_only`
-paths included). It runs on proteins with no missing cells; the rest are kept
-uncorrected. Invalid batch layouts and an empty complete-protein subset are
-errors rather than successful uncorrected outputs.
+paths included). Numeric covariates keep their values, while nominal covariates
+use k-1 one-hot indicators. It runs on proteins with no missing cells; the rest
+are kept uncorrected. Invalid batch layouts and an empty complete-protein subset
+are errors rather than successful uncorrected outputs.
 
 ### Imputation
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--impute` | off | Enable missing-value imputation on the protein matrix |
-| `--impute-method` | required with `--impute` | Method: mean, median, constant, zero, most_frequent, knn, minprob, mindet, qrilc, seqknn, impseq, gms, bpca, impseqrob |
+| `--impute` | off | Enable missing-value imputation; requires `--impute-method` |
+| `--impute-method` | none | Select a method and enable imputation; `constant` is a compatibility alias for `zero` |
 | `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet |
 | `--impute-shift` | 1.6 | MinProb shift in standard deviations |
 | `--impute-scale` | 0.3 | MinProb scale factor for the imputation distribution sigma |
@@ -217,7 +223,7 @@ represent the normalized protein matrix.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--threads` | Rayon default | Size the Rayon thread pool used by parallel Rust sections; alias: `--duckdb-threads` |
+| `--threads` | Rayon default | Size the Rayon thread pool used by parallel Rust sections; hidden compatibility aliases: `--duckdb-threads` and, for DirectLFQ, `--directlfq-cores` |
 | `--memory` | none | Linux-only soft process RSS budget, such as `512MB` or `1GB`; reduces QPX batch size/read-ahead and fails when a checkpoint observes RSS above the budget |
 
 `--memory` is a planner and runtime guard, not an operating-system hard limit.
@@ -388,7 +394,13 @@ mokume correct-batches [OPTIONS]
 | `--sep` | `\t` | Field separator |
 | `--export_anndata` | off | Export to AnnData h5ad |
 
-ComBat here is the native Rust implementation, oracle-verified against inmoose. The `.h5ad` written by `--export_anndata` is Rust-native and verified to round-trip through `anndata.read_h5ad`. This command does not expose batch-method or covariate options; for those, use `features2proteins --batch-correction`.
+ComBat here is the native Rust implementation, oracle-verified against inmoose.
+The combined protein × sample matrix must be complete and finite; structural
+gaps, blanks, `NaN`, and infinities fail instead of being silently filled with
+zero. Explicit numeric zero remains a valid observation. The `.h5ad` written by
+`--export_anndata` is Rust-native and verified to round-trip through
+`anndata.read_h5ad`. This command does not expose batch-method or covariate
+options; for those, use `features2proteins --batch-correction`.
 
 ---
 

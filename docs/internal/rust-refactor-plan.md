@@ -24,7 +24,7 @@ trust this section and `features2proteins-parity.md`.
 
 Aligned now:
 
-- Quant: `sum`, `median`, `topn`/`top3`, `intensity`, `abd`, `spectral_count`,
+- Quant: `sum`, `median`, `topn`/`top3`, `intensity`, `abd`, `peptide_count`,
   `directlfq` and `maxlfq` (both delegate to the Mann-Labs-aligned DirectLFQ path
   by default, matching Python; real-data cell-exact on PXD003539 — 0/0 protein
   sets, max_rel ~6e-15, per-sample Spearman 1.0 across all 120 samples — after the
@@ -206,7 +206,8 @@ workspace already provides:
 - Integer-ID registries for proteins, peptides, samples, runs, and ions.
 - `features2proteins` protein-matrix CSV output.
 - Quantification methods: `sum`, `median`, `topn`, `maxlfq`, `directlfq`,
-  `pibaq`, `ratio`, `abd`, `intensity`, `spectral_count`.
+  `pibaq`, `ratio`, `abd`, `intensity`, `peptide_count`, and true PSM-level
+  `spectral_count`.
 - Run normalization: `none`, `mean`, `median`, `max`, `global`, `max_min`,
   `iqr`.
 - Sample normalization: `none`, `globalmedian`, `conditionmedian`, `quantile`,
@@ -275,7 +276,8 @@ anything:
 
 - `intensity` / TMTReporter quant: VERIFIED NOT a bug. Python's loader also
   applies a per-ion MAX collapse before quantify, so no change was made.
-- `spectral_count` plus `median` / `abd` / `topn`: these were folding
+- The historical feature-level count (now named `peptide_count`) plus `median` /
+  `abd` / `topn`: these were folding
   per-(peptidoform, charge) ions; they now collapse per-(peptidoform, charge)
   MAX values into the canonical peptide by SUM before the rollup, matching
   Python's `get_peptidoform_normalize_intensities` →

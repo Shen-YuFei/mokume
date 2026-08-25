@@ -119,8 +119,11 @@ steps around them. The full catalog of methods is documented in the
 </p>
 
 - **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top3`/`topn`, `sum`
-  (also `median`, `ratio`, `abd`, `intensity`, `spectral_count`). piBAQ requires
-  a FASTA; TopN, MaxLFQ, and Sum do not.
+  (also `median`, `ratio`, `abd`, `intensity`, `peptide_count`,
+  `spectral_count`). `peptide_count` uses feature QPX; true `spectral_count`
+  requires PSM QPX via `--psm`. piBAQ requires a FASTA; TopN, MaxLFQ, and Sum
+  do not. Both count methods require run/sample normalization `none` and reject
+  IRS.
 - **Normalization:** run-level and sample-level options including `median`,
   `quantile`, `rlr`, and `loess`.
 - **Imputation:** a focused set of imputers, from simple (`mindet`, `knn`) to

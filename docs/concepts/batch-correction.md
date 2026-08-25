@@ -65,10 +65,11 @@ detected from the sample-name prefix (or an explicit SDRF column), and
     )
     ```
 
-The covariate columns are extracted from the SDRF (column match with a
-sample-substring fallback, `pd.factorize` encoding, single-value columns
-dropped) and fed to the covariate ComBat design. ComBat runs on the proteins
-with no missing cells; the rest are kept uncorrected.
+The covariate columns are extracted from the SDRF with a sample-substring
+fallback. Finite numeric columns keep their numeric values; nominal columns
+use k-1 one-hot indicators, so categories are not treated as ordered numbers.
+Constant columns are rejected. Integrated ComBat corrects proteins observed in
+every matrix sample and leaves incomplete protein rows unchanged.
 
 ### Standalone piBAQ correction
 
@@ -92,6 +93,10 @@ over a folder of piBAQ TSVs:
     mokume.correct_batches(folder="./pibaq_outputs", pattern="*pibaq.tsv",
                            output="corrected.tsv")
     ```
+
+Unlike the integrated path, this standalone long-table command requires the
+entire protein × sample matrix to be complete and finite. It rejects missing
+cells rather than silently filling them with zero.
 
 ## Batch Detection Methods
 

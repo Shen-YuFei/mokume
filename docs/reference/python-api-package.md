@@ -61,7 +61,7 @@ decorator; resolve one with `get`; list a group with `available`.
 from mokume.core.registry import PluginRegistry
 
 PluginRegistry.available("quantification")
-# ['directlfq', 'maxlfq', 'median', 'pibaq', 'ratio', 'spectral_count', 'sum', ...]
+# ['directlfq', 'maxlfq', 'median', 'peptide_count', 'pibaq', 'ratio', 'spectral_count', 'sum', ...]
 method = PluginRegistry.get("quantification", "maxlfq")
 ```
 

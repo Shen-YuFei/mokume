@@ -27,7 +27,8 @@ The `peptides2protein` command quantifies proteins from normalized peptide data.
 
 === "Python (wheel)"
 
-    The wheel wrapper maps keyword arguments to CLI flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`) and runs the same kernel in-process:
+    The wheel wrapper validates documented keyword arguments, maps them to the
+    command's exact CLI flags, and runs the same kernel in-process:
 
     ```python
     import mokume

@@ -7,6 +7,12 @@ The `correct-batches` command applies native Rust ComBat batch correction (oracl
 
 This page documents the `mokume correct-batches` CLI subcommand.
 
+The combined long table must contain one finite piBAQ value for every
+protein × sample cell. Structural gaps, blank values, `NaN`, and infinities are
+rejected with examples of the affected cells; Mokume never turns them into
+zero silently. Impute or otherwise resolve missing values explicitly before
+running this command. An explicit numeric zero remains a valid observed value.
+
 ## Basic Usage
 
 === "CLI"
@@ -20,7 +26,8 @@ This page documents the `mokume correct-batches` CLI subcommand.
 
 === "Python (wheel)"
 
-    The wheel wrapper maps keyword arguments to CLI flags (`key=value` → `--key value` with `_` rewritten to `-`; `key=True` → `--key`) and runs the same kernel in-process:
+    The wheel wrapper validates documented keyword arguments, maps them to the
+    command's exact CLI flags, and runs the same kernel in-process:
 
     ```python
     import mokume
