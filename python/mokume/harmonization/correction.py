@@ -55,12 +55,13 @@ def is_batch_correction_available() -> bool:
 def compute_pca(df, n_components=5) -> pd.DataFrame:
     """Compute principal components for a given dataframe."""
     pca = PCA(n_components=n_components)
-    pca.fit(df)
-    df_pca = pca.transform(df)
-    df_pca = pd.DataFrame(
-        df_pca, index=df.index, columns=[f"PC{i}" for i in range(1, n_components + 1)]
+    coordinates = pca.fit_transform(df)
+    columns = [f"PC{index}" for index in range(1, n_components + 1)]
+    return pd.DataFrame(
+        coordinates,
+        index=df.index,
+        columns=columns,
     )
-    return df_pca
 
 
 def get_batch_info_from_sample_names(sample_list: List[str]) -> List[int]:

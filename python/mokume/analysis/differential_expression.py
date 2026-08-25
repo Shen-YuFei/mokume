@@ -8,6 +8,7 @@ differences between experimental conditions.
 import numpy as np
 import pandas as pd
 
+from mokume.analysis._helpers import load_multipletests
 from mokume.analysis.ensemble_config import SUPPORTED_DE_METHODS
 from mokume.analysis.deqms import run_deqms
 from mokume.analysis.limma import run_limma
@@ -27,18 +28,6 @@ _DE_OPTION_DEFAULTS = {
     "n_boot": 100,
     "seed": 42,
 }
-
-
-def _multipletests():
-    """Lazily import statsmodels' ``multipletests`` (needs ``mokume-py[analysis]``)."""
-    try:
-        from statsmodels.stats.multitest import multipletests
-    except ImportError as exc:
-        raise ImportError(
-            "statsmodels is required for differential-expression FDR correction. "
-            "Install it with: pip install mokume-py[analysis]"
-        ) from exc
-    return multipletests
 
 
 class DifferentialExpression:
@@ -422,7 +411,7 @@ def _ihw_optimize_weights(
         w_p = pvalues / np.clip(w_exp, 0.01, None)
         rej = np.zeros(n_bins)
         for idx, bval in enumerate(unique_bins):
-            _, adj, _, _ = _multipletests()(
+            _, adj, _, _ = load_multipletests()(
                 w_p[bins == bval], method="fdr_bh", alpha=alpha
             )
             rej[idx] = (adj < alpha).sum()
@@ -438,7 +427,7 @@ def _ihw_optimize_weights(
 
 def _bh_adjust(pvalues: np.ndarray) -> np.ndarray:
     """Apply Benjamini-Hochberg correction."""
-    return _multipletests()(pvalues, method="fdr_bh")[1]
+    return load_multipletests()(pvalues, method="fdr_bh")[1]
 
 
 def _ihw_adjust_valid(
@@ -488,8 +477,8 @@ def _ihw_correction(
     logger.info(
         "IHW: %d bins, BH=%d, IHW=%d (gain=%+d)",
         len(unique_bins),
-        _multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
+        load_multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
         n_ihw,
-        n_ihw - _multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
+        n_ihw - load_multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
     )
     return adj

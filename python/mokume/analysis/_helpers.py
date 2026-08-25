@@ -7,6 +7,7 @@ result finalisation helpers used by the various DE methods.
 
 from __future__ import annotations
 
+import importlib
 from typing import Iterable
 
 import numpy as np
@@ -16,18 +17,29 @@ __all__ = [
     "bh_adjust",
     "filter_testable",
     "finalize_de_result",
+    "load_multipletests",
     "per_group_summary",
 ]
 
 
+def load_multipletests():
+    """Lazily load statsmodels' multiple-testing implementation."""
+    try:
+        module = importlib.import_module("statsmodels.stats.multitest")
+    except ImportError as exc:
+        raise ImportError(
+            "statsmodels is required for differential-expression FDR correction. "
+            "Install it with: pip install mokume-py[analysis]"
+        ) from exc
+    return module.multipletests
+
+
 def bh_adjust(pvalues: np.ndarray) -> np.ndarray:
     """Apply Benjamini-Hochberg correction, tolerating NaN/Inf p-values."""
-    from statsmodels.stats.multitest import multipletests
-
     valid = np.isfinite(pvalues)
     adj = np.full_like(pvalues, np.nan, dtype=float)
     if valid.any():
-        adj[valid] = multipletests(pvalues[valid], method="fdr_bh")[1]
+        adj[valid] = load_multipletests()(pvalues[valid], method="fdr_bh")[1]
     return adj
 
 

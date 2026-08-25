@@ -18,6 +18,7 @@ argv contract:
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 
 
@@ -86,7 +87,7 @@ def main(argv: list[str]) -> int:
 
         import pandas as pd
 
-        from mokume.core.constants import PIBAQ_LOG, PROTEIN_NAME, SAMPLE_ID
+        constants = importlib.import_module("mokume.core.constants")
         from mokume.plotting import is_plotting_available
     except ImportError as exc:  # pragma: no cover - environment dependent
         print(
@@ -122,7 +123,11 @@ def main(argv: list[str]) -> int:
         dfs += [
             pd.read_csv(
                 f,
-                usecols=[PROTEIN_NAME, SAMPLE_ID, PIBAQ_LOG],
+                usecols=[
+                    constants.PROTEIN_NAME,
+                    constants.SAMPLE_ID,
+                    constants.PIBAQ_LOG,
+                ],
                 sep=None,
                 engine="python",
             ).assign(reanalysis=reanalysis)
@@ -132,9 +137,9 @@ def main(argv: list[str]) -> int:
 
     normalize_df = pd.pivot_table(
         total_proteins,
-        index=[SAMPLE_ID, "reanalysis"],
-        columns=PROTEIN_NAME,
-        values=PIBAQ_LOG,
+        index=[constants.SAMPLE_ID, "reanalysis"],
+        columns=constants.PROTEIN_NAME,
+        values=constants.PIBAQ_LOG,
     )
     normalize_df = normalize_df.fillna(0)
     df_pca = compute_pca_with_plot(normalize_df, n_components=30)

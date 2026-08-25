@@ -37,26 +37,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from mokume.analysis._helpers import load_multipletests
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.analysis.adaptive_fdr")
 
 # qvalue's default lambda grid for pi0 estimation.
 _DEFAULT_LAMBDAS = np.arange(0.05, 0.96, 0.05)
-
-
-def _multipletests():
-    """Lazily import statsmodels' ``multipletests`` (needs ``mokume-py[analysis]``)."""
-    try:
-        from statsmodels.stats.multitest import (  # pylint: disable=import-outside-toplevel
-            multipletests,
-        )
-    except ImportError as exc:
-        raise ImportError(
-            "statsmodels is required for differential-expression FDR correction. "
-            "Install it with: pip install mokume-py[analysis]"
-        ) from exc
-    return multipletests
 
 
 def _finite_pvalues(pvalues: np.ndarray) -> np.ndarray:
@@ -416,9 +403,9 @@ def adjust_pvalues(
             if method == "storey":
                 adjusted[finite] = qvalues(p, pi0=rel["pi0"])
             else:
-                adjusted[finite] = _multipletests()(p, method="fdr_tsbky", alpha=alpha)[
-                    1
-                ]
+                adjusted[finite] = load_multipletests()(
+                    p, method="fdr_tsbky", alpha=alpha
+                )[1]
             return adjusted, method
         logger.info(
             "Adaptive FDR (%s) not trustworthy (pi0=%.3f n=%d boundary=%s "
@@ -432,5 +419,5 @@ def adjust_pvalues(
         )
         method = "bh"
 
-    adjusted[finite] = _multipletests()(p, method="fdr_bh")[1]
+    adjusted[finite] = load_multipletests()(p, method="fdr_bh")[1]
     return adjusted, method

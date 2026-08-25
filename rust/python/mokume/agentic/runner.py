@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
 import threading
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from mokume import differential_expression, impute_matrix, normalize_matrix
-from mokume.agentic.contract import validate_config_values
-from mokume.agentic.state import CandidateConfig
 from mokume.core.logger import get_logger
 from mokume.imputation.missforest import impute_missforest
+
+_MOKUME = importlib.import_module("mokume")
+differential_expression = getattr(_MOKUME, "differential_expression")
+impute_matrix = getattr(_MOKUME, "impute_matrix")
+normalize_matrix = getattr(_MOKUME, "normalize_matrix")
+validate_config_values = getattr(
+    importlib.import_module(f"{__package__}.contract"), "validate_config_values"
+)
+CandidateConfig = getattr(
+    importlib.import_module(f"{__package__}.state"), "CandidateConfig"
+)
 
 logger = get_logger("mokume.agentic.runner")
 
