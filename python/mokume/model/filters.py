@@ -21,6 +21,7 @@ class _FdrThresholdConfig:
     """Shared opt-in q-value threshold for peptide and protein filters."""
 
     fdr_threshold: Optional[float] = None
+    name: str = "default"
 
 
 @dataclass
@@ -110,7 +111,6 @@ class PeptideFilterConfig(_FdrThresholdConfig):
 
     registry: ClassVar[dict[str, "PeptideFilterConfig"]] = {}
 
-    name: str = "default"
     score: Optional[NamedScoreFilterConfig] = None
     allowed_charge_states: Optional[List[int]] = None
     exclude_modifications: List[str] = field(default_factory=list)
@@ -160,7 +160,6 @@ class ProteinFilterConfig(_FdrThresholdConfig):
 
     registry: ClassVar[dict[str, "ProteinFilterConfig"]] = {}
 
-    name: str = "default"
     min_peptides: int = 1
     min_unique_peptides: int = 2
     razor_peptide_handling: str = "keep"
