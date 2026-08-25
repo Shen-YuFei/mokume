@@ -180,11 +180,6 @@ fn validate_pibaq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<(
             message: "--ploidy/--organism/--cpc only apply with --ruler".to_owned(),
         });
     }
-    if method == "pibaq" && !args.verbose && args.qc_report != Path::new("QCprofile.pdf") {
-        return Err(MokumeError::InvalidInput {
-            message: "--qc-report requires --verbose".to_owned(),
-        });
-    }
     Ok(())
 }
 

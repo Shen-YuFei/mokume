@@ -132,12 +132,12 @@ fn run_metric(method: RunNormalizationMethod, values: &mut Vec<f64>) -> Option<f
         RunNormalizationMethod::Iqr => {
             // Drop missing-as-zero and non-finite values before the quartiles,
             // matching the Mean/Median/Max/Global metrics above; otherwise zeros
-            // pull the midhinge down and NaN (sorted last by total_cmp) poisons
+            // distort the range and NaN (sorted last by total_cmp) poisons
             // q75.
             values.retain(|value| value.is_finite() && *value > 0.0);
             let q25 = quantile_linear(values, 0.25)?;
             let q75 = quantile_linear(values, 0.75)?;
-            Some((q25 + q75) / 2.0)
+            Some(q75 - q25)
         }
     }
 }
@@ -269,16 +269,15 @@ mod tests {
 
     #[test]
     fn iqr_metric_excludes_zeros_and_non_finite() {
-        // The Iqr midhinge must drop missing-as-zero and non-finite values like
+        // IQR must drop missing-as-zero and non-finite values like
         // the Mean/Median/Max/Global metrics, so it reflects only the observed
-        // intensities. Over [100,200,300,400]: q25=175, q75=325, midhinge=250 --
-        // NOT 112.5, which is what including the four zeros would give.
+        // intensities. Over [100,200,300,400]: q25=175, q75=325, IQR=150.
         let mut with_zeros = vec![0.0, 0.0, 0.0, 0.0, 100.0, 200.0, 300.0, 400.0];
         let Some(metric) = run_metric(RunNormalizationMethod::Iqr, &mut with_zeros) else {
             panic!("IQR metric should be Some for finite-positive values");
         };
         assert!(
-            (metric - 250.0).abs() < 1e-9,
+            (metric - 150.0).abs() < 1e-9,
             "zeros not excluded: {metric}"
         );
 
@@ -288,7 +287,7 @@ mod tests {
             panic!("IQR metric should be Some after dropping NaN");
         };
         assert!(
-            (metric - 250.0).abs() < 1e-9,
+            (metric - 150.0).abs() < 1e-9,
             "NaN poisoned the metric: {metric}"
         );
     }

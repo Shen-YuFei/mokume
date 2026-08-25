@@ -37,6 +37,7 @@ pub enum QuantMethod {
     Ratio,
     Abd,
     Intensity,
+    PeptideCount,
     SpectralCount,
 }
 
@@ -52,6 +53,7 @@ impl QuantMethod {
             Self::Ratio => "ratio",
             Self::Abd => "abd",
             Self::Intensity => "intensity",
+            Self::PeptideCount => "peptide_count",
             Self::SpectralCount => "spectral_count",
         }
     }
@@ -85,6 +87,7 @@ impl FromStr for QuantMethod {
             "ratio" => Ok(Self::Ratio),
             "abd" | "abundance" | "tmtabundance" => Ok(Self::Abd),
             "intensity" | "reporter" | "tmtreporterintensity" => Ok(Self::Intensity),
+            "peptide_count" | "peptidecount" => Ok(Self::PeptideCount),
             "spectral_count" | "spectralcount" | "count" => Ok(Self::SpectralCount),
             other => Err(format!("unknown quantification method: {other}")),
         }
@@ -136,6 +139,7 @@ mod tests {
             QuantMethod::Ratio,
             QuantMethod::Abd,
             QuantMethod::Intensity,
+            QuantMethod::PeptideCount,
             QuantMethod::SpectralCount,
         ] {
             assert_eq!(

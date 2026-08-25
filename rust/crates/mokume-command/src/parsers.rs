@@ -24,7 +24,7 @@ impl From<OutputFormatArg> for OutputFormat {
 /// The fixed `--quant-method` names, i.e. every method whose name carries no
 /// parameter. The TopN family is spelled `top<N>` and is not listed here.
 const FIXED_QUANT_METHODS: &str = "directlfq, pibaq, maxlfq, sum, median, ratio, abd, intensity, \
-spectral_count";
+peptide_count, spectral_count";
 
 /// Default `topn_peptides` for methods outside the TopN family. The pipeline
 /// only reads the field when the method is [`QuantMethod::TopN`], in which case
@@ -189,16 +189,6 @@ pub(crate) fn parse_positive_f64(value: &str) -> std::result::Result<f64, String
         .map_err(|_| format!("invalid positive number `{value}`"))?;
     if !parsed.is_finite() || parsed <= 0.0 {
         return Err(format!("expected a finite positive number, got `{value}`"));
-    }
-    Ok(parsed)
-}
-
-pub(crate) fn parse_nonnegative_i32(value: &str) -> std::result::Result<i32, String> {
-    let parsed = value
-        .parse::<i32>()
-        .map_err(|_| format!("invalid non-negative integer `{value}`"))?;
-    if parsed < 0 {
-        return Err(format!("expected a non-negative integer, got `{value}`"));
     }
     Ok(parsed)
 }

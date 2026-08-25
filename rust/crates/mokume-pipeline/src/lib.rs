@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{create_dir_all, read_to_string, File};
 use std::path::{Path, PathBuf};
 
@@ -32,6 +32,7 @@ mod de;
 pub mod filters;
 mod matrix;
 mod memory;
+mod spectral_count;
 mod threading;
 
 use memory::MemoryPlan;
@@ -92,10 +93,10 @@ struct FeatureToProteinState {
     aggregation: FeatureAggregation,
     accepted_features: usize,
     accepted_measurements: usize,
-    /// Literal protein-ID substrings to drop (Python `--remove_ids`). A feature
-    /// is rejected when its joined `ProteinName` contains any entry. Empty on
+    /// Exact protein accessions to drop (`--remove_ids`). A feature is rejected
+    /// when any parsed accession matches an entry. Empty on
     /// the protein pipeline, which has no `--remove_ids` option.
-    remove_protein_ids: Vec<String>,
+    remove_protein_ids: HashSet<String>,
     /// Per-`(ProteinName, canonical sequence)` distinct-sample tracking for the
     /// `features2peptides` low-frequency filter. `None` disables tracking (the
     /// protein pipeline and `features2peptides` without
@@ -178,7 +179,7 @@ impl FeatureToProteinState {
             aggregation: FeatureAggregation::from_config(config, sdrf, raw_sdrf, pibaq_digest)?,
             accepted_features: 0,
             accepted_measurements: 0,
-            remove_protein_ids: Vec::new(),
+            remove_protein_ids: HashSet::new(),
             low_frequency: None,
             keep_shared_peptides: false,
             peptide_filters: None,
@@ -228,14 +229,7 @@ impl FeatureToProteinState {
         ) {
             return Ok(());
         }
-        // Python `remove_protein_by_ids` drops rows whose joined `ProteinName`
-        // contains any listed ID (regex-escaped, so a literal substring match),
-        // applied after the contaminant filter (peptide.py:283-287).
-        if self
-            .remove_protein_ids
-            .iter()
-            .any(|id| protein_group.contains(id.as_str()))
-        {
+        if has_removed_accession(&feature.protein_accessions, &self.remove_protein_ids) {
             return Ok(());
         }
         // Opt-in per-row preprocessing filters run after the load-time filters
@@ -1217,7 +1211,7 @@ enum FeatureAggregation {
     Sum(HashMap<CellKey, HashMap<PeptideId, f64>>),
     Median(HashMap<CellKey, HashMap<PeptideId, f64>>),
     Abd(HashMap<CellKey, HashMap<PeptideId, f64>>),
-    SpectralCount(HashMap<CellKey, HashMap<PeptideId, f64>>),
+    PeptideCount(HashMap<CellKey, HashMap<PeptideId, f64>>),
     Pibaq(PibaqAggregation),
     Ratio(RatioAggregation),
     TopN {
@@ -1370,7 +1364,10 @@ impl FeatureAggregation {
             QuantMethod::Sum | QuantMethod::Intensity => Ok(Self::Sum(HashMap::new())),
             QuantMethod::Median => Ok(Self::Median(HashMap::new())),
             QuantMethod::Abd => Ok(Self::Abd(HashMap::new())),
-            QuantMethod::SpectralCount => Ok(Self::SpectralCount(HashMap::new())),
+            QuantMethod::PeptideCount => Ok(Self::PeptideCount(HashMap::new())),
+            QuantMethod::SpectralCount => Err(invalid_input(
+                "spectral_count requires the PSM-level aggregation path",
+            )),
             QuantMethod::Pibaq => Ok(Self::Pibaq(PibaqAggregation::from_digest(
                 config,
                 pibaq_digest.ok_or_else(|| {
@@ -1426,7 +1423,7 @@ impl FeatureAggregation {
             Self::Sum(cells)
             | Self::Median(cells)
             | Self::Abd(cells)
-            | Self::SpectralCount(cells) => {
+            | Self::PeptideCount(cells) => {
                 push_peptide_max(cells, cell, measurement.peptide, measurement.intensity);
             }
             Self::Pibaq(pibaq) => {
@@ -1481,7 +1478,7 @@ impl FeatureAggregation {
             Self::Sum(_)
             | Self::Median(_)
             | Self::Abd(_)
-            | Self::SpectralCount(_)
+            | Self::PeptideCount(_)
             | Self::TopN { .. }
             | Self::Pibaq(_) => true,
             // Built-in MaxLFQ runs dataset normalization on its peptide traces;
@@ -1509,7 +1506,7 @@ impl FeatureAggregation {
             Self::Sum(cells)
             | Self::Median(cells)
             | Self::Abd(cells)
-            | Self::SpectralCount(cells)
+            | Self::PeptideCount(cells)
             | Self::TopN { cells, .. } => {
                 apply_dataset_norm_to_peptide_cells(
                     cells,
@@ -1566,7 +1563,7 @@ impl FeatureAggregation {
             Self::Sum(_)
                 | Self::Median(_)
                 | Self::Abd(_)
-                | Self::SpectralCount(_)
+                | Self::PeptideCount(_)
                 | Self::TopN { .. }
         )
     }
@@ -1574,7 +1571,7 @@ impl FeatureAggregation {
     fn preserves_contextual_canonical_rows(&self) -> bool {
         matches!(
             self,
-            Self::Median(_) | Self::Abd(_) | Self::SpectralCount(_) | Self::TopN { .. }
+            Self::Median(_) | Self::Abd(_) | Self::PeptideCount(_) | Self::TopN { .. }
         )
     }
 
@@ -1650,7 +1647,7 @@ impl FeatureAggregation {
                     })
                     .collect(),
             ),
-            Self::SpectralCount(cells) => ProteinValues::Cells(
+            Self::PeptideCount(cells) => ProteinValues::Cells(
                 cells
                     .into_iter()
                     .filter_map(|(key, peptides)| {
@@ -2130,7 +2127,7 @@ fn sum_peptide_values(peptides: &HashMap<PeptideId, f64>) -> f64 {
 /// peptide by summing, mirroring the Python loader which keeps the max
 /// intensity per ion across runs and then sums ions into the canonical peptide
 /// (`get_peptidoform_normalize_intensities` then `sum_peptidoform_intensities`).
-/// Median/Abd/TopN/SpectralCount operate on these canonical values.
+/// Median/Abd/TopN/PeptideCount operate on these canonical values.
 fn collapse_to_canonical(
     peptides: HashMap<PeptideId, f64>,
     peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
@@ -2156,7 +2153,7 @@ struct QuantilePeptideKey {
 
 /// Apply a dataset-level sample normalization to the canonical-peptide x sample
 /// cells in place. Shared by the protein-matrix aggregation (`Self::Sum` /
-/// `Median` / `Abd` / `SpectralCount` / `TopN`) and the `--export-peptides`
+/// `Median` / `Abd` / `PeptideCount` / `TopN`) and the `--export-peptides`
 /// path, so the exported peptides carry the exact same normalization Python
 /// applies in `load_for_mokume` before writing the peptide CSV.
 fn apply_dataset_norm_to_peptide_cells(
@@ -3784,6 +3781,7 @@ fn resolve_batch_method(name: &str) -> Result<mokume_stats::batch::BatchDetectio
 
 /// Run `mokume-stats`'s `detect_batches` for the protein-matrix flow. Methods
 /// that require unavailable run metadata are rejected by the caller.
+#[cfg(test)]
 fn detect_batches_for_method(
     method: mokume_stats::batch::BatchDetectionMethod,
     sample_names: &[&str],
@@ -3821,15 +3819,30 @@ fn validate_batch_sizes(batch: Vec<usize>) -> Option<Vec<usize>> {
     Some(batch)
 }
 
-fn sorted_batch_labels(batch: &[usize]) -> String {
-    let mut labels = batch.to_vec();
-    labels.sort_unstable();
+fn resolve_reference_batch(
+    requested: &str,
+    original_labels: &[String],
+    encoded_labels: &[usize],
+) -> Result<usize> {
+    if let Some(index) = original_labels.iter().position(|label| label == requested) {
+        return Ok(encoded_labels[index]);
+    }
+    if let Ok(encoded) = requested.parse::<usize>() {
+        if encoded_labels.contains(&encoded) {
+            tracing::warn!(
+                encoded_batch = encoded,
+                "numeric --batch-ref is deprecated; use the original batch label"
+            );
+            return Ok(encoded);
+        }
+    }
+    let mut labels = original_labels.to_vec();
+    labels.sort();
     labels.dedup();
-    labels
-        .into_iter()
-        .map(|label| label.to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
+    Err(invalid_input(format!(
+        "batch reference `{requested}` is not present; detected labels: {}",
+        labels.join(", ")
+    )))
 }
 
 fn validate_combat_design(
@@ -3971,11 +3984,9 @@ fn covariate_values_for_samples(
         .collect()
 }
 
-/// Build the sample-major covariate matrix the covariate-ComBat path consumes,
-/// mirroring `extract_covariates_from_sdrf`. Each requested column is matched,
-/// mapped to matrix samples, factorized (`pd.factorize` first-occurrence codes),
-/// and rejected when it carries at most one unique value. Explicitly requested
-/// columns are never silently dropped.
+/// Build the sample-major covariate matrix consumed by ComBat. Numeric SDRF
+/// columns remain numeric. Categorical columns use k-1 indicator columns so a
+/// nominal category is never misrepresented as an ordered scalar.
 fn extract_sdrf_covariates(
     raw: &SdrfRawTable,
     sample_names: &[&str],
@@ -3990,7 +4001,7 @@ fn extract_sdrf_covariates(
         .ok_or_else(|| invalid_input("batch covariates require an SDRF sample-name column"))?;
 
     // Covariate-major encoded columns, then transposed to sample-major below.
-    let mut covar_data: Vec<Vec<usize>> = Vec::new();
+    let mut covar_data: Vec<Vec<f64>> = Vec::new();
     for column in covariate_columns {
         let value_col = match_sdrf_column(raw.headers(), column).ok_or_else(|| {
             invalid_input(format!(
@@ -4003,18 +4014,54 @@ fn extract_sdrf_covariates(
                 "batch covariate column `{column}` is constant and cannot affect ComBat"
             )));
         }
-        covar_data.push(factorize_batch_labels(&values));
+        covar_data.extend(encode_covariate(column, &values)?);
     }
     Ok(Some(
         (0..sample_names.len())
-            .map(|sample| {
-                covar_data
-                    .iter()
-                    .map(|encoded| encoded[sample] as f64)
-                    .collect()
-            })
+            .map(|sample| covar_data.iter().map(|encoded| encoded[sample]).collect())
             .collect(),
     ))
+}
+
+fn encode_covariate(column: &str, values: &[String]) -> Result<Vec<Vec<f64>>> {
+    if values.iter().any(|value| value.trim().is_empty()) {
+        return Err(invalid_input(format!(
+            "batch covariate column `{column}` contains a missing value"
+        )));
+    }
+    let parsed = values
+        .iter()
+        .map(|value| value.parse::<f64>())
+        .collect::<Vec<_>>();
+    let numeric_count = parsed.iter().filter(|value| value.is_ok()).count();
+    if numeric_count == values.len() {
+        let numeric = parsed
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .collect::<Vec<_>>();
+        if numeric.iter().any(|value| !value.is_finite()) {
+            return Err(invalid_input(format!(
+                "batch covariate column `{column}` contains a non-finite value"
+            )));
+        }
+        return Ok(vec![numeric]);
+    }
+    if numeric_count > 0 {
+        return Err(invalid_input(format!(
+            "batch covariate column `{column}` mixes numeric and categorical values"
+        )));
+    }
+
+    let encoded = factorize_batch_labels(values);
+    let category_count = encoded.iter().copied().max().unwrap_or(0) + 1;
+    Ok((1..category_count)
+        .map(|category| {
+            encoded
+                .iter()
+                .map(|value| f64::from(*value == category))
+                .collect()
+        })
+        .collect())
 }
 
 /// Explicit batch-column values per matrix sample, mirroring
@@ -4481,7 +4528,7 @@ impl ProteinMatrix {
             None
         };
 
-        let batch = match method {
+        let original_batch_labels = match method {
             BatchDetectionMethod::ExplicitColumn => {
                 let column = config.column.as_deref().unwrap_or_default();
                 let raw = raw.as_ref().ok_or_else(|| {
@@ -4489,8 +4536,7 @@ impl ProteinMatrix {
                 })?;
                 // Python's `_detect_explicit_batches(None)` raises when the column
                 // is absent; mirror that hard failure rather than silently skipping.
-                let values = batch_column_values_for_samples(raw, &sample_names, column)?;
-                detect_batches_for_method(method, &sample_names, Some(&values))?
+                batch_column_values_for_samples(raw, &sample_names, column)?
             }
             BatchDetectionMethod::RunName
             | BatchDetectionMethod::Fraction
@@ -4502,10 +4548,12 @@ impl ProteinMatrix {
                     ),
                 ));
             }
-            BatchDetectionMethod::SamplePrefix => {
-                detect_batches_for_method(method, &sample_names, None)?
-            }
+            BatchDetectionMethod::SamplePrefix => sample_names
+                .iter()
+                .map(|sample| mokume_stats::batch::sample_prefix(sample).to_owned())
+                .collect(),
         };
+        let batch = factorize_batch_labels(&original_batch_labels);
         let batch = validate_batch_sizes(batch).ok_or_else(|| {
             invalid_input(
                 "batch correction requires at least two batches with at least two samples each",
@@ -4551,23 +4599,11 @@ impl ProteinMatrix {
             _ => None,
         };
 
-        let ref_batch = match config.ref_batch {
-            Some(label) if label < 0 => {
-                return Err(invalid_input("batch reference label must be non-negative"));
-            }
-            Some(label) => {
-                let label = usize::try_from(label)
-                    .map_err(|_| invalid_input("batch reference label is out of range"))?;
-                if !batch.contains(&label) {
-                    return Err(invalid_input(format!(
-                        "batch reference label `{label}` is not present; detected labels: {}",
-                        sorted_batch_labels(&batch)
-                    )));
-                }
-                Some(label)
-            }
-            None => None,
-        };
+        let ref_batch = config
+            .ref_batch
+            .as_deref()
+            .map(|requested| resolve_reference_batch(requested, &original_batch_labels, &batch))
+            .transpose()?;
         if let Some(covariates) = covariates.as_deref() {
             validate_combat_design(&batch, covariates, ref_batch)?;
         }
@@ -4691,11 +4727,12 @@ impl ProteinMatrix {
             .collect::<HashMap<_, _>>();
         // Per-column fill for cells with no observed (positive, finite) value.
         // Mirrors Python's `pivot_table(fill_value=0)` over the observed samples:
-        // the additive methods (sum / intensity / spectral_count / directlfq) write
-        // `0` for a missing cell, the average/ratio methods (median / topn / abd /
-        // maxlfq / ratio) leave it empty (NaN). A sample with no observations at all
-        // stays empty even for the additive methods, because Python's pivot never
-        // densifies it (it is re-added as a NaN column), not 0.
+        // the additive methods (sum / intensity / peptide_count / spectral_count /
+        // directlfq) write `0` for a missing cell, the average/ratio methods
+        // (median / topn / abd / maxlfq / ratio) leave it empty (NaN). A sample
+        // with no observations at all stays empty even for the additive methods,
+        // because Python's pivot never densifies it (it is re-added as a NaN
+        // column), not 0.
         let observed = self.observed_samples();
         let column_missing = samples
             .iter()
@@ -5106,6 +5143,7 @@ fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfi
         input: InputConfig {
             parquet: None,
             msstats: None,
+            psm: None,
             sdrf: None,
             fasta: Some(params.fasta.clone()),
         },
@@ -5223,6 +5261,10 @@ fn run_features_to_proteins_inner(
         .as_ref()
         .map(SdrfRawTable::from_path)
         .transpose()?;
+    if config.quantification == QuantMethod::SpectralCount {
+        let matrix = spectral_count_matrix(config, sdrf.as_ref(), &memory)?;
+        return finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix);
+    }
     // The protein pipeline has no custom contaminant patterns; an empty slice
     // makes the median pre-pass fall back to the default `is_contaminant` path.
     // The median pre-pass keeps shared peptides only for piBAQ (Python
@@ -5268,24 +5310,62 @@ fn run_features_to_proteins_inner(
         PeptideExportOptions::default(),
         dataset_normalization,
     )?;
-    let mut matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
+    let matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
     memory.check("protein matrix materialization")?;
+    finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix)
+}
+
+fn finish_protein_matrix(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    raw_sdrf: Option<&SdrfRawTable>,
+    memory: &MemoryPlan,
+    mut matrix: ProteinMatrix,
+) -> Result<()> {
     let drop_empty_samples = config.quantification == QuantMethod::Ratio;
+    apply_protein_postprocessing(config, sdrf, raw_sdrf, drop_empty_samples, &mut matrix)?;
+    memory.check("matrix post-processing")?;
+    matrix.write_csv(
+        &config.output.protein_matrix,
+        config.output.format,
+        drop_empty_samples,
+        missing_protein_value(config.quantification),
+    )?;
+    if config.differential_expression.enabled {
+        let mut differential_expression = config.differential_expression.clone();
+        differential_expression.method = resolve_de_method(config);
+        de::run_differential_expression(
+            &matrix,
+            sdrf,
+            &differential_expression,
+            drop_empty_samples,
+        )?;
+    }
+    Ok(())
+}
+
+fn apply_protein_postprocessing(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    raw_sdrf: Option<&SdrfRawTable>,
+    drop_empty_samples: bool,
+    matrix: &mut ProteinMatrix,
+) -> Result<()> {
     if config.irs.enabled {
-        matrix.apply_irs(sdrf.as_ref(), raw_sdrf.as_ref(), &config.irs)?;
+        matrix.apply_irs(sdrf, raw_sdrf, &config.irs)?;
     }
     if let Some(threshold) = config.sample_correlation_threshold {
         let values_are_log2 =
             matches!(config.quantification, QuantMethod::Abd | QuantMethod::Ratio);
         matrix.apply_sample_correlation_filter(
-            sdrf.as_ref(),
+            sdrf,
             threshold,
             drop_empty_samples,
             values_are_log2,
         )?;
     }
     if let Some(threshold) = config.coverage_threshold {
-        matrix.apply_coverage_filter(sdrf.as_ref(), threshold, drop_empty_samples)?;
+        matrix.apply_coverage_filter(sdrf, threshold, drop_empty_samples)?;
     }
     if config.imputation.enabled {
         matrix.apply_imputation(&config.imputation, drop_empty_samples)?;
@@ -5297,12 +5377,16 @@ fn run_features_to_proteins_inner(
             drop_empty_samples,
         )?;
     }
-    memory.check("matrix post-processing")?;
+    Ok(())
+}
+
+fn missing_protein_value(method: QuantMethod) -> Option<f64> {
     // Missing protein x sample cells follow Python's per-method convention: the
     // additive methods write `0`, the average/ratio methods leave the cell empty.
-    let missing_fill = match config.quantification {
+    match method {
         QuantMethod::Sum
         | QuantMethod::Intensity
+        | QuantMethod::PeptideCount
         | QuantMethod::SpectralCount
         | QuantMethod::DirectLfq => Some(0.0),
         QuantMethod::Median
@@ -5311,24 +5395,81 @@ fn run_features_to_proteins_inner(
         | QuantMethod::MaxLfq
         | QuantMethod::Ratio
         | QuantMethod::Pibaq => None,
-    };
-    matrix.write_csv(
-        &config.output.protein_matrix,
-        config.output.format,
-        drop_empty_samples,
-        missing_fill,
-    )?;
-    if config.differential_expression.enabled {
-        let mut differential_expression = config.differential_expression.clone();
-        differential_expression.method = resolve_de_method(config);
-        de::run_differential_expression(
-            &matrix,
-            sdrf.as_ref(),
-            &differential_expression,
-            drop_empty_samples,
-        )?;
     }
-    Ok(())
+}
+
+fn spectral_count_matrix(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    memory: &MemoryPlan,
+) -> Result<ProteinMatrix> {
+    let sdrf = sdrf.ok_or_else(|| invalid_input("spectral_count requires --sdrf option"))?;
+    let counted = spectral_count::count(config, sdrf, memory)?;
+    let (proteins, samples) = spectral_registries(&counted.cells)?;
+
+    let mut values = HashMap::new();
+    let mut peptide_sets = HashMap::<ProteinId, HashSet<String>>::new();
+    for cell in counted.cells {
+        let protein_id = proteins
+            .get(&cell.protein_group)
+            .ok_or_else(|| invalid_input("spectral-count protein registry is inconsistent"))?;
+        let sample_id = samples
+            .get(&cell.sample)
+            .ok_or_else(|| invalid_input("spectral-count sample registry is inconsistent"))?;
+        values.insert(
+            CellKey {
+                protein: protein_id,
+                sample: sample_id,
+            },
+            cell.spectra as f64,
+        );
+        peptide_sets
+            .entry(protein_id)
+            .or_default()
+            .extend(cell.sequences);
+    }
+    let allowed_proteins = values.keys().map(|cell| cell.protein).collect();
+    let peptide_counts = peptide_sets
+        .into_iter()
+        .map(|(protein, sequences)| (protein, sequences.len()))
+        .collect();
+    info!(
+        target_psms = counted.target_psms,
+        unique_spectra = counted.unique_spectra,
+        proteins = proteins.len(),
+        samples = samples.len(),
+        "PSM spectral counting finished"
+    );
+    Ok(ProteinMatrix {
+        proteins,
+        samples,
+        allowed_proteins,
+        excluded_samples: HashSet::new(),
+        peptide_counts,
+        values: ProteinValues::Cells(values),
+    })
+}
+
+fn spectral_registries(
+    cells: &[spectral_count::SpectralCountCell],
+) -> Result<(StringIdRegistry<ProteinId>, StringIdRegistry<SampleId>)> {
+    let protein_names = cells
+        .iter()
+        .map(|cell| cell.protein_group.as_str())
+        .collect::<BTreeSet<_>>();
+    let sample_names = cells
+        .iter()
+        .map(|cell| cell.sample.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut proteins = StringIdRegistry::new();
+    let mut samples = StringIdRegistry::new();
+    for protein in protein_names {
+        register_id(&mut proteins, protein, "protein")?;
+    }
+    for sample in sample_names {
+        register_id(&mut samples, sample, "sample")?;
+    }
+    Ok((proteins, samples))
 }
 
 /// Standalone `features2peptides`: load features, filter, aggregate to the
@@ -5345,8 +5486,8 @@ fn run_features_to_proteins_inner(
 ///   * summed per canonical-peptide cell (Python `sum_peptidoform_intensities`),
 ///   * filtered by the per-(protein, sample) `min_unique` canonical-peptide gate
 ///     (Python's per-sample `groupby(PROTEIN_NAME).filter(... >= min_unique)`),
-///   * `--remove_ids`: rows whose joined `ProteinName` contains a listed ID are
-///     dropped during ingest (Python `remove_protein_by_ids`),
+///   * `--remove_ids`: rows containing a complete parsed accession from the
+///     supplied ID list are dropped during ingest,
 ///   * `--remove_low_frequency_peptides`: `(ProteinName, PeptideCanonical)`
 ///     pairs seen in fewer than 20% of samples are dropped at export
 ///     (Python `get_low_frequency_peptides`),
@@ -6132,7 +6273,7 @@ fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
             | QuantMethod::Intensity
             | QuantMethod::Median
             | QuantMethod::Abd
-            | QuantMethod::SpectralCount
+            | QuantMethod::PeptideCount
             | QuantMethod::TopN
     )
 }
@@ -6151,7 +6292,10 @@ fn dataset_sample_normalization_method(
 ) -> Result<Option<SampleNormalizationMethod>> {
     if matches!(
         config.quantification,
-        QuantMethod::DirectLfq | QuantMethod::Ratio
+        QuantMethod::DirectLfq
+            | QuantMethod::Ratio
+            | QuantMethod::PeptideCount
+            | QuantMethod::SpectralCount
     ) {
         return Ok(None);
     }
@@ -6231,7 +6375,7 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
     if config.quantification != QuantMethod::Pibaq
         && (config.input.fasta.is_some()
             || !config.pibaq.enzyme.eq_ignore_ascii_case("Trypsin")
-            || config.pibaq.max_aa != 50
+            || config.pibaq.max_aa != 30
             || config.pibaq.min_shared != 2
             || config.pibaq.families_yaml.is_some()
             || config.pibaq.min_anchors != 1
@@ -6253,7 +6397,10 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
     }
     if matches!(
         config.quantification,
-        QuantMethod::DirectLfq | QuantMethod::Ratio
+        QuantMethod::DirectLfq
+            | QuantMethod::Ratio
+            | QuantMethod::PeptideCount
+            | QuantMethod::SpectralCount
     ) && (!config.normalization.run_method.eq_ignore_ascii_case("none")
         || !config
             .normalization
@@ -6261,9 +6408,17 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
             .eq_ignore_ascii_case("none")
         || config.normalization.normalization_proteins.is_some())
     {
+        let reason = if matches!(
+            config.quantification,
+            QuantMethod::PeptideCount | QuantMethod::SpectralCount
+        ) {
+            "does not use intensity normalization"
+        } else {
+            "manages normalization internally"
+        };
         return Err(invalid_input(format!(
-            "{} manages normalization internally; use --run-normalization none and \
-                 --sample-normalization none, and do not pass --normalization-proteins",
+            "{} {reason}; use --run-normalization none and --sample-normalization \
+             none, and do not pass --normalization-proteins",
             config.quantification
         )));
     }
@@ -6315,20 +6470,21 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
 }
 
 fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
-    match (&config.input.parquet, &config.input.msstats) {
-        (Some(parquet), None) => {
-            if !parquet.exists() {
-                return Err(MokumeError::MissingInput {
-                    path: parquet.clone(),
-                });
+    match (
+        &config.input.parquet,
+        &config.input.msstats,
+        &config.input.psm,
+    ) {
+        (Some(parquet), None, None) => {
+            require_existing_input(parquet)?;
+            if config.quantification == QuantMethod::SpectralCount {
+                return Err(invalid_input(
+                    "spectral_count requires PSM-level QPX input via --psm",
+                ));
             }
         }
-        (None, Some(msstats)) => {
-            if !msstats.exists() {
-                return Err(MokumeError::MissingInput {
-                    path: msstats.clone(),
-                });
-            }
+        (None, Some(msstats), None) => {
+            require_existing_input(msstats)?;
             if config.input.sdrf.is_none() {
                 return Err(invalid_input("MSstats input requires --sdrf option"));
             }
@@ -6337,14 +6493,40 @@ fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
                     "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
                 ));
             }
+            if config.quantification == QuantMethod::SpectralCount {
+                return Err(invalid_input(
+                    "spectral_count requires PSM-level QPX input via --psm",
+                ));
+            }
+        }
+        (None, None, Some(psm)) => {
+            require_existing_input(psm)?;
+            if config.quantification != QuantMethod::SpectralCount {
+                return Err(invalid_input(
+                    "--psm input only applies to spectral_count quantification",
+                ));
+            }
+            if config.input.sdrf.is_none() {
+                return Err(invalid_input("spectral_count requires --sdrf option"));
+            }
         }
         _ => {
             return Err(invalid_input(
-                "provide exactly one feature input: --parquet or --msstats",
+                "provide exactly one input: --parquet, --msstats, or --psm",
             ));
         }
     }
     Ok(())
+}
+
+fn require_existing_input(path: &Path) -> Result<()> {
+    if path.exists() {
+        Ok(())
+    } else {
+        Err(MokumeError::MissingInput {
+            path: path.to_path_buf(),
+        })
+    }
 }
 
 fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
@@ -6359,7 +6541,7 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
     if config.output.export_peptides.is_some()
         && matches!(
             config.quantification,
-            QuantMethod::DirectLfq | QuantMethod::Ratio
+            QuantMethod::DirectLfq | QuantMethod::Ratio | QuantMethod::SpectralCount
         )
     {
         return Err(invalid_input(format!(
@@ -6393,6 +6575,7 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         | QuantMethod::DirectLfq
         | QuantMethod::Abd
         | QuantMethod::Intensity
+        | QuantMethod::PeptideCount
         | QuantMethod::SpectralCount
         | QuantMethod::Pibaq
         | QuantMethod::Ratio => {}
@@ -6400,7 +6583,10 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
 
     if !matches!(
         config.quantification,
-        QuantMethod::DirectLfq | QuantMethod::Ratio
+        QuantMethod::DirectLfq
+            | QuantMethod::Ratio
+            | QuantMethod::PeptideCount
+            | QuantMethod::SpectralCount
     ) {
         if !supports_run_normalization(&config.normalization.run_method) {
             return unsupported("run-normalization-method");
@@ -6430,6 +6616,16 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
     // `column` detection plus SDRF covariate extraction. `run` detection has no
     // run-level mapping in the protein-matrix flow and errors at runtime, the
     // same way Python's `_detect_batch_indices` raises `run_info required`.
+    if matches!(
+        config.quantification,
+        QuantMethod::PeptideCount | QuantMethod::SpectralCount
+    ) && config.irs.enabled
+    {
+        return Err(invalid_input(format!(
+            "{} quantification cannot apply IRS",
+            config.quantification
+        )));
+    }
     if config
         .irs
         .reference_samples
@@ -6776,7 +6972,7 @@ struct RunQcSource<'a> {
     keep_shared_peptides: bool,
     min_unique_peptides: usize,
     contaminant_patterns: &'a [String],
-    remove_protein_ids: &'a [String],
+    remove_protein_ids: &'a HashSet<String>,
 }
 
 /// Compute the Run-QC exclusions for `features2peptides`. Python applies the
@@ -6854,11 +7050,7 @@ fn collect_run_qc_proteins(
         let Some(protein_group) = protein_group_name(&feature.protein_accessions) else {
             return Ok(());
         };
-        if source
-            .remove_protein_ids
-            .iter()
-            .any(|id| protein_group.contains(id.as_str()))
-        {
+        if has_removed_accession(&feature.protein_accessions, source.remove_protein_ids) {
             return Ok(());
         }
         let sdrf_record = sdrf_record(&feature, sdrf)?;
@@ -7697,13 +7889,8 @@ impl<'a> NormalizationFactorCollector<'a> {
     }
 }
 
-/// Read the `--remove_ids` file (one protein ID per line). Mirrors Python's
-/// `remove_protein_by_ids`: the file is split on newlines and blank/whitespace-
-/// only lines are dropped. Each surviving entry is matched as a literal
-/// substring of `ProteinName` during ingest, the same effect as Python's
-/// `re.escape`d regex `contains`. An empty list leaves every row in place
-/// (Python returns the unchanged dataset when no IDs are present).
-fn load_remove_ids(path: &Path) -> Result<Vec<String>> {
+/// Read exact accessions from `--remove_ids`, one per non-empty line.
+fn load_remove_ids(path: &Path) -> Result<HashSet<String>> {
     let contents = read_to_string(path).map_err(|source| MokumeError::Io {
         path: path.to_path_buf(),
         source,
@@ -7712,8 +7899,16 @@ fn load_remove_ids(path: &Path) -> Result<Vec<String>> {
         .split('\n')
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
+        .map(parse_protein_accession)
+        .filter(|accession| !accession.is_empty())
         .collect())
+}
+
+fn has_removed_accession(accessions: &[String], removed: &HashSet<String>) -> bool {
+    accessions
+        .iter()
+        .map(|accession| parse_protein_accession(accession))
+        .any(|accession| removed.contains(&accession))
 }
 
 fn load_normalization_proteins(path: &Path) -> Result<HashSet<String>> {
@@ -8905,9 +9100,10 @@ mod tests {
         irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
         irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
         resolve_de_method, resolve_irs_autodetect_channel, resolve_irs_reference_samples,
-        run_features_to_proteins, sum_peptide_values, tech_replicate_of, validate_batch_sizes,
-        validate_combat_design, validate_features_to_proteins, validate_implemented_subset,
-        CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix, ProteinValues,
+        resolve_reference_batch, run_features_to_proteins, sum_peptide_values, tech_replicate_of,
+        validate_batch_sizes, validate_combat_design, validate_features_to_proteins,
+        validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
+        ProteinValues,
     };
 
     #[test]
@@ -9782,6 +9978,19 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     }
 
     #[test]
+    fn remove_ids_matches_complete_accessions_not_substrings() {
+        let accessions = ["P1", "sp|P10|protein ten"].map(str::to_owned);
+        assert!(super::has_removed_accession(
+            &accessions,
+            &HashSet::from(["P1".to_owned()])
+        ));
+        assert!(!super::has_removed_accession(
+            &["P10".to_owned()],
+            &HashSet::from(["P1".to_owned()])
+        ));
+    }
+
+    #[test]
     fn resolve_batch_method_rejects_unknown_values() {
         use mokume_stats::batch::BatchDetectionMethod;
         // Known names parse (case/separator-insensitive).
@@ -9830,6 +10039,21 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         );
         assert_eq!(validate_batch_sizes(vec![0, 0, 0]), None); // a single batch
         assert_eq!(validate_batch_sizes(vec![0, 0, 1]), None); // batch 1 has one sample
+    }
+
+    #[test]
+    fn resolves_original_batch_label_before_numeric_compatibility() {
+        let labels = ["0", "0", "batch-b", "batch-b"].map(str::to_owned);
+        let encoded = [0, 0, 1, 1];
+        assert_eq!(
+            resolve_reference_batch("batch-b", &labels, &encoded).ok(),
+            Some(1)
+        );
+        assert_eq!(
+            resolve_reference_batch("0", &labels, &encoded).ok(),
+            Some(0)
+        );
+        assert!(resolve_reference_batch("missing", &labels, &encoded).is_err());
     }
 
     fn covariate_fixture() -> Result<SdrfRawTable, Box<dyn std::error::Error>> {
@@ -9906,6 +10130,69 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         .is_err());
         assert!(extract_sdrf_covariates(&raw, &names, &["const_col".into()]).is_err());
         assert_eq!(extract_sdrf_covariates(&raw, &names, &[])?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn covariates_keep_numeric_values_and_one_hot_nominal_categories(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let input = concat!(
+            "source name\tage\tsite\n",
+            "S1\t20\tnorth\n",
+            "S2\t35\tsouth\n",
+            "S3\t50\twest\n",
+            "S4\t65\twest\n",
+        );
+        let raw = SdrfRawTable::from_reader(input.as_bytes())?;
+        let covariates = extract_sdrf_covariates(
+            &raw,
+            &["S1", "S2", "S3", "S4"],
+            &["age".into(), "site".into()],
+        )?;
+        assert_eq!(
+            covariates,
+            Some(vec![
+                vec![20.0, 0.0, 0.0],
+                vec![35.0, 1.0, 0.0],
+                vec![50.0, 0.0, 1.0],
+                vec![65.0, 0.0, 1.0],
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn covariates_reject_missing_nonfinite_and_mixed_values(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for (header, rows, expected) in [
+            (
+                "missing",
+                ["20", "", "50", "65"],
+                "contains a missing value",
+            ),
+            (
+                "nonfinite",
+                ["20", "NaN", "50", "65"],
+                "contains a non-finite value",
+            ),
+            (
+                "mixed",
+                ["20", "unknown", "50", "65"],
+                "mixes numeric and categorical values",
+            ),
+        ] {
+            let input = format!(
+                "source name\t{header}\nS1\t{}\nS2\t{}\nS3\t{}\nS4\t{}\n",
+                rows[0], rows[1], rows[2], rows[3]
+            );
+            let raw = SdrfRawTable::from_reader(input.as_bytes())?;
+            let Err(error) =
+                extract_sdrf_covariates(&raw, &["S1", "S2", "S3", "S4"], &[header.into()])
+            else {
+                panic!("invalid covariate was accepted");
+            };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
         Ok(())
     }
 
@@ -10505,6 +10792,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             input: InputConfig {
                 parquet: Some(parquet),
                 msstats: None,
+                psm: None,
                 sdrf: None,
                 fasta: None,
             },

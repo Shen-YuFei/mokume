@@ -48,9 +48,7 @@ pub struct FeatureToPeptidesConfig {
     /// Destination path for the peptide intensity CSV.
     pub output: PathBuf,
     pub filtering: FilterConfig,
-    /// Optional file of protein IDs (one per line) to drop from the analysis;
-    /// a row is removed when its `ProteinName` contains any listed ID as a
-    /// literal substring (Python `--remove_ids` / `remove_protein_by_ids`).
+    /// Optional file of exact protein accessions (one per line) to drop.
     pub remove_ids: Option<PathBuf>,
     /// Remove peptides present in fewer than 20% of samples (Python
     /// `--remove_low_frequency_peptides`).
@@ -154,6 +152,7 @@ impl AggregationLevel {
 pub struct InputConfig {
     pub parquet: Option<PathBuf>,
     pub msstats: Option<PathBuf>,
+    pub psm: Option<PathBuf>,
     pub sdrf: Option<PathBuf>,
     pub fasta: Option<PathBuf>,
 }
@@ -399,7 +398,7 @@ impl Default for PibaqConfig {
     fn default() -> Self {
         Self {
             enzyme: "Trypsin".to_string(),
-            max_aa: 50,
+            max_aa: 30,
             min_shared: 2,
             families_yaml: None,
             min_anchors: 1,
@@ -433,7 +432,9 @@ pub struct BatchCorrectionConfig {
     pub covariates: Option<Vec<String>>,
     pub parametric: bool,
     pub mean_only: bool,
-    pub ref_batch: Option<i32>,
+    /// Original SDRF/sample-prefix batch label. Numeric strings remain accepted
+    /// as a compatibility spelling for the historical encoded batch ID.
+    pub ref_batch: Option<String>,
 }
 
 impl Default for BatchCorrectionConfig {

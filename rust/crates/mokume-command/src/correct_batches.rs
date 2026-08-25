@@ -5,8 +5,8 @@
 //! Python package. The flow:
 //!   1. glob `folder` for `pattern`, concatenate the long-format TSV files
 //!      (honoring the comment character and the separator);
-//!   2. pivot to a protein (row) x sample (column) matrix of raw piBAQ, filling
-//!      missing cells with 0.0 (matching `pivot_wider(..., fillna=True)`);
+//!   2. pivot to a protein (row) x sample (column) matrix of raw piBAQ and reject
+//!      any missing or non-finite cell before ComBat;
 //!   3. validate sample IDs and derive integer batch labels from the prefix
 //!      before the first '-' using first-seen (`pd.factorize`) order;
 //!   4. run parametric ComBat (`combat_parametric` with default `ComBatParams`,
@@ -117,7 +117,7 @@ pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
     )?;
 
     if args.export_anndata {
-        export_anndata(args, &table, &proteins, &samples, &matrix, &corrected)?;
+        export_anndata(args, &proteins, &samples, &matrix, &corrected)?;
     }
 
     Ok(())
@@ -129,31 +129,15 @@ pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
 ///
 /// The matrices supplied here are protein (row) x sample (column); AnnData wants
 /// observation (sample) x variable (protein), so both are transposed. `X` holds
-/// the raw piBAQ (missing cells already 0 from `build_matrix`). The `PiBAQBec`
-/// layer is built from the *merged long table*: a corrected value only lands in
-/// a cell when that (sample, protein) pair was present in the input; cells that
-/// were absent stay 0 (the Python layer pivot fills them with 0 rather than the
-/// ComBat output, because the absent row never receives a `PiBAQBec` value).
+/// the complete raw piBAQ matrix and the `PiBAQBec` layer holds the matching
+/// corrected matrix.
 fn export_anndata(
     args: &CorrectBatchesArgs,
-    table: &LongTable,
     proteins: &[String],
     samples: &[String],
     raw: &[Vec<f64>],
     corrected: &[Vec<f64>],
 ) -> Result<()> {
-    // Which (protein, sample) pairs appeared in the input long table.
-    let mut present: BTreeSet<(usize, usize)> = BTreeSet::new();
-    let protein_pos = index_map(proteins);
-    let sample_pos = index_map(samples);
-    for row in &table.rows {
-        let protein = cell(row, table.protein_index)?;
-        let sample = cell(row, table.sample_index)?;
-        if let (Some(&p), Some(&s)) = (protein_pos.get(protein), sample_pos.get(sample)) {
-            present.insert((p, s));
-        }
-    }
-
     // Transpose protein x sample into sample (obs) x protein (var) layout.
     let n_obs = samples.len();
     let n_var = proteins.len();
@@ -162,9 +146,7 @@ fn export_anndata(
     for (protein_idx, _) in proteins.iter().enumerate() {
         for (sample_idx, _) in samples.iter().enumerate() {
             x[sample_idx][protein_idx] = raw[protein_idx][sample_idx];
-            if present.contains(&(protein_idx, sample_idx)) {
-                layer[sample_idx][protein_idx] = corrected[protein_idx][sample_idx];
-            }
+            layer[sample_idx][protein_idx] = corrected[protein_idx][sample_idx];
         }
     }
 
@@ -270,9 +252,9 @@ fn read_long_file(
     Ok((headers, rows))
 }
 
-/// Build the protein (row) x sample (column) matrix of raw piBAQ values, filling
-/// missing cells with 0.0 (matching `pivot_wider(..., fillna=True)`). Duplicate
-/// (protein, sample) combinations are rejected, matching `pivot_wider`.
+/// Build the complete protein (row) x sample (column) matrix of raw piBAQ
+/// values. Missing cells, blank/non-finite values, and duplicate combinations
+/// are rejected before ComBat; none are silently converted to biological zero.
 fn build_matrix(
     table: &LongTable,
     proteins: &[String],
@@ -300,6 +282,27 @@ fn build_matrix(
             continue;
         };
         matrix[r][c] = value;
+    }
+    let mut missing_count = 0;
+    let mut missing_examples = Vec::new();
+    for protein in proteins {
+        for sample in samples {
+            if !seen.contains(&(protein.as_str(), sample.as_str())) {
+                missing_count += 1;
+                if missing_examples.len() < 5 {
+                    missing_examples.push(format!("({protein}, {sample})"));
+                }
+            }
+        }
+    }
+    if missing_count > 0 {
+        let examples = missing_examples.join(", ");
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "ComBat requires a complete protein x sample matrix; found {} missing cells (examples: {examples}). Handle missing values explicitly before correct-batches.",
+                missing_count
+            ),
+        });
     }
     Ok(matrix)
 }
@@ -709,13 +712,25 @@ fn cell(row: &LongRow, index: usize) -> Result<&str> {
 fn parse_value(raw: &str, index: usize) -> Result<f64> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Ok(0.0);
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "Column {index} contains a missing value; ComBat requires complete input."
+            ),
+        });
     }
-    trimmed
+    let value = trimmed
         .parse::<f64>()
         .map_err(|_| MokumeError::InvalidInput {
             message: format!("Column {index} value '{raw}' is not numeric."),
-        })
+        })?;
+    if !value.is_finite() {
+        return Err(MokumeError::InvalidInput {
+            message: format!(
+                "Column {index} value '{raw}' is not finite; ComBat requires complete finite input."
+            ),
+        });
+    }
+    Ok(value)
 }
 
 /// Format a corrected value. `{}` on `f64` gives Rust's shortest round-trip
@@ -823,6 +838,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn combat_matrix_rejects_structural_and_value_missingness() {
+        let table = LongTable {
+            headers: vec!["ProteinName".into(), "SampleID".into(), "PiBAQ".into()],
+            rows: vec![
+                LongRow {
+                    values: vec!["P1".into(), "S1".into(), "1".into()],
+                },
+                LongRow {
+                    values: vec!["P1".into(), "S2".into(), "2".into()],
+                },
+                LongRow {
+                    values: vec!["P2".into(), "S1".into(), "3".into()],
+                },
+            ],
+            sample_index: 1,
+            protein_index: 0,
+            pibaq_index: 2,
+        };
+        let proteins = ["P1".to_owned(), "P2".to_owned()];
+        let samples = ["S1".to_owned(), "S2".to_owned()];
+        let Err(error) = build_matrix(&table, &proteins, &samples) else {
+            panic!("missing cell was accepted");
+        };
+        assert!(error
+            .to_string()
+            .contains("complete protein x sample matrix"));
+        assert!(parse_value("", 2).is_err());
+        assert!(parse_value("NaN", 2).is_err());
+    }
+
     fn assert_rejected_without_output(
         args: &CorrectBatchesArgs,
         output: &Path,
@@ -906,7 +952,8 @@ P5\tB1-s2\tcase\t3.5\n\
 P1\tB1-s3\tcase\t9.5\n\
 P2\tB1-s3\tcase\t4.0\n\
 P3\tB1-s3\tcase\t1.5\n\
-P4\tB1-s3\tcase\t48.0\n";
+P4\tB1-s3\tcase\t48.0\n\
+P5\tB1-s3\tcase\t0.0\n";
 
     const BATCH_B: &str = "# synthetic pibaq fixture for correct-batches golden test\n\
 ProteinName\tSampleID\tCondition\tPiBAQ\n\
@@ -959,8 +1006,8 @@ P2\tB2-s2\t7.5\told\n";
     // Python oracle:
     //   conda run -n Bigbio python -m mokume.mokume_cli correct-batches \
     //     --folder <fixture-dir> --pattern "*pibaq.tsv" --output <out.tsv>
-    // inmoose 0.9.1 / pandas. B1-s3/P5 is intentionally absent in the input, so
-    // it never appears in the output (left-merge miss).
+    // inmoose 0.9.1 / pandas. B1-s3/P5 is an explicit observed zero, which is
+    // distinct from a structurally absent cell under the complete-matrix contract.
     const EXPECTED: &[(&str, &str, f64)] = &[
         ("B1-s1", "P1", 14.86027101136503),
         ("B1-s1", "P2", 6.568250615964994),
@@ -976,6 +1023,7 @@ P2\tB2-s2\t7.5\told\n";
         ("B1-s3", "P2", 5.663812473469715),
         ("B1-s3", "P3", 2.327760884924285),
         ("B1-s3", "P4", 38.42040482085444),
+        ("B1-s3", "P5", 2.187138360321982),
         ("B2-s1", "P1", 15.14370361017618),
         ("B2-s1", "P2", 6.405668897416727),
         ("B2-s1", "P3", 2.169016234610666),
@@ -995,7 +1043,7 @@ P2\tB2-s2\t7.5\told\n";
 
     /// Golden test: the Rust command reproduces the Python oracle's PiBAQBec
     /// values to relative 1e-6 on a synthetic 2-batch / 6-sample / 5-protein
-    /// dataset (one cell intentionally missing).
+    /// complete dataset (including one explicit observed zero).
     #[test]
     fn correct_batches_matches_python_oracle() -> TestResult<()> {
         let dir = temp_dir("oracle")?;
@@ -1210,8 +1258,7 @@ P2\tB2-s2\t7.5\told\n";
         );
 
         // Read X / PiBAQBec back with the hdf5 crate and confirm the corrected
-        // layer matches the oracle (samples x proteins) and that the absent
-        // input cell B1-s3/P5 carries 0 in both X and the layer.
+        // layer matches the oracle (samples x proteins).
         let file = hdf5_metno::File::open(&h5ad)?;
         let obs: Vec<hdf5_metno::types::VarLenUnicode> =
             file.group("obs")?.dataset("SampleID")?.read_raw()?;
@@ -1241,13 +1288,13 @@ P2\tB2-s2\t7.5\told\n";
             );
         }
 
-        // The absent input cell keeps 0 in both X and the layer (it never
-        // received a PiBAQBec value in the merged long table).
+        // An explicit input zero remains present in raw X and receives a
+        // corrected ComBat value in the layer.
         let (Some(i), Some(j)) = (obs_idx("B1-s3"), var_idx("P5")) else {
             panic!("missing B1-s3/P5 in AnnData index");
         };
-        assert_eq!(x[[i, j]], 0.0, "absent X cell must be 0");
-        assert_eq!(layer[[i, j]], 0.0, "absent layer cell must be 0");
+        assert_eq!(x[[i, j]], 0.0, "explicit raw zero must be preserved");
+        assert_eq!(layer[[i, j]], 2.187138360321982);
 
         // Raw X reflects the input piBAQ values.
         let (Some(i), Some(j)) = (obs_idx("B1-s1"), var_idx("P4")) else {

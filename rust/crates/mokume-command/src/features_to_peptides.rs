@@ -11,7 +11,7 @@ use mokume_core::{
 use mokume_pipeline::{resolve_irs_autodetect_channel, run_features_to_peptides};
 
 use crate::filter_config_examples::{EXAMPLE_FILTER_CONFIG_JSON, EXAMPLE_FILTER_CONFIG_YAML};
-use crate::parsers::{parse_fraction, parse_named_score_filter};
+use crate::parsers::{parse_fraction, parse_named_score_filter, parse_nonnegative_f64};
 
 #[allow(dead_code)]
 #[derive(Debug, Args)]
@@ -100,13 +100,13 @@ pub(crate) struct Features2PeptidesArgs {
     #[arg(long = "filter-config")]
     filter_config: Option<PathBuf>,
 
-    #[arg(long = "generate-filter-config")]
+    #[arg(long = "generate-filter-config", exclusive = true)]
     generate_filter_config: Option<PathBuf>,
 
-    #[arg(long = "filter-min-intensity")]
+    #[arg(long = "filter-min-intensity", value_parser = parse_nonnegative_f64)]
     filter_min_intensity: Option<f64>,
 
-    #[arg(long = "filter-cv-threshold")]
+    #[arg(long = "filter-cv-threshold", value_parser = parse_nonnegative_f64)]
     filter_cv_threshold: Option<f64>,
 
     #[arg(long = "filter-charge-states")]
@@ -261,6 +261,7 @@ fn feature_to_peptides_config(
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: args.sdrf.clone(),
             fasta: None,
         },
@@ -299,10 +300,19 @@ fn build_filter_pipeline(
 ) -> mokume_core::Result<Option<PreprocessingFilterConfig>> {
     let mut config = match &args.filter_config {
         Some(path) => load_filter_config(path)?,
-        None if has_filter_override(args) => PreprocessingFilterConfig {
-            name: "cli_config".to_string(),
-            ..PreprocessingFilterConfig::default()
-        },
+        None if has_filter_override(args) => {
+            let mut config = PreprocessingFilterConfig {
+                name: "cli_config".to_string(),
+                ..PreprocessingFilterConfig::default()
+            };
+            // A CLI-only filter override extends the base filtering contract; it
+            // must not silently restore the preprocessing defaults for unrelated
+            // settings such as --min_unique or contaminant removal.
+            config.peptide.min_peptide_length = args.min_aa;
+            config.protein.min_unique_peptides = args.min_unique;
+            config.protein.remove_contaminants = args.remove_decoy_contaminants;
+            config
+        }
         None => return Ok(None),
     };
     apply_filter_overrides(args, &mut config)?;
@@ -436,4 +446,50 @@ fn generate_filter_config(path: &Path) -> mokume_core::Result<()> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::build_filter_pipeline;
+    use crate::{Cli, Commands};
+
+    #[test]
+    fn cli_filter_override_preserves_base_filter_contract() {
+        let cli = Cli::parse_from([
+            "mokume",
+            "features2peptides",
+            "--parquet",
+            "input.parquet",
+            "--output",
+            "output.csv",
+            "--min_unique",
+            "5",
+            "--filter-min-intensity",
+            "0",
+        ]);
+        let Commands::Features2Peptides(args) = cli.command else {
+            panic!("expected features2peptides command");
+        };
+        let Ok(Some(pipeline)) = build_filter_pipeline(&args) else {
+            panic!("expected an enabled valid filter pipeline");
+        };
+        assert_eq!(pipeline.peptide.min_peptide_length, 7);
+        assert_eq!(pipeline.protein.min_unique_peptides, 5);
+        assert!(!pipeline.protein.remove_contaminants);
+    }
+
+    #[test]
+    fn generated_filter_config_is_exclusive() {
+        let parsed = Cli::try_parse_from([
+            "mokume",
+            "features2peptides",
+            "--generate-filter-config",
+            "filters.yaml",
+            "--filter-min-intensity",
+            "10",
+        ]);
+        assert!(parsed.is_err());
+    }
 }

@@ -4,6 +4,7 @@ use crate::Cli;
 
 const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--parquet",
+    "--psm",
     "--output",
     "--sdrf",
     "--quant-method",
@@ -19,8 +20,6 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--pibaq-min-shared",
     "--pibaq-families",
     "--pibaq-min-anchors",
-    "--pibaq-high-anchor-threshold",
-    "--directlfq-cores",
     "--directlfq-min-nonan",
     "--directlfq-num-samples-quadratic",
     "--export-peptides",
@@ -33,7 +32,6 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--batch-mean-only",
     "--batch-ref",
     "--irs",
-    "--irs-reference-samples",
     "--irs-reference-sample",
     "--irs-sdrf-column",
     "--irs-sdrf-values",
@@ -60,7 +58,7 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--de-fdr-method",
     "--de-output",
     "--memory",
-    "--duckdb-threads",
+    "--threads",
 ];
 
 const REMOVED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[

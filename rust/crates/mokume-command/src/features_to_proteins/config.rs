@@ -53,7 +53,20 @@ fn resolve_quantification(
 ) -> mokume_core::Result<QuantificationOptions> {
     let QuantMethodArg { method, topn } = args.quant_method;
     validate_lfq_options(args, method)?;
-    let manages_normalization = matches!(method, QuantMethod::DirectLfq | QuantMethod::Ratio);
+    if method == QuantMethod::Pibaq && args.min_unique.is_some() {
+        return Err(MokumeError::InvalidInput {
+            message: "piBAQ defines its denominator independently; do not pass --min-unique"
+                .to_owned(),
+        });
+    }
+    validate_input_for_quantification(args, method)?;
+    let manages_normalization = matches!(
+        method,
+        QuantMethod::DirectLfq
+            | QuantMethod::Ratio
+            | QuantMethod::PeptideCount
+            | QuantMethod::SpectralCount
+    );
     let run_normalization = args.run_normalization.clone().unwrap_or_else(|| {
         if manages_normalization {
             "none".to_owned()
@@ -74,6 +87,24 @@ fn resolve_quantification(
         run_normalization,
         sample_normalization,
     })
+}
+
+fn validate_input_for_quantification(
+    args: &Features2ProteinsArgs,
+    method: QuantMethod,
+) -> mokume_core::Result<()> {
+    if method == QuantMethod::SpectralCount {
+        if args.psm.is_none() {
+            return Err(MokumeError::InvalidInput {
+                message: "spectral_count requires PSM-level QPX input via --psm".to_owned(),
+            });
+        }
+    } else if args.psm.is_some() {
+        return Err(MokumeError::InvalidInput {
+            message: "--psm only applies to --quant-method spectral_count".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_lfq_options(
@@ -129,7 +160,7 @@ fn resolve_batch(args: &Features2ProteinsArgs) -> mokume_core::Result<BatchCorre
         covariates: split_csv_option(args.batch_covariates.clone()),
         parametric: !args.batch_nonparametric,
         mean_only: args.batch_mean_only,
-        ref_batch: args.batch_ref,
+        ref_batch: args.batch_ref.clone(),
     })
 }
 
@@ -184,6 +215,15 @@ fn validate_irs_mode(
     quantification: QuantMethod,
     selector_count: usize,
 ) -> mokume_core::Result<()> {
+    if matches!(
+        quantification,
+        QuantMethod::PeptideCount | QuantMethod::SpectralCount
+    ) && args.irs
+    {
+        return Err(MokumeError::InvalidInput {
+            message: format!("{quantification} quantification cannot apply IRS"),
+        });
+    }
     if quantification == QuantMethod::Ratio {
         if args.irs {
             return Err(MokumeError::InvalidInput {
@@ -228,23 +268,26 @@ fn resolve_ratio(
 }
 
 fn resolve_imputation(args: &Features2ProteinsArgs) -> mokume_core::Result<ImputationConfig> {
-    let options_supplied = args.impute_method.is_some()
-        || args.impute_quantile.is_some()
+    let tuning_supplied = args.impute_quantile.is_some()
         || args.impute_shift.is_some()
         || args.impute_scale.is_some()
         || args.impute_n_neighbors.is_some();
-    if !args.impute && options_supplied {
+    if tuning_supplied && args.impute_method.is_none() {
         return Err(MokumeError::InvalidInput {
-            message: "imputation options require --impute".to_owned(),
+            message: "imputation tuning options require --impute-method".to_owned(),
         });
     }
-    let method = args
+    let mut method = args
         .impute_method
         .clone()
         .unwrap_or_else(|| "none".to_owned());
-    validate_imputation_method(args, &method)?;
+    if method.eq_ignore_ascii_case("constant") {
+        method = "zero".to_owned();
+    }
+    let enabled = args.impute || args.impute_method.is_some();
+    validate_imputation_method(args, &method, enabled)?;
     Ok(ImputationConfig {
-        enabled: args.impute,
+        enabled,
         method,
         quantile: args.impute_quantile.unwrap_or(0.01),
         shift: args.impute_shift.unwrap_or(1.6),
@@ -256,8 +299,9 @@ fn resolve_imputation(args: &Features2ProteinsArgs) -> mokume_core::Result<Imput
 fn validate_imputation_method(
     args: &Features2ProteinsArgs,
     method: &str,
+    enabled: bool,
 ) -> mokume_core::Result<()> {
-    if args.impute && method.eq_ignore_ascii_case("none") {
+    if enabled && method.eq_ignore_ascii_case("none") {
         return Err(MokumeError::InvalidInput {
             message: "--impute requires --impute-method".to_owned(),
         });
@@ -375,7 +419,13 @@ fn build_config(
         output: output_config(args),
         filtering: FilterConfig {
             min_aa: args.min_aa,
-            min_unique_peptides: args.min_unique,
+            min_unique_peptides: args.min_unique.unwrap_or(
+                if quantification.method == QuantMethod::Pibaq {
+                    0
+                } else {
+                    2
+                },
+            ),
             remove_contaminants: !args.keep_contaminants,
         },
         normalization: NormalizationConfig {
@@ -400,7 +450,7 @@ fn build_config(
         differential_expression: resolved.differential_expression,
         runtime: RuntimeConfig {
             memory: args.memory.clone(),
-            threads: args.threads,
+            threads: args.threads.or(args.directlfq_cores),
         },
     }
 }
@@ -409,6 +459,7 @@ fn input_config(args: &Features2ProteinsArgs) -> InputConfig {
     InputConfig {
         parquet: args.parquet.clone(),
         msstats: args.msstats.clone(),
+        psm: args.psm.clone(),
         sdrf: args.sdrf.clone(),
         fasta: args.fasta.clone(),
     }
@@ -430,13 +481,13 @@ fn pibaq_config(args: &Features2ProteinsArgs) -> PibaqConfig {
         min_shared: args.pibaq_min_shared,
         families_yaml: args.pibaq_families_yaml.clone(),
         min_anchors: args.pibaq_min_anchors,
-        high_anchor_threshold: args.pibaq_high_anchor_threshold,
+        high_anchor_threshold: PibaqConfig::default().high_anchor_threshold,
     }
 }
 
 fn directlfq_config(args: &Features2ProteinsArgs) -> DirectLfqConfig {
     DirectLfqConfig {
-        cores: args.directlfq_cores,
+        cores: None,
         min_nonan: args.directlfq_min_nonan.unwrap_or(1),
         num_samples_quadratic: args.directlfq_num_samples_quadratic.unwrap_or(50),
     }

@@ -24,6 +24,7 @@ pub fn supported_methods() -> &'static [QuantMethod] {
         QuantMethod::Ratio,
         QuantMethod::Abd,
         QuantMethod::Intensity,
+        QuantMethod::PeptideCount,
         QuantMethod::SpectralCount,
     ]
 }

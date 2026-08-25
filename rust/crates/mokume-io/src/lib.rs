@@ -1,5 +1,6 @@
 pub mod msstats;
 pub mod peptide_parquet;
+pub mod psm;
 pub mod qpx;
 pub mod sdrf;
 
@@ -8,6 +9,7 @@ pub use msstats::MsstatsReader;
 pub use peptide_parquet::{
     read_peptide_parquet, write_peptide_parquet, PeptideParquetRow, RawPeptideRow, RawPeptideTable,
 };
+pub use psm::{flatten_psm_batch, QpxPsmParquetReader, QpxPsmRecord};
 pub use qpx::{
     flatten_qpx_batch, flatten_qpx_batch_with_score, QpxFeatureRecord, QpxIntensityEntry,
     QpxParquetReader, QpxScoreValue,

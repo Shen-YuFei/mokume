@@ -110,7 +110,7 @@ fn parses_python_features2proteins_options() {
     );
     assert!(!config.batch.parametric);
     assert!(config.batch.mean_only);
-    assert_eq!(config.batch.ref_batch, Some(2));
+    assert_eq!(config.batch.ref_batch.as_deref(), Some("2"));
     assert_eq!(
         config.irs.reference_samples.as_deref(),
         Some(&["Pool A".to_string(), "Pool B".to_string()][..])
@@ -277,6 +277,28 @@ fn native_msstats_input_requires_sdrf() {
         error.kind(),
         clap::error::ErrorKind::MissingRequiredArgument
     );
+}
+
+#[test]
+fn impute_method_enables_imputation_and_constant_maps_to_zero() {
+    let cli = Cli::parse_from([
+        "mokume",
+        "features2proteins",
+        "--parquet",
+        "input.parquet",
+        "--output",
+        "protein.csv",
+        "--impute-method",
+        "constant",
+    ]);
+    let Commands::Features2Proteins(args) = cli.command else {
+        panic!("expected features2proteins command");
+    };
+    let Ok(config) = args.into_config() else {
+        panic!("expected a valid imputation config");
+    };
+    assert!(config.imputation.enabled);
+    assert_eq!(config.imputation.method, "zero");
 }
 
 #[test]

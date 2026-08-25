@@ -63,7 +63,7 @@ fn features2proteins_preserves_biological_replicate_peptide_rows() -> Result<(),
         (QuantMethod::Sum, 1000.0),
         (QuantMethod::Median, 250.0),
         (QuantMethod::TopN, 300.0),
-        (QuantMethod::SpectralCount, 4.0),
+        (QuantMethod::PeptideCount, 4.0),
     ] {
         let output = root.join(format!("{}.csv", method.as_str()));
         let mut config = default_sum_config(parquet.clone(), sdrf.clone(), output.clone());
@@ -293,6 +293,7 @@ fn default_peptides_config(parquet: PathBuf, output: PathBuf) -> FeatureToPeptid
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: None,
             fasta: None,
         },
@@ -2585,10 +2586,10 @@ fn features2proteins_extra_quant_methods_match_synthetic_oracles() -> Result<(),
     assert_numeric_cell_close(&intensity, "P1", "sample-1", 350.0);
     assert_numeric_cell_close(&intensity, "P4A;P4B", "sample-1", 30.0);
 
-    let spectral_count = run_synthetic_quantification(QuantMethod::SpectralCount, 3)?;
-    assert_numeric_cell_close(&spectral_count, "P1", "sample-1", 2.0);
-    assert_numeric_cell_close(&spectral_count, "P3", "sample-1", 2.0);
-    assert_numeric_cell_close(&spectral_count, "P4A;P4B", "sample-1", 2.0);
+    let peptide_count = run_synthetic_quantification(QuantMethod::PeptideCount, 3)?;
+    assert_numeric_cell_close(&peptide_count, "P1", "sample-1", 2.0);
+    assert_numeric_cell_close(&peptide_count, "P3", "sample-1", 2.0);
+    assert_numeric_cell_close(&peptide_count, "P4A;P4B", "sample-1", 2.0);
 
     let pibaq = run_synthetic_quantification(QuantMethod::Pibaq, 3)?;
     assert_numeric_cell_close(&pibaq, "P1", "sample-1", 3450.0);
@@ -2627,8 +2628,8 @@ fn features2proteins_collapses_charges_into_canonical_before_rollup() -> Result<
         (140.0_f64.log2() + 30.0_f64.log2()) / 2.0,
     );
 
-    let spectral_count = run_canonical_collapse_quantification(QuantMethod::SpectralCount, 3)?;
-    assert_numeric_cell_close(&spectral_count, "P50", "sample-1", 2.0);
+    let peptide_count = run_canonical_collapse_quantification(QuantMethod::PeptideCount, 3)?;
+    assert_numeric_cell_close(&peptide_count, "P50", "sample-1", 2.0);
     Ok(())
 }
 
@@ -3333,6 +3334,7 @@ fn run_synthetic_quantification(
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta,
         },
@@ -3443,6 +3445,7 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -3549,6 +3552,7 @@ fn run_family_pibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: Some(fasta),
         },
@@ -4233,6 +4237,7 @@ fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> Featu
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -4295,6 +4300,7 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -4773,7 +4779,7 @@ fn test_pibaq_digest(entries: &[(&str, &[&str])]) -> PibaqDigest {
             enzyme: "Trypsin".to_owned(),
             catalog_hash: "test".to_owned(),
             min_aa: 7,
-            max_aa: 50,
+            max_aa: 30,
             missed_cleavages: 0,
         },
     }

@@ -5,8 +5,8 @@ use mokume_core::QuantMethod;
 
 use crate::parsers::{
     parse_correlation, parse_de_log2fc, parse_finite_f64, parse_fraction, parse_memory,
-    parse_nonnegative_f64, parse_nonnegative_i32, parse_positive_usize, parse_quant_method,
-    DeLog2FcArg, OutputFormatArg, QuantMethodArg,
+    parse_nonnegative_f64, parse_positive_usize, parse_quant_method, DeLog2FcArg, OutputFormatArg,
+    QuantMethodArg,
 };
 use crate::PibaqDigestRequest;
 
@@ -16,23 +16,36 @@ pub(crate) struct Features2ProteinsArgs {
     #[arg(
         short = 'p',
         long = "parquet",
-        required_unless_present = "msstats",
-        conflicts_with = "msstats"
+        required_unless_present_any = ["msstats", "psm"],
+        conflicts_with_all = ["msstats", "psm"]
     )]
     parquet: Option<PathBuf>,
 
     #[arg(
         long = "msstats",
-        required_unless_present = "parquet",
-        conflicts_with = "parquet",
+        required_unless_present_any = ["parquet", "psm"],
+        conflicts_with_all = ["parquet", "psm"],
         requires = "sdrf"
     )]
     msstats: Option<PathBuf>,
 
+    #[arg(
+        long = "psm",
+        required_unless_present_any = ["parquet", "msstats"],
+        conflicts_with_all = ["parquet", "msstats"],
+        requires = "sdrf",
+        help = "PSM-level QPX parquet input; required by true spectral_count"
+    )]
+    psm: Option<PathBuf>,
+
     #[arg(short = 'o', long = "output")]
     output: PathBuf,
 
-    #[arg(long = "output-format", default_value = "python-compatible")]
+    #[arg(
+        long = "output-format",
+        default_value = "python-compatible",
+        help = "Output column/header schema only; it does not change quantification"
+    )]
     output_format: OutputFormatArg,
 
     #[arg(short = 's', long = "sdrf")]
@@ -42,10 +55,10 @@ pub(crate) struct Features2ProteinsArgs {
         long = "quant-method",
         alias = "method",
         default_value = "maxlfq",
-        value_name = "[directlfq|pibaq|maxlfq|sum|median|ratio|abd|intensity|spectral_count|top<N>]",
+        value_name = "[directlfq|pibaq|maxlfq|sum|median|ratio|abd|intensity|peptide_count|spectral_count|top<N>]",
         value_parser = parse_quant_method,
         help = "Quantification method: directlfq, pibaq, maxlfq, sum, median, ratio, abd, \
-intensity, spectral_count, or top<N> -- the TopN family spells its peptide count in the name \
+intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells its peptide count in the name \
 (e.g. top3, top5)"
     )]
     quant_method: QuantMethodArg,
@@ -53,15 +66,23 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "min-aa", default_value_t = 7)]
     min_aa: usize,
 
-    #[arg(long = "min-unique", default_value_t = 2)]
-    min_unique: usize,
+    #[arg(
+        long = "min-unique",
+        help = "Minimum distinct peptides per protein/sample (default: 2; piBAQ uses 0 and rejects an explicit override)"
+    )]
+    min_unique: Option<usize>,
 
-    #[arg(long = "keep-contaminants")]
+    #[arg(
+        long = "keep-contaminants",
+        help = "Keep contaminant proteins; QPX rows marked is_decoy=true are always removed"
+    )]
     keep_contaminants: bool,
 
     #[arg(long = "run-normalization", value_parser = [
         "none", "mean", "median", "max", "global", "max_min", "iqr",
-    ], ignore_case = true)]
+    ], ignore_case = true,
+    help = "Run-level intensity normalization; count methods require none"
+    )]
     run_normalization: Option<String>,
 
     #[arg(long = "sample-normalization", value_parser = [
@@ -75,7 +96,9 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
         "rlr",
         "loess",
         "tmm",
-    ], ignore_case = true)]
+    ], ignore_case = true,
+    help = "Sample-level intensity normalization; count methods require none"
+    )]
     sample_normalization: Option<String>,
 
     #[arg(long = "normalization-proteins")]
@@ -87,7 +110,7 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "pibaq-enzyme", default_value = "Trypsin")]
     pibaq_enzyme: String,
 
-    #[arg(long = "pibaq-max-aa", default_value_t = 50)]
+    #[arg(long = "pibaq-max-aa", default_value_t = 30)]
     pibaq_max_aa: usize,
 
     #[arg(long = "pibaq-min-shared", default_value_t = 2)]
@@ -99,10 +122,7 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "pibaq-min-anchors", default_value_t = 1)]
     pibaq_min_anchors: usize,
 
-    #[arg(long = "pibaq-high-anchor-threshold", default_value_t = 3)]
-    pibaq_high_anchor_threshold: usize,
-
-    #[arg(long = "directlfq-cores", value_parser = parse_positive_usize)]
+    #[arg(long = "directlfq-cores", hide = true, value_parser = parse_positive_usize)]
     directlfq_cores: Option<usize>,
 
     #[arg(long = "directlfq-min-nonan", value_parser = parse_positive_usize)]
@@ -120,7 +140,12 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "batch-correction")]
     batch_correction: bool,
 
-    #[arg(long = "batch-method", value_parser = ["sample_prefix", "column"], ignore_case = true)]
+    #[arg(
+        long = "batch-method",
+        value_parser = ["sample_prefix", "column"],
+        ignore_case = true,
+        help = "How batch labels are detected: sample accession prefix or one SDRF column"
+    )]
     batch_method: Option<String>,
 
     #[arg(long = "batch-column")]
@@ -135,14 +160,21 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "batch-mean-only")]
     batch_mean_only: bool,
 
-    #[arg(long = "batch-ref", value_parser = parse_nonnegative_i32)]
-    batch_ref: Option<i32>,
+    #[arg(
+        long = "batch-ref",
+        help = "Reference batch using its original sample-prefix or SDRF-column label"
+    )]
+    batch_ref: Option<String>,
 
-    #[arg(long = "irs")]
+    #[arg(
+        long = "irs",
+        help = "Enable IRS; not applicable to peptide_count or spectral_count"
+    )]
     irs: bool,
 
     #[arg(
         long = "irs-reference-samples",
+        hide = true,
         conflicts_with = "irs_reference_sample"
     )]
     irs_reference_samples: Option<String>,
@@ -269,7 +301,7 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
 
     #[arg(
         long = "threads",
-        visible_alias = "duckdb-threads",
+        alias = "duckdb-threads",
         value_parser = parse_positive_usize
     )]
     threads: Option<usize>,

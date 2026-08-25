@@ -14,10 +14,9 @@
 //! ([batch one-hot | covariate columns]) and standardization regresses out
 //! batch + covariates via a Gaussian-elimination solve of the normal equations
 //! `B_hat = solve(design design^T, design data^T)` (`calculate_mean_var` in the
-//! reference). The covariate columns mirror what mokume feeds inmoose: each
-//! categorical-encoded covariate enters as a single numeric design column (the
-//! `dmatrix("+".join(cols))` patsy build treats integer codes as continuous and
-//! drops the redundant intercept).
+//! reference). Numeric covariates enter the design unchanged; nominal SDRF
+//! covariates are expanded to k-1 indicator columns before this module is
+//! called, avoiding an artificial ordering between categories.
 //!
 //! All reductions use population variance (`ddof = 0`), matching numpy. The
 //! parametric `it_sol` fixed-point uses the reference's relative-change stop at
