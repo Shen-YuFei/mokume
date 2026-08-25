@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow::array::{
-    ArrayRef, BooleanArray, Float32Builder, Float64Array, Int16Array, Int32Builder, ListBuilder,
-    StringArray, StringBuilder, StructBuilder,
+    ArrayRef, BooleanArray, BooleanBuilder, Float32Builder, Float64Array, Float64Builder,
+    Int16Array, Int32Builder, ListBuilder, StringArray, StringBuilder, StructBuilder,
 };
 use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::record_batch::RecordBatch;
@@ -17,9 +17,9 @@ use mokume_core::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
     FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
     IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
-    MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig, PibaqConfig,
-    PreprocessingFilterConfig, ProteinFilterConfig, QuantMethod, RatioConfig, RunQcFilterConfig,
-    RuntimeConfig,
+    MokumeError, NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat,
+    PeptideFilterConfig, PibaqConfig, PreprocessingFilterConfig, ProteinFilterConfig, QuantMethod,
+    RatioConfig, RunQcFilterConfig, RuntimeConfig,
 };
 use mokume_pipeline::{
     run_features_to_peptides, run_features_to_proteins, run_features_to_proteins_with_pibaq_digest,
@@ -1778,8 +1778,8 @@ fn features2peptides_razor_assign_to_top_flips_winner_on_row_order() -> Result<(
     Ok(())
 }
 
-// The QPX schema carries neither a search-engine score nor a coverage column.
-// Reject those filters instead of accepting options that cannot affect output.
+// The synthetic QPX lacks the requested score and any coverage column. Reject
+// both instead of accepting filters that cannot affect output.
 #[test]
 fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
 ) -> Result<(), Box<dyn Error>> {
@@ -1791,16 +1791,18 @@ fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
     let mut search_score = default_peptides_config(parquet.clone(), root.join("search-score.csv"));
     search_score.filter_pipeline = Some(PreprocessingFilterConfig {
         peptide: PeptideFilterConfig {
-            min_search_score: Some(0.9),
+            score: Some(NamedScoreFilterConfig {
+                name: "missing_score".to_owned(),
+                threshold: 0.9,
+            }),
             ..PeptideFilterConfig::default()
         },
         ..PreprocessingFilterConfig::default()
     });
     assert!(matches!(
         run_features_to_peptides(&search_score),
-        Err(MokumeError::NotImplemented {
-            stage: "features2peptides filter min-search-score"
-        })
+        Err(MokumeError::InvalidInput { message })
+            if message.contains("missing_score")
     ));
 
     let mut coverage = default_peptides_config(parquet, root.join("coverage.csv"));
@@ -1817,6 +1819,41 @@ fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
             stage: "features2peptides filter min-coverage"
         })
     ));
+    Ok(())
+}
+
+#[test]
+fn features2peptides_applies_named_score_direction() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+
+    for (case, higher_better) in [("higher", true), ("lower", false)] {
+        let mut rows = synthetic_peptide_rows();
+        for (index, row) in rows.iter_mut().enumerate() {
+            let passes = index != 1;
+            let value = if passes == higher_better { 0.9 } else { 0.1 };
+            *row = row.with_score("engine_score", value, higher_better);
+        }
+        let parquet = root.join(format!("score-{case}.features.parquet"));
+        let output = root.join(format!("score-{case}.csv"));
+        write_qpx_rows(&parquet, &rows)?;
+
+        let mut config = default_peptides_config(parquet, output.clone());
+        config.filter_pipeline = Some(PreprocessingFilterConfig {
+            peptide: PeptideFilterConfig {
+                score: Some(NamedScoreFilterConfig {
+                    name: "engine_score".to_owned(),
+                    threshold: 0.5,
+                }),
+                ..PeptideFilterConfig::default()
+            },
+            ..PreprocessingFilterConfig::default()
+        });
+        run_features_to_peptides(&config)?;
+
+        let table = read_csv(&output)?;
+        assert_peptide_cell(&table, "P1", "PEPTIDEAK", "run1", 100.0)?;
+    }
     Ok(())
 }
 
@@ -4751,6 +4788,7 @@ struct QpxRow<'a> {
     unique: bool,
     peptide_qvalue: Option<f64>,
     protein_qvalue: Option<f64>,
+    score: Option<(&'a str, f64, bool)>,
 }
 
 impl<'a> QpxRow<'a> {
@@ -4769,6 +4807,7 @@ impl<'a> QpxRow<'a> {
             unique: true,
             peptide_qvalue: None,
             protein_qvalue: None,
+            score: None,
         }
     }
 
@@ -4788,6 +4827,7 @@ impl<'a> QpxRow<'a> {
             unique: true,
             peptide_qvalue: None,
             protein_qvalue: None,
+            score: None,
         }
     }
 
@@ -4806,12 +4846,18 @@ impl<'a> QpxRow<'a> {
             unique: false,
             peptide_qvalue: None,
             protein_qvalue: None,
+            score: None,
         }
     }
 
     const fn with_qvalues(mut self, peptide: Option<f64>, protein: Option<f64>) -> Self {
         self.peptide_qvalue = peptide;
         self.protein_qvalue = protein;
+        self
+    }
+
+    const fn with_score(mut self, name: &'a str, value: f64, higher_better: bool) -> Self {
+        self.score = Some((name, value, higher_better));
         self
     }
 }
@@ -4843,10 +4889,16 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
             .map(|row| row.protein_qvalue)
             .collect::<Vec<_>>(),
     )) as ArrayRef;
+    let additional_scores = qpx_row_scores(rows)?;
     let intensities = qpx_row_intensities(rows)?;
     let proteins = qpx_row_proteins(rows)?;
     let intensities_field = Field::new("intensities", intensities.data_type().clone(), true);
     let proteins_field = Field::new("pg_accessions", proteins.data_type().clone(), true);
+    let scores_field = Field::new(
+        "additional_scores",
+        additional_scores.data_type().clone(),
+        true,
+    );
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("sequence", DataType::Utf8, false),
@@ -4857,6 +4909,7 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
         Field::new("unique", DataType::Boolean, false),
         Field::new("peptide_qvalue", DataType::Float64, true),
         Field::new("pg_global_qvalue", DataType::Float64, true),
+        scores_field,
         intensities_field,
         proteins_field,
     ]));
@@ -4871,6 +4924,7 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
             unique,
             peptide_qvalue,
             protein_qvalue,
+            additional_scores,
             intensities,
             proteins,
         ],
@@ -4881,6 +4935,41 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
     writer.write(&batch)?;
     writer.close()?;
     Ok(())
+}
+
+fn qpx_row_scores(rows: &[QpxRow<'_>]) -> Result<ArrayRef, Box<dyn Error>> {
+    let fields = Fields::from(vec![
+        Field::new("score_name", DataType::Utf8, false),
+        Field::new("score_value", DataType::Float64, false),
+        Field::new("higher_better", DataType::Boolean, false),
+    ]);
+    let struct_builder = StructBuilder::new(
+        fields,
+        vec![
+            Box::new(StringBuilder::new()),
+            Box::new(Float64Builder::new()),
+            Box::new(BooleanBuilder::new()),
+        ],
+    );
+    let mut builder = ListBuilder::new(struct_builder);
+    for row in rows {
+        if let Some((name, value, higher_better)) = row.score {
+            append_string_field(builder.values(), 0, name)?;
+            builder
+                .values()
+                .field_builder::<Float64Builder>(1)
+                .ok_or("missing score_value builder")?
+                .append_value(value);
+            builder
+                .values()
+                .field_builder::<BooleanBuilder>(2)
+                .ok_or("missing higher_better builder")?
+                .append_value(higher_better);
+            builder.values().append(true);
+        }
+        builder.append(true);
+    }
+    Ok(Arc::new(builder.finish()) as ArrayRef)
 }
 
 fn qpx_row_intensities(rows: &[QpxRow<'_>]) -> Result<ArrayRef, Box<dyn Error>> {

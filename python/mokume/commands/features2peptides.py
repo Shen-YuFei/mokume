@@ -2,11 +2,31 @@
 CLI command for converting features to peptides.
 """
 
+import math
+
 import click
 
 from mokume.normalization.peptide import peptide_normalization
 from mokume.preprocessing.filters.io import generate_example_config, load_filter_config
-from mokume.model.filters import PreprocessingFilterConfig
+from mokume.model.filters import NamedScoreFilterConfig, PreprocessingFilterConfig
+
+
+def _parse_named_score_option(
+    _ctx: click.Context, _param: click.Parameter, value: str | None
+) -> NamedScoreFilterConfig | None:
+    if value is None:
+        return None
+    try:
+        name, raw_threshold = value.rsplit("=", maxsplit=1)
+        threshold = float(raw_threshold)
+    except (ValueError, TypeError) as exc:
+        raise click.BadParameter("expected NAME=THRESHOLD") from exc
+    name = name.strip()
+    if not name:
+        raise click.BadParameter("score name cannot be empty")
+    if not math.isfinite(threshold):
+        raise click.BadParameter("threshold must be finite")
+    return NamedScoreFilterConfig(name=name, threshold=threshold)
 
 
 def _command_line_value(ctx: click.Context, name: str) -> bool:
@@ -69,6 +89,7 @@ def _validate_features2peptides_options(ctx: click.Context) -> None:
 def _filter_overrides(
     ctx: click.Context,
     peptide_fdr: float | None = None,
+    score: NamedScoreFilterConfig | None = None,
     protein_fdr: float | None = None,
     max_missing_rate: float | None = None,
 ) -> dict:
@@ -86,6 +107,8 @@ def _filter_overrides(
             overrides[target] = params[source]
     if peptide_fdr is not None:
         overrides["peptide_fdr"] = peptide_fdr
+    if score is not None:
+        overrides["score"] = score
     if protein_fdr is not None:
         overrides["protein_fdr"] = protein_fdr
     if max_missing_rate is not None:
@@ -104,10 +127,13 @@ def _filter_overrides(
 def _preprocessing_config(
     ctx: click.Context,
     peptide_fdr: float | None = None,
+    score: NamedScoreFilterConfig | None = None,
     protein_fdr: float | None = None,
     max_missing_rate: float | None = None,
 ) -> PreprocessingFilterConfig | None:
-    overrides = _filter_overrides(ctx, peptide_fdr, protein_fdr, max_missing_rate)
+    overrides = _filter_overrides(
+        ctx, peptide_fdr, score, protein_fdr, max_missing_rate
+    )
     config_path = ctx.params["filter_config"]
     if config_path:
         config = load_filter_config(config_path)
@@ -302,6 +328,13 @@ def _resolved_filter_thresholds(
     help="Override: maximum QPX peptide q-value",
 )
 @click.option(
+    "--filter-score",
+    "filter_score",
+    metavar="NAME=THRESHOLD",
+    callback=_parse_named_score_option,
+    help="Filter one exact QPX additional score using its higher_better direction",
+)
+@click.option(
     "--filter-exclude-modifications",
     "filter_exclude_modifications",
     type=str,
@@ -361,6 +394,7 @@ def features2parquet(
     filter_charge_states: str,
     filter_max_missed_cleavages: int,
     filter_peptide_fdr: float,
+    filter_score: NamedScoreFilterConfig,
     filter_exclude_modifications: str,
     filter_min_unique_peptides: int,
     filter_protein_fdr: float,
@@ -382,6 +416,7 @@ def features2parquet(
     preprocessing_config = _preprocessing_config(
         ctx,
         filter_peptide_fdr,
+        filter_score,
         filter_protein_fdr,
         filter_max_missing_rate,
     )

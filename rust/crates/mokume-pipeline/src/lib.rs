@@ -6,9 +6,10 @@ use csv::WriterBuilder;
 use mokume_core::{
     BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig, FeatureToPeptidesConfig,
     FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig, IntensityFilterConfig,
-    IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig, MokumeError, NormalizationConfig,
-    OutputConfig, OutputFormat, PeptideId, PibaqConfig, PreprocessingFilterConfig, ProteinId,
-    QuantMethod, RatioConfig, Result, RunQcFilterConfig, RuntimeConfig, SampleId, StringIdRegistry,
+    IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig, MokumeError,
+    NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
+    PibaqConfig, PreprocessingFilterConfig, ProteinId, QuantMethod, RatioConfig, Result,
+    RunQcFilterConfig, RuntimeConfig, SampleId, StringIdRegistry,
 };
 use mokume_imputation::imputed_values;
 use mokume_io::{
@@ -5069,6 +5070,7 @@ fn run_features_to_proteins_inner(
         &[],
         config.quantification == QuantMethod::Pibaq,
         &memory,
+        None,
     )?;
     memory.check("normalization pre-pass")?;
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
@@ -5249,9 +5251,7 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     let peptide = &config.peptide;
     let protein = &config.protein;
     validate_fdr_thresholds(peptide.fdr_threshold, protein.fdr_threshold)?;
-    if peptide.min_search_score.is_some() {
-        return unsupported("features2peptides filter min-search-score");
-    }
+    validate_named_score_filter(peptide.score.as_ref())?;
     if peptide.require_unique_peptides {
         return unsupported("features2peptides peptide unique filter");
     }
@@ -5286,6 +5286,23 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     }
     if run_qc.min_sample_correlation.is_some() {
         return unsupported("features2peptides filter min-sample-correlation");
+    }
+    Ok(())
+}
+
+fn validate_named_score_filter(score: Option<&NamedScoreFilterConfig>) -> Result<()> {
+    let Some(score) = score else {
+        return Ok(());
+    };
+    if score.name.trim().is_empty() {
+        return Err(invalid_input(
+            "features2peptides filter score name cannot be empty",
+        ));
+    }
+    if !score.threshold.is_finite() {
+        return Err(invalid_input(
+            "features2peptides filter score threshold must be finite",
+        ));
     }
     Ok(())
 }
@@ -5367,6 +5384,7 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
 pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> {
     validate_features_to_peptides_config(config)?;
     let filter_pipeline = active_filter_pipeline(config);
+    let named_score = filter_pipeline.and_then(|pipeline| pipeline.peptide.score.as_ref());
 
     // Route the deterministic peptide export through the protein pipeline's
     // ingest machinery by building a Sum-quantification config whose only
@@ -5407,6 +5425,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             median_contaminant_patterns,
             config.keep_shared_peptides,
             &MemoryPlan::unlimited(),
+            named_score,
         )?
     };
     // The IRS pre-pass reuses the median pre-pass's contaminant settings.
@@ -5420,6 +5439,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             proteins_config.filtering.remove_contaminants,
             median_contaminant_patterns,
             irs_min_intensity,
+            named_score,
         )?;
         if irs_scale_by_techrep.is_empty() {
             return Err(invalid_input(format!(
@@ -5448,7 +5468,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     }
     state.peptide_filters = filter_pipeline.cloned();
     if let Some(pipeline) = filter_pipeline {
-        configure_fdr_and_sequence_filters(&mut state, parquet, pipeline)?;
+        configure_fdr_and_sequence_filters(&mut state, parquet, pipeline, named_score)?;
         if let Some(peptides) = &mut state.export_rows.peptides {
             peptides.razor_handling =
                 parse_razor_handling(&pipeline.protein.razor_peptide_handling);
@@ -5467,8 +5487,13 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             contaminant_patterns: &pipeline.protein.contaminant_patterns,
             remove_protein_ids: &state.remove_protein_ids,
         };
-        state.run_qc_excluded_runs =
-            collect_run_qc_exclusions(parquet, sdrf.as_ref(), &pipeline.run_qc, &source)?;
+        state.run_qc_excluded_runs = collect_run_qc_exclusions(
+            parquet,
+            sdrf.as_ref(),
+            &pipeline.run_qc,
+            &source,
+            named_score,
+        )?;
     }
     // CVThresholdFilter and QuantileFilter are group-level filters: both need the
     // whole sample's `min_unique`-gated intensities, which the streaming ingest
@@ -5479,14 +5504,20 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // Excluded Run-QC technical runs are skipped so they do not feed either
     // decision.
     if let Some(pipeline) = filter_pipeline {
+        let source = RunQcSource {
+            filtering: proteins_config.filtering,
+            keep_shared_peptides: config.keep_shared_peptides,
+            min_unique_peptides: proteins_config.filtering.min_unique_peptides,
+            contaminant_patterns: &pipeline.protein.contaminant_patterns,
+            remove_protein_ids: &state.remove_protein_ids,
+        };
         let group_filters = collect_intensity_group_filters(
             parquet,
-            proteins_config.filtering,
             sdrf.as_ref(),
-            config.keep_shared_peptides,
-            proteins_config.filtering.min_unique_peptides,
+            &source,
             &pipeline.intensity,
             &state.run_qc_excluded_runs,
+            named_score,
         )?;
         state.cv_dropped = group_filters.cv_dropped;
         state.quantile_bounds = group_filters.quantile_bounds;
@@ -5497,7 +5528,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         state.replicate_agreement_wipes_all = pipeline.intensity.min_replicate_agreement > 1;
     }
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
         state.ingest(
             &feature,
             sdrf.as_ref(),
@@ -5555,6 +5586,7 @@ fn configure_fdr_and_sequence_filters(
     state: &mut FeatureToProteinState,
     parquet: &Path,
     pipeline: &PreprocessingFilterConfig,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<()> {
     state.excluded_sequence_regexes =
         compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
@@ -5562,6 +5594,7 @@ fn configure_fdr_and_sequence_filters(
         parquet,
         pipeline.peptide.fdr_threshold,
         pipeline.protein.fdr_threshold,
+        named_score,
     )?;
     Ok(())
 }
@@ -5574,6 +5607,7 @@ fn collect_fdr_filter_state(
     parquet: &Path,
     peptide_threshold: Option<f64>,
     protein_threshold: Option<f64>,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<Option<HashSet<String>>> {
     if peptide_threshold.is_none() && protein_threshold.is_none() {
         return Ok(None);
@@ -5583,7 +5617,7 @@ fn collect_fdr_filter_state(
     let mut protein_values = 0_usize;
     let mut protein_min_qvalue: HashMap<String, f64> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
         if peptide_threshold.is_some()
             && feature
                 .peptide_qvalue
@@ -5686,7 +5720,75 @@ fn stream_qpx_features<F>(mut reader: QpxParquetReader, mut consume: F) -> Resul
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
-    stream_qpx_features_with_plan(&mut reader, &MemoryPlan::unlimited(), &mut consume)
+    stream_qpx_features_with_optional_score(
+        &mut reader,
+        &MemoryPlan::unlimited(),
+        None,
+        &mut consume,
+    )
+}
+
+fn stream_qpx_features_with_score<F>(
+    mut reader: QpxParquetReader,
+    score: &NamedScoreFilterConfig,
+    mut consume: F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    let mut seen = 0_usize;
+    let mut direction = None;
+    stream_qpx_features_with_optional_score(
+        &mut reader,
+        &MemoryPlan::unlimited(),
+        Some(score.name.as_str()),
+        &mut |feature| {
+            let Some(value) = feature.selected_score else {
+                return Ok(());
+            };
+            seen += 1;
+            if let Some(expected) = direction {
+                if expected != value.higher_better {
+                    return Err(invalid_input(format!(
+                        "QPX score `{}` has inconsistent higher_better values",
+                        score.name
+                    )));
+                }
+            } else {
+                direction = Some(value.higher_better);
+            }
+            let passes = if value.higher_better {
+                value.value >= score.threshold
+            } else {
+                value.value <= score.threshold
+            };
+            if passes {
+                consume(feature)?;
+            }
+            Ok(())
+        },
+    )?;
+    if seen == 0 {
+        return Err(invalid_input(format!(
+            "--filter-score requires QPX `additional_scores` entry `{}`",
+            score.name
+        )));
+    }
+    Ok(())
+}
+
+fn stream_qpx_features_maybe_score<F>(
+    reader: QpxParquetReader,
+    score: Option<&NamedScoreFilterConfig>,
+    consume: F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    match score {
+        Some(score) => stream_qpx_features_with_score(reader, score, consume),
+        None => stream_qpx_features(reader, consume),
+    }
 }
 
 fn stream_qpx_features_with_plan<F>(
@@ -5697,23 +5799,41 @@ fn stream_qpx_features_with_plan<F>(
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
+    stream_qpx_features_with_optional_score(reader, memory, None, consume)
+}
+
+fn stream_qpx_features_with_optional_score<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    score_name: Option<&str>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
     if memory.channel_capacity() == 0 {
-        stream_qpx_features_synchronously(reader, memory, consume)
+        stream_qpx_features_synchronously(reader, memory, score_name, consume)
     } else {
-        stream_qpx_features_buffered(reader, memory, consume)
+        stream_qpx_features_buffered(reader, memory, score_name, consume)
     }
 }
 
 fn stream_qpx_features_synchronously<F>(
     reader: &mut QpxParquetReader,
     memory: &MemoryPlan,
+    score_name: Option<&str>,
     consume: &mut F,
 ) -> Result<()>
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
     while let Some(batch) = reader.next_raw_batch() {
-        for feature in mokume_io::flatten_qpx_batch(&batch?)? {
+        let batch = batch?;
+        let features = match score_name {
+            Some(name) => mokume_io::flatten_qpx_batch_with_score(&batch, name)?,
+            None => mokume_io::flatten_qpx_batch(&batch)?,
+        };
+        for feature in features {
             consume(feature)?;
         }
         memory.check("QPX streaming")?;
@@ -5724,6 +5844,7 @@ where
 fn stream_qpx_features_buffered<F>(
     reader: &mut QpxParquetReader,
     memory: &MemoryPlan,
+    score_name: Option<&str>,
     consume: &mut F,
 ) -> Result<()>
 where
@@ -5755,7 +5876,7 @@ where
             }
         });
 
-        let result = consume_qpx_windows(&rx, memory, consume);
+        let result = consume_qpx_windows(&rx, memory, score_name, consume);
         // A consumer or RSS-budget error must drop the receiver before the
         // scoped reader thread is joined. This wakes a sender blocked by the
         // bounded channel instead of deadlocking on scope exit.
@@ -5767,6 +5888,7 @@ where
 fn consume_qpx_windows<F>(
     receiver: &std::sync::mpsc::Receiver<Result<Vec<mokume_io::RecordBatch>>>,
     memory: &MemoryPlan,
+    score_name: Option<&str>,
     consume: &mut F,
 ) -> Result<()>
 where
@@ -5775,7 +5897,10 @@ where
     for message in receiver {
         let flattened: Result<Vec<Vec<QpxFeatureRecord>>> = message?
             .into_par_iter()
-            .map(|batch| mokume_io::flatten_qpx_batch(&batch))
+            .map(|batch| match score_name {
+                Some(name) => mokume_io::flatten_qpx_batch_with_score(&batch, name),
+                None => mokume_io::flatten_qpx_batch(&batch),
+            })
             .collect();
         for features in flattened? {
             for feature in features {
@@ -6490,12 +6615,13 @@ fn collect_run_qc_exclusions(
     sdrf: Option<&SdrfTable>,
     run_qc: &RunQcFilterConfig,
     source: &RunQcSource<'_>,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<HashSet<RunQcKey>> {
     if !run_qc_is_active(run_qc) {
         return Ok(HashSet::new());
     }
 
-    let proteins = collect_run_qc_proteins(parquet, sdrf, source)?;
+    let proteins = collect_run_qc_proteins(parquet, sdrf, source, named_score)?;
     let min_unique = if source.keep_shared_peptides {
         0
     } else {
@@ -6521,10 +6647,11 @@ fn collect_run_qc_proteins(
     parquet: &Path,
     sdrf: Option<&SdrfTable>,
     source: &RunQcSource<'_>,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<HashMap<(String, String), RunQcProteinStats>> {
     let mut proteins: HashMap<(String, String), RunQcProteinStats> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
         if !passes_feature_filter(&feature, source.filtering, source.keep_shared_peptides) {
             return Ok(());
         }
@@ -6688,12 +6815,11 @@ struct IntensityGroupFilters {
 /// bounds use f64, matching pandas upcasting the f32 column for `quantile`.
 fn collect_intensity_group_filters(
     parquet: &Path,
-    filtering: FilterConfig,
     sdrf: Option<&SdrfTable>,
-    keep_shared_peptides: bool,
-    min_unique_peptides: usize,
+    source: &RunQcSource<'_>,
     intensity: &IntensityFilterConfig,
     run_qc_excluded: &HashSet<RunQcKey>,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<IntensityGroupFilters> {
     let cv_active = intensity.cv_threshold.is_some();
     let quantile_active = intensity.quantile_lower > 0.0 || intensity.quantile_upper < 1.0;
@@ -6722,8 +6848,8 @@ fn collect_intensity_group_filters(
     let mut group_intensities: HashMap<(String, String, String), Vec<f64>> = HashMap::new();
     let mut cell_canonicals: HashMap<(String, String), HashSet<String>> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
-        if !passes_feature_filter(&feature, filtering, keep_shared_peptides) {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+        if !passes_feature_filter(&feature, source.filtering, source.keep_shared_peptides) {
             return Ok(());
         }
         let Some(protein_group) = protein_group_name(&feature.protein_accessions) else {
@@ -6749,10 +6875,10 @@ fn collect_intensity_group_filters(
         Ok(())
     })?;
 
-    let min_unique = if keep_shared_peptides {
+    let min_unique = if source.keep_shared_peptides {
         0
     } else {
-        min_unique_peptides
+        source.min_unique_peptides
     };
 
     // Phase 2: per group, apply the `min_unique` gate (Python applies it before the
@@ -6848,6 +6974,7 @@ fn collect_irs_scale(
     remove_contaminants: bool,
     contaminant_patterns: &[String],
     min_intensity: f64,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<HashMap<i64, f64>> {
     // Phase 1: per run, buffer the reference-channel intensities and remember the
     // IRS-internal techreplicate and mixture. A run with no integer techreplicate
@@ -6860,7 +6987,7 @@ fn collect_irs_scale(
     }
     let mut runs: HashMap<String, RunBuffer> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
         // Channel match is on the *raw* feature label (Python filters on
         // `channel = ?` before any reformat). A row with no label never matches.
         if feature.label.as_deref() != Some(irs.channel.as_str()) {
@@ -7154,6 +7281,7 @@ fn collect_intensity_factors(
     contaminant_patterns: &[String],
     keep_shared_peptides: bool,
     memory: &MemoryPlan,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<IntensityFactors> {
     if matches!(
         config.quantification,
@@ -7197,7 +7325,7 @@ fn collect_intensity_factors(
     // forwards the `--keep-shared-peptides` flag from `FeatureToPeptidesConfig`,
     // which `peptide_export_config` cannot represent (it pins quantification to
     // `Sum`, so the old in-function `== Pibaq` derivation always read `false`).
-    stream_input_features(&config.input, sdrf, memory, |feature| {
+    stream_normalization_features(config, sdrf, memory, named_score, &mut |feature| {
         collector.push(feature, config.filtering, keep_shared_peptides)
     })?;
     if collector.normalization_proteins.is_some()
@@ -7209,6 +7337,25 @@ fn collect_intensity_factors(
         ));
     }
     Ok(collector.into_factors())
+}
+
+fn stream_normalization_features<F>(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    memory: &MemoryPlan,
+    named_score: Option<&NamedScoreFilterConfig>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    match (&config.input.parquet, named_score) {
+        (Some(parquet), Some(score)) => {
+            let reader = QpxParquetReader::open(parquet, memory.qpx_batch_size())?;
+            stream_qpx_features_with_score(reader, score, consume)
+        }
+        _ => stream_input_features(&config.input, sdrf, memory, consume),
+    }
 }
 
 fn sample_method_uses_factors(method: Option<SampleNormalizationMethod>) -> bool {
@@ -8801,6 +8948,7 @@ mod tests {
                 is_decoy: Some(false),
                 peptide_qvalue: None,
                 pg_global_qvalue: None,
+                selected_score: None,
                 label: None,
                 intensity: 100.0,
             },

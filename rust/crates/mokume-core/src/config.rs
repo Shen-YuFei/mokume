@@ -258,7 +258,7 @@ impl Default for IntensityFilterConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PeptideFilterConfig {
-    pub min_search_score: Option<f64>,
+    pub score: Option<NamedScoreFilterConfig>,
     pub allowed_charge_states: Option<Vec<i32>>,
     pub exclude_modifications: Vec<String>,
     pub max_missed_cleavages: Option<usize>,
@@ -272,7 +272,7 @@ pub struct PeptideFilterConfig {
 impl Default for PeptideFilterConfig {
     fn default() -> Self {
         Self {
-            min_search_score: None,
+            score: None,
             allowed_charge_states: None,
             exclude_modifications: Vec::new(),
             max_missed_cleavages: None,
@@ -283,6 +283,18 @@ impl Default for PeptideFilterConfig {
             require_unique_peptides: false,
         }
     }
+}
+
+/// Threshold for one explicitly named QPX `additional_scores` entry.
+///
+/// The comparison direction is read from that entry's `higher_better` flag:
+/// higher-better scores must be greater than or equal to `threshold`, while
+/// lower-better scores must be less than or equal to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamedScoreFilterConfig {
+    pub name: String,
+    pub threshold: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

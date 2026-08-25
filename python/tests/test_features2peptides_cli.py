@@ -192,3 +192,48 @@ def test_filter_max_missing_rate_reaches_filter_config(monkeypatch, tmp_path: Pa
 
     assert result.exit_code == 0
     assert captured["filter_config"].run_qc.max_missing_rate == 0.4
+
+
+def test_named_score_cli_reaches_filter_config(monkeypatch, tmp_path: Path):
+    parquet = tmp_path / "input.parquet"
+    parquet.write_text("placeholder", encoding="utf-8")
+    captured = _patch_peptide_normalization(monkeypatch)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2peptides",
+            "-p",
+            str(parquet),
+            "-o",
+            str(tmp_path / "peptides.csv"),
+            "--filter-score",
+            "diann_ms1_profile_corr=0.8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    score = captured["filter_config"].peptide.score
+    assert score.name == "diann_ms1_profile_corr"
+    assert score.threshold == 0.8
+
+
+def test_named_score_cli_rejects_ambiguous_value(tmp_path: Path):
+    parquet = tmp_path / "input.parquet"
+    parquet.write_text("placeholder", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2peptides",
+            "-p",
+            str(parquet),
+            "-o",
+            str(tmp_path / "peptides.csv"),
+            "--filter-score",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "expected NAME=THRESHOLD" in result.output

@@ -24,8 +24,17 @@ pub struct QpxFeatureRecord {
     pub is_decoy: Option<bool>,
     pub peptide_qvalue: Option<f64>,
     pub pg_global_qvalue: Option<f64>,
+    /// The requested `additional_scores` entry, populated only by
+    /// [`flatten_qpx_batch_with_score`].
+    pub selected_score: Option<QpxScoreValue>,
     pub label: Option<String>,
     pub intensity: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QpxScoreValue {
+    pub value: f64,
+    pub higher_better: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,6 +101,23 @@ impl Iterator for QpxParquetReader {
 }
 
 pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
+    flatten_qpx_batch_inner(batch, None)
+}
+
+/// Flatten a QPX batch while selecting one exact `additional_scores.score_name`.
+/// Rows without that score retain `selected_score = None`; the pipeline decides
+/// whether missing values are filtered or constitute an unavailable score.
+pub fn flatten_qpx_batch_with_score(
+    batch: &RecordBatch,
+    score_name: &str,
+) -> Result<Vec<QpxFeatureRecord>> {
+    flatten_qpx_batch_inner(batch, Some(score_name))
+}
+
+fn flatten_qpx_batch_inner(
+    batch: &RecordBatch,
+    score_name: Option<&str>,
+) -> Result<Vec<QpxFeatureRecord>> {
     let sequence = column_by_names(batch, &["sequence", "Sequence"])?;
     let peptidoform = column_by_names(batch, &["peptidoform", "modified_sequence"])?;
     let charge = column_by_names(batch, &["charge", "precursor_charge"])?;
@@ -107,6 +133,7 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
     let is_decoy = optional_column_by_names(batch, &["is_decoy", "decoy"]);
     let peptide_qvalue = optional_column_by_names(batch, &["peptide_qvalue", "peptide_q_value"]);
     let pg_global_qvalue = optional_column_by_names(batch, &["pg_global_qvalue", "protein_qvalue"]);
+    let additional_scores = requested_score_column(batch, score_name)?;
 
     let mut records = Vec::new();
     for row in 0..batch.num_rows() {
@@ -139,6 +166,7 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
             .flatten();
         let (peptide_qvalue, pg_global_qvalue) =
             optional_qvalue_values(peptide_qvalue, pg_global_qvalue, row)?;
+        let selected_score = selected_score_value(additional_scores, score_name, row)?;
 
         let entries = intensity_entries(intensities, row)?;
         // In quantms.io LFQ the per-run intensities are labeled by run file (the
@@ -176,6 +204,7 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
                     is_decoy,
                     peptide_qvalue,
                     pg_global_qvalue,
+                    selected_score,
                     label: entry_label,
                     intensity: entry.intensity,
                 });
@@ -184,6 +213,84 @@ pub fn flatten_qpx_batch(batch: &RecordBatch) -> Result<Vec<QpxFeatureRecord>> {
     }
 
     Ok(records)
+}
+
+fn requested_score_column<'a>(
+    batch: &'a RecordBatch,
+    score_name: Option<&str>,
+) -> Result<Option<&'a dyn Array>> {
+    score_name
+        .map(|_| column_by_names(batch, &["additional_scores"]))
+        .transpose()
+}
+
+fn selected_score_value(
+    scores: Option<&dyn Array>,
+    name: Option<&str>,
+    row: usize,
+) -> Result<Option<QpxScoreValue>> {
+    scores
+        .zip(name)
+        .map(|(scores, name)| named_score_value(scores, row, name))
+        .transpose()
+        .map(Option::flatten)
+}
+
+fn named_score_value(array: &dyn Array, row: usize, name: &str) -> Result<Option<QpxScoreValue>> {
+    let Some(values) = list_row_values(array, row, "additional_scores")? else {
+        return Ok(None);
+    };
+    let scores = downcast_array::<StructArray>(values.as_ref(), "additional_scores")?;
+    let names = struct_column_by_names(scores, &["score_name"])
+        .ok_or_else(|| invalid_input("missing `additional_scores.score_name` field"))?;
+    let values = struct_column_by_names(scores, &["score_value"])
+        .ok_or_else(|| invalid_input("missing `additional_scores.score_value` field"))?;
+    let directions = struct_column_by_names(scores, &["higher_better"])
+        .ok_or_else(|| invalid_input("missing `additional_scores.higher_better` field"))?;
+
+    let Some(index) = named_score_index(names, scores.len(), name)? else {
+        return Ok(None);
+    };
+    let value = required_score_value(values, index, name, row)?;
+    let higher_better = required_score_direction(directions, index, name, row)?;
+    Ok(Some(QpxScoreValue {
+        value,
+        higher_better,
+    }))
+}
+
+fn named_score_index(names: &dyn Array, len: usize, name: &str) -> Result<Option<usize>> {
+    for index in 0..len {
+        if optional_string_value(names, index, "additional_scores.score_name")?.as_deref()
+            == Some(name)
+        {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
+}
+
+fn required_score_value(array: &dyn Array, index: usize, name: &str, row: usize) -> Result<f64> {
+    optional_f64_value(array, index, "additional_scores.score_value")?
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| {
+            invalid_input(format!(
+                "QPX score `{name}` has a null or non-finite score_value at row {row}"
+            ))
+        })
+}
+
+fn required_score_direction(
+    array: &dyn Array,
+    index: usize,
+    name: &str,
+    row: usize,
+) -> Result<bool> {
+    optional_bool_value(array, index, "additional_scores.higher_better")?.ok_or_else(|| {
+        invalid_input(format!(
+            "QPX score `{name}` has a null higher_better flag at row {row}"
+        ))
+    })
 }
 
 fn optional_qvalue_values(

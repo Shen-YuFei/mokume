@@ -298,6 +298,7 @@ them through `features2proteins`, where the full matrix exists.
 | `--filter-charge-states` | none | Comma-separated charge states (override) |
 | `--filter-max-missed-cleavages` | none | Max missed cleavages (override) |
 | `--filter-peptide-fdr` | none | Max QPX peptide q-value (override) |
+| `--filter-score NAME=THRESHOLD` | none | Named QPX score threshold; direction comes from `higher_better` |
 | `--filter-exclude-modifications` | none | Comma-separated modifications (override) |
 | `--filter-min-unique-peptides` | none | Min unique peptides (override) |
 | `--filter-protein-fdr` | none | Max QPX protein-group q-value (override) |
@@ -308,6 +309,9 @@ Only implemented filters appear in the generated example. FDR filtering is
 disabled by default and requires populated `peptide_qvalue` or
 `pg_global_qvalue` input. Missing rate uses the complete distinct
 `(protein, peptide)` universe among the surviving technical runs in each sample.
+Named-score filtering is applied before normalization and aggregation, matches
+`additional_scores.score_name` exactly, and fails if the requested score is
+missing or has inconsistent `higher_better` values.
 Active unsupported filter-config values are rejected instead of being logged and
 ignored.
 

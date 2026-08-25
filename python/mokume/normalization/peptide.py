@@ -166,12 +166,15 @@ def peptide_normalization(
     # Create filter builder for pre-computations (median maps, peptide frequencies)
     if filter_config is not None and filter_config.enabled:
         contaminant_patterns = filter_config.protein.active_contaminant_patterns()
+        named_score = filter_config.peptide.score
         filter_builder = SQLFilterBuilder(
             remove_contaminants=bool(contaminant_patterns),
             contaminant_patterns=contaminant_patterns,
             min_intensity=filter_config.intensity.min_intensity,
             min_peptide_length=min_aa,
             require_unique=not keep_shared_peptides,
+            named_score_name=getattr(named_score, "name", None),
+            named_score_threshold=getattr(named_score, "threshold", None),
         )
     else:
         filter_builder = SQLFilterBuilder(

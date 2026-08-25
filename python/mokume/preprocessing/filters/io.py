@@ -192,6 +192,7 @@ intensity:
 
 # Peptide-level filters
 peptide:
+  score: null                      # e.g., {name: diann_ms1_profile_corr, threshold: 0.8}
   allowed_charge_states: null     # e.g., [2, 3, 4] or null for all charges
   exclude_modifications: []       # Modification names to exclude, e.g., ["Oxidation"]
   max_missed_cleavages: null      # Max missed cleavages (null = no filter)

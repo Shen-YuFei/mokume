@@ -5,6 +5,7 @@ This module provides dataclasses for configuring preprocessing filters
 at the intensity, peptide, protein, and sample QC levels.
 """
 
+import math
 from dataclasses import dataclass, field, asdict
 from typing import ClassVar, Optional, List
 
@@ -20,6 +21,21 @@ class _FdrThresholdConfig:
     """Shared opt-in q-value threshold for peptide and protein filters."""
 
     fdr_threshold: Optional[float] = None
+
+
+@dataclass
+class NamedScoreFilterConfig:
+    """Threshold for one QPX ``additional_scores`` entry."""
+
+    name: str
+    threshold: float
+
+    def __post_init__(self):
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError("score filter name cannot be empty")
+        if not math.isfinite(self.threshold):
+            raise ValueError("score filter threshold must be finite")
 
 
 @dataclass
@@ -81,6 +97,9 @@ class PeptideFilterConfig(_FdrThresholdConfig):
         Maximum number of missed cleavages allowed.
     fdr_threshold : float, optional
         Maximum peptide q-value. ``None`` disables peptide FDR filtering.
+    score : NamedScoreFilterConfig, optional
+        Named QPX score threshold. Comparison direction comes from
+        ``additional_scores.higher_better``.
     min_peptide_length : int
         Minimum peptide length in amino acids.
     max_peptide_length : int
@@ -92,6 +111,7 @@ class PeptideFilterConfig(_FdrThresholdConfig):
     registry: ClassVar[dict[str, "PeptideFilterConfig"]] = {}
 
     name: str = "default"
+    score: Optional[NamedScoreFilterConfig] = None
     allowed_charge_states: Optional[List[int]] = None
     exclude_modifications: List[str] = field(default_factory=list)
     max_missed_cleavages: Optional[int] = None
@@ -261,12 +281,16 @@ class PreprocessingFilterConfig:
         if unknown:
             raise ValueError(f"Unknown preprocessing filter keys: {unknown}")
         intensity_data = data.get("intensity") or {}
-        peptide_data = data.get("peptide") or {}
+        peptide_data = dict(data.get("peptide") or {})
         protein_data = data.get("protein") or {}
         run_qc_data = data.get("run_qc") or {}
 
         # Create nested configs with unique names to avoid registry conflicts
         config_name = data.get("name", "custom")
+
+        score_data = peptide_data.get("score")
+        if score_data is not None:
+            peptide_data["score"] = NamedScoreFilterConfig(**score_data)
 
         return cls(
             name=config_name,
@@ -332,6 +356,7 @@ class PreprocessingFilterConfig:
         self.peptide.fdr_threshold = _optional_override(
             overrides, "peptide_fdr", self.peptide.fdr_threshold
         )
+        self.peptide.score = _optional_override(overrides, "score", self.peptide.score)
         if (
             "min_peptide_length" in overrides
             and overrides["min_peptide_length"] is not None

@@ -12,8 +12,8 @@ use mokume_core::{
     parse_memory_to_bytes, AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig,
     DirectLfqConfig, FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig,
     ImputationConfig, InputConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
-    MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PibaqConfig,
-    PreprocessingFilterConfig, QuantMethod, RatioConfig, RuntimeConfig,
+    MokumeError, NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat,
+    PibaqConfig, PreprocessingFilterConfig, QuantMethod, RatioConfig, RuntimeConfig,
 };
 use mokume_pipeline::{
     resolve_irs_autodetect_channel, run_features_to_peptides, run_features_to_proteins,
@@ -196,6 +196,14 @@ struct Features2PeptidesArgs {
 
     #[arg(long = "filter-peptide-fdr", value_parser = parse_fraction)]
     filter_peptide_fdr: Option<f64>,
+
+    #[arg(
+        long = "filter-score",
+        value_name = "NAME=THRESHOLD",
+        value_parser = parse_named_score_filter,
+        help = "Filter one exact QPX additional score; comparison direction comes from higher_better"
+    )]
+    filter_score: Option<NamedScoreFilterConfig>,
 
     #[arg(long = "filter-exclude-modifications")]
     filter_exclude_modifications: Option<String>,
@@ -1134,6 +1142,28 @@ fn parse_fraction(value: &str) -> std::result::Result<f64, String> {
     Ok(parsed)
 }
 
+fn parse_named_score_filter(value: &str) -> std::result::Result<NamedScoreFilterConfig, String> {
+    let (name, threshold) = value
+        .rsplit_once('=')
+        .ok_or_else(|| format!("invalid score filter `{value}`: expected NAME=THRESHOLD"))?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("score filter name cannot be empty".to_owned());
+    }
+    let threshold = threshold.trim().parse::<f64>().map_err(|_| {
+        format!("invalid score filter `{value}`: threshold must be a finite number")
+    })?;
+    if !threshold.is_finite() {
+        return Err(format!(
+            "invalid score filter `{value}`: threshold must be a finite number"
+        ));
+    }
+    Ok(NamedScoreFilterConfig {
+        name: name.to_owned(),
+        threshold,
+    })
+}
+
 fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
     let parsed = value
         .parse::<usize>()
@@ -1501,6 +1531,9 @@ fn build_filter_pipeline(
     if let Some(value) = args.filter_max_missed_cleavages {
         config.peptide.max_missed_cleavages = Some(value);
     }
+    if let Some(value) = &args.filter_score {
+        config.peptide.score = Some(value.clone());
+    }
     apply_fdr_overrides(args, &mut config);
     if let Some(value) = &args.filter_exclude_modifications {
         config.peptide.exclude_modifications = value
@@ -1527,6 +1560,7 @@ fn has_filter_override(args: &Features2PeptidesArgs) -> bool {
         || args.filter_charge_states.is_some()
         || args.filter_max_missed_cleavages.is_some()
         || args.filter_peptide_fdr.is_some()
+        || args.filter_score.is_some()
         || args.filter_exclude_modifications.is_some()
         || args.filter_min_unique_peptides.is_some()
         || args.filter_protein_fdr.is_some()
@@ -2304,6 +2338,7 @@ mod tests {
             "--filter-charge-states",
             "--filter-max-missed-cleavages",
             "--filter-peptide-fdr",
+            "--filter-score",
             "--filter-exclude-modifications",
             "--filter-min-unique-peptides",
             "--filter-protein-fdr",

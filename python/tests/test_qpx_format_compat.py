@@ -31,6 +31,15 @@ _PG_PROTEIN_TYPE = pa.list_(
         ]
     )
 )
+_ADDITIONAL_SCORES_TYPE = pa.list_(
+    pa.struct(
+        [
+            ("score_name", pa.string()),
+            ("score_value", pa.float64()),
+            ("higher_better", pa.bool_()),
+        ]
+    )
+)
 _NEW_QPX_SCHEMA = pa.schema(
     [
         ("sequence", pa.string()),
@@ -167,6 +176,63 @@ def _make_lfq_qpx_parquet(path: str) -> None:
     pq.write_table(table, path)
 
 
+def _make_scored_qpx_parquet(path: str) -> None:
+    protein = {
+        "accession": "sp|P12345|PROT_HUMAN",
+        "start": 1,
+        "end": 8,
+        "pre": "K",
+        "post": "R",
+    }
+    schema = _NEW_QPX_SCHEMA.append(
+        pa.field("additional_scores", _ADDITIONAL_SCORES_TYPE)
+    )
+    table = pa.table(
+        {
+            "sequence": ["PEPTIDEA", "PEPTIDEB"],
+            "peptidoform": ["PEPTIDEA", "PEPTIDEB"],
+            "pg_accessions": [[protein], [protein]],
+            "anchor_protein": [protein["accession"], protein["accession"]],
+            "charge": [2, 2],
+            "run_file_name": ["run_a", "run_b"],
+            "unique": [True, True],
+            "is_decoy": [False, False],
+            "intensities": [
+                [{"label": "run_a", "intensity": 10.0}],
+                [{"label": "run_b", "intensity": 20.0}],
+            ],
+            "additional_scores": [
+                [
+                    {
+                        "score_name": "quality",
+                        "score_value": 0.9,
+                        "higher_better": True,
+                    },
+                    {
+                        "score_name": "qvalue",
+                        "score_value": 0.01,
+                        "higher_better": False,
+                    },
+                ],
+                [
+                    {
+                        "score_name": "quality",
+                        "score_value": 0.1,
+                        "higher_better": True,
+                    },
+                    {
+                        "score_name": "qvalue",
+                        "score_value": 0.2,
+                        "higher_better": False,
+                    },
+                ],
+            ],
+        },
+        schema=schema,
+    )
+    pq.write_table(table, path)
+
+
 def _make_raw_placeholder_lfq_qpx_parquet(path: str) -> None:
     """Create the older QPX LFQ dialect whose only intensity label is ``raw``."""
     protein = {
@@ -287,6 +353,40 @@ def _write_sdrf(path, rows) -> None:
     lines = ["source name\tcomment[data file]\tcomment[label]\tfactor value[group]\n"]
     lines.extend("\t".join(row) + "\n" for row in rows)
     path.write_text("".join(lines), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("name", "threshold"),
+    [("quality", 0.5), ("qvalue", 0.05)],
+)
+def test_named_score_filter_uses_qpx_direction(tmp_path, name, threshold):
+    parquet_file = tmp_path / f"{name}.feature.parquet"
+    _make_scored_qpx_parquet(str(parquet_file))
+    builder = qpx_feature.SQLFilterBuilder(
+        remove_contaminants=False,
+        require_unique=False,
+        named_score_name=name,
+        named_score_threshold=threshold,
+    )
+    feature = qpx_feature.Feature(str(parquet_file), filter_builder=builder)
+    try:
+        report = feature.get_report_from_database(feature.samples)
+    finally:
+        feature.parquet_db.close()
+
+    assert report["sequence"].tolist() == ["PEPTIDEA"]
+
+
+def test_named_score_filter_rejects_missing_name(tmp_path):
+    parquet_file = tmp_path / "missing-score.feature.parquet"
+    _make_scored_qpx_parquet(str(parquet_file))
+    builder = qpx_feature.SQLFilterBuilder(
+        named_score_name="missing",
+        named_score_threshold=0.5,
+    )
+
+    with pytest.raises(ValueError, match="additional_scores entry `missing`"):
+        qpx_feature.Feature(str(parquet_file), filter_builder=builder)
 
 
 class TestQpxSdrfIdentity:

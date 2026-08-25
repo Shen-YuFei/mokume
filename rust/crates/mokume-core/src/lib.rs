@@ -10,8 +10,9 @@ pub use config::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
     FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
     IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
-    NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig, PibaqConfig,
-    PreprocessingFilterConfig, ProteinFilterConfig, RatioConfig, RunQcFilterConfig, RuntimeConfig,
+    NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig,
+    PibaqConfig, PreprocessingFilterConfig, ProteinFilterConfig, RatioConfig, RunQcFilterConfig,
+    RuntimeConfig,
 };
 pub use error::{MokumeError, Result};
 pub use ids::{IonId, PeptideId, ProteinId, RunId, SampleId};

@@ -156,6 +156,7 @@ mokume features2peptides \
     --filter-min-intensity 1000 \
     --filter-cv-threshold 0.3 \
     --filter-charge-states "2,3,4" \
+    --filter-score diann_ms1_profile_corr=0.8 \
     --filter-protein-fdr 0.01 \
     --output peptides.csv
 ```
@@ -169,6 +170,7 @@ mokume features2peptides \
 | `--filter-charge-states` | Comma-separated allowed charge states |
 | `--filter-max-missed-cleavages` | Maximum missed cleavages |
 | `--filter-peptide-fdr` | Maximum QPX `peptide_qvalue` |
+| `--filter-score` | Named QPX `additional_scores` threshold (`NAME=THRESHOLD`) |
 | `--filter-exclude-modifications` | Comma-separated modifications to exclude |
 | `--filter-min-unique-peptides` | Minimum unique peptides per protein |
 | `--filter-protein-fdr` | Maximum QPX `pg_global_qvalue` per protein group |
@@ -182,6 +184,10 @@ mokume features2peptides \
     FDR filtering is opt-in: peptide FDR uses `peptide_qvalue`, while protein
     FDR keeps groups whose minimum `pg_global_qvalue` passes. A requested but
     unpopulated q-value field is an error rather than a no-op.
+    `--filter-score` matches one exact score name and reads its QPX
+    `higher_better` flag, so higher-better scores use `>=` and lower-better
+    scores use `<=`. Missing, invalid, or direction-inconsistent scores fail
+    before output is written.
     Among the group-level filters, CV threshold (`--filter-cv-threshold`),
     quantile outlier removal, and the run-QC checks `--filter-min-features` /
     min-total-intensity / min-proteins / `--filter-max-missing-rate` are

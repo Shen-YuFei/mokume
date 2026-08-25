@@ -143,6 +143,7 @@ impl<'a> MsstatsReader<'a> {
             is_decoy: None,
             peptide_qvalue: None,
             pg_global_qvalue: None,
+            selected_score: None,
             label,
             intensity,
         })
