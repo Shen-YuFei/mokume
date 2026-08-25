@@ -140,7 +140,7 @@ def run_quantification(paths: BenchmarkPaths, threads: int) -> None:
             options.update(
                 fasta=str(paths.fasta),
                 pibaq_enzyme="Trypsin",
-                pibaq_max_aa=50,
+                pibaq_max_aa=30,
             )
         if method == "directlfq":
             options["directlfq_cores"] = threads

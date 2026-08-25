@@ -315,7 +315,7 @@ def quantify_method(
         "threads": threads,
     }
     if method == "pibaq":
-        options.update(fasta=str(fasta), enzyme="Trypsin", min_aa=7, max_aa=50)
+        options.update(fasta=str(fasta), enzyme="Trypsin", min_aa=7, max_aa=30)
     elif method == "directlfq":
         options["min_nonan"] = 1
     mokume.peptides2protein(**options)

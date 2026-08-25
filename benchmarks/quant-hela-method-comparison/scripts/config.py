@@ -323,7 +323,7 @@ PROTEINS_OF_INTEREST = [
 PIBAQ_PARAMS = {
     "enzyme": "Trypsin",
     "min_aa": 7,
-    "max_aa": 50,
+    "max_aa": 30,
     "missed_cleavages": 0,
 }
 
