@@ -100,10 +100,11 @@ methods default to `median` / `globalMedian`.
 IRS options require `--irs` and an SDRF. Reference detection must find usable
 reference samples and plex assignments; otherwise the command fails.
 
-### Coverage Filter
+### Matrix QC and Coverage Filter
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--min-sample-correlation` | none | Drop samples whose mean pairwise Pearson correlation to same-condition peers is below the threshold; uses pairwise-complete log2 protein intensities and requires SDRF metadata |
 | `--coverage-threshold` | none | Min fraction of non-missing values per condition |
 
 ### Ratio Quantification

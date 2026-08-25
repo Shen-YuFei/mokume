@@ -239,6 +239,26 @@ Every IRS sub-option requires `--irs` and an SDRF. If reference detection finds
 no usable sample/plex mapping or no finite scale, the command fails rather than
 returning an unscaled matrix.
 
+## Sample Correlation QC
+
+Use `--min-sample-correlation` to remove a sample when its mean Pearson
+correlation to the other samples in the same SDRF condition falls below a
+threshold:
+
+```bash
+mokume features2proteins \
+    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --min-sample-correlation 0.8
+```
+
+The comparison is one-shot on the normalized protein matrix: positive finite
+linear intensities are log2-transformed, while the already-log2 `abd` and
+`ratio` outputs are used directly. Each pair uses its shared proteins, and all
+sample scores are computed before any sample is removed. Conditions with fewer
+than two samples and pairs with fewer than three usable proteins are rejected
+because the requested correlation cannot be evaluated. Pooled/powder reference
+conditions are retained but are not scored.
+
 ## Ratio Quantification (TMT PS Protocol)
 
 For multi-plex TMT with per-plex reference division:

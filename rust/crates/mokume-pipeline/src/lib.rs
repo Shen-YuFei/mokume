@@ -44,6 +44,7 @@ pub use matrix::{impute_matrix, normalize_matrix};
 /// hardcodes `min_nonan=2`; the class path passes `min_peptides`, default 2).
 const MAXLFQ_DIRECTLFQ_MIN_NONAN: usize = 2;
 const DEFAULT_REFERENCE_REGEX: &str = "pool|powder|ref|reference|bridge";
+const MIN_SAMPLE_CORRELATION_OVERLAP: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CellKey {
@@ -4052,6 +4053,34 @@ fn batch_column_values_for_samples(
         .collect()
 }
 
+fn pearson_correlation(pairs: &[(f64, f64)]) -> Option<f64> {
+    if pairs.len() < MIN_SAMPLE_CORRELATION_OVERLAP {
+        return None;
+    }
+    let count = pairs.len() as f64;
+    let (sum_left, sum_right) = pairs
+        .iter()
+        .fold((0.0, 0.0), |(left, right), (x, y)| (left + x, right + y));
+    let mean_left = sum_left / count;
+    let mean_right = sum_right / count;
+    let (covariance, variance_left, variance_right) = pairs.iter().fold(
+        (0.0, 0.0, 0.0),
+        |(covariance, variance_left, variance_right), (x, y)| {
+            let centered_left = x - mean_left;
+            let centered_right = y - mean_right;
+            (
+                covariance + centered_left * centered_right,
+                variance_left + centered_left * centered_left,
+                variance_right + centered_right * centered_right,
+            )
+        },
+    );
+    let denominator = (variance_left * variance_right).sqrt();
+    (denominator > 0.0)
+        .then(|| (covariance / denominator).clamp(-1.0, 1.0))
+        .filter(|correlation| correlation.is_finite())
+}
+
 impl ProteinMatrix {
     fn apply_irs(
         &mut self,
@@ -4181,6 +4210,139 @@ impl ProteinMatrix {
             .collect::<Vec<_>>();
         samples.sort_by(|left, right| left.1.cmp(right.1));
         samples
+    }
+
+    fn pairwise_sample_correlation(
+        &self,
+        left: SampleId,
+        right: SampleId,
+        values_are_log2: bool,
+    ) -> (Option<f64>, usize) {
+        let pairs = self
+            .allowed_proteins
+            .iter()
+            .filter_map(|protein| {
+                let left = self.value(*protein, left)?;
+                let right = self.value(*protein, right)?;
+                if values_are_log2 {
+                    return (left.is_finite() && right.is_finite()).then_some((left, right));
+                }
+                (left.is_finite() && left > 0.0 && right.is_finite() && right > 0.0)
+                    .then_some((left.log2(), right.log2()))
+            })
+            .collect::<Vec<_>>();
+        (pearson_correlation(&pairs), pairs.len())
+    }
+
+    fn biological_samples_by_condition(
+        &self,
+        sdrf: &SdrfTable,
+        drop_empty_samples: bool,
+    ) -> Result<HashMap<String, Vec<(SampleId, String)>>> {
+        let condition_by_sample = condition_by_sample(sdrf);
+        let samples = self
+            .sample_columns(drop_empty_samples)
+            .into_iter()
+            .map(|(sample, name)| {
+                condition_by_sample
+                    .get(name)
+                    .map(|condition| (sample, name.to_owned(), condition.clone()))
+                    .ok_or_else(|| {
+                        invalid_input(format!(
+                            "sample correlation filtering found no condition metadata for `{name}`"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut grouped = HashMap::<String, Vec<(SampleId, String)>>::new();
+        for (sample, name, condition) in samples {
+            if !is_reference_condition(&condition) {
+                grouped.entry(condition).or_default().push((sample, name));
+            }
+        }
+        if grouped.is_empty() {
+            return Err(invalid_input(
+                "sample correlation filtering found no biological samples with condition metadata",
+            ));
+        }
+        Ok(grouped)
+    }
+
+    fn mean_sample_correlation(
+        &self,
+        sample: SampleId,
+        name: &str,
+        condition: &str,
+        condition_samples: &[(SampleId, String)],
+        values_are_log2: bool,
+    ) -> Result<f64> {
+        let mut correlations = Vec::with_capacity(condition_samples.len() - 1);
+        for (peer, peer_name) in condition_samples {
+            if sample == *peer {
+                continue;
+            }
+            let (correlation, overlap) =
+                self.pairwise_sample_correlation(sample, *peer, values_are_log2);
+            let correlation = correlation.ok_or_else(|| {
+                invalid_input(format!(
+                    "sample correlation between `{name}` and `{peer_name}` in condition `{condition}` is undefined: {overlap} pairwise-complete usable proteins (minimum {MIN_SAMPLE_CORRELATION_OVERLAP})"
+                ))
+            })?;
+            correlations.push(correlation);
+        }
+        Ok(correlations.iter().sum::<f64>() / correlations.len() as f64)
+    }
+
+    fn apply_sample_correlation_filter(
+        &mut self,
+        sdrf: Option<&SdrfTable>,
+        threshold: f64,
+        drop_empty_samples: bool,
+        values_are_log2: bool,
+    ) -> Result<()> {
+        let sdrf = sdrf
+            .ok_or_else(|| invalid_input("sample correlation filtering requires --sdrf option"))?;
+        let samples_by_condition =
+            self.biological_samples_by_condition(sdrf, drop_empty_samples)?;
+
+        let mut excluded = Vec::new();
+        for (condition, condition_samples) in &samples_by_condition {
+            if condition_samples.len() < 2 {
+                return Err(invalid_input(format!(
+                    "sample correlation filtering requires at least two samples in condition `{condition}`"
+                )));
+            }
+            for (sample, name) in condition_samples {
+                let mean_correlation = self.mean_sample_correlation(
+                    *sample,
+                    name,
+                    condition,
+                    condition_samples,
+                    values_are_log2,
+                )?;
+                info!(
+                    sample = name,
+                    condition,
+                    mean_correlation,
+                    peers = condition_samples.len() - 1,
+                    threshold,
+                    "sample correlation QC"
+                );
+                if mean_correlation < threshold {
+                    excluded.push((*sample, name.clone(), mean_correlation));
+                }
+            }
+        }
+        for (sample, _, _) in &excluded {
+            self.excluded_samples.insert(*sample);
+        }
+        info!(
+            evaluated_samples = samples_by_condition.values().map(Vec::len).sum::<usize>(),
+            excluded_samples = excluded.len(),
+            threshold,
+            "sample correlation filtering complete"
+        );
+        Ok(())
     }
 
     fn value(&self, protein: ProteinId, sample: SampleId) -> Option<f64> {
@@ -4974,6 +5136,7 @@ fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfi
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -5110,6 +5273,16 @@ fn run_features_to_proteins_inner(
     let drop_empty_samples = config.quantification == QuantMethod::Ratio;
     if config.irs.enabled {
         matrix.apply_irs(sdrf.as_ref(), raw_sdrf.as_ref(), &config.irs)?;
+    }
+    if let Some(threshold) = config.sample_correlation_threshold {
+        let values_are_log2 =
+            matches!(config.quantification, QuantMethod::Abd | QuantMethod::Ratio);
+        matrix.apply_sample_correlation_filter(
+            sdrf.as_ref(),
+            threshold,
+            drop_empty_samples,
+            values_are_log2,
+        )?;
     }
     if let Some(threshold) = config.coverage_threshold {
         matrix.apply_coverage_filter(sdrf.as_ref(), threshold, drop_empty_samples)?;
@@ -5283,9 +5456,6 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
         return Err(invalid_input(
             "features2peptides max-missing-rate must be between 0 and 1",
         ));
-    }
-    if run_qc.min_sample_correlation.is_some() {
-        return unsupported("features2peptides filter min-sample-correlation");
     }
     Ok(())
 }
@@ -5697,6 +5867,7 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -6323,6 +6494,18 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
         }
         if config.input.sdrf.is_none() {
             return Err(invalid_input("coverage-threshold requires --sdrf option"));
+        }
+    }
+    if let Some(threshold) = config.sample_correlation_threshold {
+        if !threshold.is_finite() || !(-1.0..=1.0).contains(&threshold) {
+            return Err(invalid_input(
+                "min-sample-correlation must be between -1 and 1",
+            ));
+        }
+        if config.input.sdrf.is_none() {
+            return Err(invalid_input(
+                "min-sample-correlation requires --sdrf option",
+            ));
         }
     }
     if !matches!(
@@ -9482,6 +9665,117 @@ mod tests {
     }
 
     #[test]
+    fn sample_correlation_filter_excludes_only_the_original_matrix_outlier(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut samples = StringIdRegistry::<SampleId>::new();
+        let sample_ids = ["A1", "A2", "A3", "B1", "B2"]
+            .into_iter()
+            .map(|name| samples.get_or_insert(name).ok_or("sample id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let protein_ids = ["P1", "P2", "P3", "P4"]
+            .into_iter()
+            .map(|name| proteins.get_or_insert(name).ok_or("protein id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let columns = [
+            [1.0, 2.0, 4.0, 8.0],
+            [2.0, 4.0, 8.0, 16.0],
+            [8.0, 4.0, 2.0, 1.0],
+            [3.0, 6.0, 12.0, 24.0],
+            [6.0, 12.0, 24.0, 48.0],
+        ];
+        let mut cells = HashMap::new();
+        for (sample, values) in sample_ids.iter().zip(columns) {
+            for (protein, value) in protein_ids.iter().zip(values) {
+                cells.insert(
+                    CellKey {
+                        protein: *protein,
+                        sample: *sample,
+                    },
+                    value,
+                );
+            }
+        }
+        let mut matrix = ProteinMatrix {
+            proteins,
+            samples,
+            allowed_proteins: protein_ids.iter().copied().collect(),
+            excluded_samples: HashSet::new(),
+            peptide_counts: HashMap::new(),
+            values: ProteinValues::Cells(cells),
+        };
+        let sdrf = SdrfTable::from_reader(
+            b"source name\tcomment[data file]\tfactor value[group]\n\
+A1\tA1.raw\tA\nA2\tA2.raw\tA\nA3\tA3.raw\tA\n\
+B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
+                .as_slice(),
+        )?;
+
+        matrix.apply_sample_correlation_filter(Some(&sdrf), -0.5, false, false)?;
+
+        let kept = matrix
+            .sample_columns(false)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>();
+        assert_eq!(kept, vec!["A1", "A2", "B1", "B2"]);
+        assert_eq!(matrix.value(protein_ids[0], sample_ids[0]), Some(1.0));
+        Ok(())
+    }
+
+    #[test]
+    fn sample_correlation_uses_negative_values_for_log2_methods(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut samples = StringIdRegistry::<SampleId>::new();
+        let left = samples.get_or_insert("A1").ok_or("left sample")?;
+        let right = samples.get_or_insert("A2").ok_or("right sample")?;
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let protein_ids = ["P1", "P2", "P3"]
+            .into_iter()
+            .map(|name| proteins.get_or_insert(name).ok_or("protein id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut cells = HashMap::new();
+        for (protein, left_value, right_value) in protein_ids
+            .iter()
+            .zip([-2.0, 0.0, 2.0])
+            .zip([-1.0, 1.0, 3.0])
+            .map(|((protein, left_value), right_value)| (protein, left_value, right_value))
+        {
+            cells.insert(
+                CellKey {
+                    protein: *protein,
+                    sample: left,
+                },
+                left_value,
+            );
+            cells.insert(
+                CellKey {
+                    protein: *protein,
+                    sample: right,
+                },
+                right_value,
+            );
+        }
+        let matrix = ProteinMatrix {
+            proteins,
+            samples,
+            allowed_proteins: protein_ids.iter().copied().collect(),
+            excluded_samples: HashSet::new(),
+            peptide_counts: HashMap::new(),
+            values: ProteinValues::Cells(cells),
+        };
+
+        let (log2_correlation, log2_overlap) =
+            matrix.pairwise_sample_correlation(left, right, true);
+        let (linear_correlation, linear_overlap) =
+            matrix.pairwise_sample_correlation(left, right, false);
+        assert_eq!(log2_overlap, 3);
+        assert!(log2_correlation.is_some_and(|value| (value - 1.0).abs() < 1e-12));
+        assert_eq!((linear_correlation, linear_overlap), (None, 1));
+        Ok(())
+    }
+
+    #[test]
     fn factorize_batch_labels_uses_first_occurrence_order() {
         let values = ["B", "A", "B", "A", "C"].map(String::from);
         assert_eq!(factorize_batch_labels(&values), vec![0, 1, 0, 1, 2]);
@@ -10230,6 +10524,7 @@ mod tests {
             batch: BatchCorrectionConfig::default(),
             irs: IrsConfig::default(),
             coverage_threshold: None,
+            sample_correlation_threshold: None,
             ratio: RatioConfig::default(),
             imputation: ImputationConfig::default(),
             differential_expression: DifferentialExpressionConfig::default(),

@@ -73,6 +73,52 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
     assert captured["de_fdr_method"] == "ihw"
 
 
+def test_features2proteins_passes_sample_correlation_threshold(monkeypatch, tmp_path):
+    parquet, sdrf = _make_input_files(tmp_path)
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(pipeline, "features_to_proteins", fake_run_pipeline)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "-s",
+            sdrf,
+            "--min-sample-correlation",
+            "0.85",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["sample_correlation_threshold"] == 0.85
+
+
+def test_features2proteins_requires_sdrf_for_sample_correlation(tmp_path):
+    parquet, _ = _make_input_files(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "--min-sample-correlation",
+            "0.85",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--min-sample-correlation requires --sdrf" in result.output
+
+
 def test_features2proteins_requires_batch_column_for_column_method(tmp_path):
     parquet, sdrf = _make_input_files(tmp_path)
 

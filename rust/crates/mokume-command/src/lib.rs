@@ -516,6 +516,14 @@ intensity, spectral_count, or top<N> -- the TopN family spells its peptide count
     #[arg(long = "coverage-threshold", value_parser = parse_fraction)]
     coverage_threshold: Option<f64>,
 
+    #[arg(
+        long = "min-sample-correlation",
+        value_parser = parse_correlation,
+        requires = "sdrf",
+        help = "Drop samples whose mean Pearson correlation to same-condition peers is below this value"
+    )]
+    min_sample_correlation: Option<f64>,
+
     #[arg(long = "ratio-fraction-merge", value_parser = ["mean", "max"], ignore_case = true)]
     ratio_fraction_merge: Option<String>,
 
@@ -885,6 +893,7 @@ impl Features2ProteinsArgs {
                 remove_reference: self.irs_remove_reference,
             },
             coverage_threshold: self.coverage_threshold,
+            sample_correlation_threshold: self.min_sample_correlation,
             ratio: RatioConfig {
                 fraction_merge: ratio_fraction_merge,
             },
@@ -1138,6 +1147,14 @@ fn parse_fraction(value: &str) -> std::result::Result<f64, String> {
     let parsed = parse_finite_f64(value)?;
     if !(0.0..=1.0).contains(&parsed) {
         return Err(format!("expected a number between 0 and 1, got `{value}`"));
+    }
+    Ok(parsed)
+}
+
+fn parse_correlation(value: &str) -> std::result::Result<f64, String> {
+    let parsed = parse_finite_f64(value)?;
+    if !(-1.0..=1.0).contains(&parsed) {
+        return Err(format!("expected a number between -1 and 1, got `{value}`"));
     }
     Ok(parsed)
 }
@@ -1870,6 +1887,8 @@ mod tests {
             "Pool A,Pool B",
             "--coverage-threshold",
             "0.65",
+            "--min-sample-correlation",
+            "0.90",
             "--impute",
             "--impute-method",
             "knn",
@@ -1919,6 +1938,7 @@ mod tests {
             Some(&["Pool A".to_string(), "Pool B".to_string()][..])
         );
         assert_eq!(config.coverage_threshold, Some(0.65));
+        assert_eq!(config.sample_correlation_threshold, Some(0.90));
         assert!(config.imputation.enabled);
         assert_eq!(config.imputation.method, "knn");
         assert!(config.differential_expression.enabled);
@@ -2253,6 +2273,7 @@ mod tests {
             "--irs-stat",
             "--irs-remove-reference",
             "--coverage-threshold",
+            "--min-sample-correlation",
             "--ratio-fraction-merge",
             "--impute",
             "--impute-method",

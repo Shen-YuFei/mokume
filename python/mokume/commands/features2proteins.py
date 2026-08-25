@@ -375,6 +375,13 @@ QUANT_METHOD = QuantMethodParamType()
     type=click.FloatRange(min=0.0, max=1.0),
     default=None,
 )
+@click.option(
+    "--min-sample-correlation",
+    "sample_correlation_threshold",
+    help="Drop samples below mean Pearson correlation to same-condition peers",
+    type=click.FloatRange(min=-1.0, max=1.0),
+    default=None,
+)
 # Ratio quantification options
 @click.option(
     "--ratio-fraction-merge",
@@ -644,6 +651,8 @@ def features2proteins(
     irs_remove_reference: bool,
     # Coverage filter
     coverage_threshold: float,
+    # Sample correlation QC
+    sample_correlation_threshold: float,
     # Ratio
     ratio_fraction_merge: str,
     # Imputation
@@ -815,6 +824,8 @@ def features2proteins(
         de_ensemble_min_k=de_ensemble_min_k,
         # Coverage filter
         coverage_threshold=coverage_threshold,
+        # Sample correlation QC
+        sample_correlation_threshold=sample_correlation_threshold,
         # Ratio
         ratio_fraction_merge=ratio_fraction_merge,
         # Imputation

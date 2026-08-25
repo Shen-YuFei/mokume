@@ -158,6 +158,11 @@ class QuantificationPipeline:
             and not self.config.input.sdrf
         ):
             raise ValueError("Coverage filtering requires an SDRF file")
+        if (
+            self.config.quantification.sample_correlation_threshold is not None
+            and not self.config.input.sdrf
+        ):
+            raise ValueError("Sample correlation filtering requires an SDRF file")
 
     def _reference_selector_count(self) -> int:
         default_reference_regex = "pool|powder|ref|reference|bridge"
@@ -334,6 +339,8 @@ class QuantificationPipeline:
         if self.config.irs.enabled and quant_method != "ratio":
             protein_df = self.normalization.apply_irs(protein_df)
             self._run_capture["irs_applied"] = True
+
+        protein_df = self.normalization.apply_sample_correlation_filter(protein_df)
 
         # Apply coverage filter if configured (generic, works with any method)
         if self.config.quantification.coverage_threshold is not None:
@@ -700,6 +707,8 @@ def features_to_proteins(
     highlight_genes: Optional[list] = None,
     # Coverage filter
     coverage_threshold: Optional[float] = None,
+    # Sample correlation QC
+    sample_correlation_threshold: Optional[float] = None,
     # Ratio quantification
     ratio_fraction_merge: str = "mean",
     # Imputation parameters
@@ -809,6 +818,9 @@ def features_to_proteins(
         Only adjust batch means, not individual effects. Default: False.
     batch_ref : int, optional
         Reference batch ID.
+    sample_correlation_threshold : float, optional
+        Minimum mean Pearson correlation to same-condition peers on the
+        pairwise-complete log2 protein matrix. Requires ``sdrf``.
 
     Returns
     -------
@@ -845,6 +857,7 @@ def features_to_proteins(
             method=quant_method,
             ion_alignment=ion_alignment,
             coverage_threshold=coverage_threshold,
+            sample_correlation_threshold=sample_correlation_threshold,
             ratio_fraction_merge=ratio_fraction_merge,
             directlfq_num_cores=directlfq_num_cores,
             directlfq_min_nonan=directlfq_min_nonan,

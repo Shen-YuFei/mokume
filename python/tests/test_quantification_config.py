@@ -37,3 +37,9 @@ class TestRatioFractionMerge:
     def test_error_names_the_value_the_user_wrote(self) -> None:
         with pytest.raises(ValueError, match="'Median'"):
             QuantificationConfig(ratio_fraction_merge="Median")
+
+
+@pytest.mark.parametrize("threshold", [-1.1, 1.1, float("nan"), float("inf")])
+def test_rejects_invalid_sample_correlation_threshold(threshold: float) -> None:
+    with pytest.raises(ValueError, match="between -1 and 1"):
+        QuantificationConfig(sample_correlation_threshold=threshold)

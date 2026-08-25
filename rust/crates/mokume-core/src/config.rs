@@ -18,6 +18,10 @@ pub struct FeatureToProteinsConfig {
     pub batch: BatchCorrectionConfig,
     pub irs: IrsConfig,
     pub coverage_threshold: Option<f64>,
+    /// Minimum mean pairwise Pearson correlation to same-condition peers,
+    /// computed on pairwise-complete log2 protein intensities.
+    #[serde(default)]
+    pub sample_correlation_threshold: Option<f64>,
     pub ratio: RatioConfig,
     pub imputation: ImputationConfig,
     pub differential_expression: DifferentialExpressionConfig,
@@ -337,7 +341,6 @@ pub struct RunQcFilterConfig {
     pub min_total_intensity: f64,
     pub min_identified_features: usize,
     pub min_identified_proteins: usize,
-    pub min_sample_correlation: Option<f64>,
     pub max_missing_rate: f64,
 }
 
@@ -347,7 +350,6 @@ impl Default for RunQcFilterConfig {
             min_total_intensity: 0.0,
             min_identified_features: 0,
             min_identified_proteins: 0,
-            min_sample_correlation: None,
             max_missing_rate: 1.0,
         }
     }

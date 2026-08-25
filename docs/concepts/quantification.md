@@ -202,6 +202,12 @@ PSM intensities → average fractions → divide by reference → log2
 
 This method requires an SDRF file to detect reference samples and plexes.
 
+For replicated conditions, `--min-sample-correlation <r>` can remove samples
+whose normalized log2 protein profile has mean Pearson correlation below `r`
+to its same-condition peers. The filter runs before protein coverage,
+imputation, and batch correction, so neither imputed values nor batch-adjusted
+values can inflate the QC score.
+
 ```bash
 mokume features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \

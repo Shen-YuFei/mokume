@@ -29,6 +29,7 @@ from mokume.preprocessing.aggregation import (
     reformat_quantms_feature_table_quant_labels,
 )
 from mokume.normalization.hierarchical import HierarchicalSampleNormalizer
+from mokume.normalization import irs as irs_normalization
 from mokume.model.normalization import (
     FeatureNormalizationMethod,
     PeptideNormalizationMethod,
@@ -54,6 +55,7 @@ from mokume.postprocessing.batch_correction import (
 )
 from mokume.model.batch_correction import BatchDetectionMethod
 from mokume.pipeline.config import PipelineConfig, validate_de_config
+from mokume.pipeline.sample_qc import filter_samples_by_correlation
 
 logger = get_logger("mokume.pipeline")
 
@@ -1220,6 +1222,24 @@ class NormalizationStage:
             protein_df,
             sample_to_condition,
             self.config.quantification.coverage_threshold,
+        )
+
+    def apply_sample_correlation_filter(self, protein_df: pd.DataFrame) -> pd.DataFrame:
+        """Filter samples by mean within-condition protein correlation."""
+        threshold = self.config.quantification.sample_correlation_threshold
+        if threshold is None:
+            return protein_df
+        if not self.config.input.sdrf:
+            raise ValueError("Sample correlation filtering requires an SDRF file")
+        sample_to_condition = irs_normalization.detect_condition_from_sdrf(
+            self.config.input.sdrf
+        )
+        return filter_samples_by_correlation(
+            protein_df,
+            sample_to_condition,
+            threshold,
+            values_are_log2=self.config.quantification.method.lower()
+            in {"abd", "abundance", "tmtabundance", "ratio"},
         )
 
 

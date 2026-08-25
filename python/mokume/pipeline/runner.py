@@ -68,6 +68,11 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
             "Ratio quantification requires PSM-level QPX input; "
             "MSstats feature tables do not contain the required PSM evidence"
         )
+    if (
+        config.quantification.sample_correlation_threshold is not None
+        and not config.input.sdrf
+    ):
+        raise ValueError("Sample correlation filtering requires an SDRF file")
 
     # Ensure built-in methods are registered
     import mokume.quantification  # noqa: F401
@@ -138,6 +143,10 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
         dataset.proteins = protein_df
         dataset.record_step("irs_normalization", method=config.irs.stat)
 
+    protein_df = _apply_sample_correlation_filter(
+        protein_df, norm_stage, dataset, config
+    )
+
     # Coverage filter
     if config.quantification.coverage_threshold is not None:
         protein_df = norm_stage.apply_coverage_filter(protein_df, dataset=dataset)
@@ -194,6 +203,22 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
         _export_anndata(dataset, config)
 
     return dataset
+
+
+def _apply_sample_correlation_filter(
+    protein_df, norm_stage, dataset: QpxDataset, config: PipelineConfig
+):
+    """Apply matrix QC and record it only when the option is enabled."""
+    threshold = config.quantification.sample_correlation_threshold
+    filtered = norm_stage.apply_sample_correlation_filter(protein_df)
+    if threshold is not None:
+        dataset.proteins = filtered
+        dataset.record_step(
+            "sample_correlation_filter",
+            threshold=threshold,
+            columns_out=len(filtered.columns) - 1,
+        )
+    return filtered
 
 
 def _export_anndata(dataset: QpxDataset, config: PipelineConfig) -> None:

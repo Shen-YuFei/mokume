@@ -91,6 +91,8 @@ def _validate_ratio_and_output_options(ctx: click.Context, quant_method: str) ->
         raise click.UsageError("--ratio-fraction-merge requires --quant-method ratio")
     if params["coverage_threshold"] is not None and not params["sdrf"]:
         raise click.UsageError("--coverage-threshold requires --sdrf")
+    if params["sample_correlation_threshold"] is not None and not params["sdrf"]:
+        raise click.UsageError("--min-sample-correlation requires --sdrf")
 
 
 def _validate_quantification_options(ctx: click.Context, quant_method: str) -> None:
