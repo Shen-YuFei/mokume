@@ -12,7 +12,7 @@ Run requirements: the ``plotting`` extra (matplotlib + seaborn + scikit-learn):
 argv contract:
     --input/-i    PATH   folder that contains the protein files (required)
     --pattern/-p  STR    protein file glob pattern (default: proteins.tsv)
-    --output/-o   PATH   destination PDF
+    --output/-o   PATH   destination PDF (required)
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "-o",
         "--output",
-        default="5.tsne_plot_with_batch_information.pdf",
+        required=True,
         help="Destination PDF.",
     )
     return parser.parse_args(argv)

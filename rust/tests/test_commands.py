@@ -338,7 +338,20 @@ def test_visualize_reads_tab_delimited_protein_tables(tmp_path, monkeypatch):
         ),
     )
 
-    assert module.main(["--input", str(tmp_path)]) == 0
+    assert (
+        module.main(["--input", str(tmp_path), "--output", str(tmp_path / "tsne.pdf")])
+        == 0
+    )
+
+
+def test_visualize_requires_output(tmp_path):
+    """The public t-SNE command must not write to an implicit legacy filename."""
+    module = importlib.import_module("mokume.commands.visualize")
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.main(["--input", str(tmp_path)])
+
+    assert exc_info.value.code == 2
 
 
 @pytest.mark.parametrize(
