@@ -24,6 +24,7 @@ _PLUGIN_MODULES = {
     ("quantification", "maxlfq"): "mokume.quantification.maxlfq",
     ("quantification", "median"): "mokume.quantification.median",
     ("quantification", "ratio"): "mokume.quantification.ratio",
+    ("quantification", "peptide_count"): "mokume.quantification.spectral_count",
     ("quantification", "spectral_count"): "mokume.quantification.spectral_count",
     ("quantification", "tmt_abundance"): "mokume.quantification.tmt_abundance",
     ("quantification", "tmt_reporter"): "mokume.quantification.tmt_reporter",

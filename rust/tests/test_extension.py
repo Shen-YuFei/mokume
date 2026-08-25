@@ -429,7 +429,6 @@ def test_features2proteins_pibaq_uses_runtime_digest(tmp_path):
         pibaq_enzyme="no cleavage",
         min_aa=1,
         pibaq_max_aa=1000,
-        min_unique=1,
         run_normalization="none",
         sample_normalization="none",
     )

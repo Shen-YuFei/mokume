@@ -30,7 +30,10 @@ if TYPE_CHECKING:
         peptides_to_protein,
     )
     from mokume.quantification.ratio import RatioQuantification
-    from mokume.quantification.spectral_count import SpectralCountQuantification
+    from mokume.quantification.spectral_count import (
+        PeptideCountQuantification,
+        SpectralCountQuantification,
+    )
     from mokume.quantification.tmt_abundance import TMTAbundanceQuantification
     from mokume.quantification.tmt_reporter import TMTReporterIntensityQuantification
     from mokume.quantification.top3 import Top3Quantification
@@ -53,6 +56,7 @@ __all__ = [
     "RatioQuantification",
     "TMTAbundanceQuantification",
     "TMTReporterIntensityQuantification",
+    "PeptideCountQuantification",
     "SpectralCountQuantification",
     # DirectLFQ (optional)
     "DirectLFQQuantification",
@@ -104,6 +108,10 @@ _LAZY_EXPORTS = {
         "mokume.quantification.spectral_count",
         "SpectralCountQuantification",
     ),
+    "PeptideCountQuantification": (
+        "mokume.quantification.spectral_count",
+        "PeptideCountQuantification",
+    ),
     "DirectLFQQuantification": (
         "mokume.quantification.directlfq",
         "DirectLFQQuantification",
@@ -123,6 +131,8 @@ _SIMPLE_METHODS = {
     "intensity": "TMTReporterIntensityQuantification",
     "reporter": "TMTReporterIntensityQuantification",
     "tmtreporterintensity": "TMTReporterIntensityQuantification",
+    "peptidecount": "PeptideCountQuantification",
+    "peptide_count": "PeptideCountQuantification",
     "spectralcount": "SpectralCountQuantification",
     "spectral_count": "SpectralCountQuantification",
     "count": "SpectralCountQuantification",
@@ -142,7 +152,8 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
         Name of the quantification method. One of:
         'topN' (where N is any number, e.g., 'top3', 'top5', 'top10'),
         'pibaq', 'maxlfq', 'directlfq', 'all', 'sum',
-        'abd' / 'abundance', 'intensity' / 'reporter', 'ratio'.
+        'abd' / 'abundance', 'intensity' / 'reporter', 'peptide_count',
+        'spectral_count', 'ratio'.
     **kwargs
         Additional arguments passed to the quantification method constructor.
 
@@ -245,7 +256,7 @@ def get_quantification_method(method: str, **kwargs) -> ProteinQuantificationMet
 
     available = (
         "pibaq, topN (e.g., top3, top5, top10), maxlfq, directlfq, all/sum, "
-        "abd/abundance, intensity/reporter, ratio"
+        "abd/abundance, intensity/reporter, peptide_count, spectral_count, ratio"
     )
     raise ValueError(
         f"Unknown quantification method: {method}. Available methods: {available}"
@@ -279,5 +290,6 @@ def list_quantification_methods() -> dict:
         "abd": True,
         "intensity": True,
         "ratio": True,
+        "peptide_count": True,
         "spectral_count": True,
     }

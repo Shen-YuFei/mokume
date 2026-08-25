@@ -54,14 +54,20 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
     quant_method_name = config.quantification.method.lower()
     logger.info(f"Starting pipeline with quant_method={quant_method_name}")
 
-    if quant_method_name in {"directlfq", "ratio"} and (
+    if quant_method_name in {"directlfq", "ratio", "peptide_count"} and (
         config.normalization.run_method.lower() != "none"
         or config.normalization.sample_method.lower() != "none"
     ):
-        raise ValueError(
-            f"{quant_method_name} manages normalization internally; "
-            "use run/sample normalization 'none'"
+        reason = (
+            "does not use intensity normalization"
+            if quant_method_name == "peptide_count"
+            else "manages normalization internally"
         )
+        raise ValueError(
+            f"{quant_method_name} {reason}; use run/sample normalization 'none'"
+        )
+    if quant_method_name == "peptide_count" and config.irs.enabled:
+        raise ValueError("peptide_count quantification cannot apply IRS")
 
     if config.input.msstats and quant_method_name == "ratio":
         raise ValueError(

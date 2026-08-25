@@ -124,12 +124,16 @@ class QuantificationPipeline:
     def _validate_normalization_config(self, quant_method: str) -> None:
         run_method = self.config.normalization.run_method.lower()
         sample_method = self.config.normalization.sample_method.lower()
-        if quant_method in {"directlfq", "ratio"} and (
+        if quant_method in {"directlfq", "ratio", "peptide_count"} and (
             run_method != "none" or sample_method != "none"
         ):
+            reason = (
+                "does not use intensity normalization"
+                if quant_method == "peptide_count"
+                else "manages normalization internally"
+            )
             raise ValueError(
-                f"{quant_method} manages normalization internally; "
-                "use run/sample normalization 'none'"
+                f"{quant_method} {reason}; use run/sample normalization 'none'"
             )
         if self.config.normalization.proteins_file and sample_method != "hierarchical":
             raise ValueError(
@@ -149,6 +153,8 @@ class QuantificationPipeline:
     def _validate_reference_config(self, quant_method: str) -> None:
         selectors = self._reference_selector_count()
         self._validate_reference_selectors(selectors)
+        if quant_method == "peptide_count" and self.config.irs.enabled:
+            raise ValueError("peptide_count quantification cannot apply IRS")
         if quant_method == "ratio":
             self._validate_ratio_reference_config()
         else:
@@ -660,7 +666,7 @@ def features_to_proteins(
     ion_alignment: Optional[str] = None,
     # piBAQ-specific (paralog-aware iBAQ)
     pibaq_enzyme: str = "Trypsin",
-    pibaq_max_aa: int = 50,
+    pibaq_max_aa: int = 30,
     pibaq_min_shared: int = 2,
     pibaq_families_yaml: Optional[str] = None,
     pibaq_min_anchors: int = 1,
@@ -758,15 +764,16 @@ def features_to_proteins(
     run_normalization : str
         Run/technical replicate normalization method. Options:
         none, median, mean, max, global, max_min, IQR. DirectLFQ and Ratio
-        manage normalization internally and therefore require ``none``.
+        manage normalization internally; peptide_count is unaffected by
+        intensity normalization. These methods therefore require ``none``.
     sample_normalization : str
         Sample-to-sample normalization method. Options:
         - 'none': No normalization
         - 'globalMedian': Sample median / global median
         - 'conditionMedian': Condition-specific median
         - 'hierarchical': DirectLFQ-style hierarchical clustering
-        DirectLFQ and Ratio manage normalization internally and therefore
-        require ``none``.
+        DirectLFQ and Ratio manage normalization internally; peptide_count is
+        unaffected by intensity normalization. These methods require ``none``.
     normalization_proteins_file : str, optional
         File with protein IDs to use for hierarchical normalization (one per
         line). Requires ``sample_normalization='hierarchical'``.
@@ -779,7 +786,7 @@ def features_to_proteins(
         Default: 'Trypsin'.
     pibaq_max_aa : int
         Maximum peptide length retained from the FASTA digest for piBAQ.
-        Default: 50 (min length comes from ``min_aa``).
+        Default: 30 (min length comes from ``min_aa``).
     pibaq_min_shared : int
         Minimum distinct peptides two proteins must share to co-cluster
         into one piBAQ family. Default: 2.
@@ -824,7 +831,11 @@ def features_to_proteins(
         Protein intensities matrix.
     """
     quant_method_lower = quant_method.lower()
-    manages_normalization = quant_method_lower in {"directlfq", "ratio"}
+    manages_normalization = quant_method_lower in {
+        "directlfq",
+        "ratio",
+        "peptide_count",
+    }
     if run_normalization is None:
         run_normalization = "none" if manages_normalization else "median"
     if sample_normalization is None:

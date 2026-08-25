@@ -11,7 +11,8 @@ Run requirements: the ``plotting`` extra (matplotlib + seaborn + scikit-learn):
 
 argv contract:
     --folder/-f   PATH   folder that contains the protein files (required)
-    --pattern/-o  STR    protein file glob pattern (default: proteins.tsv)
+    --pattern/-p  STR    protein file glob pattern (default: proteins.tsv)
+    --output/-o   PATH   destination PDF
 """
 
 from __future__ import annotations
@@ -32,10 +33,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Folder that contains all the protein files.",
     )
     parser.add_argument(
-        "-o",
+        "-p",
         "--pattern",
         default="proteins.tsv",
         help="Protein file pattern (default: proteins.tsv).",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="5.tsne_plot_with_batch_information.pdf",
+        help="Destination PDF.",
     )
     return parser.parse_args(argv)
 
@@ -141,7 +148,7 @@ def main(argv: list[str]) -> int:
         "tSNE1",
         "tSNE2",
         "batch",
-        "5.tsne_plot_with_batch_information.pdf",
+        args.output,
     )
     print(f"t-SNE plot written; input shape {total_proteins.shape}", file=sys.stderr)
     return 0

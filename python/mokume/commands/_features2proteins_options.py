@@ -16,11 +16,11 @@ def _resolved_normalizations(ctx: click.Context) -> tuple[str, str, str]:
     params = ctx.params
     quant_method = params["quant_method"].lower()
     manages_normalization = quant_method in {"directlfq", "ratio"}
-    run_method = params["run_normalization"] or (
-        "none" if manages_normalization else "median"
-    )
+    is_count_method = quant_method == "peptide_count"
+    requires_none = manages_normalization or is_count_method
+    run_method = params["run_normalization"] or ("none" if requires_none else "median")
     sample_method = params["sample_normalization"] or (
-        "none" if manages_normalization else "globalmedian"
+        "none" if requires_none else "globalmedian"
     )
     explicitly_active = any(
         _supplied(ctx, name) and method.lower() != "none"
@@ -29,9 +29,14 @@ def _resolved_normalizations(ctx: click.Context) -> tuple[str, str, str]:
             ("sample_normalization", sample_method),
         )
     )
-    if manages_normalization and explicitly_active:
+    if requires_none and explicitly_active:
+        reason = (
+            "does not use intensity normalization"
+            if is_count_method
+            else "manages normalization internally"
+        )
         raise click.UsageError(
-            f"{params['quant_method']} manages normalization internally; "
+            f"{params['quant_method']} {reason}; "
             "use explicit 'none' or omit the normalization options"
         )
     if params["normalization_proteins"] and sample_method.lower() != "hierarchical":
@@ -161,6 +166,8 @@ def _validate_reference_options(ctx: click.Context, quant_method: str) -> None:
         "irs_stat",
         "irs_remove_reference",
     )
+    if quant_method == "peptide_count" and params["irs"]:
+        raise click.UsageError("peptide_count quantification cannot apply IRS")
     if quant_method == "ratio":
         if params["irs"]:
             raise click.UsageError(

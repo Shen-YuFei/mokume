@@ -214,8 +214,8 @@ class QuantificationConfig:
         denominator. Defaults to ``"Trypsin"``.
     pibaq_max_aa : int
         Maximum peptide length retained from the FASTA digest for piBAQ.
-        Defaults to ``50`` (the historical pipeline value). The minimum
-        length is taken from :attr:`FilterConfig.min_aa`.
+        Defaults to ``30``. The minimum length is taken from
+        :attr:`FilterConfig.min_aa`.
     pibaq_min_shared : int
         Minimum number of distinct peptides two proteins must share to be
         placed in the same automatically discovered piBAQ family. Defaults
@@ -246,7 +246,7 @@ class QuantificationConfig:
     directlfq_num_samples_quadratic: int = 50
     # piBAQ-specific (paralog-aware iBAQ family discovery / digestion)
     pibaq_enzyme: str = "Trypsin"
-    pibaq_max_aa: int = 50
+    pibaq_max_aa: int = 30
     pibaq_min_shared: int = 2
     pibaq_families_yaml: Optional[str] = None
     pibaq_min_anchors: int = 1

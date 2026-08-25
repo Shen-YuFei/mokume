@@ -38,7 +38,7 @@ FIXED_QUANT_METHODS = [
     "ratio",
     "abd",
     "intensity",
-    "spectral_count",
+    "peptide_count",
 ]
 
 _TOPN_METHOD_RE = re.compile(r"^top(\d+)$")
@@ -133,7 +133,7 @@ QUANT_METHOD = QuantMethodParamType()
     help=(
         "Quantification method: directlfq, pibaq, maxlfq, top<N> (e.g. top3, "
         "top5, top10), sum, median, ratio, abd (TMT abundance), "
-        "intensity (TMT reporter), spectral_count (PSM-based count)"
+        "intensity (TMT reporter), peptide_count (distinct canonical peptides)"
     ),
     type=QUANT_METHOD,
     default="maxlfq",
@@ -709,11 +709,12 @@ def features2proteins(
                    method name (top3 = Silva 2006, also top1/top5/top10/...)
       sum        - Sum of all peptides
       median     - Median of peptides
+      peptide_count - Distinct canonical peptides per protein/sample
       ratio      - PS protocol: log2(sample/reference) per plex (requires --sdrf)
 
     \b
     NORMALIZATION:
-      When using directlfq, the DirectLFQ package handles all normalization.
+      DirectLFQ, Ratio, and peptide_count require normalization 'none'.
       For other methods, mokume applies normalization:
       - Run normalization: normalizes technical replicates within samples
       - Sample normalization: normalizes samples relative to each other

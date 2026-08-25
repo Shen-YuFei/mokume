@@ -45,6 +45,7 @@ QUANTIFICATION_METHODS: tuple[str, ...] = (
     "ratio",
     "abd",
     "intensity",
+    "peptide_count",
     "spectral_count",
     "top3",
 )

@@ -192,6 +192,7 @@ print(json.dumps({
             "directlfq",
             "maxlfq",
             "median",
+            "peptide_count",
             "pibaq",
             "ratio",
             "spectral_count",

@@ -185,16 +185,17 @@ def _run_rust_de(
     proteins = ordered[protein_col].astype(str).tolist()
     options: dict[str, Any] = {
         "fdr_threshold": config.fdr_threshold,
-        "fdr_method": config.fdr_method,
         "condition_a": group_a,
         "condition_b": group_b,
         "threads": context.threads,
     }
+    if config.de_method not in {"rots", "limrots"}:
+        options["fdr_method"] = config.fdr_method
     if config.de_method == "ensemble":
         options["ensemble_methods"] = ensemble_methods
         options["ensemble_min_k"] = config.ensemble_k
     if config.log2fc_threshold == "auto":
-        options["effect_size_gate"] = "auto"
+        options["effect_size_gate"] = "mixture"
     else:
         options["log2fc_threshold"] = float(config.log2fc_threshold)
     if context.peptide_counts is not None:

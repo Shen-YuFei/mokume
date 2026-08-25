@@ -112,11 +112,34 @@ def test_fixed_methods_still_work(tmp_path, monkeypatch):
         "directlfq",
         "sum",
         "median",
-        "spectral_count",
+        "peptide_count",
     ]:
         result, captured = _run(tmp_path, monkeypatch, method)
         assert result.exit_code == 0, result.output
         assert captured["quant_method"] == method
+
+
+def test_peptide_count_defaults_to_no_intensity_normalization(tmp_path, monkeypatch):
+    result, captured = _run(tmp_path, monkeypatch, "peptide_count")
+
+    assert result.exit_code == 0, result.output
+    assert captured["run_normalization"] == "none"
+    assert captured["sample_normalization"] == "none"
+
+
+def test_peptide_count_rejects_intensity_normalization_and_irs(tmp_path, monkeypatch):
+    active, _ = _run(
+        tmp_path,
+        monkeypatch,
+        "peptide_count",
+        extra=["--run-normalization", "median"],
+    )
+    assert active.exit_code != 0
+    assert "does not use intensity normalization" in active.output
+
+    irs, _ = _run(tmp_path, monkeypatch, "peptide_count", extra=["--irs"])
+    assert irs.exit_code != 0
+    assert "cannot apply IRS" in irs.output
 
 
 def test_removed_ibaq_method_name_is_rejected(tmp_path, monkeypatch):

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import pytest
+import pandas as pd
 
 from mokume.agentic.contract import method_contract, validate_config_values
+from mokume.agentic.runner import ExperimentContext, _run_rust_de
 from mokume.agentic.state import CandidateConfig
 
 
@@ -58,3 +60,37 @@ def test_ensemble_requires_bounded_ensemble_k() -> None:
         ensemble_k=2,
     )
     validate_config_values(config.to_dict())
+
+
+def test_runner_maps_auto_gate_and_omits_rots_fdr(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_de(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("mokume.agentic.runner.differential_expression", fake_de)
+    frame = pd.DataFrame(
+        {
+            "ProteinName": ["P1"],
+            "S1": [1.0],
+            "S2": [2.0],
+            "S3": [3.0],
+            "S4": [4.0],
+        }
+    )
+    context = ExperimentContext(
+        sample_to_condition={"S1": "A", "S2": "A", "S3": "B", "S4": "B"},
+        contrast=("A", "B"),
+    )
+    config = CandidateConfig(
+        name="limrots-auto",
+        de_method="limrots",
+        log2fc_threshold="auto",
+    )
+
+    _run_rust_de(frame, config, context, None)
+
+    assert captured["effect_size_gate"] == "mixture"
+    assert "fdr_method" not in captured

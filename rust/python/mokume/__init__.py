@@ -13,10 +13,9 @@ pydantic-core (Python imports a compiled Rust extension). The compute commands
 run *in-process* (no subprocess) through the same clap parsing + dispatch as the
 installed console command, so the flag handling stays single-sourced in Rust.
 
-Each wrapper maps keyword arguments to CLI flags (``key=value`` -> ``--key
-value`` with ``_`` rewritten to ``-``; ``key=True`` -> ``--key``; a list value
-repeats the flag once per item; ``None`` / ``False`` are skipped). For full
-control, call :func:`run` with an explicit argument list.
+Each wrapper validates keyword names and translates them according to that
+command's real CLI contract, including CSV versus repeatable options and
+reverse booleans. For full control, call :func:`run` with explicit argv.
 """
 
 import importlib
@@ -24,6 +23,7 @@ import importlib.metadata
 import sys
 import warnings
 
+flags_for = getattr(importlib.import_module(f"{__name__}._command_flags"), "flags_for")
 _NATIVE_EXTENSION = importlib.import_module("mokume._mokume")
 _differential_expression = getattr(_NATIVE_EXTENSION, "differential_expression")
 _impute_matrix = getattr(_NATIVE_EXTENSION, "impute_matrix")
@@ -102,28 +102,9 @@ def _bootstrap():
     _BOOTSTRAPPED.append(True)
 
 
-def _flags(kwargs):
-    """Translate ``key=value`` keyword arguments into a CLI flag list."""
-    args = []
-    for key, value in kwargs.items():
-        if value is None or value is False:
-            continue
-        flag = "--" + key.replace("_", "-")
-        if value is True:
-            args.append(flag)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                args.append(flag)
-                args.append(str(item))
-        else:
-            args.append(flag)
-            args.append(str(value))
-    return args
-
-
 def _build_args(command, kwargs):
     """Prefix the subcommand name to the flags built from ``kwargs``."""
-    return [command, *_flags(kwargs)]
+    return [command, *flags_for(command, kwargs)]
 
 
 def _prepare_pibaq_digest(args):
@@ -152,13 +133,17 @@ def _run(args):
     except (OSError, RuntimeError, ValueError) as exc:
         raise RuntimeError(f"piBAQ digestion failed: {exc}") from None
     if payload is None:
-        return _native_run(args)
-    accession_peptides, provenance = payload
-    return _native_run_with_pibaq_digest(
-        args,
-        accession_peptides,
-        _pibaq_provenance_tuple(provenance),
-    )
+        result = _native_run(args)
+    else:
+        accession_peptides, provenance = payload
+        result = _native_run_with_pibaq_digest(
+            args,
+            accession_peptides,
+            _pibaq_provenance_tuple(provenance),
+        )
+    entrypoint = importlib.import_module("mokume.__main__")
+    getattr(entrypoint, "_render_requested_pibaq_qc")(args, sys.modules[__name__])
+    return result
 
 
 def _run_cli(args):
@@ -262,22 +247,22 @@ def _run_command(module_name, argv):
 
 def tsne_visualization(**kwargs):
     """Render the t-SNE plot for a folder of protein files (``plotting`` extra)."""
-    _run_command("visualize", _flags(kwargs))
+    _run_command("visualize", flags_for("visualize", kwargs))
 
 
 def tissuemap(**kwargs):
     """Run the per-dataset tissue proteome analysis (``tissuemap`` extra)."""
-    _run_command("tissuemap", _flags(kwargs))
+    _run_command("tissuemap", flags_for("tissuemap", kwargs))
 
 
 def peptides2protein_qc(**kwargs):
     """Render the piBAQ QC report from a protein table (``plotting`` extra)."""
-    _run_command("peptides2protein_qc", _flags(kwargs))
+    _run_command("peptides2protein_qc", flags_for("peptides2protein_qc", kwargs))
 
 
 def peptides2protein_pibaq(**kwargs):
     """Run the native-backed piBAQ compatibility command."""
-    _run_command("peptides2protein_pibaq", _flags(kwargs))
+    _run_command("peptides2protein_pibaq", flags_for("peptides2protein_pibaq", kwargs))
 
 
 def de_plots(args):

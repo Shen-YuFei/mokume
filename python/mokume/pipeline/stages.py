@@ -1265,9 +1265,8 @@ class QuantificationStage:
             "abundance",
             "intensity",
             "reporter",
-            "spectral_count",
-            "spectralcount",
-            "count",
+            "peptide_count",
+            "peptidecount",
         ):
             # Propagate the global parallelism budget so MaxLFQ -> DirectLFQ
             # does not silently default to cpu_count workers (each forked

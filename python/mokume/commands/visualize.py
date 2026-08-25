@@ -56,13 +56,24 @@ def compute_tsne(df_pca, n_components=2, perplexity=30, learning_rate=200, n_ite
     "-f", "--folder", help="Folder that contains all the protein files", required=True
 )
 @click.option(
-    "-o",
+    "-p",
     "--pattern",
     help="Protein file pattern",
     required=False,
     default="proteins.tsv",
 )
-def tsne_visualization(folder: str = None, pattern: str = "proteins.tsv"):
+@click.option(
+    "-o",
+    "--output",
+    default="5.tsne_plot_with_batch_information.pdf",
+    show_default=True,
+    help="Destination PDF.",
+)
+def tsne_visualization(
+    folder: str = None,
+    pattern: str = "proteins.tsv",
+    output: str = "5.tsne_plot_with_batch_information.pdf",
+):
     """Generate a t-SNE visualization for protein data from specified files."""
     if not is_plotting_available():
         raise click.ClickException(
@@ -101,9 +112,7 @@ def tsne_visualization(folder: str = None, pattern: str = "proteins.tsv"):
     batch = df_tsne.index.get_level_values("reanalysis").tolist()
     df_tsne["batch"] = batch
 
-    plot_tsne(
-        df_tsne, "tSNE1", "tSNE2", "batch", "5.tsne_plot_with_batch_information.pdf"
-    )
+    plot_tsne(df_tsne, "tSNE1", "tSNE2", "batch", output)
     logger.info(total_proteins.shape)
 
 

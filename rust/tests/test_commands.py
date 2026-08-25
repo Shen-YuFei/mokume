@@ -62,6 +62,104 @@ def test_pibaq_qc_wrapper_accepts_global_options_before_subcommand(monkeypatch):
     }
 
 
+def test_pibaq_qc_wrapper_accepts_equals_syntax_without_verbose():
+    """An explicit QC path requests rendering without a separate verbose flag."""
+    observed = {}
+    package = SimpleNamespace(
+        peptides2protein_qc=lambda **kwargs: observed.update(kwargs)
+    )
+    entrypoint = importlib.import_module("mokume.__main__")
+
+    entrypoint._render_requested_pibaq_qc(
+        [
+            "peptides2protein",
+            "--method=pibaq",
+            "--qc-report=qc.pdf",
+            "--output=proteins.tsv",
+        ],
+        package,
+    )
+
+    assert observed["qc_report"] == "qc.pdf"
+
+
+def test_python_compute_wrapper_runs_requested_pibaq_qc(monkeypatch):
+    """The in-process Python wrapper must not accept qc_report as a no-op."""
+    observed = {}
+    package = importlib.import_module("mokume")
+    monkeypatch.setattr(package, "_prepare_pibaq_digest", lambda _args: None)
+    monkeypatch.setattr(package, "_native_run", lambda _args: None)
+    monkeypatch.setattr(
+        package,
+        "peptides2protein_qc",
+        lambda **kwargs: observed.update(kwargs),
+    )
+
+    package.peptides2protein(
+        method="pibaq",
+        peptides="peptides.tsv",
+        fasta="proteins.fasta",
+        output="proteins.tsv",
+        qc_report="qc.pdf",
+    )
+
+    assert observed["protein_table"] == "proteins.tsv"
+    assert observed["qc_report"] == "qc.pdf"
+
+
+def test_non_pibaq_verbose_does_not_render_pibaq_qc():
+    """Verbose output for another method must not invoke the piBAQ renderer."""
+    package = SimpleNamespace(
+        peptides2protein_qc=lambda **_kwargs: pytest.fail("unexpected piBAQ QC")
+    )
+    entrypoint = importlib.import_module("mokume.__main__")
+
+    entrypoint._render_requested_pibaq_qc(
+        [
+            "peptides2protein",
+            "--method",
+            "top3",
+            "--verbose",
+            "--output",
+            "proteins.tsv",
+        ],
+        package,
+    )
+
+
+def test_pibaq_compat_command_qc_report_enables_rendering(monkeypatch):
+    """The compatibility command treats an explicit QC path as a render request."""
+    captured = {}
+    module = importlib.import_module("mokume.commands.peptides2protein_pibaq")
+    pibaq_module = SimpleNamespace(
+        peptides_to_protein=lambda **kwargs: captured.update(kwargs)
+    )
+    monkeypatch.setattr(
+        module.importlib,
+        "import_module",
+        lambda _name: pibaq_module,
+    )
+
+    result = module.main(
+        [
+            "--peptides",
+            "peptides.tsv",
+            "--fasta",
+            "proteins.fasta",
+            "--enzyme",
+            "Trypsin",
+            "--output",
+            "proteins.tsv",
+            "--qc-report",
+            "qc.pdf",
+        ]
+    )
+
+    assert result == 0
+    assert captured["verbose"] is True
+    assert captured["qc_report"] == "qc.pdf"
+
+
 def test_tissuemap_config_values_are_not_overridden_by_parser_defaults(
     tmp_path, monkeypatch
 ):
@@ -185,22 +283,6 @@ def test_visualize_reads_tab_delimited_protein_tables(tmp_path, monkeypatch):
                 "plots",
             ],
             "choose --report-output or --plot-dir",
-        ),
-        (
-            "peptides2protein_pibaq",
-            [
-                "--peptides",
-                "peptides.tsv",
-                "--fasta",
-                "proteins.fasta",
-                "--enzyme",
-                "Trypsin",
-                "--output",
-                "proteins.tsv",
-                "--qc-report",
-                "qc.pdf",
-            ],
-            "--qc-report requires --verbose",
         ),
         (
             "peptides2protein_pibaq",

@@ -76,7 +76,7 @@ def _parse_args(argv):
     parser.add_argument(
         "--qc-report",
         default=None,
-        help="PDF for the verbose QC images (only used with --verbose).",
+        help="Render a QC PDF at this path; --verbose is not required.",
     )
     parser.add_argument(
         "--families",
@@ -103,8 +103,6 @@ def _validate_options(args):
         raise SystemExit(
             "piBAQ command aborted: --ploidy/--organism/--cpc require --ruler"
         )
-    if args.qc_report is not None and not args.verbose:
-        raise SystemExit("piBAQ command aborted: --qc-report requires --verbose")
     if args.ploidy is not None and args.ploidy < 1:
         raise SystemExit("piBAQ command aborted: --ploidy must be greater than zero")
     if args.cpc is not None and args.cpc <= 0:
@@ -155,7 +153,7 @@ def main(argv=None):
             cpc=cpc,
             organism=organism,
             output=args.output,
-            verbose=args.verbose,
+            verbose=args.verbose or args.qc_report is not None,
             qc_report=qc_report,
             families_yaml=args.families,
             min_shared=args.min_shared,
