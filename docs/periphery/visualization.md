@@ -165,7 +165,8 @@ the Rust compute kernel:
 ```bash
 mokume plot tsne \
     --input protein_folder/ \
-    --pattern proteins.tsv
+    --pattern proteins.tsv \
+    --output tsne.pdf
 ```
 
 The equivalent Python APIs remain available as `mokume.de_plots([...])`,

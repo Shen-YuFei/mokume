@@ -62,7 +62,7 @@ The public plotting, report, and TissueMap workflows are available directly
 from the wheel console command:
 
 ```bash
-mokume plot tsne --input ./proteins --pattern proteins.tsv
+mokume plot tsne --input ./proteins --pattern proteins.tsv --output tsne.pdf
 mokume tissuemap --input ./data --outdir ./out
 mokume plot de --help
 mokume interactive-report --help
