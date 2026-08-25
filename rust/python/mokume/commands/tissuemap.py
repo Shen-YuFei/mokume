@@ -3,8 +3,8 @@
 
 A periphery command in the mokume wheel: it re-implements no compute kernel; it
 drives the tissue-atlas pipeline (PCA / t-SNE / UMAP, AdaTiSS specificity,
-markers, atlas plots) over a dataset directory. Exposed in-process as
-``mokume.tissuemap`` and runnable as ``python -m mokume.commands.tissuemap``.
+markers, atlas plots) over a dataset directory. Exposed as ``mokume tissuemap``
+and in-process as ``mokume.tissuemap``.
 
 Run requirements: the ``tissuemap`` extra (scanpy, umap-learn, combat, anndata,
 matplotlib, seaborn, ...): ``pip install mokume[tissuemap]``. The
@@ -46,7 +46,7 @@ _IMPUTATION_CHOICES = (
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="tissuemap.py",
+        prog="mokume tissuemap",
         description="Per-dataset tissue proteome analysis (mokume command).",
     )
     parser.add_argument("--scan-dir", type=Path, default=None)

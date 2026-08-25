@@ -1,12 +1,66 @@
-"""Entry point for ``python -m mokume`` and the ``mokume`` console script.
-
-Runs the compute CLI in-process through the Rust extension (no subprocess).
-clap handles help/version/usage errors with the usual exit codes.
-"""
+"""Unified entry point for the Rust-backed ``mokume`` wheel."""
 
 import argparse
 import importlib
 import sys
+
+
+_PERIPHERY_COMMANDS = {
+    "tsne-visualization": "visualize",
+    "tissuemap": "tissuemap",
+    "de-plots": "de_plots",
+    "interactive-report": "interactive_report",
+}
+
+_ROOT_HELP = """Mokume proteomics quantification and analysis toolkit
+
+Usage:
+  mokume [NATIVE OPTIONS] <COMPUTE COMMAND> [COMMAND OPTIONS]
+  mokume <PERIPHERY COMMAND> [COMMAND OPTIONS]
+
+Rust-native compute commands:
+  features2proteins  Quantify proteins from a QPX feature parquet file
+  features2peptides  Convert features to peptide-level output
+  peptides2protein   Compute protein quantities from peptide-level input
+  correct-batches    Correct batch effects in protein quantification output
+
+Optional analysis and visualization commands:
+  tsne-visualization  Render a t-SNE plot [requires: mokume[plotting]]
+  tissuemap           Build a tissue proteome atlas [requires: mokume[tissuemap]]
+  de-plots            Render DE plots [requires: mokume[plotting]]
+  interactive-report  Build a DE HTML report [requires: mokume[reports]]
+
+Other commands:
+  help                Print this message or command-specific help
+
+Native compute options:
+  -v, --log-level <LEVEL>  [default: debug] [possible values: debug, info, warn]
+      --log-file <PATH>
+
+General options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Run `mokume <COMMAND> --help` for command-specific options.
+"""
+
+
+def _print_root_help(stream):
+    print(_ROOT_HELP, file=stream, end="")
+
+
+def _periphery_request(args):
+    if args and args[0] in _PERIPHERY_COMMANDS:
+        return args[0], args[1:]
+    if len(args) == 2 and args[0] == "help" and args[1] in _PERIPHERY_COMMANDS:
+        return args[1], ["--help"]
+    return None
+
+
+def _run_periphery(command, args):
+    module = importlib.import_module(f"mokume.commands.{_PERIPHERY_COMMANDS[command]}")
+    result = getattr(module, "main")(args)
+    return 0 if result is None else result
 
 
 def _render_requested_pibaq_qc(args, package):
@@ -44,8 +98,18 @@ def _render_requested_pibaq_qc(args, package):
 
 
 def main():
-    """Dispatch the plugin service or the Rust compute CLI."""
+    """Dispatch wheel periphery, plugin service, or Rust-native computation."""
     args = sys.argv[1:]
+    if not args:
+        _print_root_help(sys.stderr)
+        raise SystemExit(2)
+    if args in (["-h"], ["--help"], ["help"]):
+        _print_root_help(sys.stdout)
+        raise SystemExit(0)
+    periphery = _periphery_request(args)
+    if periphery is not None:
+        command, command_args = periphery
+        raise SystemExit(_run_periphery(command, command_args))
     if args[:2] == ["mcp", "serve"]:
         module = importlib.import_module("mokume.agentic.mcp_server")
         try:

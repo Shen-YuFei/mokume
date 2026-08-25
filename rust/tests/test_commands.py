@@ -16,12 +16,91 @@ COMMAND_MODULES = [
     "peptides2protein_pibaq",
 ]
 
+PUBLIC_CLI_COMMANDS = (
+    "tsne-visualization",
+    "tissuemap",
+    "de-plots",
+    "interactive-report",
+)
+
 
 @pytest.mark.parametrize("name", COMMAND_MODULES)
 def test_command_module_imports_with_main(name):
     """Each relocated periphery command must expose a callable entrypoint."""
     module = importlib.import_module(f"mokume.commands.{name}")
     assert callable(getattr(module, "main", None))
+
+
+def test_console_root_help_covers_the_installed_wheel(monkeypatch, capsys):
+    """The PyPI entry point must advertise native and periphery workflows."""
+    entrypoint = importlib.import_module("mokume.__main__")
+    monkeypatch.setattr(entrypoint.sys, "argv", ["mokume", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "Rust-native compute commands:" in output
+    assert "features2proteins" in output
+    assert "Optional analysis and visualization commands:" in output
+    for command in PUBLIC_CLI_COMMANDS:
+        assert command in output
+    assert "mcp serve" not in output
+
+
+def test_console_without_a_command_prints_unified_help(monkeypatch, capsys):
+    """A missing command must not fall back to Rust-only discovery output."""
+    entrypoint = importlib.import_module("mokume.__main__")
+    monkeypatch.setattr(entrypoint.sys, "argv", ["mokume"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 2
+    assert "tsne-visualization" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", PUBLIC_CLI_COMMANDS)
+def test_console_periphery_help_uses_public_command_name(command, monkeypatch, capsys):
+    """Each advertised workflow must have direct command-specific help."""
+    entrypoint = importlib.import_module("mokume.__main__")
+    monkeypatch.setattr(entrypoint.sys, "argv", ["mokume", command, "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 0
+    assert f"usage: mokume {command}" in capsys.readouterr().out
+
+
+def test_console_dispatches_periphery_arguments(monkeypatch):
+    """Periphery argv must reach its module without being parsed by Rust."""
+    observed = {}
+    module = SimpleNamespace(
+        main=lambda args: observed.update(args=args) or 0,
+    )
+    entrypoint = importlib.import_module("mokume.__main__")
+    monkeypatch.setattr(
+        entrypoint.importlib,
+        "import_module",
+        lambda name: (
+            module
+            if name == "mokume.commands.tissuemap"
+            else pytest.fail(f"unexpected import: {name}")
+        ),
+    )
+    monkeypatch.setattr(
+        entrypoint.sys,
+        "argv",
+        ["mokume", "tissuemap", "--scan-dir", "datasets"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 0
+    assert observed["args"] == ["--scan-dir", "datasets"]
 
 
 def test_pibaq_qc_wrapper_accepts_global_options_before_subcommand(monkeypatch):

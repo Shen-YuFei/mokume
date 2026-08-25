@@ -17,9 +17,9 @@ Rust produced and call the shared mokume plotting helpers, so the cells in the
 plots are the cells in the Rust CSVs. No mokume algorithm is duplicated -- a
 system ``pip install mokume[plotting]`` provides the helpers.
 
-argv contract (runnable via ``python -m mokume.commands.de_plots``):
+argv contract (runnable via ``mokume de-plots``):
 
-    python -m mokume.commands.de_plots \
+    mokume de-plots \
         --protein-matrix <proteins.csv> \
         --plot-dir <plots/> \
         [--sdrf <sdrf.tsv>] \
@@ -46,7 +46,7 @@ import sys
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
-        prog="de_plots.py",
+        prog="mokume de-plots",
         description="Render features2proteins DE plots from Rust-written CSVs.",
     )
     parser.add_argument(

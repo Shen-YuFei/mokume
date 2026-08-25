@@ -1,12 +1,12 @@
 # Reference
 
-Reference documentation for mokume's CLI commands, its Rust-wheel and
-pure-Python APIs, output columns, and periphery commands (TissueMap, t-SNE, DE
-plots, interactive reports).
+Reference documentation for the unified wheel CLI, its Rust-wheel and
+pure-Python APIs, output columns, and periphery workflows.
 
 ## [CLI Reference](cli.md)
 
-The four compute subcommands of the `mokume` binary and their options: `features2proteins`, `features2peptides`, `peptides2protein`, and `correct-batches`.
+The four Rust-native compute commands and four Python periphery commands exposed
+by `pip install mokume`, with their options and dependency extras.
 
 ## [Python API (wheel)](python-api.md)
 

@@ -146,8 +146,8 @@ The plotting and reporting periphery reads the tables the kernel wrote without
 recomputing them, so the cells in its plots match the kernel output. TissueMap
 derives downstream atlas outputs from QPX data, while explicit fallbacks compute
 operations unsupported by the Rust kernel. Each command lives in
-`mokume.commands.<name>` with a `main(argv)` entry point (runnable as
-`python -m mokume.commands.<name>`) and most have an ergonomic wrapper on the
+`mokume.commands.<name>` with a `main(argv)` entry point, is routed by the
+unified `mokume` console command, and usually has an ergonomic wrapper on the
 top-level package.
 
 ### Visualization
@@ -181,7 +181,7 @@ mokume.interactive_report([
 ])
 ```
 
-Run `python -m mokume.commands.de_plots --help` / `python -m mokume.commands.interactive_report --help` for the flags.
+Run `mokume de-plots --help` / `mokume interactive-report --help` for the flags.
 
 ### QC and workflow-comparison reports
 

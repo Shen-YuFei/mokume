@@ -18,9 +18,9 @@ duplicated -- a system ``pip install mokume[reports]`` provides the builder
 needs only pandas + numpy, but the availability gate matches Python and checks
 for plotly).
 
-argv contract (runnable via ``python -m mokume.commands.interactive_report``):
+argv contract (runnable via ``mokume interactive-report``):
 
-    python -m mokume.commands.interactive_report \
+    mokume interactive-report \
         --protein-matrix <proteins.csv> \
         --sdrf <sdrf.tsv> \
         [--report-output <report.html>] \
@@ -47,7 +47,7 @@ import sys
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
-        prog="interactive_report.py",
+        prog="mokume interactive-report",
         description="Render the features2proteins interactive HTML report.",
     )
     parser.add_argument(

@@ -42,8 +42,9 @@ periphery command.
 
 !!! note "Console command"
 
-    The wheel installs a `mokume` console command exposing the four compute
-    subcommands through the same in-process extension as the Python API.
+    The wheel installs one `mokume` console command. Its root help lists the
+    four Rust-native compute commands plus the optional Python periphery
+    workflows supplied by the installed wheel.
 
 ### Optional Extras
 
@@ -55,8 +56,8 @@ mokume uses optional dependencies for the periphery commands:
     pip install mokume[plotting]
     ```
 
-    Enables the t-SNE visualization, DE plots, and piBAQ QC report periphery
-    commands (numpy, pandas, scipy, scikit-learn, matplotlib, seaborn).
+    Enables `mokume tsne-visualization`, `mokume de-plots`, and the piBAQ QC
+    report (numpy, pandas, scipy, scikit-learn, matplotlib, seaborn).
 
 === "Interactive Reports"
 
@@ -64,7 +65,7 @@ mokume uses optional dependencies for the periphery commands:
     pip install mokume[reports]
     ```
 
-    Enables the interactive HTML report periphery command (plotly).
+    Enables `mokume interactive-report` (plotly).
 
 === "TissueMap"
 
@@ -72,9 +73,9 @@ mokume uses optional dependencies for the periphery commands:
     pip install mokume[tissuemap]
     ```
 
-    Enables the `mokume.tissuemap` periphery command for per-dataset tissue atlas
-    analysis, including AdaTiSS tissue-specificity scoring, embeddings, and atlas
-    plots (scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow).
+    Enables `mokume tissuemap` for per-dataset tissue atlas analysis, including
+    AdaTiSS tissue-specificity scoring, embeddings, and atlas plots (scanpy,
+    anndata, umap-learn, combat, matplotlib, seaborn, pyarrow).
 
 === "Analysis"
 

@@ -270,7 +270,7 @@ def de_plots(args):
 
     Takes an explicit argument list (the per-contrast ``--contrast KEY A B CSV``
     flag repeats, which keyword arguments cannot express). See
-    ``python -m mokume.commands.de_plots --help``.
+    ``mokume de-plots --help``.
     """
     _run_command("de_plots", args)
 
@@ -279,7 +279,7 @@ def interactive_report(args):
     """Render the features2proteins interactive HTML report from kernel CSVs.
 
     Takes an explicit argument list (see ``de_plots`` for why) — run
-    ``python -m mokume.commands.interactive_report --help`` for the flags.
+    ``mokume interactive-report --help`` for the flags.
     """
     _run_command("interactive_report", args)
 

@@ -59,19 +59,20 @@ executable.
 | Shell pipelines and CI | `mokume` console command |
 | Python scripting | `mokume.features2proteins(...)` or another keyword wrapper |
 | Flags not expressible as keyword arguments | `mokume.run([...])` |
-| Plots | `mokume.tsne_visualization` or `mokume.de_plots` |
-| Tissue proteome maps | `mokume.tissuemap` |
-| Interactive HTML DE report | `mokume.interactive_report` |
+| Plots | `mokume tsne-visualization` or `mokume de-plots` |
+| Tissue proteome maps | `mokume tissuemap` |
+| Interactive HTML DE report | `mokume interactive-report` |
 | piBAQ QC report PDF | `mokume.peptides2protein_qc` |
 | `missforest` imputation | `mokume.impute(method=...)` |
 | piBAQ with any installed pyOpenMS protease | `mokume.peptides2protein(...)` or `mokume.features2proteins(...)` |
 | Agent-host method recommendation | Mokume Plugin + local MCP service |
 
-The compute command surface contains `features2proteins`, `features2peptides`,
-`peptides2protein`, and `correct-batches`. Plotting and report functions are
-wheel-only Python periphery APIs rather than compute subcommands. The hidden
-`mokume mcp serve` service belongs to the `agentic` extra and is started by the
-installed Mokume Plugin; users do not configure or launch it manually.
+The unified wheel CLI separates four Rust-native compute commands from its
+optional Python periphery commands. The latter are still part of the installed
+`mokume` command, but they do not move plotting or TissueMap computation into
+Rust. The hidden `mokume mcp serve` service belongs to the `agentic` extra and
+is started by the installed Mokume Plugin; users do not configure or launch it
+manually.
 
 ## The kwargs &rarr; flags rule
 
@@ -94,7 +95,7 @@ are explicit; unknown keywords and list values on scalar-only fields raise
 
 ## Capability locations
 
-| Capability | Implementation | Python entry point |
+| Capability | Implementation | Public entry point |
 | --- | --- | --- |
 | `features2proteins` | Rust kernel | `mokume.features2proteins` |
 | `features2peptides` | Rust kernel | `mokume.features2peptides` |
@@ -103,9 +104,10 @@ are explicit; unknown keywords and list values on scalar-only fields raise
 | Matrix normalization | Rust kernel | `mokume.normalize_matrix` |
 | Matrix imputation | Rust kernel | `mokume.impute_matrix` |
 | Matrix differential expression | Rust kernel | `mokume.differential_expression` |
-| t-SNE, DE, and piBAQ-QC plots | Python periphery | plotting wrappers |
-| Tissue proteome maps | Python periphery | `mokume.tissuemap` |
-| Interactive HTML DE report | Python periphery | `mokume.interactive_report` |
+| t-SNE and DE plots | Python periphery | `mokume tsne-visualization` / `mokume de-plots` |
+| piBAQ-QC plots | Python periphery | `peptides2protein --qc-report` |
+| Tissue proteome maps | Python periphery | `mokume tissuemap` |
+| Interactive HTML DE report | Python periphery | `mokume interactive-report` |
 | QC and workflow comparison | Python periphery | report wrappers |
 | `missforest` imputation | Python fallback | `mokume.impute` |
 | piBAQ FASTA digestion | pyOpenMS runtime catalog feeding the Rust kernel | `mokume.peptides2protein` / `mokume.features2proteins` |

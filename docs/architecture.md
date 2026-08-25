@@ -41,10 +41,11 @@ flowchart TB
     subgraph wheel["pip install mokume (the wheel)"]
         ext
         api["thin Python API<br/>features2proteins() · peptides2protein() · run([...])"]
-        console["mokume console command<br/>Python entry point"]
+        console["mokume console command<br/>unified Python entry point"]
         periphery["Python periphery<br/>rust/python/mokume/commands/*"]
         ext --> api
         ext --> console
+        console --> periphery
     end
 
     out["kernel output<br/>protein matrix CSV · peptide parquet · piBAQ TSV · DE CSV"]
@@ -56,8 +57,10 @@ flowchart TB
     periphery --> figs["plots · tissue maps · HTML reports"]
 ```
 
-The wheel's console command and compute wrappers parse their arguments through
-the same `clap` definition, so flag handling stays single-sourced in Rust.
+The wheel entry point routes the four compute commands through the same `clap`
+definition as the Python compute wrappers, so their flag handling stays
+single-sourced in Rust. It routes the optional plotting, reporting, and
+TissueMap commands to their Python periphery modules.
 
 ## In-process, no subprocess
 
@@ -76,11 +79,12 @@ imports a compiled Rust extension rather than driving an external program.
 ## Rust-native compute and the Python periphery
 
 The periphery lives in `rust/python/mokume/commands/` and is reached **only**
-through the wheel:
+through the wheel. Its public workflows are available from both the unified CLI
+and Python API:
 
-- `mokume.tsne_visualization`, `mokume.de_plots`, `mokume.interactive_report` —
+- `mokume tsne-visualization`, `mokume de-plots`, `mokume interactive-report` —
   plots and the HTML report built from the `features2proteins` matrix / DE CSVs.
-- `mokume.tissuemap` — downstream per-dataset normalization, batch correction,
+- `mokume tissuemap` — downstream per-dataset normalization, batch correction,
   tissue-specificity scoring, embeddings, and atlas plots from QPX outputs.
 - `mokume.peptides2protein_qc` — the piBAQ `--verbose` QC report PDF.
 

@@ -104,10 +104,12 @@ sklearn) and the native `.h5ad`/AnnData writer for `correct-batches --export-ann
 cmake at build time). The visualization/QC surface ships in the `mokume` Python wheel (PyO3/maturin):
 the periphery lives in `python/mokume/commands/` and reads the kernel's
 TSV/parquet output to render figures, so the numbers stay single-sourced in Rust.
-The former `tsne_visualization` / `tissuemap` subcommands and the
-`features2proteins --plot-*` / `--interactive-report` flags moved to wheel APIs
-(`mokume.tsne_visualization(...)`, `mokume.de_plots(...)`, etc.), so they are no
-longer part of the Rust compute command surface. Meanwhile,
+The former Rust `tsne_visualization` / `tissuemap` subcommands and the
+`features2proteins --plot-*` / `--interactive-report` flags moved to the wheel's
+Python periphery. The unified wheel entry point exposes them as
+`mokume tsne-visualization`, `mokume tissuemap`, `mokume de-plots`, and
+`mokume interactive-report`, while they remain outside the Rust compute command
+surface. Meanwhile,
 `peptides2protein --verbose` writes the numeric TSV while the wheel renders the QC
 PDF (`mokume.peptides2protein_qc`). The `tsne_visualization` command carries a
 small sklearn-version shim (`n_iter`→`max_iter`, removed upstream in sklearn 1.5+)
@@ -117,7 +119,8 @@ provides a deterministic MCP service rather than another model or compute core.
 Recently closed (2026-06-28b — gap-audit follow-ups, three commits): a 5-agent rs<->py
 gap audit found the remaining user-facing gaps were peripheral output. They were first
 delivered via vendored Python delegation and then moved into the `mokume` wheel by the
-PyO3/maturin migration (see the lead paragraph above); the Rust compute command surface no longer carries them.
+PyO3/maturin migration (see the lead paragraph above); the unified wheel CLI now
+routes them without adding them back to the Rust compute command surface.
 `features2proteins` DE plotting (`--plot-volcano`/`--plot-heatmap`/`--plot-pca`/
 `--highlight-genes`) and the interactive HTML report (`--interactive-report`) became the
 wheel's `mokume.de_plots` / `mokume.interactive_report` (Rust writes the protein matrix +

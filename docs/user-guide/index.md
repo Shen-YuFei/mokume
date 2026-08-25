@@ -2,11 +2,13 @@
 
 This section covers the practical usage of each mokume command. The
 `mokume` wheel installs a `mokume` console command backed by the compiled
-`mokume._mokume` extension. It runs the leading Rust kernel in-process. The
-separately maintained pure-Python distribution is documented under
+`mokume._mokume` extension and the wheel's Python periphery. Compute commands
+run the leading Rust kernel in-process; plotting, reporting, and TissueMap
+commands route to the periphery. The separately maintained pure-Python
+distribution is documented under
 [Python API (package)](../reference/python-api-package.md).
 
-## Compute commands
+## Rust-native compute commands
 
 The console command exposes exactly four compute subcommands. Each can also be
 driven through a thin keyword wrapper (`mokume.<command>(**kwargs)`) or with an
@@ -28,14 +30,13 @@ Quantifies proteins from normalized peptide data. Supports piBAQ (with TPA and P
 
 Standalone batch correction for already-quantified protein data. Combines multiple files and applies native Rust ComBat (oracle-verified vs inmoose) correction.
 
-## Periphery (wheel-only)
+## Python periphery commands
 
-Plotting, tissue maps, and interactive reports are not CLI subcommands; they
-live in the Python wheel under `mokume.commands` and are reached through
-periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`,
-`mokume.de_plots`, and `mokume.interactive_report`. Plotting and reporting
-consume kernel tables, while TissueMap derives its downstream atlas from QPX
-data. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `analysis`,
-or `all`) to pull in the periphery libraries. The agentic workflow
-is provided by the [Mokume Plugin](agentic-plugin.md), whose local MCP service
-uses the default Rust-backed wheel.
+The same `mokume` console command exposes `tsne-visualization`, `tissuemap`,
+`de-plots`, and `interactive-report`. These commands live in the Python
+periphery of the wheel: plotting and reporting consume kernel tables, while
+TissueMap derives its downstream atlas from QPX data. Install the relevant
+extra (`plotting`, `reports`, `tissuemap`, or `all`) to pull in their libraries.
+The top-level Python wrappers remain available for scripts. The agentic workflow
+is provided by the [Mokume Plugin](agentic-plugin.md), whose hidden local MCP
+service uses the default Rust-backed wheel.

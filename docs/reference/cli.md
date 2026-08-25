@@ -1,19 +1,21 @@
 # CLI Reference
 
-The `mokume` console command is installed by the `mokume` wheel. It exposes exactly four compute subcommands — `features2proteins`, `features2peptides`, `peptides2protein`, and `correct-batches` — and runs the compiled Rust kernel in-process. Most users start with `features2proteins` for quantification workflows.
+The `mokume` console command is installed by the Rust-backed wheel. It exposes
+four Rust-native compute commands plus optional Python periphery workflows for
+t-SNE, TissueMap, DE plots, and interactive reports. Most users start with
+`features2proteins` for quantification workflows.
 Use `mokume --help` or `mokume <command> --help` for details.
 
-The flag surface below is single-sourced in Rust and is shared with the wheel's thin Python API.
+The compute flag surface below is single-sourced in Rust and shared with the
+wheel's thin Python API. Periphery commands dispatch to modules packaged in the
+same wheel and state their required extra in root help.
 
-!!! note "Plotting, tissue maps, and reports live in the Python wheel"
-    The visualization periphery — t-SNE, tissue-proteome maps, DE plots,
-    interactive HTML reports, piBAQ QC — is **not** part of this CLI. It ships in
-    the `pip install mokume` wheel as `mokume.tsne_visualization(...)`,
-    `mokume.tissuemap(...)`, `mokume.de_plots([...])`,
-    `mokume.interactive_report([...])`, and
-    `mokume.peptides2protein_qc(...)`. Plotting and reporting consume kernel
-    tables; TissueMap performs its documented downstream analysis from QPX data.
-    See the [Python API](python-api.md).
+!!! note "One CLI, two implementation layers"
+    `features2proteins`, `features2peptides`, `peptides2protein`, and
+    `correct-batches` run in the Rust kernel. `tsne-visualization`, `tissuemap`,
+    `de-plots`, and `interactive-report` run in the wheel's Python periphery.
+    Plotting and reporting consume kernel tables; TissueMap performs its
+    documented downstream analysis from QPX data.
 
 ## features2proteins
 
@@ -188,25 +190,19 @@ cell-exactly and p-values at rank level.
 
 `features2proteins` is pure compute and writes no figures. The kernel emits the protein-matrix CSV and (with `--de-output`) one DE result CSV per contrast; render plots and HTML reports from those CSVs with the wheel periphery:
 
-```python
-import mokume
+```bash
+# DE volcano / heatmap / PCA from the kernel CSVs (plotting extra)
+mokume de-plots --protein-matrix proteins.csv --plot-dir plots \
+    --sdrf experiment.sdrf.tsv --volcano --heatmap --pca \
+    --contrast c1 A B de.csv
 
-# DE volcano / heatmap / PCA from the kernel CSVs (plotting extra):
-mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
-                 "--sdrf", "experiment.sdrf.tsv",
-                 "--volcano", "--heatmap", "--pca",
-                 "--contrast", "c1", "A", "B", "de.csv"])
-
-# interactive HTML report (reports extra):
-mokume.interactive_report([
-    "--protein-matrix", "proteins.csv",
-    "--sdrf", "experiment.sdrf.tsv",
-    "--report-output", "report.html",
-    "--contrast", "c1", "A", "B", "de.csv",
-])
+# Interactive HTML report (reports extra)
+mokume interactive-report --protein-matrix proteins.csv \
+    --sdrf experiment.sdrf.tsv --report-output report.html \
+    --contrast c1 A B de.csv
 ```
 
-Pass `--help` to either (`python -m mokume.commands.de_plots --help`) for the full flag set.
+Pass `--help` to either command for the full flag set.
 
 ### Export
 
@@ -404,17 +400,19 @@ options; for those, use `features2proteins --batch-correction`.
 
 ---
 
-## Periphery (tissue maps, t-SNE)
+## Periphery commands
 
-Tissue-proteome maps and t-SNE visualization are **not** CLI subcommands; they
-ship in the `pip install mokume` wheel. t-SNE visualization reads a protein
-matrix, while TissueMap derives a downstream atlas from QPX data:
+These commands ship in the `pip install mokume` wheel but remain implemented in
+Python rather than the Rust compute kernel:
 
-```python
-import mokume
+```bash
+pip install "mokume[plotting]"
+mokume tsne-visualization --folder ./proteins --pattern proteins.tsv
 
-mokume.tissuemap(scan_dir="./data", output_dir="./out")     # tissuemap extra
-mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")  # plotting extra
+pip install "mokume[tissuemap]"
+mokume tissuemap --scan-dir ./data --output-dir ./out
 ```
 
-Each is also runnable as `python -m mokume.commands.tissuemap --help` / `python -m mokume.commands.visualize --help`. See the [Python API](python-api.md) for the full periphery surface and the matching extras.
+t-SNE visualization reads protein tables, while TissueMap derives a downstream
+atlas from QPX data. See the [Python API](python-api.md) for the corresponding
+in-process functions and the full periphery surface.

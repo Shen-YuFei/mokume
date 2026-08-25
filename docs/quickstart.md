@@ -121,9 +121,9 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
     `features2proteins` no longer accepts `--plot-*` / `--interactive-report`
     flags — the kernel is pure-compute and only writes tables (the protein matrix
     and, with `--de-output`, the DE result CSVs). Render figures afterward from
-    those tables with the Python periphery: `mokume.de_plots([...])` for volcano /
-    PCA / heatmap plots and `mokume.interactive_report([...])` for the HTML report
-    (both need the `plotting` / `reports` extras).
+    those tables with the Python periphery: `mokume de-plots` for volcano / PCA /
+    heatmap plots and `mokume interactive-report` for the HTML report (they need
+    the `plotting` / `reports` extras).
 
 ## Two-Step Pipeline
 
@@ -148,17 +148,14 @@ mokume peptides2protein \
 ## Tissue Atlas Workflow
 
 Use `tissuemap` when your goal is tissue atlas analysis rather than standard
-protein quantification. TissueMap is a Python periphery command (not a kernel
-subcommand) and lives only in the wheel:
+protein quantification. It is a wheel CLI command backed by the Python
+periphery, rather than a Rust-native compute command:
 
-```python
-import mokume
-
-# Install the optional dependencies first: pip install mokume[tissuemap]
-mokume.tissuemap(
-    scan_dir="QPX_data/tissues-mq/PXD016999",
-    output_dir="./tissuemap_results",
-)
+```bash
+# Install the optional dependencies first: pip install "mokume[tissuemap]"
+mokume tissuemap \
+    --scan-dir QPX_data/tissues-mq/PXD016999 \
+    --output-dir ./tissuemap_results
 ```
 
 This workflow generates batch-corrected AnnData outputs, tissue-specificity scores, and atlas-style plots.

@@ -80,6 +80,11 @@ pip install "mokume[agentic]"    # local MCP service used by the Mokume Plugin
 pip install "mokume[all]"        # all Python periphery dependencies
 ```
 
+The installed `mokume --help` lists both the Rust-native compute commands and
+the optional wheel workflows. After installing the matching extra, run
+`mokume tsne-visualization`, `mokume tissuemap`, `mokume de-plots`, or
+`mokume interactive-report` directly.
+
 The optional Plugin/MCP workflow requires Python 3.10 or newer.
 
 For the separate pure-Python implementation, use `pip install mokume-py`; its

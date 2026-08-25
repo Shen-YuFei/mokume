@@ -75,7 +75,7 @@ the downstream DE and plotting interfaces.
 ```bash
 OMP_NUM_THREADS=24 OPENBLAS_NUM_THREADS=24 MKL_NUM_THREADS=24 \
 MPLCONFIGDIR="$CPTAC_OUT/matplotlib" \
-python -m mokume.commands.de_plots \
+mokume de-plots \
     --protein-matrix "$CPTAC_OUT/PDC000125.proteins.csv" \
     --plot-dir "$CPTAC_OUT/plots" \
     --sdrf "$CPTAC_OUT/PDC000125.sdrf.tsv" \

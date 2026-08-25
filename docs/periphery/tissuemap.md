@@ -5,11 +5,9 @@ per-dataset tissue proteome atlas from QPX parquet outputs. It is intended for
 atlas-style tissue exploration and tissue-specificity scoring, not for standard
 protein quantification from a single experiment.
 
-!!! note "Periphery command — not a CLI subcommand"
-    `tissuemap` is **not** one of the four Rust CLI subcommands
-    (`features2proteins`, `features2peptides`, `peptides2protein`,
-    `correct-batches`). It lives only in the Python wheel as
-    `mokume.tissuemap(**kwargs)` (or `python -m mokume.commands.tissuemap`) and
+!!! note "Python periphery command"
+    `mokume tissuemap` is exposed by the wheel's unified CLI, but it is not a
+    Rust-native compute command. It dispatches to the Python periphery and
     requires the `tissuemap` extra:
     ```bash
     pip install "mokume[tissuemap]"
@@ -39,38 +37,26 @@ with repeated `tmt_dataset` values.
 
 ## Quick Start
 
-```python
-import mokume
-
+```bash
 # Generate a default YAML template
-mokume.tissuemap(generate_config="tissuemap.yaml")
+mokume tissuemap --generate-config tissuemap.yaml
 
 # Run a single dataset directory
-mokume.tissuemap(
-    scan_dir="QPX_data/tissues-mq/PXD016999",
-    output_dir="./results",
-)
+mokume tissuemap --scan-dir QPX_data/tissues-mq/PXD016999 \
+    --output-dir ./results
 
-# Run a parent directory containing multiple datasets
-mokume.tissuemap(
-    scan_dir="QPX_data/tissues-mq",
-    tmt_dataset=["PXD016999"],   # a list repeats --tmt-dataset
-    output_dir="./results",
-    n_jobs=8,
-)
+# Run a parent directory and identify a TMT dataset explicitly
+mokume tissuemap --scan-dir QPX_data/tissues-mq \
+    --tmt-dataset PXD016999 --output-dir ./results --n-jobs 8
 
 # Run with a custom YAML configuration
-mokume.tissuemap(
-    scan_dir="QPX_data/tissues-mq",
-    config="tissuemap.yaml",
-    output_dir="./results",
-)
+mokume tissuemap --scan-dir QPX_data/tissues-mq \
+    --config tissuemap.yaml --output-dir ./results
 ```
 
-The wrapper validates keyword arguments and maps them to the command's exact
-flags; a `tmt_datasets` list repeats `--tmt-dataset`. The same
-command is runnable from a shell as `python -m mokume.commands.tissuemap
---scan-dir ... --output-dir ...`.
+The equivalent Python API is `mokume.tissuemap(**kwargs)`. Its wrapper validates
+keyword arguments and maps them to the command's exact flags; a `tmt_datasets`
+list repeats `--tmt-dataset`.
 
 ## What the Pipeline Does
 
@@ -91,15 +77,15 @@ The current TissueMap workflow is organized around per-dataset processing:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `scan_dir` | required unless `generate_config` | Dataset directory or parent directory containing datasets |
-| `output_dir` | `tissuemap_output` | Output directory for all results |
-| `config` | none | YAML configuration file |
-| `generate_config` | none | Write a default YAML template and exit |
-| `tmt_dataset` | auto | Mark one or more dataset IDs as TMT (list repeats the flag) |
-| `n_jobs` | `8` | Threads for dataset processing and embedding |
-| `dpi` | `250` | Plot resolution override |
-| `imputation_method` | config default | Imputation method used before embedding |
-| `embedding_method` | config default | `tsne` or `umap` |
+| `--scan-dir` | required unless `--generate-config` | Dataset directory or parent directory containing datasets |
+| `--output-dir` | `tissuemap_output` | Output directory for all results |
+| `--config` | none | YAML configuration file |
+| `--generate-config` | none | Write a default YAML template and exit |
+| `--tmt-dataset` | auto | Mark one or more dataset IDs as TMT; repeat for multiple datasets |
+| `--n-jobs` | `8` | Threads for dataset processing and embedding |
+| `--dpi` | `250` | Plot resolution override |
+| `--imputation-method` | config default | Imputation method used before embedding |
+| `--embedding-method` | config default | `tsne` or `umap` |
 
 ## Configuration Workflow
 
@@ -121,8 +107,8 @@ The generated YAML exposes the main configuration groups:
 - `plotting` — DPI, PDF export, marker plot controls
 - `output` — output directory
 
-Argument values such as `scan_dir`, `output_dir`, `n_jobs`, and `dpi` override
-the YAML file.
+CLI values such as `--scan-dir`, `--output-dir`, `--n-jobs`, and `--dpi`
+override the YAML file.
 
 ## Output Files
 

@@ -3,8 +3,8 @@
 
 A pure-Python periphery command in the mokume wheel: it re-implements no compute
 kernel; it reads the protein files and draws the t-SNE plot through the mokume
-plotting helpers. Exposed in-process as ``mokume.tsne_visualization`` and
-runnable as ``python -m mokume.commands.visualize``.
+plotting helpers. Exposed as ``mokume tsne-visualization`` and in-process as
+``mokume.tsne_visualization``.
 
 Run requirements: the ``plotting`` extra (matplotlib + seaborn + scikit-learn):
 ``pip install mokume[plotting]``.
@@ -23,7 +23,7 @@ import sys
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="tsne_visualization.py",
+        prog="mokume tsne-visualization",
         description="t-SNE visualization for protein data (mokume command).",
     )
     parser.add_argument(

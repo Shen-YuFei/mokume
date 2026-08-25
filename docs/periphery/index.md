@@ -31,11 +31,11 @@ libraries. Install just the extra for the command you run.
 
 | Command | Extra | Third-party libraries |
 | --- | --- | --- |
-| `mokume.tsne_visualization` | `plotting` | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
+| `mokume tsne-visualization` | `plotting` | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
 | `mokume.peptides2protein_qc` | `plotting` | numpy, pandas, matplotlib, seaborn |
-| `mokume.de_plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
-| `mokume.interactive_report` | `reports` | numpy, pandas, plotly |
-| `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
+| `mokume de-plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
+| `mokume interactive-report` | `reports` | numpy, pandas, plotly |
+| `mokume tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
 
@@ -56,12 +56,19 @@ The exact dependency lists are declared in `pyproject.toml`'s
     DirectLFQ and ComBat are native Rust, while pyOpenMS-backed FASTA digestion
     is now a base piBAQ capability.
 
-## The import-then-call pattern
+## CLI and Python entry points
 
-Each periphery command lives in `mokume.commands.<name>` with a `main(argv)`
-entry point, is runnable as `python -m mokume.commands.<name>`, and most have an
-ergonomic wrapper on the top-level `mokume` package. Import the package and call
-the wrapper:
+The public plotting, report, and TissueMap workflows are available directly
+from the wheel console command:
+
+```bash
+mokume tsne-visualization --folder ./proteins --pattern proteins.tsv
+mokume tissuemap --scan-dir ./data --output-dir ./out
+mokume de-plots --help
+mokume interactive-report --help
+```
+
+Most also have an ergonomic wrapper on the top-level `mokume` package:
 
 ```python
 import mokume
@@ -88,7 +95,7 @@ flag repeats in a shape keyword arguments cannot express.
 
 ## What lives where
 
-- **Tissue Proteome Atlas** &rarr; [`mokume.tissuemap`](tissuemap.md) — PCA /
+- **Tissue Proteome Atlas** &rarr; [`mokume tissuemap`](tissuemap.md) — PCA /
   t-SNE / UMAP / AdaTiSS tissue-specificity scoring, markers, atlas plots.
 - **Visualization & Reports** &rarr;
   [t-SNE / DE plots / interactive report](visualization.md).
