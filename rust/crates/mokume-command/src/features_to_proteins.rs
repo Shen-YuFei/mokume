@@ -5,8 +5,7 @@ use mokume_core::QuantMethod;
 
 use crate::parsers::{
     parse_correlation, parse_de_log2fc, parse_finite_f64, parse_fraction, parse_memory,
-    parse_nonnegative_f64, parse_positive_usize, parse_quant_method, DeLog2FcArg, OutputFormatArg,
-    QuantMethodArg,
+    parse_nonnegative_f64, parse_positive_usize, parse_quant_method, DeLog2FcArg, QuantMethodArg,
 };
 use crate::PibaqDigestRequest;
 
@@ -41,24 +40,16 @@ pub(crate) struct Features2ProteinsArgs {
     #[arg(short = 'o', long = "output")]
     output: PathBuf,
 
-    #[arg(
-        long = "output-format",
-        default_value = "python-compatible",
-        help = "Output column/header schema only; it does not change quantification"
-    )]
-    output_format: OutputFormatArg,
-
     #[arg(short = 's', long = "sdrf")]
     sdrf: Option<PathBuf>,
 
     #[arg(
         long = "quant-method",
-        alias = "method",
         default_value = "maxlfq",
-        value_name = "[directlfq|pibaq|maxlfq|sum|median|ratio|abd|intensity|peptide_count|spectral_count|top<N>]",
+        value_name = "[directlfq|pibaq|maxlfq|sum|median|ratio|abd|intensity|peptide-count|spectral-count|top<N>]",
         value_parser = parse_quant_method,
         help = "Quantification method: directlfq, pibaq, maxlfq, sum, median, ratio, abd, \
-intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells its peptide count in the name \
+intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells its peptide count in the name \
 (e.g. top3, top5)"
     )]
     quant_method: QuantMethodArg,
@@ -79,7 +70,7 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     keep_contaminants: bool,
 
     #[arg(long = "run-normalization", value_parser = [
-        "none", "mean", "median", "max", "global", "max_min", "iqr",
+        "none", "mean", "median", "max", "global", "max-min", "iqr",
     ], ignore_case = true,
     help = "Run-level intensity normalization; count methods require none"
     )]
@@ -87,12 +78,12 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
 
     #[arg(long = "sample-normalization", value_parser = [
         "none",
-        "globalmedian",
-        "conditionmedian",
+        "global-median",
+        "condition-median",
         "hierarchical",
         "quantile",
-        "mediancenter",
-        "meancenter",
+        "median-center",
+        "mean-center",
         "rlr",
         "loess",
         "tmm",
@@ -104,7 +95,7 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     #[arg(long = "normalization-proteins")]
     normalization_proteins: Option<PathBuf>,
 
-    #[arg(long = "fasta")]
+    #[arg(short = 'f', long = "fasta")]
     fasta: Option<PathBuf>,
 
     #[arg(long = "pibaq-enzyme", default_value = "Trypsin")]
@@ -121,9 +112,6 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
 
     #[arg(long = "pibaq-min-anchors", default_value_t = 1)]
     pibaq_min_anchors: usize,
-
-    #[arg(long = "directlfq-cores", hide = true, value_parser = parse_positive_usize)]
-    directlfq_cores: Option<usize>,
 
     #[arg(long = "directlfq-min-nonan", value_parser = parse_positive_usize)]
     directlfq_min_nonan: Option<usize>,
@@ -142,7 +130,7 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
 
     #[arg(
         long = "batch-method",
-        value_parser = ["sample_prefix", "column"],
+        value_parser = ["sample-prefix", "column"],
         ignore_case = true,
         help = "How batch labels are detected: sample accession prefix or one SDRF column"
     )]
@@ -151,8 +139,8 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     #[arg(long = "batch-column")]
     batch_column: Option<String>,
 
-    #[arg(long = "batch-covariates")]
-    batch_covariates: Option<String>,
+    #[arg(long = "batch-covariate")]
+    batch_covariate: Vec<String>,
 
     #[arg(long = "batch-nonparametric")]
     batch_nonparametric: bool,
@@ -172,24 +160,14 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     )]
     irs: bool,
 
-    #[arg(
-        long = "irs-reference-samples",
-        hide = true,
-        conflicts_with = "irs_reference_sample"
-    )]
-    irs_reference_samples: Option<String>,
-
-    #[arg(
-        long = "irs-reference-sample",
-        conflicts_with = "irs_reference_samples"
-    )]
+    #[arg(long = "irs-reference-sample")]
     irs_reference_sample: Vec<String>,
 
     #[arg(long = "irs-sdrf-column")]
     irs_sdrf_column: Option<String>,
 
-    #[arg(long = "irs-sdrf-values")]
-    irs_sdrf_values: Option<String>,
+    #[arg(long = "irs-sdrf-value")]
+    irs_sdrf_value: Vec<String>,
 
     #[arg(long = "irs-reference-regex")]
     irs_reference_regex: Option<String>,
@@ -214,15 +192,11 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     #[arg(long = "ratio-fraction-merge", value_parser = ["mean", "max"], ignore_case = true)]
     ratio_fraction_merge: Option<String>,
 
-    #[arg(long = "impute")]
-    impute: bool,
-
     #[arg(long = "impute-method", value_parser = [
         "mean",
         "median",
-        "constant",
         "zero",
-        "most_frequent",
+        "most-frequent",
         "knn",
         "minprob",
         "mindet",
@@ -247,14 +221,11 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     #[arg(long = "impute-n-neighbors", value_parser = parse_positive_usize)]
     impute_n_neighbors: Option<usize>,
 
-    #[arg(long = "de")]
-    differential_expression: bool,
+    #[arg(long = "de-contrast", num_args = 2)]
+    de_contrast: Vec<String>,
 
-    #[arg(long = "de-contrasts")]
-    de_contrasts: Option<String>,
-
-    #[arg(long = "de-contrasts-file")]
-    de_contrasts_file: Option<PathBuf>,
+    #[arg(long = "de-contrast-file")]
+    de_contrast_file: Option<PathBuf>,
 
     #[arg(long = "de-method", value_parser = [
         "auto",
@@ -267,8 +238,8 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     ], ignore_case = true)]
     de_method: Option<String>,
 
-    #[arg(long = "de-ensemble-methods")]
-    de_ensemble_methods: Option<String>,
+    #[arg(long = "de-ensemble-method")]
+    de_ensemble_method: Vec<String>,
 
     #[arg(
         long = "de-ensemble-min-k",
@@ -280,7 +251,7 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     #[arg(long = "de-log2fc", value_parser = parse_de_log2fc)]
     de_log2fc_threshold: Option<DeLog2FcArg>,
 
-    #[arg(long = "de-effect-size-gate", value_parser = ["mixture", "null_quantile"], ignore_case = true)]
+    #[arg(long = "de-effect-size-gate", value_parser = ["mixture", "null-quantile"], ignore_case = true)]
     de_effect_size_gate: Option<String>,
 
     #[arg(long = "de-fdr", value_parser = parse_fraction)]
@@ -300,8 +271,8 @@ intensity, peptide_count, spectral_count, or top<N> -- the TopN family spells it
     memory: Option<String>,
 
     #[arg(
+        short = 't',
         long = "threads",
-        alias = "duckdb-threads",
         value_parser = parse_positive_usize
     )]
     threads: Option<usize>,

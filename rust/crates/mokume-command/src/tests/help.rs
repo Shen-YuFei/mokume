@@ -27,31 +27,29 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--batch-correction",
     "--batch-method",
     "--batch-column",
-    "--batch-covariates",
+    "--batch-covariate",
     "--batch-nonparametric",
     "--batch-mean-only",
     "--batch-ref",
     "--irs",
     "--irs-reference-sample",
     "--irs-sdrf-column",
-    "--irs-sdrf-values",
+    "--irs-sdrf-value",
     "--irs-reference-regex",
     "--irs-stat",
     "--irs-remove-reference",
     "--coverage-threshold",
     "--min-sample-correlation",
     "--ratio-fraction-merge",
-    "--impute",
     "--impute-method",
     "--impute-quantile",
     "--impute-shift",
     "--impute-scale",
     "--impute-n-neighbors",
-    "--de",
-    "--de-contrasts",
-    "--de-contrasts-file",
+    "--de-contrast",
+    "--de-contrast-file",
     "--de-method",
-    "--de-ensemble-methods",
+    "--de-ensemble-method",
     "--de-ensemble-min-k",
     "--de-log2fc",
     "--de-fdr",
@@ -63,6 +61,18 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
 
 const REMOVED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--ion-alignment",
+    "--output-format",
+    "--method",
+    "--directlfq-cores",
+    "--duckdb-threads",
+    "--batch-covariates",
+    "--irs-reference-samples",
+    "--irs-sdrf-values",
+    "--impute",
+    "--de",
+    "--de-contrasts",
+    "--de-contrasts-file",
+    "--de-ensemble-methods",
     "--duckdb-memory",
     "--remove-contaminants",
     "--batch-parametric",
@@ -79,15 +89,17 @@ const REMOVED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
 #[test]
 fn top_level_help_lists_compute_commands() {
     let help = render_help(Cli::command());
-    for command in [
-        "features2proteins",
-        "features2peptides",
-        "peptides2protein",
-        "correct-batches",
-    ] {
+    for command in ["quantify", "correct-batches"] {
         assert!(
             help.contains(command),
             "missing command `{command}` in help:\n{help}"
+        );
+    }
+    let quantify_help = render_subcommand_help_path(&["quantify"]);
+    for command in ["features2proteins", "features2peptides", "peptides2protein"] {
+        assert!(
+            quantify_help.contains(command),
+            "missing command `{command}` in quantify help:\n{quantify_help}"
         );
     }
     // The visualization / tissue-map periphery moved to the Python wheel; the
@@ -102,7 +114,7 @@ fn top_level_help_lists_compute_commands() {
 
 #[test]
 fn features2proteins_help_lists_python_option_surface() {
-    let help = render_subcommand_help("features2proteins");
+    let help = render_subcommand_help_path(&["quantify", "features2proteins"]);
     for option in REQUIRED_FEATURES_TO_PROTEINS_OPTIONS.iter().copied() {
         assert!(
             help.contains(option),
@@ -113,7 +125,7 @@ fn features2proteins_help_lists_python_option_surface() {
     // must reject them now.
     for option in REMOVED_FEATURES_TO_PROTEINS_OPTIONS.iter().copied() {
         assert!(
-            !help.contains(option),
+            !help_has_option(&help, option),
             "removed plotting option `{option}` must not appear in help:\n{help}"
         );
     }
@@ -128,37 +140,36 @@ fn features2proteins_help_lists_python_option_surface() {
 
 #[test]
 fn features2peptides_help_lists_python_option_surface() {
-    let help = render_subcommand_help("features2peptides");
+    let help = render_subcommand_help_path(&["quantify", "features2peptides"]);
     for option in [
         "--parquet",
         "--sdrf",
-        "--min_aa",
-        "--min_unique",
+        "--min-aa",
+        "--min-unique",
         "--keep-shared-peptides",
-        "--remove_ids",
-        "--remove_decoy_contaminants",
-        "--remove_low_frequency_peptides",
+        "--remove-ids",
+        "--remove-decoy-contaminants",
+        "--remove-low-frequency-peptides",
         "--output",
-        "--skip_normalization",
+        "--skip-normalization",
         "--run-normalization",
         "--sample-normalization",
         "--log2",
-        "--save_parquet",
-        "--irs_channel",
-        "--irs_autodetect_regex",
-        "--irs_stat",
-        "--irs_scope",
-        "--aggregation_level",
+        "--save-parquet",
+        "--irs-channel",
+        "--irs-autodetect-regex",
+        "--irs-stat",
+        "--irs-scope",
+        "--aggregation-level",
         "--filter-config",
         "--generate-filter-config",
         "--filter-min-intensity",
         "--filter-cv-threshold",
-        "--filter-charge-states",
+        "--filter-charge-state",
         "--filter-max-missed-cleavages",
         "--filter-peptide-fdr",
         "--filter-score",
-        "--filter-exclude-modifications",
-        "--filter-min-unique-peptides",
+        "--filter-exclude-modification",
         "--filter-protein-fdr",
         "--filter-min-features",
         "--filter-max-missing-rate",
@@ -172,25 +183,24 @@ fn features2peptides_help_lists_python_option_surface() {
 
 #[test]
 fn peptides2protein_help_lists_python_option_surface() {
-    let help = render_subcommand_help("peptides2protein");
+    let help = render_subcommand_help_path(&["quantify", "peptides2protein"]);
     for option in [
         "--fasta",
         "--peptides",
-        "--method",
+        "--quant-method",
         "--enzyme",
         "--normalize",
-        "--min_aa",
-        "--max_aa",
+        "--min-aa",
+        "--max-aa",
         "--tpa",
         "--ruler",
         "--ploidy",
         "--organism",
         "--cpc",
         "--output",
-        "--verbose",
-        "--qc_report",
+        "--qc-report",
         "--threads",
-        "--min_nonan",
+        "--directlfq-min-nonan",
         "--families",
         "--min-shared",
         "--min-anchors",
@@ -201,7 +211,7 @@ fn peptides2protein_help_lists_python_option_surface() {
             "missing option `{option}` in help:\n{help}"
         );
     }
-    // N is spelled in the method name (`--method top5`), so the companion
+    // N is spelled in the method name (`--quant-method top5`), so the companion
     // option is gone from both CLIs and must stay gone.
     assert!(
         !help.contains("--topn_n"),
@@ -211,18 +221,18 @@ fn peptides2protein_help_lists_python_option_surface() {
 
 #[test]
 fn correct_batches_help_lists_python_option_surface() {
-    let correct_batches_help = render_subcommand_help("correct-batches");
+    let correct_batches_help = render_subcommand_help_path(&["correct-batches"]);
     for option in [
-        "--folder",
+        "--input",
         "--pattern",
         "--comment",
         "--sep",
         "--output",
-        "--sample_id_column",
-        "--protein_id_column",
-        "--pibaq_raw_column",
-        "--pibaq_corrected_column",
-        "--export_anndata",
+        "--sample-id-column",
+        "--protein-id-column",
+        "--pibaq-raw-column",
+        "--pibaq-corrected-column",
+        "--export-anndata",
     ] {
         assert!(
             correct_batches_help.contains(option),
@@ -257,10 +267,18 @@ fn render_help(mut command: clap::Command) -> String {
     }
 }
 
-fn render_subcommand_help(name: &str) -> String {
+fn render_subcommand_help_path(path: &[&str]) -> String {
     let mut command = Cli::command();
-    let Some(subcommand) = command.find_subcommand_mut(name) else {
-        panic!("missing subcommand `{name}`");
-    };
-    render_help(subcommand.clone())
+    for name in path {
+        let Some(subcommand) = command.find_subcommand_mut(name) else {
+            panic!("missing subcommand `{name}`");
+        };
+        command = subcommand.clone();
+    }
+    render_help(command)
+}
+
+fn help_has_option(help: &str, option: &str) -> bool {
+    help.split_whitespace()
+        .any(|token| token.trim_end_matches(',') == option)
 }

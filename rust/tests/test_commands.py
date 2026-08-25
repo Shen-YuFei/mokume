@@ -16,11 +16,12 @@ COMMAND_MODULES = [
     "peptides2protein_pibaq",
 ]
 
-PUBLIC_CLI_COMMANDS = (
-    "tsne-visualization",
-    "tissuemap",
-    "de-plots",
-    "interactive-report",
+PUBLIC_CLI_PATHS = (
+    ("tissuemap",),
+    ("interactive-report",),
+    ("plot", "pca"),
+    ("plot", "tsne"),
+    ("plot", "de"),
 )
 
 
@@ -41,11 +42,9 @@ def test_console_root_help_covers_the_installed_wheel(monkeypatch, capsys):
 
     assert exc_info.value.code == 0
     output = capsys.readouterr().out
-    assert "Rust-native compute commands:" in output
-    assert "features2proteins" in output
-    assert "Optional analysis and visualization commands:" in output
-    for command in PUBLIC_CLI_COMMANDS:
-        assert command in output
+    assert "quantify" in output
+    assert "plot" in output
+    assert "interactive-report" in output
     assert "mcp serve" not in output
 
 
@@ -58,20 +57,20 @@ def test_console_without_a_command_prints_unified_help(monkeypatch, capsys):
         entrypoint.main()
 
     assert exc_info.value.code == 2
-    assert "tsne-visualization" in capsys.readouterr().err
+    assert "quantify" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("command", PUBLIC_CLI_COMMANDS)
-def test_console_periphery_help_uses_public_command_name(command, monkeypatch, capsys):
+@pytest.mark.parametrize("path", PUBLIC_CLI_PATHS)
+def test_console_periphery_help_uses_public_command_path(path, monkeypatch, capsys):
     """Each advertised workflow must have direct command-specific help."""
     entrypoint = importlib.import_module("mokume.__main__")
-    monkeypatch.setattr(entrypoint.sys, "argv", ["mokume", command, "--help"])
+    monkeypatch.setattr(entrypoint.sys, "argv", ["mokume", *path, "--help"])
 
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
 
     assert exc_info.value.code == 0
-    assert f"usage: mokume {command}" in capsys.readouterr().out
+    assert f"usage: mokume {' '.join(path)}" in capsys.readouterr().out
 
 
 def test_console_dispatches_periphery_arguments(monkeypatch):
@@ -93,14 +92,21 @@ def test_console_dispatches_periphery_arguments(monkeypatch):
     monkeypatch.setattr(
         entrypoint.sys,
         "argv",
-        ["mokume", "tissuemap", "--scan-dir", "datasets"],
+        [
+            "mokume",
+            "--log-level",
+            "warn",
+            "tissuemap",
+            "--input",
+            "datasets",
+        ],
     )
 
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
 
     assert exc_info.value.code == 0
-    assert observed["args"] == ["--scan-dir", "datasets"]
+    assert observed["args"] == ["--input", "datasets"]
 
 
 def test_pibaq_qc_wrapper_accepts_global_options_before_subcommand(monkeypatch):
@@ -115,10 +121,10 @@ def test_pibaq_qc_wrapper_accepts_global_options_before_subcommand(monkeypatch):
         "mokume",
         "--log-level",
         "warn",
+        "quantify",
         "peptides2protein",
-        "--method",
+        "--quant-method",
         "pibaq",
-        "--verbose",
         "--normalize",
         "--qc-report",
         "qc.pdf",
@@ -149,10 +155,12 @@ def test_pibaq_qc_wrapper_accepts_equals_syntax_without_verbose():
     )
     entrypoint = importlib.import_module("mokume.__main__")
 
-    entrypoint._render_requested_pibaq_qc(
+    render_qc = getattr(entrypoint, "_render_requested_pibaq_qc")
+    render_qc(
         [
+            "quantify",
             "peptides2protein",
-            "--method=pibaq",
+            "--quant-method=pibaq",
             "--qc-report=qc.pdf",
             "--output=proteins.tsv",
         ],
@@ -175,7 +183,7 @@ def test_python_compute_wrapper_runs_requested_pibaq_qc(monkeypatch):
     )
 
     package.peptides2protein(
-        method="pibaq",
+        quant_method="pibaq",
         peptides="peptides.tsv",
         fasta="proteins.fasta",
         output="proteins.tsv",
@@ -186,19 +194,22 @@ def test_python_compute_wrapper_runs_requested_pibaq_qc(monkeypatch):
     assert observed["qc_report"] == "qc.pdf"
 
 
-def test_non_pibaq_verbose_does_not_render_pibaq_qc():
-    """Verbose output for another method must not invoke the piBAQ renderer."""
+def test_non_pibaq_qc_report_does_not_render_pibaq_qc():
+    """A QC path for another method must not invoke the piBAQ renderer."""
     package = SimpleNamespace(
         peptides2protein_qc=lambda **_kwargs: pytest.fail("unexpected piBAQ QC")
     )
     entrypoint = importlib.import_module("mokume.__main__")
 
-    entrypoint._render_requested_pibaq_qc(
+    render_qc = getattr(entrypoint, "_render_requested_pibaq_qc")
+    render_qc(
         [
+            "quantify",
             "peptides2protein",
-            "--method",
+            "--quant-method",
             "top3",
-            "--verbose",
+            "--qc-report",
+            "qc.pdf",
             "--output",
             "proteins.tsv",
         ],
@@ -327,27 +338,28 @@ def test_visualize_reads_tab_delimited_protein_tables(tmp_path, monkeypatch):
         ),
     )
 
-    assert module.main(["--folder", str(tmp_path)]) == 0
+    assert module.main(["--input", str(tmp_path)]) == 0
 
 
 @pytest.mark.parametrize(
-    "module_name,args,match",
+    "module_name,args,mode,match",
     [
         (
             "de_plots",
-            ["--protein-matrix", "proteins.csv", "--plot-dir", "plots"],
-            "select --volcano, --heatmap, or --pca",
+            ["--protein-matrix", "proteins.csv", "--outdir", "plots"],
+            "de",
+            "select --volcano or --heatmap",
         ),
         (
             "de_plots",
             [
                 "--protein-matrix",
                 "proteins.csv",
-                "--plot-dir",
-                "plots",
-                "--pca",
+                "--output",
+                "pca.png",
             ],
-            "--heatmap/--pca require --sdrf",
+            "pca",
+            "required: -s/--sdrf",
         ),
         (
             "interactive_report",
@@ -356,12 +368,13 @@ def test_visualize_reads_tab_delimited_protein_tables(tmp_path, monkeypatch):
                 "proteins.csv",
                 "--sdrf",
                 "data.sdrf.tsv",
-                "--report-output",
+                "--output",
                 "report.html",
                 "--plot-dir",
                 "plots",
             ],
-            "choose --report-output or --plot-dir",
+            None,
+            "unrecognized arguments: --plot-dir plots",
         ),
         (
             "peptides2protein_pibaq",
@@ -377,18 +390,27 @@ def test_visualize_reads_tab_delimited_protein_tables(tmp_path, monkeypatch):
                 "--ploidy",
                 "2",
             ],
+            None,
             "--ploidy/--organism/--cpc require --ruler",
         ),
     ],
 )
 def test_periphery_commands_reject_options_that_would_be_ignored(
-    module_name, args, match
+    module_name, args, mode, match, capsys
 ):
     """Periphery commands must reject options outside their active path."""
     module = importlib.import_module(f"mokume.commands.{module_name}")
 
-    with pytest.raises(SystemExit, match=match):
-        module.main(args)
+    with pytest.raises(SystemExit) as exc_info:
+        if mode is None:
+            module.main(args)
+        else:
+            module.main(args, mode=mode)
+    if isinstance(exc_info.value.code, str):
+        assert match in exc_info.value.code
+    else:
+        assert exc_info.value.code == 2
+        assert match in capsys.readouterr().err
 
 
 def test_tissuemap_generate_config_rejects_run_options(tmp_path):
@@ -399,7 +421,7 @@ def test_tissuemap_generate_config_rejects_run_options(tmp_path):
         [
             "--generate-config",
             str(tmp_path / "config.yaml"),
-            "--n-jobs",
+            "--threads",
             "24",
         ]
     )

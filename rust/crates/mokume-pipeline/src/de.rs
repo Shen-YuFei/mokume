@@ -20,7 +20,7 @@
 //!
 //! `--de-method ensemble` is also wired: it runs each configured member method
 //! (default members `[limrots, deqms, proda]`, overridable via
-//! `--de-ensemble-methods`), keeps the non-empty results, and fuses them with the
+//! repeated `--de-ensemble-method`), keeps the non-empty results, and fuses them with the
 //! deterministic top-k consensus combiner (`combine_de_results`), emitting the
 //! consensus column set (`n_methods_up`/`n_methods_down`/`methods_significant`).
 //! The combine step is cell-exact vs Python; the end-to-end ensemble inherits
@@ -505,7 +505,7 @@ fn classify_significance(
 /// the members that produced a non-empty result (Python's `if not result.empty`),
 /// then fuse with `combine_de_results`. The member list defaults to
 /// `[limrots, deqms, proda]` (the Python default) and is overridable via
-/// `--de-ensemble-methods`. Invalid member configurations are rejected before
+/// repeated `--de-ensemble-method`. Invalid member configurations are rejected before
 /// any member runs.
 fn run_ensemble(
     prepared: &Prepared<'_>,
@@ -628,7 +628,7 @@ pub(crate) fn validate_config(
     }
     if config.ensemble_methods.is_some() && !is_ensemble {
         return Err(invalid_input(
-            "--de-ensemble-methods only applies to --de-method ensemble",
+            "--de-ensemble-method only applies to --de-method ensemble",
         ));
     }
     if !is_ensemble && config.ensemble_min_k != 2 {
@@ -844,7 +844,7 @@ fn available_conditions(condition_by_sample: &HashMap<String, String>) -> String
 fn parse_contrasts(config: &DifferentialExpressionConfig) -> Result<Vec<Contrast>> {
     let Some(raw) = &config.contrasts else {
         return Err(invalid_input(
-            "differential expression requires explicit contrasts via --de-contrasts",
+            "differential expression requires explicit contrasts via --de-contrast",
         ));
     };
     let mut contrasts = Vec::new();

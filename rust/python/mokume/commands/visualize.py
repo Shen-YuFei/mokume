@@ -3,14 +3,14 @@
 
 A pure-Python periphery command in the mokume wheel: it re-implements no compute
 kernel; it reads the protein files and draws the t-SNE plot through the mokume
-plotting helpers. Exposed as ``mokume tsne-visualization`` and in-process as
+plotting helpers. Exposed as ``mokume plot tsne`` and in-process as
 ``mokume.tsne_visualization``.
 
 Run requirements: the ``plotting`` extra (matplotlib + seaborn + scikit-learn):
 ``pip install mokume[plotting]``.
 
 argv contract:
-    --folder/-f   PATH   folder that contains the protein files (required)
+    --input/-i    PATH   folder that contains the protein files (required)
     --pattern/-p  STR    protein file glob pattern (default: proteins.tsv)
     --output/-o   PATH   destination PDF
 """
@@ -24,12 +24,12 @@ import sys
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="mokume tsne-visualization",
+        prog="mokume plot tsne",
         description="t-SNE visualization for protein data (mokume command).",
     )
     parser.add_argument(
-        "-f",
-        "--folder",
+        "-i",
+        "--input",
         required=True,
         help="Folder that contains all the protein files.",
     )
@@ -109,10 +109,10 @@ def main(argv: list[str]) -> int:
 
     # Reproduce the upstream tsne_visualization body verbatim so the plotting
     # stays single-sourced in the mokume package.
-    files = glob.glob(f"{args.folder}/*{args.pattern}")
+    files = glob.glob(f"{args.input}/*{args.pattern}")
     if not files:
         print(
-            f"error: no files matched '{args.folder}/*{args.pattern}'",
+            f"error: no files matched '{args.input}/*{args.pattern}'",
             file=sys.stderr,
         )
         return 1

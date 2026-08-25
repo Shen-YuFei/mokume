@@ -2058,7 +2058,7 @@ impl RatioAggregation {
         let reference_samples = resolve_ratio_reference_samples(sdrf, raw_sdrf, config)?;
         if reference_samples.is_empty() {
             return Err(invalid_input(
-                "Ratio quantification requires reference samples; provide --irs-reference-samples or mark references in SDRF",
+                "Ratio quantification requires reference samples; repeat --irs-reference-sample or mark references in SDRF",
             ));
         }
         Ok(Self {
@@ -4490,7 +4490,7 @@ impl ProteinMatrix {
     /// sample-name prefix, `column` from an explicit SDRF column (`source name ->
     /// column`, missing samples `"unknown"`). `run` has no run-level mapping in
     /// the protein-matrix flow, so it raises like Python's `run_info required`.
-    /// `--batch-covariates` are extracted from the SDRF (`extract_sdrf_covariates`)
+    /// Repeated `--batch-covariate` values are extracted from the SDRF (`extract_sdrf_covariates`)
     /// and fed to the covariate ComBat design to preserve their biological signal.
     fn apply_batch_correction(
         &mut self,
@@ -4872,7 +4872,7 @@ pub struct LfqProteinIntensity {
 /// Roll a peptide-level table up to per-protein intensities inside an explicitly
 /// sized Rayon worker pool with the DirectLFQ estimator (canonical peptides as
 /// ions) -- the engine behind
-/// `peptides2protein --method directlfq` and `--method maxlfq`. mokume's
+/// `quantify peptides2protein --quant-method directlfq` and `--quant-method maxlfq`. mokume's
 /// `MaxLFQQuantification` delegates to DirectLFQ when the package is available
 /// (`min_nonan = 2`, its `min_peptides`); the `directlfq` method uses its own
 /// `min_nonan`. `num_samples_quadratic` is DirectLFQ's global-stage knob (the
@@ -5234,7 +5234,7 @@ fn run_features_to_proteins_inner(
     config: &FeatureToProteinsConfig,
     pibaq_digest: Option<PibaqDigest>,
 ) -> Result<()> {
-    // Fold `--de-contrasts-file` into the contrast list up front (mirroring
+    // Fold `--de-contrast-file` into the contrast list up front (mirroring
     // Python's CLI) so validation and the DE stage see one resolved list; the
     // owned, expanded config then shadows the borrowed one for the rest of the run.
     let expanded;
@@ -6324,7 +6324,7 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
     }
     if config.directlfq.cores.is_some() && config.quantification != QuantMethod::DirectLfq {
         return Err(invalid_input(
-            "--directlfq-cores only applies to --quant-method directlfq; use --threads for other methods",
+            "DirectLfqConfig.cores only applies to --quant-method directlfq; use RuntimeConfig.threads for other methods",
         ));
     }
     if config.directlfq.min_nonan != 1 && config.quantification != QuantMethod::DirectLfq {
@@ -6463,7 +6463,7 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
         && (config.batch.column.is_some() || config.batch.covariates.is_some())
     {
         return Err(invalid_input(
-            "Batch correction with --batch-column or --batch-covariates requires --sdrf option",
+            "Batch correction with --batch-column or --batch-covariate requires --sdrf option",
         ));
     }
     Ok(())
@@ -6636,7 +6636,7 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
     }
     if config.irs.sdrf_column.is_some() != config.irs.sdrf_values.is_some() {
         return Err(invalid_input(
-            "--irs-sdrf-column and --irs-sdrf-values must be provided together",
+            "--irs-sdrf-column and --irs-sdrf-value must be provided together",
         ));
     }
     let custom_regex = config.irs.reference_regex != DEFAULT_REFERENCE_REGEX;
@@ -6729,7 +6729,7 @@ pub(crate) fn validate_imputation_config(config: &ImputationConfig) -> Result<()
             || (config.scale - 0.3).abs() > f64::EPSILON
             || config.n_neighbors != 5
         {
-            return Err(invalid_input("imputation options require --impute"));
+            return Err(invalid_input("imputation options require --impute-method"));
         }
         return Ok(());
     }
@@ -6753,7 +6753,7 @@ pub(crate) fn validate_imputation_config(config: &ImputationConfig) -> Result<()
         ));
     }
     match method.as_str() {
-        "" | "none" => return Err(invalid_input("--impute requires an explicit method")),
+        "" | "none" => return Err(invalid_input("--impute-method must name a method")),
         "mindet" | "minprob" => {
             if !config.quantile.is_finite() || !(0.0..=1.0).contains(&config.quantile) {
                 return Err(invalid_input("impute-quantile must be between 0 and 1"));
@@ -6845,15 +6845,15 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         ));
     }
 
-    // `--de-contrasts-file` is expanded into `contrasts` before validation runs
+    // `--de-contrast-file` is expanded into `contrasts` before validation runs
     // (see `expand_de_contrasts_file`), so by here `contrasts_file` is already
     // folded in and the contrasts list below reflects both sources.
     match &de.contrasts {
         Some(contrasts) if !contrasts.is_empty() => {}
         _ => {
             return Err(invalid_input(
-                "differential expression requires explicit contrasts via --de-contrasts \
-                 or --de-contrasts-file (format: 'GroupA vs GroupB' or 'GroupA-GroupB')",
+                "differential expression requires explicit contrasts via --de-contrast \
+                 or --de-contrast-file",
             ));
         }
     }
@@ -6889,9 +6889,9 @@ fn resolve_de_method(config: &FeatureToProteinsConfig) -> String {
     }
 }
 
-/// Fold `--de-contrasts-file` (a TSV with `group1`/`group2` columns) into the
+/// Fold `--de-contrast-file` (a TSV with `group1`/`group2` columns) into the
 /// `contrasts` list, mirroring Python (features2proteins.py:768): each row
-/// appends `"<group1> vs <group2>"` after the inline `--de-contrasts` entries.
+/// appends `"<group1> vs <group2>"` after the repeated `--de-contrast` entries.
 /// The returned config owns the merged list and has `contrasts_file` cleared, so
 /// validation and the DE stage observe a single resolved contrast list. Called
 /// only when `contrasts_file.is_some()`.
@@ -8754,7 +8754,7 @@ fn detect_reference_samples(raw: &SdrfRawTable, reference_regex: &str) -> Result
 
 /// Detect reference samples for ratio quantification, mirroring Python's
 /// `LoadingStage.load_for_ratio` priority:
-///   1. explicit `--irs-reference-samples`,
+///   1. repeated `--irs-reference-sample`,
 ///   2. an explicitly changed reference regex,
 ///   3. `characteristics[pooled sample]` autodetection,
 ///   4. the default regex across every factor/characteristic column.
@@ -9788,7 +9788,7 @@ mod tests {
     #[test]
     fn expands_de_contrasts_file_appending_to_inline() -> Result<(), Box<dyn std::error::Error>> {
         // Mirror Python (features2proteins.py:768): a TSV with group1/group2
-        // columns appends "<g1> vs <g2>" after the inline --de-contrasts entries,
+        // columns appends "<g1> vs <g2>" after the repeated --de-contrast entries,
         // empty rows are skipped, and contrasts_file is cleared so downstream sees
         // one resolved list.
         let parquet = existing_dummy_path("de_contrasts_file")?;
@@ -10565,7 +10565,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     fn accepts_ensemble_de_subset() -> Result<(), Box<dyn std::error::Error>> {
         // ensemble runs member methods and fuses them with the deterministic
         // top-k consensus combiner; a well-formed ensemble DE config must validate
-        // (including an explicit member list via --de-ensemble-methods).
+        // (including an explicit member list via repeated --de-ensemble-method).
         let parquet = existing_dummy_path("ensemble_de")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
@@ -10668,7 +10668,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
 
     #[test]
     fn rejects_ensemble_methods_for_single_method() -> Result<(), Box<dyn std::error::Error>> {
-        // --de-ensemble-methods is meaningless for a single-method run and must be
+        // --de-ensemble-method is meaningless for a single-method run and must be
         // rejected rather than silently ignored.
         let parquet = existing_dummy_path("ensemble_methods_on_limma")?;
         let mut config = base_config(parquet);

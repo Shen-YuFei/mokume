@@ -5,7 +5,7 @@ use std::{
     sync::Mutex,
 };
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use mokume_core::{FeatureToProteinsConfig, MokumeError};
 use mokume_pipeline::{
     run_features_to_proteins, run_features_to_proteins_with_pibaq_digest, PibaqDigest,
@@ -75,6 +75,22 @@ pub struct PibaqDigestRequest {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "Build peptide and protein expression matrices")]
+    Quantify(QuantifyArgs),
+
+    #[command(name = "correct-batches")]
+    #[command(about = "Correct batch effects in protein quantification output")]
+    CorrectBatches(Box<CorrectBatchesArgs>),
+}
+
+#[derive(Debug, Args)]
+struct QuantifyArgs {
+    #[command(subcommand)]
+    command: QuantifyCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum QuantifyCommands {
     #[command(name = "features2proteins")]
     #[command(about = "Quantify proteins from a QPX feature parquet file")]
     Features2Proteins(Box<Features2ProteinsArgs>),
@@ -86,23 +102,21 @@ enum Commands {
     #[command(name = "peptides2protein")]
     #[command(about = "Compute protein quantities from peptide-level input")]
     Peptides2Protein(Box<Peptides2ProteinArgs>),
-
-    #[command(name = "correct-batches")]
-    #[command(about = "Correct batch effects in protein quantification output")]
-    CorrectBatches(Box<CorrectBatchesArgs>),
 }
 
 /// Dispatch a fully-built [`Cli`] to its subcommand.
 #[allow(dead_code)]
 fn dispatch(cli: Cli, pibaq_digest: Option<PibaqDigest>) -> mokume_core::Result<()> {
     init_logging(cli.log_level, cli.log_file).and_then(|()| match cli.command {
-        Commands::Features2Proteins(args) => args
-            .into_config()
-            .and_then(|config| dispatch_features_to_proteins(config, pibaq_digest)),
-        Commands::Features2Peptides(args) => features_to_peptides::dispatch(&args),
-        Commands::Peptides2Protein(args) => {
-            peptides2protein::run_peptides_to_protein_with_digest(&args, pibaq_digest)
-        }
+        Commands::Quantify(args) => match args.command {
+            QuantifyCommands::Features2Proteins(args) => args
+                .into_config()
+                .and_then(|config| dispatch_features_to_proteins(config, pibaq_digest)),
+            QuantifyCommands::Features2Peptides(args) => features_to_peptides::dispatch(&args),
+            QuantifyCommands::Peptides2Protein(args) => {
+                peptides2protein::run_peptides_to_protein_with_digest(&args, pibaq_digest)
+            }
+        },
         Commands::CorrectBatches(args) => correct_batches::run_correct_batches(&args),
     })
 }
@@ -117,10 +131,12 @@ where
 {
     let cli = Cli::try_parse_from(args).ok()?;
     match cli.command {
-        Commands::Features2Proteins(args) => args.into_pibaq_digest_request(),
-        Commands::Peptides2Protein(args)
-            if args.method.eq_ignore_ascii_case("pibaq") && args.output.is_some() =>
-        {
+        Commands::Quantify(QuantifyArgs {
+            command: QuantifyCommands::Features2Proteins(args),
+        }) => args.into_pibaq_digest_request(),
+        Commands::Quantify(QuantifyArgs {
+            command: QuantifyCommands::Peptides2Protein(args),
+        }) if args.quant_method.eq_ignore_ascii_case("pibaq") && args.output.is_some() => {
             let fasta = args.fasta?;
             fasta.is_file().then_some(PibaqDigestRequest {
                 fasta,

@@ -29,7 +29,7 @@ fn version() -> &'static str {
 /// Run a mokume command in-process from an argument vector (no subprocess).
 ///
 /// `args` is the subcommand and its flags WITHOUT the program name, for example
-/// `["features2proteins", "--parquet", "x.parquet", "--output", "y.csv"]`. A
+/// `["quantify", "features2proteins", "--parquet", "x.parquet", "--output", "y.csv"]`. A
 /// parse or runtime error is raised as a Python `RuntimeError` rather than
 /// exiting the interpreter.
 #[pyfunction]

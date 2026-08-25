@@ -34,7 +34,7 @@ def test_de_plots_writes_volcano_png(tmp_path):
         [
             "--protein-matrix",
             os.path.join(DATA, "proteins_matrix.csv"),
-            "--plot-dir",
+            "--outdir",
             str(plot_dir),
             "--volcano",
             "--contrast",
@@ -68,7 +68,7 @@ def test_de_plots_preserves_tiny_kernel_pvalues(tmp_path, monkeypatch):
             [
                 "--protein-matrix",
                 os.path.join(DATA, "proteins_matrix.csv"),
-                "--plot-dir",
+                "--outdir",
                 str(tmp_path / "plots"),
                 "--volcano",
                 "--contrast",

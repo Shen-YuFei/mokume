@@ -6,9 +6,7 @@ use mokume_core::{
 };
 
 use super::Features2ProteinsArgs;
-use crate::parsers::{
-    split_csv_option, split_ensemble_methods, DeLog2FcArg, QuantMethodArg, DEFAULT_TOPN_PEPTIDES,
-};
+use crate::parsers::{DeLog2FcArg, QuantMethodArg, DEFAULT_TOPN_PEPTIDES};
 
 struct QuantificationOptions {
     method: QuantMethod,
@@ -67,20 +65,26 @@ fn resolve_quantification(
             | QuantMethod::PeptideCount
             | QuantMethod::SpectralCount
     );
-    let run_normalization = args.run_normalization.clone().unwrap_or_else(|| {
-        if manages_normalization {
-            "none".to_owned()
-        } else {
-            "median".to_owned()
-        }
-    });
-    let sample_normalization = args.sample_normalization.clone().unwrap_or_else(|| {
-        if manages_normalization {
-            "none".to_owned()
-        } else {
-            "globalmedian".to_owned()
-        }
-    });
+    let run_normalization = args.run_normalization.clone().map_or_else(
+        || {
+            if manages_normalization {
+                "none".to_owned()
+            } else {
+                "median".to_owned()
+            }
+        },
+        |method| method.replace('-', "_"),
+    );
+    let sample_normalization = args.sample_normalization.clone().map_or_else(
+        || {
+            if manages_normalization {
+                "none".to_owned()
+            } else {
+                "globalmedian".to_owned()
+            }
+        },
+        |method| method.replace('-', ""),
+    );
     Ok(QuantificationOptions {
         method,
         topn_peptides: topn.unwrap_or(DEFAULT_TOPN_PEPTIDES),
@@ -111,17 +115,9 @@ fn validate_lfq_options(
     args: &Features2ProteinsArgs,
     method: QuantMethod,
 ) -> mokume_core::Result<()> {
-    if args.threads.is_some() && args.directlfq_cores.is_some() {
+    if method != QuantMethod::DirectLfq && args.directlfq_min_nonan.is_some() {
         return Err(MokumeError::InvalidInput {
-            message: "choose either --threads or --directlfq-cores, not both".to_owned(),
-        });
-    }
-    if method != QuantMethod::DirectLfq
-        && (args.directlfq_cores.is_some() || args.directlfq_min_nonan.is_some())
-    {
-        return Err(MokumeError::InvalidInput {
-            message: "--directlfq-cores/--directlfq-min-nonan require --quant-method directlfq"
-                .to_owned(),
+            message: "--directlfq-min-nonan requires --quant-method directlfq".to_owned(),
         });
     }
     if !matches!(method, QuantMethod::DirectLfq | QuantMethod::MaxLfq)
@@ -137,14 +133,14 @@ fn validate_lfq_options(
 
 fn resolve_batch(args: &Features2ProteinsArgs) -> mokume_core::Result<BatchCorrectionConfig> {
     let method_supplied = args.batch_method.is_some();
-    let method = args
-        .batch_method
-        .clone()
-        .unwrap_or_else(|| "sample_prefix".to_owned());
+    let method = args.batch_method.clone().map_or_else(
+        || "sample_prefix".to_owned(),
+        |value| value.replace('-', "_"),
+    );
     if !args.batch_correction
         && (method_supplied
             || args.batch_column.is_some()
-            || args.batch_covariates.is_some()
+            || !args.batch_covariate.is_empty()
             || args.batch_nonparametric
             || args.batch_mean_only
             || args.batch_ref.is_some())
@@ -157,7 +153,7 @@ fn resolve_batch(args: &Features2ProteinsArgs) -> mokume_core::Result<BatchCorre
         enabled: args.batch_correction,
         method,
         column: args.batch_column.clone(),
-        covariates: split_csv_option(args.batch_covariates.clone()),
+        covariates: (!args.batch_covariate.is_empty()).then(|| args.batch_covariate.clone()),
         parametric: !args.batch_nonparametric,
         mean_only: args.batch_mean_only,
         ref_batch: args.batch_ref.clone(),
@@ -168,18 +164,15 @@ fn resolve_irs(
     args: &Features2ProteinsArgs,
     quantification: QuantMethod,
 ) -> mokume_core::Result<IrsConfig> {
-    let reference_samples = if args.irs_reference_sample.is_empty() {
-        split_csv_option(args.irs_reference_samples.clone())
-    } else {
-        Some(args.irs_reference_sample.clone())
-    };
+    let reference_samples =
+        (!args.irs_reference_sample.is_empty()).then(|| args.irs_reference_sample.clone());
     let selector_count = validate_irs_selectors(args, reference_samples.is_some())?;
     validate_irs_mode(args, quantification, selector_count)?;
     Ok(IrsConfig {
         enabled: args.irs,
         reference_samples,
         sdrf_column: args.irs_sdrf_column.clone(),
-        sdrf_values: split_csv_option(args.irs_sdrf_values.clone()),
+        sdrf_values: (!args.irs_sdrf_value.is_empty()).then(|| args.irs_sdrf_value.clone()),
         reference_regex: args
             .irs_reference_regex
             .clone()
@@ -193,9 +186,9 @@ fn validate_irs_selectors(
     args: &Features2ProteinsArgs,
     has_reference_samples: bool,
 ) -> mokume_core::Result<usize> {
-    if args.irs_sdrf_column.is_some() != args.irs_sdrf_values.is_some() {
+    if args.irs_sdrf_column.is_some() == args.irs_sdrf_value.is_empty() {
         return Err(MokumeError::InvalidInput {
-            message: "--irs-sdrf-column and --irs-sdrf-values must be provided together".to_owned(),
+            message: "--irs-sdrf-column and --irs-sdrf-value must be provided together".to_owned(),
         });
     }
     let selector_count = usize::from(has_reference_samples)
@@ -231,12 +224,12 @@ fn validate_irs_mode(
             });
         }
         if args.irs_sdrf_column.is_some()
-            || args.irs_sdrf_values.is_some()
+            || !args.irs_sdrf_value.is_empty()
             || args.irs_stat.is_some()
             || args.irs_remove_reference
         {
             return Err(MokumeError::InvalidInput {
-                message: "Ratio accepts --irs-reference-samples or --irs-reference-regex; IRS-only options require --irs"
+                message: "Ratio accepts --irs-reference-sample or --irs-reference-regex; IRS-only options require --irs"
                     .to_owned(),
             });
         }
@@ -277,15 +270,12 @@ fn resolve_imputation(args: &Features2ProteinsArgs) -> mokume_core::Result<Imput
             message: "imputation tuning options require --impute-method".to_owned(),
         });
     }
-    let mut method = args
+    let method = args
         .impute_method
         .clone()
-        .unwrap_or_else(|| "none".to_owned());
-    if method.eq_ignore_ascii_case("constant") {
-        method = "zero".to_owned();
-    }
-    let enabled = args.impute || args.impute_method.is_some();
-    validate_imputation_method(args, &method, enabled)?;
+        .map_or_else(|| "none".to_owned(), |value| value.replace('-', "_"));
+    let enabled = args.impute_method.is_some();
+    validate_imputation_method(args, &method)?;
     Ok(ImputationConfig {
         enabled,
         method,
@@ -299,13 +289,7 @@ fn resolve_imputation(args: &Features2ProteinsArgs) -> mokume_core::Result<Imput
 fn validate_imputation_method(
     args: &Features2ProteinsArgs,
     method: &str,
-    enabled: bool,
 ) -> mokume_core::Result<()> {
-    if enabled && method.eq_ignore_ascii_case("none") {
-        return Err(MokumeError::InvalidInput {
-            message: "--impute requires --impute-method".to_owned(),
-        });
-    }
     let method = method.to_ascii_lowercase();
     if args.impute_quantile.is_some() && !matches!(method.as_str(), "mindet" | "minprob") {
         return Err(MokumeError::InvalidInput {
@@ -329,11 +313,7 @@ fn resolve_differential_expression(
     args: &Features2ProteinsArgs,
     quantification: QuantMethod,
 ) -> mokume_core::Result<DifferentialExpressionConfig> {
-    if !args.differential_expression && de_options_supplied(args) {
-        return Err(MokumeError::InvalidInput {
-            message: "differential-expression options require --de".to_owned(),
-        });
-    }
+    let enabled = de_options_supplied(args);
     let method = args.de_method.clone().unwrap_or_else(|| "auto".to_owned());
     let resolved_method = resolved_de_method(&method, quantification);
     validate_de_method_options(args, &method, resolved_method)?;
@@ -342,14 +322,19 @@ fn resolve_differential_expression(
         .unwrap_or(DeLog2FcArg::Fixed(0.5))
         .into_config();
     Ok(DifferentialExpressionConfig {
-        enabled: args.differential_expression,
-        contrasts: split_csv_option(args.de_contrasts.clone()),
-        contrasts_file: args.de_contrasts_file.clone(),
+        enabled,
+        contrasts: de_contrasts(args),
+        contrasts_file: args.de_contrast_file.clone(),
         method,
-        ensemble_methods: split_ensemble_methods(args.de_ensemble_methods.clone()),
+        ensemble_methods: (!args.de_ensemble_method.is_empty())
+            .then(|| args.de_ensemble_method.clone()),
         ensemble_min_k: args.de_ensemble_min_k.unwrap_or(2),
         log2fc_threshold,
-        effect_size_gate: args.de_effect_size_gate.clone().or(auto_effect_size_gate),
+        effect_size_gate: args
+            .de_effect_size_gate
+            .clone()
+            .map(|value| value.replace('-', "_"))
+            .or(auto_effect_size_gate),
         fdr_threshold: args.de_fdr_threshold.unwrap_or(0.05),
         fdr_method: args
             .de_fdr_method
@@ -360,16 +345,25 @@ fn resolve_differential_expression(
 }
 
 fn de_options_supplied(args: &Features2ProteinsArgs) -> bool {
-    args.de_contrasts.is_some()
-        || args.de_contrasts_file.is_some()
+    !args.de_contrast.is_empty()
+        || args.de_contrast_file.is_some()
         || args.de_method.is_some()
-        || args.de_ensemble_methods.is_some()
+        || !args.de_ensemble_method.is_empty()
         || args.de_ensemble_min_k.is_some()
         || args.de_log2fc_threshold.is_some()
         || args.de_effect_size_gate.is_some()
         || args.de_fdr_threshold.is_some()
         || args.de_fdr_method.is_some()
         || args.de_output.is_some()
+}
+
+fn de_contrasts(args: &Features2ProteinsArgs) -> Option<Vec<String>> {
+    (!args.de_contrast.is_empty()).then(|| {
+        args.de_contrast
+            .chunks_exact(2)
+            .map(|groups| format!("{} vs {}", groups[0], groups[1]))
+            .collect()
+    })
 }
 
 fn resolved_de_method(method: &str, quantification: QuantMethod) -> &str {
@@ -450,7 +444,7 @@ fn build_config(
         differential_expression: resolved.differential_expression,
         runtime: RuntimeConfig {
             memory: args.memory.clone(),
-            threads: args.threads.or(args.directlfq_cores),
+            threads: args.threads,
         },
     }
 }
@@ -470,7 +464,7 @@ fn output_config(args: &Features2ProteinsArgs) -> OutputConfig {
         protein_matrix: args.output.clone(),
         export_peptides: args.export_peptides.clone(),
         export_ions: args.export_ions.clone(),
-        format: OutputFormat::from(args.output_format),
+        format: OutputFormat::PythonCompatible,
     }
 }
 

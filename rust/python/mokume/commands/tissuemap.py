@@ -12,14 +12,14 @@ matplotlib, seaborn, ...): ``pip install mokume[tissuemap]``. The
 wheel.
 
 argv contract:
-    --scan-dir          PATH    dataset directory (required unless --generate-config)
-    --output-dir        PATH    output directory (default: tissuemap_output)
+    --input/-i          PATH    dataset directory (required unless --generate-config)
+    --outdir/-o         PATH    output directory (default: tissuemap_output)
     --config            PATH    YAML configuration file
     --generate-config   PATH    write default YAML template and exit
     --tmt-dataset       STR     TMT dataset id (repeatable)
-    --n-jobs            INT     threads (default: 8)
+    --threads/-t        INT     threads (default: 8)
     --dpi               INT     plot DPI
-    --imputation-method STR
+    --impute-method     STR
     --embedding-method  {tsne,umap}
 """
 
@@ -49,17 +49,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         prog="mokume tissuemap",
         description="Per-dataset tissue proteome analysis (mokume command).",
     )
-    parser.add_argument("--scan-dir", type=Path, default=None)
-    parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("-i", "--input", dest="scan_dir", type=Path, default=None)
+    parser.add_argument("-o", "--outdir", dest="output_dir", type=Path, default=None)
     parser.add_argument("--config", dest="config_path", type=Path, default=None)
     parser.add_argument("--generate-config", type=Path, default=None)
     parser.add_argument(
         "--tmt-dataset", dest="tmt_datasets", action="append", default=[]
     )
-    parser.add_argument("--n-jobs", type=int, default=None)
+    parser.add_argument("-t", "--threads", dest="n_jobs", type=int, default=None)
     parser.add_argument("--dpi", type=int, default=None)
     parser.add_argument(
-        "--imputation-method",
+        "--impute-method",
         dest="imputation_method",
         type=str.lower,
         choices=_IMPUTATION_CHOICES,
@@ -189,7 +189,7 @@ def main(argv: list[str]) -> int:
 
     if args.scan_dir is None and args.config_path is None:
         print(
-            "error: --scan-dir is required unless it is defined by --config.",
+            "error: --input is required unless it is defined by --config.",
             file=sys.stderr,
         )
         return 2

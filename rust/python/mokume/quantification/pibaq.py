@@ -339,7 +339,7 @@ def _native_pibaq_options(bound: Mapping[str, object]) -> dict[str, object]:
         "organism output min_shared min_anchors high_anchor_threshold"
     ).split()
     options = {name: bound[name] for name in names}
-    options["method"] = "pibaq"
+    options["quant_method"] = "pibaq"
     if bound["families_yaml"] is not None:
         options["families"] = bound["families_yaml"]
     return options

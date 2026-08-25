@@ -36,7 +36,7 @@ class TestPeptides2Protein:
         output = str(tmp_path / f"{method}.tsv")
         mokume.peptides2protein(
             peptides=PEPTIDES_CSV,
-            method=method,
+            quant_method=method,
             output=output,
         )
         assert os.path.exists(output)
@@ -48,7 +48,7 @@ class TestPeptides2Protein:
         output = str(tmp_path / "from_parquet.tsv")
         mokume.peptides2protein(
             peptides=peptides_parquet,
-            method="sum",
+            quant_method="sum",
             output=output,
         )
         assert os.path.exists(output)
@@ -60,12 +60,12 @@ class TestPeptides2Protein:
         pq_out = str(tmp_path / "pq.tsv")
         mokume.peptides2protein(
             peptides=PEPTIDES_CSV,
-            method="sum",
+            quant_method="sum",
             output=csv_out,
         )
         mokume.peptides2protein(
             peptides=peptides_parquet,
-            method="sum",
+            quant_method="sum",
             output=pq_out,
         )
         df_csv = pd.read_csv(csv_out, sep="\t")
@@ -73,13 +73,13 @@ class TestPeptides2Protein:
         assert set(df_csv["ProteinName"]) == set(df_pq["ProteinName"])
 
     def test_topn_with_custom_n(self, tmp_path):
-        # N is spelled in the method name. This used to read `method="top3",
+        # N is spelled in the method name. This used to read `quant_method="top3",
         # topn_n=5` and still produce Top5 -- the digits in the name were inert
         # and the companion option won. Both spellings of N are gone now.
         output = str(tmp_path / "top5.tsv")
         mokume.peptides2protein(
             peptides=PEPTIDES_CSV,
-            method="top5",
+            quant_method="top5",
             output=output,
         )
         assert os.path.exists(output)
@@ -133,10 +133,11 @@ class TestRunGeneric:
         output = str(tmp_path / "run_out.tsv")
         mokume.run(
             [
+                "quantify",
                 "peptides2protein",
                 "--peptides",
                 PEPTIDES_CSV,
-                "--method",
+                "--quant-method",
                 "sum",
                 "--output",
                 output,

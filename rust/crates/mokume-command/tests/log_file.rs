@@ -15,6 +15,7 @@ fn log_file_option_writes_file_and_preserves_command_errors(
     let log_file = root.join("logs").join("mokume.log");
     let error = match run_from_args([
         "mokume",
+        "quantify",
         "features2proteins",
         "--parquet",
         "definitely-missing.feature.parquet",
@@ -56,8 +57,9 @@ P1,PEPTIDEAK,S1,A,100.0\n",
     run_from_args_with_pibaq_digest(
         [
             "mokume",
+            "quantify",
             "peptides2protein",
-            "--method",
+            "--quant-method",
             "pibaq",
             "--peptides",
             path_str(&peptides)?,
@@ -108,6 +110,7 @@ P1,PEPTIDEAK,S1,A,100.0\n",
     let conflicting_log = root.join("logs").join("conflicting.log");
     let conflict = match run_from_args([
         "mokume",
+        "quantify",
         "features2proteins",
         "--parquet",
         "another-missing.feature.parquet",

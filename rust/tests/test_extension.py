@@ -118,7 +118,7 @@ def test_pibaq_compatibility_wrapper_dispatches_native(monkeypatch, tmp_path):
     )
 
     assert captured == {
-        "method": "pibaq",
+        "quant_method": "pibaq",
         "fasta": "proteome.fasta",
         "peptides": "peptides.csv",
         "enzyme": "Trypsin",
@@ -139,11 +139,11 @@ def test_pibaq_compatibility_wrapper_dispatches_native(monkeypatch, tmp_path):
 
 
 def test_compute_wrapper_rejects_bad_method(tmp_path):
-    # A bad --method value is rejected by clap inside the extension and surfaced
+    # A bad --quant-method value is rejected by clap inside the extension and surfaced
     # as a normal RuntimeError -- no interpreter teardown.
     with pytest.raises(RuntimeError):
         mokume.peptides2protein(
-            method="definitely-not-a-method",
+            quant_method="definitely-not-a-method",
             peptides="/nonexistent/peptides.csv",
             output=str(tmp_path / "out.tsv"),
         )
@@ -154,7 +154,7 @@ def test_run_cli_help_exits_zero():
 
 
 def test_run_cli_subcommand_help_exits_zero():
-    assert run_cli(["features2proteins", "--help"]) == 0
+    assert run_cli(["quantify", "features2proteins", "--help"]) == 0
 
 
 def test_run_cli_unknown_subcommand_is_nonzero():
@@ -304,7 +304,7 @@ def test_rust_pibaq_matches_python_for_runtime_catalog(tmp_path, enzyme):
         peptide_df, mapping, peptide_to_accessions, families, **options
     )
     mokume.peptides2protein(
-        method="pibaq",
+        quant_method="pibaq",
         peptides=str(peptide_table),
         fasta=str(fasta),
         enzyme=enzyme,
@@ -455,8 +455,9 @@ def test_console_pibaq_uses_runtime_digest(tmp_path, monkeypatch):
         "argv",
         [
             "mokume",
+            "quantify",
             "peptides2protein",
-            "--method",
+            "--quant-method",
             "pibaq",
             "--peptides",
             str(peptide_table),

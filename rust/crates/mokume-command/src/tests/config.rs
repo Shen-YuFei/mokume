@@ -3,10 +3,11 @@ use std::path::Path;
 use clap::Parser;
 use mokume_core::{MokumeError, PreprocessingFilterConfig};
 
-use crate::{Cli, Commands};
+use crate::{Cli, Commands, Features2ProteinsArgs, QuantifyCommands};
 
 const PYTHON_FEATURES_TO_PROTEINS_ARGS: &[&str] = &[
     "mokume",
+    "quantify",
     "features2proteins",
     "-p",
     "input.parquet",
@@ -23,54 +24,54 @@ const PYTHON_FEATURES_TO_PROTEINS_ARGS: &[&str] = &[
     "column",
     "--batch-column",
     "characteristics[batch]",
-    "--batch-covariates",
-    "characteristics[sex],characteristics[organism part]",
+    "--batch-covariate",
+    "characteristics[sex]",
+    "--batch-covariate",
+    "characteristics[organism part]",
     "--batch-nonparametric",
     "--batch-mean-only",
     "--batch-ref",
     "2",
     "--irs",
-    "--irs-reference-samples",
-    "Pool A,Pool B",
+    "--irs-reference-sample",
+    "Pool A",
+    "--irs-reference-sample",
+    "Pool B",
     "--coverage-threshold",
     "0.65",
     "--min-sample-correlation",
     "0.90",
-    "--impute",
     "--impute-method",
     "knn",
-    "--de",
     "--de-method",
     "limma",
-    "--de-contrasts",
-    "NASH-HL,NASH-Ctrl",
+    "--de-contrast",
+    "NASH-HL",
+    "NASH-Ctrl",
     "--de-fdr-method",
     "ihw",
     "--de-output",
     "de.csv",
     "--memory",
     "1GB",
-    "--duckdb-threads",
+    "--threads",
     "24",
 ];
 
 #[test]
-fn correct_batches_accepts_short_column_aliases() {
-    // Python's click CLI accepts `-sid`/`-pid`/`-pibaq`; clap cannot express
-    // single-dash multi-character shorts, so these are offered as `--sid` /
-    // `--pid` / `--pibaq` long aliases (closest portable form).
+fn correct_batches_accepts_canonical_column_options() {
     let cli = Cli::parse_from([
         "mokume",
         "correct-batches",
-        "-f",
+        "-i",
         "in",
         "-o",
         "out",
-        "--sid",
+        "--sample-id-column",
         "MySample",
-        "--pid",
+        "--protein-id-column",
         "MyProtein",
-        "--pibaq",
+        "--pibaq-raw-column",
         "MyPibaq",
     ]);
     let Commands::CorrectBatches(args) = cli.command else {
@@ -85,9 +86,7 @@ fn correct_batches_accepts_short_column_aliases() {
 fn parses_python_features2proteins_options() {
     let cli = Cli::parse_from(PYTHON_FEATURES_TO_PROTEINS_ARGS.iter().copied());
 
-    let Commands::Features2Proteins(args) = cli.command else {
-        panic!("expected features2proteins command");
-    };
+    let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
         panic!("expected a valid features2proteins config");
     };
@@ -126,9 +125,39 @@ fn parses_python_features2proteins_options() {
 }
 
 #[test]
+fn canonical_kebab_case_values_map_to_internal_config() {
+    let cli = Cli::parse_from([
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "--parquet",
+        "input.parquet",
+        "--output",
+        "protein.csv",
+        "--quant-method",
+        "sum",
+        "--run-normalization",
+        "max-min",
+        "--sample-normalization",
+        "median-center",
+        "--impute-method",
+        "most-frequent",
+    ]);
+    let args = features_to_proteins_args(cli);
+    let Ok(config) = args.into_config() else {
+        panic!("expected canonical CLI values to produce a valid config");
+    };
+
+    assert_eq!(config.normalization.run_method, "max_min");
+    assert_eq!(config.normalization.sample_method, "mediancenter");
+    assert_eq!(config.imputation.method, "most_frequent");
+}
+
+#[test]
 fn rejects_removed_ibaq_method_name() {
     let features = Cli::try_parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "-p",
         "input.parquet",
@@ -141,10 +170,11 @@ fn rejects_removed_ibaq_method_name() {
 
     let peptides = Cli::try_parse_from([
         "mokume",
+        "quantify",
         "peptides2protein",
         "--peptides",
         "peptides.csv",
-        "--method",
+        "--quant-method",
         "ibaq",
     ]);
     assert!(peptides.is_err());
@@ -154,6 +184,7 @@ fn rejects_removed_ibaq_method_name() {
 fn rejects_nonpositive_memory_budget() {
     let parsed = Cli::try_parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "--parquet",
         "input.parquet",
@@ -173,6 +204,7 @@ fn rejects_nonpositive_memory_budget() {
 fn parses_adaptive_de_options() {
     let cli = Cli::parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "-p",
         "input.parquet",
@@ -180,19 +212,17 @@ fn parses_adaptive_de_options() {
         "protein.csv",
         "-s",
         "input.sdrf.tsv",
-        "--de",
         "--de-method",
         "limma",
-        "--de-contrasts",
-        "A vs B",
+        "--de-contrast",
+        "A",
+        "B",
         "--de-log2fc",
         "auto",
         "--de-fdr-method",
         "storey",
     ]);
-    let Commands::Features2Proteins(args) = cli.command else {
-        panic!("expected features2proteins command");
-    };
+    let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
         panic!("expected a valid features2proteins config");
     };
@@ -209,20 +239,18 @@ fn parses_adaptive_de_options() {
 fn explicit_effect_size_method_uses_numeric_threshold_as_fallback() {
     let cli = Cli::parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "-p",
         "input.parquet",
         "-o",
         "protein.csv",
-        "--de",
         "--de-log2fc",
         "0.25",
         "--de-effect-size-gate",
-        "null_quantile",
+        "null-quantile",
     ]);
-    let Commands::Features2Proteins(args) = cli.command else {
-        panic!("expected features2proteins command");
-    };
+    let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
         panic!("expected a valid features2proteins config");
     };
@@ -238,6 +266,7 @@ fn explicit_effect_size_method_uses_numeric_threshold_as_fallback() {
 fn parses_native_msstats_input() {
     let cli = Cli::parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "--msstats",
         "input.csv",
@@ -246,9 +275,7 @@ fn parses_native_msstats_input() {
         "--output",
         "protein.csv",
     ]);
-    let Commands::Features2Proteins(args) = cli.command else {
-        panic!("expected features2proteins command");
-    };
+    let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
         panic!("expected a valid features2proteins config");
     };
@@ -264,6 +291,7 @@ fn parses_native_msstats_input() {
 fn native_msstats_input_requires_sdrf() {
     let Err(error) = Cli::try_parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "--msstats",
         "input.csv",
@@ -280,20 +308,19 @@ fn native_msstats_input_requires_sdrf() {
 }
 
 #[test]
-fn impute_method_enables_imputation_and_constant_maps_to_zero() {
+fn zero_impute_method_enables_imputation() {
     let cli = Cli::parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "--parquet",
         "input.parquet",
         "--output",
         "protein.csv",
         "--impute-method",
-        "constant",
+        "zero",
     ]);
-    let Commands::Features2Proteins(args) = cli.command else {
-        panic!("expected features2proteins command");
-    };
+    let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
         panic!("expected a valid imputation config");
     };
@@ -302,42 +329,37 @@ fn impute_method_enables_imputation_and_constant_maps_to_zero() {
 }
 
 #[test]
-fn preserves_empty_de_ensemble_members_for_validation() {
-    for value in ["", "limma,,deqms"] {
-        let cli = Cli::parse_from([
-            "mokume",
-            "features2proteins",
-            "-p",
-            "input.parquet",
-            "-o",
-            "protein.csv",
-            "--de",
-            "--de-method",
-            "ensemble",
-            "--de-ensemble-methods",
-            value,
-        ]);
-        let Commands::Features2Proteins(args) = cli.command else {
-            panic!("expected features2proteins command");
-        };
-        let Ok(config) = args.into_config() else {
-            panic!("expected a valid features2proteins config");
-        };
-        let methods = config.differential_expression.ensemble_methods;
-
-        assert!(
-            methods
-                .as_ref()
-                .is_some_and(|methods| methods.iter().any(String::is_empty)),
-            "empty member from {value:?} was discarded: {methods:?}"
-        );
-    }
+fn repeated_de_ensemble_methods_preserve_members() {
+    let cli = Cli::parse_from([
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "-p",
+        "input.parquet",
+        "-o",
+        "protein.csv",
+        "--de-method",
+        "ensemble",
+        "--de-ensemble-method",
+        "limma",
+        "--de-ensemble-method",
+        "deqms",
+    ]);
+    let args = features_to_proteins_args(cli);
+    let Ok(config) = args.into_config() else {
+        panic!("expected a valid features2proteins config");
+    };
+    assert_eq!(
+        config.differential_expression.ensemble_methods,
+        Some(vec!["limma".to_owned(), "deqms".to_owned()])
+    );
 }
 
 #[test]
 fn rejects_ensemble_min_k_for_single_de_method() {
     let cli = Cli::parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "-p",
         "input.parquet",
@@ -348,9 +370,7 @@ fn rejects_ensemble_min_k_for_single_de_method() {
         "--de-ensemble-min-k",
         "2",
     ]);
-    let Commands::Features2Proteins(args) = cli.command else {
-        panic!("expected features2proteins command");
-    };
+    let args = features_to_proteins_args(cli);
 
     assert!(matches!(
         args.into_config(),
@@ -362,6 +382,7 @@ fn rejects_ensemble_min_k_for_single_de_method() {
 fn repeatable_reference_sample_preserves_commas() {
     let cli = Cli::parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "-p",
         "input.parquet",
@@ -374,9 +395,7 @@ fn repeatable_reference_sample_preserves_commas() {
         "Pool B",
     ]);
 
-    let Commands::Features2Proteins(args) = cli.command else {
-        panic!("expected features2proteins command");
-    };
+    let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
         panic!("expected a valid features2proteins config");
     };
@@ -388,9 +407,10 @@ fn repeatable_reference_sample_preserves_commas() {
 }
 
 #[test]
-fn rejects_mixed_reference_sample_encodings() {
+fn rejects_removed_plural_reference_sample_option() {
     let Err(error) = Cli::try_parse_from([
         "mokume",
+        "quantify",
         "features2proteins",
         "-p",
         "input.parquet",
@@ -398,13 +418,21 @@ fn rejects_mixed_reference_sample_encodings() {
         "protein.csv",
         "--irs-reference-samples",
         "Pool A,Pool B",
-        "--irs-reference-sample",
-        "Pool C",
     ]) else {
-        panic!("mixed reference-sample encodings should conflict");
+        panic!("removed plural reference-sample option was accepted");
     };
 
-    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+fn features_to_proteins_args(cli: Cli) -> Box<Features2ProteinsArgs> {
+    let Commands::Quantify(quantify) = cli.command else {
+        panic!("expected quantify command");
+    };
+    let QuantifyCommands::Features2Proteins(args) = quantify.command else {
+        panic!("expected features2proteins command");
+    };
+    args
 }
 
 #[test]

@@ -82,7 +82,7 @@ run_one() {
     || { echo "[parity][${pxd}] ${name}: python FAILED" >&2; return 1; }
 
   echo "[parity][${pxd}] ${name}: rust"
-  "${RUST_PYTHON}" -m mokume features2proteins \
+  "${RUST_PYTHON}" -m mokume quantify features2proteins \
     --parquet "${parquet}" "${sdrf_rs[@]}" --output "${rs_csv}" \
     --quant-method "${quant}" \
     --run-normalization "${run_norm}" \

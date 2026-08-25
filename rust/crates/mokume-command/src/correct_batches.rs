@@ -55,7 +55,7 @@ struct LongTable {
 pub fn run_correct_batches(args: &CorrectBatchesArgs) -> Result<()> {
     let separator = single_byte(&args.sep, "sep")?;
     let comment = optional_single_byte(&args.comment, "comment")?;
-    let paths = matched_input_files(&args.folder, &args.pattern, &args.output)?;
+    let paths = matched_input_files(&args.input, &args.pattern, &args.output)?;
 
     let table = load_long_table(
         &paths,
@@ -924,7 +924,7 @@ mod tests {
 
     fn args_for(folder: &Path, output: &Path) -> CorrectBatchesArgs {
         CorrectBatchesArgs {
-            folder: folder.to_path_buf(),
+            input: folder.to_path_buf(),
             pattern: "*pibaq.tsv".to_string(),
             comment: "#".to_string(),
             sep: "\t".to_string(),

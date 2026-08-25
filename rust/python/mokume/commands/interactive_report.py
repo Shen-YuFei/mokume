@@ -23,18 +23,17 @@ argv contract (runnable via ``mokume interactive-report``):
     mokume interactive-report \
         --protein-matrix <proteins.csv> \
         --sdrf <sdrf.tsv> \
-        [--report-output <report.html>] \
-        [--plot-dir <plots/>] \
-        [--log2fc-threshold 0.5] [--fdr-threshold 0.05] \
-        [--highlight-genes GENE1,GENE2] \
+        [-o <report.html>] \
+        [--log2fc 0.5] [--fdr 0.05] \
+        [--highlight-protein PROTEIN] ... \
         [--contrast <key> <condA> <condB> <de_csv>] ...
 
 Each ``--contrast`` flag carries one contrast: its output-file key, the two
 condition labels, and the path to the DE result CSV Rust wrote. The report is
 per-contrast. The output path mirrors ``stages.generate_interactive_report``:
-with ``--report-output`` and a single contrast the path is used verbatim; with
+with ``--output`` and a single contrast the path is used verbatim; with
 multiple contrasts the contrast key is inserted before the extension; without
-``--report-output`` the report lands in ``<plot-dir or .>/report_<key>.html``.
+``--output`` the report lands in ``./report_<key>.html``.
 
 Exit code 0 on success; non-zero (with a message on stderr) otherwise.
 """
@@ -44,86 +43,51 @@ from __future__ import annotations
 import argparse
 import sys
 
+from mokume.commands._de_cli import (
+    add_de_result_arguments,
+    add_protein_matrix_argument,
+)
+
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="mokume interactive-report",
         description="Render the features2proteins interactive HTML report.",
     )
+    add_protein_matrix_argument(parser)
     parser.add_argument(
-        "--protein-matrix",
-        required=True,
-        help="Protein intensity matrix CSV written by the Rust pipeline.",
-    )
-    parser.add_argument(
+        "-s",
         "--sdrf",
         required=True,
         help="SDRF file; the report needs the sample-to-condition mapping.",
     )
     parser.add_argument(
-        "--report-output",
+        "-o",
+        "--output",
         default=None,
-        help="Output HTML path (default: <plot-dir or .>/report_<key>.html).",
+        help="Output HTML path (default: ./report_<key>.html).",
     )
-    parser.add_argument(
-        "--plot-dir",
-        default=None,
-        help="Plot directory used to place the report when --report-output is unset.",
-    )
-    parser.add_argument(
-        "--log2fc-threshold",
-        type=float,
-        default=0.5,
-        help="|log2FC| significance threshold (matches --de-log2fc).",
-    )
-    parser.add_argument(
-        "--fdr-threshold",
-        type=float,
-        default=0.05,
-        help="FDR significance threshold (matches --de-fdr).",
-    )
-    parser.add_argument(
-        "--highlight-genes",
-        default=None,
-        help="Comma-separated protein names to highlight on the volcano plot.",
-    )
-    parser.add_argument(
-        "--contrast",
-        nargs=4,
-        action="append",
-        default=[],
-        metavar=("KEY", "COND_A", "COND_B", "DE_CSV"),
-        help="One contrast: output key, condition A, condition B, DE result CSV.",
-    )
+    add_de_result_arguments(parser)
     return parser.parse_args(argv)
 
 
-def _resolve_output_html(report_output, plot_dir, key, n_contrasts):
+def _resolve_output_html(output, key, n_contrasts):
     """Mirror the output-path logic in ``stages.generate_interactive_report``."""
     from pathlib import Path
 
-    if report_output:
+    if output:
         if n_contrasts == 1:
-            return report_output
-        base = report_output.rsplit(".", 1)
+            return output
+        base = output.rsplit(".", 1)
         return "{0}_{1}.html".format(base[0], key)
-    plot_dir = plot_dir or "."
-    return str(Path(plot_dir) / "report_{0}.html".format(key))
+    return str(Path(".") / "report_{0}.html".format(key))
 
 
 def _validate_args(args):
-    if args.report_output and args.plot_dir:
-        raise SystemExit(
-            "Interactive report aborted: choose --report-output or --plot-dir, not both"
-        )
-    if args.log2fc_threshold < 0:
-        raise SystemExit(
-            "Interactive report aborted: --log2fc-threshold must be non-negative"
-        )
-    if not 0 <= args.fdr_threshold <= 1:
-        raise SystemExit(
-            "Interactive report aborted: --fdr-threshold must be between 0 and 1"
-        )
+    if args.log2fc < 0:
+        raise SystemExit("Interactive report aborted: --log2fc must be non-negative")
+    if not 0 <= args.fdr <= 1:
+        raise SystemExit("Interactive report aborted: --fdr must be between 0 and 1")
 
 
 def _require_sample_conditions(sample_to_condition):
@@ -186,19 +150,13 @@ def main(argv=None):
     protein_df = pd.read_csv(args.protein_matrix)
     sample_to_condition = detect_condition_from_sdrf(args.sdrf)
     _require_sample_conditions(sample_to_condition)
-    highlight = (
-        [gene.strip() for gene in args.highlight_genes.split(",") if gene.strip()]
-        if args.highlight_genes
-        else None
-    )
+    highlight = args.highlight_protein or None
 
     n_contrasts = len(args.contrast)
     for key, cond_a, cond_b, de_csv in args.contrast:
         _validate_contrast_conditions(sample_to_condition, cond_a, cond_b)
         de_df = pd.read_csv(de_csv, float_precision="round_trip")
-        output_html = _resolve_output_html(
-            args.report_output, args.plot_dir, key, n_contrasts
-        )
+        output_html = _resolve_output_html(args.output, key, n_contrasts)
         generate_de_report(
             de_results=de_df,
             protein_df=protein_df,
@@ -206,8 +164,8 @@ def main(argv=None):
             output_html=output_html,
             title=f"DE Report: {key} ({cond_a} vs {cond_b})",
             highlight_genes=highlight,
-            log2fc_threshold=args.log2fc_threshold,
-            fdr_threshold=args.fdr_threshold,
+            log2fc_threshold=args.log2fc,
+            fdr_threshold=args.fdr,
         )
         print("Interactive report saved to {0}".format(output_html))
 

@@ -7,7 +7,7 @@ This module preserves the established file-oriented Python command contract and
 forwards it through ``mokume.quantification.pibaq.peptides_to_protein``. That
 compatibility API delegates shared-peptide allocation, theoretical denominators,
 evidence classification, TPA, and output generation to the same native Rust core
-as ``mokume peptides2protein``; it is neither an enzyme fallback nor a separate
+as ``mokume quantify peptides2protein``; it is neither an enzyme fallback nor a separate
 full-Python implementation.
 
 The output uses the native command's TSV schema, so downstream consumers see the
@@ -26,7 +26,7 @@ argv contract (runnable via ``python -m mokume.commands.peptides2protein_pibaq``
         [--normalize] [--tpa] [--ruler] [--verbose] \
         [--qc-report <QCprofile.pdf>] [--families <families.yaml>]
 
-The DirectLFQ knobs (``--threads`` / ``--min_nonan``) are not forwarded:
+The DirectLFQ knobs (``--threads`` / ``--directlfq-min-nonan``) are not forwarded:
 ``peptides_to_protein`` takes no such parameters, and only the piBAQ method
 reaches this command. TopN needs no knob at all -- its N is spelled in the
 method name (``top5``).

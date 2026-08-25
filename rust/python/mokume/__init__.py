@@ -104,7 +104,12 @@ def _bootstrap():
 
 def _build_args(command, kwargs):
     """Prefix the subcommand name to the flags built from ``kwargs``."""
-    return [command, *flags_for(command, kwargs)]
+    path = (
+        ["quantify", command]
+        if command in {"features2peptides", "features2proteins", "peptides2protein"}
+        else [command]
+    )
+    return [*path, *flags_for(command, kwargs)]
 
 
 def _prepare_pibaq_digest(args):
@@ -168,7 +173,7 @@ def run(args):
 
     Example::
 
-        mokume.run(["features2proteins", "--parquet", "x.parquet",
+        mokume.run(["quantify", "features2proteins", "--parquet", "x.parquet",
                     "--output", "y.csv"])
     """
     _run(list(args))
@@ -181,17 +186,17 @@ def protease_catalog():
 
 
 def features2peptides(**kwargs):
-    """Run ``features2peptides`` (feature parquet -> peptide-level output)."""
+    """Run ``quantify features2peptides`` (feature parquet -> peptide output)."""
     _run(_build_args("features2peptides", kwargs))
 
 
 def features2proteins(**kwargs):
-    """Run ``features2proteins`` (feature parquet -> protein matrix, optional DE)."""
+    """Run ``quantify features2proteins`` (feature parquet -> protein matrix)."""
     _run(_build_args("features2proteins", kwargs))
 
 
 def peptides2protein(**kwargs):
-    """Run ``peptides2protein`` (peptide-level input -> protein quantities)."""
+    """Run ``quantify peptides2protein`` (peptide input -> protein quantities)."""
     _run(_build_args("peptides2protein", kwargs))
 
 
@@ -270,7 +275,7 @@ def de_plots(args):
 
     Takes an explicit argument list (the per-contrast ``--contrast KEY A B CSV``
     flag repeats, which keyword arguments cannot express). See
-    ``mokume de-plots --help``.
+    ``mokume plot de --help``.
     """
     _run_command("de_plots", args)
 

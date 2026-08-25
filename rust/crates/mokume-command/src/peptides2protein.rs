@@ -4,7 +4,7 @@
 //! This mirrors `mokume.commands.peptides2protein.peptides2protein` in the
 //! Python package. Two code paths exist:
 //!
-//!   * piBAQ (`--method pibaq`, the default) reuses the existing piBAQ core via
+//!   * piBAQ (`--quant-method pibaq`, the default) reuses the existing piBAQ core via
 //!     `mokume_pipeline::run_pibaq_from_peptides`. A FASTA is required to derive
 //!     theoretical peptide counts. The output is the Python long-format table
 //!     `ProteinName, SampleID, Condition, NormIntensity, PiBAQ, FamilyId,
@@ -44,7 +44,7 @@
 //! `SampleID`, and `NormIntensity`. The peptide column is `PeptideCanonical`
 //! (preferred) or `PeptideSequence`; it is required for piBAQ. `Condition` is
 //! optional. Parquet `SampleID` / `Condition` columns may be dictionary-encoded
-//! (pandas `Categorical`), as written by `features2peptides --save_parquet`.
+//! (pandas `Categorical`), as written by `quantify features2peptides --save-parquet`.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -98,7 +98,7 @@ pub fn run_peptides_to_protein_with_digest(
     args: &Peptides2ProteinArgs,
     pibaq_digest: Option<PibaqDigest>,
 ) -> Result<()> {
-    let method = args.method.to_ascii_lowercase();
+    let method = args.quant_method.to_ascii_lowercase();
     let output = peptides2protein_output(args)?;
     validate_lfq_options(args, &method)?;
     validate_pibaq_options(args, &method)?;
@@ -106,7 +106,7 @@ pub fn run_peptides_to_protein_with_digest(
     match method.as_str() {
         "pibaq" => run_pibaq(args, output, pibaq_digest),
         "sum" => run_generic(args, &method, output),
-        // `--method` is validated (and `topn` normalized to `top3`) by
+        // `--quant-method` is validated by
         // `parse_peptides2protein_method`, so any `top`-prefixed name reaching
         // here is a well-formed `top<N>`.
         name if parse_topn_from_method_name(name).is_some() => run_generic(args, &method, output),
@@ -133,14 +133,14 @@ fn peptides2protein_output(args: &Peptides2ProteinArgs) -> Result<&Path> {
 
 fn validate_lfq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<()> {
     let is_lfq = matches!(method, "maxlfq" | "directlfq");
-    if !is_lfq && args.threads != -1 {
+    if !is_lfq && args.threads.is_some() {
         return Err(MokumeError::InvalidInput {
             message: "--threads only applies to peptides2protein DirectLFQ/MaxLFQ".to_owned(),
         });
     }
-    if method != "directlfq" && args.min_nonan != 1 {
+    if method != "directlfq" && args.directlfq_min_nonan.is_some() {
         return Err(MokumeError::InvalidInput {
-            message: "--min-nonan only applies to peptides2protein DirectLFQ".to_owned(),
+            message: "--directlfq-min-nonan only applies to peptides2protein DirectLFQ".to_owned(),
         });
     }
     Ok(())
@@ -161,15 +161,14 @@ fn validate_pibaq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<(
         args.min_shared != 2,
         args.min_anchors != 1,
         args.high_anchor_threshold != 3,
-        args.verbose,
-        args.qc_report != Path::new("QCprofile.pdf"),
+        args.qc_report.is_some(),
     ]
     .into_iter()
     .any(|configured| configured);
 
     if method != "pibaq" && has_pibaq_options {
         return Err(MokumeError::InvalidInput {
-            message: "piBAQ digestion/TPA/ruler/QC options require --method pibaq".to_owned(),
+            message: "piBAQ digestion/TPA/ruler/QC options require --quant-method pibaq".to_owned(),
         });
     }
     if method == "pibaq"
@@ -188,22 +187,6 @@ fn validate_pibaq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<(
 /// does not expose it, so it is fixed here too.
 const DIRECTLFQ_NUM_SAMPLES_QUADRATIC: usize = 50;
 
-/// Translate the Python/joblib-style thread count into an explicit Rayon pool
-/// size. Negative values reserve `abs(threads) - 1` logical CPUs, so `-1`
-/// selects every available CPU and `-2` leaves one free; zero keeps Rayon's
-/// configured global pool.
-fn resolve_lfq_threads(threads: i32) -> Option<usize> {
-    if threads > 0 {
-        return Some(threads as usize);
-    }
-    if threads == 0 {
-        return None;
-    }
-    let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    let reserved = threads.unsigned_abs().saturating_sub(1) as usize;
-    Some(available.saturating_sub(reserved).max(1))
-}
-
 /// DirectLFQ / MaxLFQ path: roll the peptide matrix up with the DirectLFQ
 /// estimator (Python's `DirectLFQQuantification`; `maxlfq` delegates to it with
 /// `min_nonan = 2`). Emits the same long-format table as the deterministic
@@ -219,11 +202,11 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
     }
 
     // Python's maxlfq delegates to DirectLFQ with min_nonan = 2 (its min_peptides);
-    // the directlfq method uses the configured --min_nonan.
+    // the directlfq method uses the configured --directlfq-min-nonan.
     let min_nonan = if method == "maxlfq" {
         2
     } else {
-        args.min_nonan
+        args.directlfq_min_nonan.unwrap_or(1)
     };
 
     let mut condition_by_sample: HashMap<String, String> = HashMap::new();
@@ -244,7 +227,7 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
         &observations,
         min_nonan,
         DIRECTLFQ_NUM_SAMPLES_QUADRATIC,
-        resolve_lfq_threads(args.threads),
+        args.threads,
     )?
     .into_iter()
     .map(|row| GenericRow {
@@ -1191,7 +1174,7 @@ P3,THIDPECK,S1,A,900.0\n";
         Peptides2ProteinArgs {
             fasta: None,
             peptides: peptides.to_path_buf(),
-            method: "pibaq".to_owned(),
+            quant_method: "pibaq".to_owned(),
             enzyme: "Trypsin".to_owned(),
             normalize: false,
             min_aa: 7,
@@ -1202,10 +1185,9 @@ P3,THIDPECK,S1,A,900.0\n";
             organism: None,
             cpc: None,
             output: Some(output.to_path_buf()),
-            verbose: false,
-            qc_report: std::path::PathBuf::from("QCprofile.pdf"),
-            threads: -1,
-            min_nonan: 1,
+            qc_report: None,
+            threads: None,
+            directlfq_min_nonan: None,
             families_yaml: None,
             min_shared: 2,
             min_anchors: 1,
@@ -1368,7 +1350,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&peptides, PEPTIDES_CSV)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "sum".to_owned();
+        args.quant_method = "sum".to_owned();
         run_peptides_to_protein_with_digest(&args, None)?;
 
         let (headers, rows) = read_table(&output)?;
@@ -1432,11 +1414,11 @@ P3,THIDPECK,S1,A,900.0\n";
         let parquet_out = dir.join("from_parquet.tsv");
 
         let mut csv_args = base_args(&csv_path, &csv_out);
-        csv_args.method = "sum".to_owned();
+        csv_args.quant_method = "sum".to_owned();
         run_peptides_to_protein_with_digest(&csv_args, None)?;
 
         let mut parquet_args = base_args(&parquet_path, &parquet_out);
-        parquet_args.method = "sum".to_owned();
+        parquet_args.quant_method = "sum".to_owned();
         run_peptides_to_protein_with_digest(&parquet_args, None)?;
 
         let (csv_headers, csv_rows) = read_table(&csv_out)?;
@@ -1447,7 +1429,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle:
-    //   ... peptides2protein --method top2 -p peptides.csv -o out.tsv
+    //   ... quantify peptides2protein --quant-method top2 -p peptides.csv -o out.tsv
     // (the oracle predates the rename and was captured as `--method topn
     // --topn_n 2`; N moved into the method name, the arithmetic did not change)
     #[test]
@@ -1458,7 +1440,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&peptides, PEPTIDES_CSV)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "top2".to_owned();
+        args.quant_method = "top2".to_owned();
         run_peptides_to_protein_with_digest(&args, None)?;
 
         let (headers, rows) = read_table(&output)?;
@@ -1470,7 +1452,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle:
-    //   ... peptides2protein --method top3 -p peptides.csv -o out.tsv
+    //   ... quantify peptides2protein --quant-method top3 -p peptides.csv -o out.tsv
     #[test]
     fn peptides2protein_top3_matches_python_oracle() -> TestResult<()> {
         let dir = temp_dir("top3")?;
@@ -1479,7 +1461,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&peptides, PEPTIDES_CSV)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "top3".to_owned();
+        args.quant_method = "top3".to_owned();
         run_peptides_to_protein_with_digest(&args, None)?;
 
         let (headers, rows) = read_table(&output)?;
@@ -1489,7 +1471,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle:
-    //   ... peptides2protein --method sum -n -p peptides.csv -o out.tsv
+    //   ... quantify peptides2protein --quant-method sum --normalize -p peptides.csv -o out.tsv
     // Adds IntensityNorm = Intensity / sum(Intensity per SampleID).
     #[test]
     fn peptides2protein_sum_normalize_matches_python_oracle() -> TestResult<()> {
@@ -1499,7 +1481,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&peptides, PEPTIDES_CSV)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "sum".to_owned();
+        args.quant_method = "sum".to_owned();
         args.normalize = true;
         run_peptides_to_protein_with_digest(&args, None)?;
 
@@ -1520,7 +1502,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle:
-    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv -o out.tsv
+    //   ... quantify peptides2protein --quant-method pibaq -f proteome.fasta -p peptides.csv -o out.tsv
     // Columns: ProteinName SampleID Condition NormIntensity PiBAQ FamilyId EvidenceLevel FamilySize.
     #[test]
     fn peptides2protein_pibaq_matches_python_oracle() -> TestResult<()> {
@@ -1532,7 +1514,7 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&fasta, PROTEOME_FASTA)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "pibaq".to_owned();
+        args.quant_method = "pibaq".to_owned();
         args.fasta = Some(fasta);
         run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
@@ -1580,7 +1562,7 @@ P3,THIDPECK,S1,A,900.0\n";
 
         let run = |threshold: usize, out: &Path| -> TestResult<()> {
             let mut args = base_args(&peptides, out);
-            args.method = "pibaq".to_owned();
+            args.quant_method = "pibaq".to_owned();
             args.fasta = Some(fasta.clone());
             args.high_anchor_threshold = threshold;
             run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
@@ -1616,7 +1598,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle (TPA columns MolecularWeight + TPA appended):
-    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
+    //   ... quantify peptides2protein --quant-method pibaq -f proteome.fasta -p peptides.csv \
     //       --tpa -o out.tsv
     // MolecularWeight is the pyOpenMS getMonoWeight of the canonical protein;
     // TPA = NormIntensity / MolecularWeight.
@@ -1640,7 +1622,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle (normalize_pibaq columns PiBAQNorm + PiBAQLog + PiBAQPpb appended):
-    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
+    //   ... quantify peptides2protein --quant-method pibaq -f proteome.fasta -p peptides.csv \
     //       -n -o out.tsv
     // PiBAQNorm = PiBAQ / sum(PiBAQ per SampleID,Condition);
     // PiBAQLog = 10 + log10(PiBAQNorm); PiBAQPpb = PiBAQNorm * 1e8.
@@ -1682,7 +1664,7 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     // Oracle (ProteomicRuler columns; ruler requires --tpa):
-    //   ... peptides2protein --method pibaq -f proteome.fasta -p peptides.csv \
+    //   ... quantify peptides2protein --quant-method pibaq -f proteome.fasta -p peptides.csv \
     //       --tpa --ruler --organism human --ploidy 2 --cpc 200 -o out.tsv
     // P1/P2/P3 are not human histones, so histone_intensity = max(0, 1) = 1.
     // dna_mass = 2 * 3.22e9 * 617.96 / 6.02214129e23.
@@ -1764,8 +1746,8 @@ P3,THIDPECK,S1,A,900.0\n";
             for threads in [1, 4] {
                 let output = dir.join(format!("{method}-{threads}.tsv"));
                 let mut args = base_args(&peptides, &output);
-                args.method = method.to_owned();
-                args.threads = threads;
+                args.quant_method = method.to_owned();
+                args.threads = Some(threads);
                 run_peptides_to_protein_with_digest(&args, None)?;
 
                 let table = read_table(&output)?;
@@ -1784,21 +1766,6 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     #[test]
-    fn resolves_lfq_thread_sentinels_like_python() {
-        let available = std::thread::available_parallelism()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or(1);
-
-        assert_eq!(super::resolve_lfq_threads(4), Some(4));
-        assert_eq!(super::resolve_lfq_threads(0), None);
-        assert_eq!(super::resolve_lfq_threads(-1), Some(available));
-        assert_eq!(
-            super::resolve_lfq_threads(-2),
-            Some(available.saturating_sub(1).max(1))
-        );
-    }
-
-    #[test]
     fn peptides2protein_kernel_leaves_verbose_qc_to_python_wrapper() -> TestResult<()> {
         // The native kernel writes the data table; the Python console wrapper renders
         // the optional PDF from those exact values after a successful native run.
@@ -1811,10 +1778,9 @@ P3,THIDPECK,S1,A,900.0\n";
         write_file(&fasta, PROTEOME_FASTA)?;
 
         let mut args = base_args(&peptides, &output);
-        args.method = "pibaq".to_owned();
+        args.quant_method = "pibaq".to_owned();
         args.fasta = Some(fasta);
-        args.verbose = true;
-        args.qc_report = qc.clone();
+        args.qc_report = Some(qc.clone());
         run_peptides_to_protein_with_digest(&args, Some(test_pibaq_digest()))?;
 
         // The protein table is written and carries the piBAQ column.

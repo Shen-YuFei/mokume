@@ -9,6 +9,7 @@ use mokume_command::run_from_args;
 #[test]
 fn features2proteins_missing_input_returns_error() {
     let error = match run(&[
+        "quantify",
         "features2proteins",
         "--parquet",
         "definitely-missing.feature.parquet",
@@ -40,8 +41,9 @@ P2,ALYAAEK,S1,A,500.0\n",
     )?;
 
     run(&[
+        "quantify",
         "peptides2protein",
-        "--method",
+        "--quant-method",
         "sum",
         "--peptides",
         path_str(&peptides)?,
@@ -77,7 +79,7 @@ P1\tB2-s1\t20.0\nP2\tB2-s1\t8.0\nP1\tB2-s2\t21.0\nP2\tB2-s2\t7.5\n",
 
     run(&[
         "correct-batches",
-        "--folder",
+        "--input",
         path_str(&input)?,
         "--output",
         path_str(&output)?,
@@ -116,7 +118,7 @@ P1\tB2-s1\t20.0\nP1\tB2-s2\t21.0\n",
 
     let error = match run(&[
         "correct-batches",
-        "--folder",
+        "--input",
         path_str(&input)?,
         "--output",
         path_str(&input_file)?,
@@ -154,11 +156,11 @@ P1\tB2-s2\t21.0\nP2\tB2-s2\t7.5\nP3\tB2-s2\t2.5\n",
 
     run(&[
         "correct-batches",
-        "--folder",
+        "--input",
         path_str(&input)?,
         "--output",
         path_str(&output)?,
-        "--export_anndata",
+        "--export-anndata",
     ])?;
 
     // The corrected TSV and the AnnData `.h5ad` are both written, the latter at
@@ -186,6 +188,7 @@ fn features2peptides_generates_filter_config() -> Result<(), Box<dyn std::error:
 
     for output_path in [&yaml, &json] {
         run(&[
+            "quantify",
             "features2peptides",
             "--generate-filter-config",
             path_str(output_path)?,
@@ -261,6 +264,7 @@ fn unimplemented_features2proteins_options_return_stable_error(
         },
     ] {
         let mut args = vec![
+            "quantify",
             "features2proteins",
             "--parquet",
             parquet,
@@ -283,6 +287,7 @@ fn unimplemented_features2proteins_options_return_stable_error(
         );
     }
     let error = match run(&[
+        "quantify",
         "features2proteins",
         "--parquet",
         parquet,

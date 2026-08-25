@@ -1,30 +1,12 @@
 use std::str::FromStr;
 
-use clap::ValueEnum;
 use mokume_core::quant::parse_topn_from_method_name;
-use mokume_core::{parse_memory_to_bytes, NamedScoreFilterConfig, OutputFormat, QuantMethod};
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub(crate) enum OutputFormatArg {
-    #[value(name = "python-compatible")]
-    PythonCompatible,
-    #[value(name = "rust-native")]
-    RustNative,
-}
-
-impl From<OutputFormatArg> for OutputFormat {
-    fn from(value: OutputFormatArg) -> Self {
-        match value {
-            OutputFormatArg::PythonCompatible => Self::PythonCompatible,
-            OutputFormatArg::RustNative => Self::RustNative,
-        }
-    }
-}
+use mokume_core::{parse_memory_to_bytes, NamedScoreFilterConfig, QuantMethod};
 
 /// The fixed `--quant-method` names, i.e. every method whose name carries no
 /// parameter. The TopN family is spelled `top<N>` and is not listed here.
 const FIXED_QUANT_METHODS: &str = "directlfq, pibaq, maxlfq, sum, median, ratio, abd, intensity, \
-peptide_count, spectral_count";
+peptide-count, spectral-count";
 
 /// Default `topn_peptides` for methods outside the TopN family. The pipeline
 /// only reads the field when the method is [`QuantMethod::TopN`], in which case
@@ -91,16 +73,6 @@ impl FromStr for QuantMethodArg {
 
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         let lowered = value.trim().to_ascii_lowercase();
-        // `topn` keeps the placeholder letter and means the canonical Top3
-        // (Silva 2006), matching what the Python factory does with a `top` name
-        // that carries no digits. Normalizing here keeps `top<digits>` as the
-        // single internal spelling.
-        if lowered == "topn" {
-            return Ok(Self {
-                method: QuantMethod::TopN,
-                topn: Some(3),
-            });
-        }
         if let Some(topn) = parse_topn_from_method_name(&lowered) {
             return Ok(Self {
                 method: QuantMethod::TopN,
@@ -112,7 +84,13 @@ impl FromStr for QuantMethodArg {
         if lowered.starts_with("top") {
             return Err(invalid_topn_message(value));
         }
-        let method = QuantMethod::from_str(&lowered).map_err(|_| unknown_method_message(value))?;
+        let internal = match lowered.as_str() {
+            "peptide-count" => "peptide_count",
+            "spectral-count" => "spectral_count",
+            name if name.contains('_') => return Err(unknown_method_message(value)),
+            name => name,
+        };
+        let method = QuantMethod::from_str(internal).map_err(|_| unknown_method_message(value))?;
         Ok(Self { method, topn: None })
     }
 }
@@ -128,18 +106,14 @@ pub(crate) fn parse_quant_method(value: &str) -> std::result::Result<QuantMethod
 /// peptide table, so it offers a smaller set than `features2proteins`.
 const PEPTIDES2PROTEIN_METHODS: [&str; 4] = ["pibaq", "maxlfq", "sum", "directlfq"];
 
-/// clap `value_parser` for `peptides2protein --method`.
+/// clap `value_parser` for `quantify peptides2protein --quant-method`.
 ///
 /// Applies the same TopN spelling rules as `--quant-method` over this command's
-/// smaller method set, and normalizes bare `topn` to `top<DEFAULT_TOPN_PEPTIDES>`
-/// so the runner only ever matches on `top<digits>`.
+/// smaller method set.
 pub(crate) fn parse_peptides2protein_method(value: &str) -> std::result::Result<String, String> {
     let lowered = value.trim().to_ascii_lowercase();
     if PEPTIDES2PROTEIN_METHODS.contains(&lowered.as_str()) {
         return Ok(lowered);
-    }
-    if lowered == "topn" {
-        return Ok(format!("top{DEFAULT_TOPN_PEPTIDES}"));
     }
     if parse_topn_from_method_name(&lowered).is_some() {
         return Ok(lowered);
@@ -153,16 +127,6 @@ pub(crate) fn parse_peptides2protein_method(value: &str) -> std::result::Result<
         "unknown peptides2protein method `{value}`: expected one of {}, or `top<N>` (e.g. `top3`)",
         PEPTIDES2PROTEIN_METHODS.join(", ")
     ))
-}
-
-pub(crate) fn parse_nonzero_threads(value: &str) -> std::result::Result<i32, String> {
-    let threads = value
-        .parse::<i32>()
-        .map_err(|_| format!("invalid thread count `{value}`: expected a non-zero integer"))?;
-    if threads == 0 {
-        return Err("invalid thread count `0`: expected a non-zero integer".to_owned());
-    }
-    Ok(threads)
 }
 
 pub(crate) fn parse_memory(value: &str) -> std::result::Result<String, String> {
@@ -272,29 +236,4 @@ fn invalid_topn_message(value: &str) -> String {
 /// Error for a name that is neither a fixed method nor a `top<N>`.
 fn unknown_method_message(value: &str) -> String {
     format!("unknown quantification method `{value}`: expected one of {FIXED_QUANT_METHODS}, or `top<N>` (e.g. `top3`)")
-}
-
-pub(crate) fn split_csv_option(value: Option<String>) -> Option<Vec<String>> {
-    value
-        .map(|value| {
-            value
-                .split(',')
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .filter(|values| !values.is_empty())
-}
-
-/// Split ensemble members without discarding empty entries so validation can
-/// report malformed lists instead of silently changing the requested methods.
-pub(crate) fn split_ensemble_methods(value: Option<String>) -> Option<Vec<String>> {
-    value.map(|value| {
-        value
-            .split(',')
-            .map(str::trim)
-            .map(ToOwned::to_owned)
-            .collect()
-    })
 }
