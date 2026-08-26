@@ -45,39 +45,34 @@ CONCENTRATION_NM = "Concentration[nM]"
 
 
 def _parse_args(argv):
-    parser = argparse.ArgumentParser(
-        description="Render the peptides2protein piBAQ QC report from a protein table."
-    )
+    parser = argparse.ArgumentParser(description="Render a piBAQ QC report.")
     parser.add_argument(
         "--protein-table",
+        metavar="<FILE>",
         required=True,
-        help="Tab-separated protein table produced by the Rust piBAQ path.",
+        help="piBAQ TSV input.",
     )
     parser.add_argument(
         "--qc-report",
+        metavar="<FILE>",
         required=True,
-        help="Destination PDF for the QC images.",
+        help="PDF output.",
     )
     parser.add_argument(
         "--plot-column",
+        metavar="<COLUMN>",
         default=PIBAQ,
-        help=(
-            "Primary quantification column to plot. The Python verbose path uses "
-            "PiBAQPpb when --normalize is set, otherwise PiBAQ."
-        ),
+        help="Default: PiBAQ.",
     )
     parser.add_argument(
         "--tpa",
         action="store_true",
-        help="Also plot the TPA distribution (matches the Python verbose block).",
+        help="Include the TPA distribution.",
     )
     parser.add_argument(
         "--ruler",
         action="store_true",
-        help=(
-            "Also plot the CopyNumber and Concentration[nM] distributions "
-            "(matches the Python verbose block)."
-        ),
+        help="Include CopyNumber and Concentration[nM] distributions.",
     )
     return parser.parse_args(argv)
 

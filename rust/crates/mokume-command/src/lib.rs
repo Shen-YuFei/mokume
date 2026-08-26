@@ -93,7 +93,7 @@ struct QuantifyArgs {
 #[derive(Debug, Subcommand)]
 enum QuantifyCommands {
     #[command(name = "features2proteins")]
-    #[command(about = "Quantify proteins from a QPX feature parquet file")]
+    #[command(about = "Build a protein expression matrix")]
     Features2Proteins(Box<Features2ProteinsArgs>),
 
     #[command(name = "features2peptides")]

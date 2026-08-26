@@ -19,8 +19,7 @@ pub(crate) struct Peptides2ProteinArgs {
         default_value = "pibaq",
         value_name = "METHOD",
         value_parser = parse_peptides2protein_method,
-        help = "Quantification method: pibaq, maxlfq, sum, directlfq, or top<N> -- the TopN \
-family spells its peptide count in the name (e.g. top3, top5)"
+        help = "[possible values: pibaq, maxlfq, sum, directlfq, top<N> (e.g. top3)]"
     )]
     pub(crate) quant_method: String,
 
@@ -62,7 +61,7 @@ family spells its peptide count in the name (e.g. top3, top5)"
         long = "threads",
         value_name = "N",
         value_parser = parse_positive_usize,
-        help = "DirectLFQ/MaxLFQ worker count"
+        help = "DirectLFQ/MaxLFQ only"
     )]
     pub(crate) threads: Option<usize>,
 

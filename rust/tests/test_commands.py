@@ -107,6 +107,21 @@ def test_console_periphery_help_uses_semantic_value_names(
         assert expected in output
 
 
+def test_tissuemap_help_uses_possible_values_label(monkeypatch, capsys):
+    """Fixed Python choices should use the same label as the Rust CLI."""
+    entrypoint = importlib.import_module("mokume.__main__")
+    monkeypatch.setattr(entrypoint.sys, "argv", ["mokume", "tissuemap", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "[possible values: mindet, minprob" in output
+    assert "[possible values: tsne, umap]" in output
+    assert "choices:" not in output
+
+
 def test_console_dispatches_periphery_arguments(monkeypatch):
     """Periphery argv must reach its module without being parsed by Rust."""
     observed = {}

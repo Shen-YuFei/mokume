@@ -50,9 +50,13 @@ from mokume.commands._de_cli import (
 
 
 def _parse_args(argv, mode):
+    description = (
+        "Render a PCA-by-condition plot."
+        if mode == "pca"
+        else "Render volcano plots and DE heatmaps."
+    )
     parser = argparse.ArgumentParser(
-        prog=f"mokume plot {mode}",
-        description="Render plots from Rust-written protein and DE tables.",
+        prog=f"mokume plot {mode}", description=description
     )
     add_protein_matrix_argument(parser)
     if mode == "pca":
@@ -67,10 +71,10 @@ def _parse_args(argv, mode):
         "--sdrf",
         metavar="<FILE>",
         default=None,
-        help="SDRF file; required for heatmap condition annotation.",
+        help="Required for heatmap annotations.",
     )
-    parser.add_argument("--volcano", action="store_true", help="Render volcano plots.")
-    parser.add_argument("--heatmap", action="store_true", help="Render DE heatmaps.")
+    parser.add_argument("--volcano", action="store_true")
+    parser.add_argument("--heatmap", action="store_true")
     add_de_result_arguments(parser)
     return parser.parse_args(argv)
 

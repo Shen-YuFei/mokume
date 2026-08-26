@@ -36,7 +36,7 @@ pub(crate) struct Features2ProteinsArgs {
         required_unless_present_any = ["parquet", "msstats"],
         conflicts_with_all = ["parquet", "msstats"],
         requires = "sdrf",
-        help = "PSM-level QPX parquet input; required by true spectral_count"
+        help = "PSM-level QPX input for spectral-count"
     )]
     psm: Option<PathBuf>,
 
@@ -51,9 +51,8 @@ pub(crate) struct Features2ProteinsArgs {
         default_value = "maxlfq",
         value_name = "METHOD",
         value_parser = parse_quant_method,
-        help = "Quantification method: directlfq, pibaq, maxlfq, sum, median, ratio, abd, \
-intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells its peptide count in the name \
-(e.g. top3, top5)"
+        help = "[possible values: directlfq, pibaq, maxlfq, sum, median, ratio, abd, \
+intensity, peptide-count, spectral-count, top<N> (e.g. top3)]"
     )]
     quant_method: QuantMethodArg,
 
@@ -63,20 +62,19 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     #[arg(
         long = "min-unique",
         value_name = "N",
-        help = "Minimum distinct peptides per protein/sample (default: 2; piBAQ uses 0 and rejects an explicit override)"
+        help = "Minimum distinct peptides per protein/sample (default: 2; piBAQ: 0)"
     )]
     min_unique: Option<usize>,
 
-    #[arg(
-        long = "keep-contaminants",
-        help = "Keep contaminant proteins; QPX rows marked is_decoy=true are always removed"
-    )]
+    #[arg(long = "keep-contaminants", help = "Decoys are always removed")]
     keep_contaminants: bool,
 
     #[arg(long = "run-normalization", value_name = "METHOD", value_parser = [
         "none", "mean", "median", "max", "global", "max-min", "iqr",
     ], ignore_case = true,
-    help = "Run-level intensity normalization; count methods require none"
+    hide_possible_values = true,
+    help = "[default: median; directlfq, ratio, peptide-count, spectral-count: none]\n\
+[possible values: none, mean, median, max, global, max-min, iqr]"
     )]
     run_normalization: Option<String>,
 
@@ -92,11 +90,18 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
         "loess",
         "tmm",
     ], ignore_case = true,
-    help = "Sample-level intensity normalization; count methods require none"
+    hide_possible_values = true,
+    help = "[default: global-median; directlfq, ratio, peptide-count, spectral-count: none]\n\
+[possible values: none, global-median, condition-median, hierarchical, quantile, median-center, \
+mean-center, rlr, loess, tmm]"
     )]
     sample_normalization: Option<String>,
 
-    #[arg(long = "normalization-proteins", value_name = "FILE")]
+    #[arg(
+        long = "normalization-proteins",
+        value_name = "FILE",
+        help = "Unavailable for directlfq, ratio, peptide-count, spectral-count"
+    )]
     normalization_proteins: Option<PathBuf>,
 
     #[arg(short = 'f', long = "fasta", value_name = "FILE")]
@@ -144,8 +149,7 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
         long = "batch-method",
         value_name = "METHOD",
         value_parser = ["sample-prefix", "column"],
-        ignore_case = true,
-        help = "How batch labels are detected: sample accession prefix or one SDRF column"
+        ignore_case = true
     )]
     batch_method: Option<String>,
 
@@ -161,17 +165,10 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     #[arg(long = "batch-mean-only")]
     batch_mean_only: bool,
 
-    #[arg(
-        long = "batch-ref",
-        value_name = "LABEL",
-        help = "Reference batch using its original sample-prefix or SDRF-column label"
-    )]
+    #[arg(long = "batch-ref", value_name = "LABEL")]
     batch_ref: Option<String>,
 
-    #[arg(
-        long = "irs",
-        help = "Enable IRS; not applicable to peptide_count or spectral_count"
-    )]
+    #[arg(long = "irs", help = "Unavailable for count methods")]
     irs: bool,
 
     #[arg(long = "irs-reference-sample", value_name = "SAMPLE")]
@@ -209,7 +206,7 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
         value_name = "CORRELATION",
         value_parser = parse_correlation,
         requires = "sdrf",
-        help = "Drop samples whose mean Pearson correlation to same-condition peers is below this value"
+        help = "Minimum mean within-condition Pearson correlation"
     )]
     min_sample_correlation: Option<f64>,
 
@@ -294,7 +291,7 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
         long = "de-ensemble-min-k",
         value_name = "N",
         value_parser = parse_positive_usize,
-        help = "Minimum agreeing ensemble members (default: 2; ensemble only)"
+        help = "Minimum agreeing methods for ensemble DE (default: 2)"
     )]
     de_ensemble_min_k: Option<usize>,
 
@@ -331,7 +328,7 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
         long = "memory",
         value_name = "SIZE",
         value_parser = parse_memory,
-        help = "Cross-platform soft process resident-memory budget (for example 1GB or 512MB); also reduces QPX batch/read-ahead memory"
+        help = "Soft resident-memory budget (e.g. 1GB); also limits QPX buffering"
     )]
     memory: Option<String>,
 

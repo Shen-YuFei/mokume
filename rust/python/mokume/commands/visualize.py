@@ -25,28 +25,28 @@ import sys
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="mokume plot tsne",
-        description="t-SNE visualization for protein data (mokume command).",
+        description="Render a t-SNE plot from protein tables.",
     )
     parser.add_argument(
         "-i",
         "--input",
         metavar="<DIR>",
         required=True,
-        help="Folder that contains all the protein files.",
+        help="Protein-table directory.",
     )
     parser.add_argument(
         "-p",
         "--pattern",
         metavar="<GLOB>",
         default="proteins.tsv",
-        help="Protein file pattern (default: proteins.tsv).",
+        help="Default: proteins.tsv.",
     )
     parser.add_argument(
         "-o",
         "--output",
         metavar="<FILE>",
         required=True,
-        help="Destination PDF.",
+        help="PDF output.",
     )
     return parser.parse_args(argv)
 

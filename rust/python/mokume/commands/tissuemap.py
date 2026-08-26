@@ -47,7 +47,7 @@ _IMPUTATION_CHOICES = (
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="mokume tissuemap",
-        description="Per-dataset tissue proteome analysis (mokume command).",
+        description="Build a tissue proteome atlas.",
     )
     parser.add_argument(
         "-i", "--input", dest="scan_dir", metavar="<DIR>", type=Path, default=None
@@ -82,7 +82,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         type=str.lower,
         choices=_IMPUTATION_CHOICES,
         default=None,
-        help="Imputation method; choices: " + ", ".join(_IMPUTATION_CHOICES),
+        help="[possible values: " + ", ".join(_IMPUTATION_CHOICES) + "]",
     )
     parser.add_argument(
         "--embedding-method",
@@ -91,7 +91,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         type=str.lower,
         choices=("tsne", "umap"),
         default=None,
-        help="Embedding method; choices: tsne, umap",
+        help="[possible values: tsne, umap]",
     )
     return parser.parse_args(argv)
 

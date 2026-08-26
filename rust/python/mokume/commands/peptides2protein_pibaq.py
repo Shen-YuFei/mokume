@@ -45,48 +45,49 @@ import sys
 
 
 def _parse_args(argv):
-    parser = argparse.ArgumentParser(
-        description="Compute piBAQ through the native-backed compatibility API."
-    )
+    parser = argparse.ArgumentParser(description="Compute piBAQ from peptide data.")
     parser.add_argument(
         "--peptides",
+        metavar="<FILE>",
         required=True,
-        help="Peptide intensity table (CSV / TSV / parquet).",
+        help="CSV, TSV, or parquet input.",
     )
     parser.add_argument(
         "--fasta",
+        metavar="<FILE>",
         required=True,
-        help="Protein FASTA used to derive theoretical peptide counts.",
+        help="Used for theoretical peptide counts.",
     )
     parser.add_argument(
         "--enzyme",
+        metavar="<NAME>",
         required=True,
-        help="Digestion enzyme name understood by pyOpenMS ProteaseDigestion.",
+        help="pyOpenMS ProteaseDigestion name.",
     )
     parser.add_argument(
         "--output",
+        metavar="<FILE>",
         required=True,
-        help="Destination protein table (tab-separated, or parquet if .parquet).",
+        help="TSV, or parquet with a .parquet suffix.",
     )
-    parser.add_argument("--min-aa", type=int, default=7)
-    parser.add_argument("--max-aa", type=int, default=30)
-    parser.add_argument("--ploidy", type=int, default=None)
-    parser.add_argument("--organism", default=None)
-    parser.add_argument("--cpc", type=float, default=None)
+    parser.add_argument("--min-aa", metavar="<N>", type=int, default=7)
+    parser.add_argument("--max-aa", metavar="<N>", type=int, default=30)
+    parser.add_argument("--ploidy", metavar="<N>", type=int, default=None)
+    parser.add_argument("--organism", metavar="<NAME>", default=None)
+    parser.add_argument("--cpc", metavar="<VALUE>", type=float, default=None)
     parser.add_argument(
         "--qc-report",
-        default=None,
-        help="Render a QC PDF at this path; --verbose is not required.",
+        metavar="<FILE>",
+        help="PDF path; does not require --verbose.",
     )
     parser.add_argument(
         "--families",
-        dest="families",
-        default=None,
-        help="Optional YAML declaring explicit piBAQ family overrides.",
+        metavar="<FILE>",
+        help="YAML family overrides.",
     )
-    parser.add_argument("--min-shared", type=int, default=2)
-    parser.add_argument("--min-anchors", type=int, default=1)
-    parser.add_argument("--high-anchor-threshold", type=int, default=3)
+    parser.add_argument("--min-shared", metavar="<N>", type=int, default=2)
+    parser.add_argument("--min-anchors", metavar="<N>", type=int, default=1)
+    parser.add_argument("--high-anchor-threshold", metavar="<N>", type=int, default=3)
     parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--tpa", action="store_true")
     parser.add_argument("--ruler", action="store_true")

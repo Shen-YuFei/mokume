@@ -52,7 +52,7 @@ from mokume.commands._de_cli import (
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="mokume interactive-report",
-        description="Render the features2proteins interactive HTML report.",
+        description="Build a DE HTML report.",
     )
     add_protein_matrix_argument(parser)
     parser.add_argument(
@@ -60,14 +60,14 @@ def _parse_args(argv):
         "--sdrf",
         metavar="<FILE>",
         required=True,
-        help="SDRF file; the report needs the sample-to-condition mapping.",
+        help="Sample metadata.",
     )
     parser.add_argument(
         "-o",
         "--output",
         metavar="<FILE>",
         default=None,
-        help="Output HTML path (default: ./report_<key>.html).",
+        help="Default: ./report_<key>.html.",
     )
     add_de_result_arguments(parser)
     return parser.parse_args(argv)

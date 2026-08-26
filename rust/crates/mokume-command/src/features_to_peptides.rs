@@ -129,7 +129,7 @@ pub(crate) struct Features2PeptidesArgs {
         long = "filter-score",
         value_name = "NAME=THRESHOLD",
         value_parser = parse_named_score_filter,
-        help = "Filter one exact QPX additional score; comparison direction comes from higher_better"
+        help = "Direction follows higher_better"
     )]
     filter_score: Option<NamedScoreFilterConfig>,
 

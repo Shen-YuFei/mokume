@@ -157,12 +157,55 @@ fn help_uses_concise_semantic_value_names() {
         !features_help.contains("<DE_CONTRAST> <DE_CONTRAST>"),
         "duplicate automatic contrast value names remain in help:\n{features_help}"
     );
+    assert!(
+        features_help.contains("[possible values: directlfq, pibaq, maxlfq"),
+        "dynamic quantification methods do not use the standard possible-values label:\n{features_help}"
+    );
 
     let correct_batches_help = render_subcommand_help_path(&["correct-batches"]);
     for expected in ["--input <DIR>", "--pattern <GLOB>", "--output <FILE>"] {
         assert!(
             correct_batches_help.contains(expected),
             "missing semantic value name `{expected}` in help:\n{correct_batches_help}"
+        );
+    }
+}
+
+#[test]
+fn normalization_help_separates_and_aligns_metadata() {
+    let features_help = render_subcommand_help_path(&["quantify", "features2proteins"]);
+    for expected in [
+        "[default: median; directlfq, ratio, peptide-count, spectral-count: none]",
+        "[default: global-median; directlfq, ratio, peptide-count, spectral-count: none]",
+        "Unavailable for directlfq, ratio, peptide-count, spectral-count",
+    ] {
+        assert!(
+            features_help.contains(expected),
+            "missing method-dependent normalization help `{expected}`:\n{features_help}"
+        );
+    }
+    assert!(
+        !features_help.contains("none] [possible values"),
+        "normalization defaults and possible values must be on separate lines:\n{features_help}"
+    );
+    for (default_text, values_text) in [
+        ("[default: median;", "[possible values: none, mean, median"),
+        (
+            "[default: global-median;",
+            "[possible values: none, global-median",
+        ),
+    ] {
+        let default_column = features_help
+            .lines()
+            .find(|line| line.contains(default_text))
+            .and_then(|line| line.find('['));
+        let values_column = features_help
+            .lines()
+            .find(|line| line.contains(values_text))
+            .and_then(|line| line.find('['));
+        assert_eq!(
+            default_column, values_column,
+            "normalization metadata brackets are misaligned:\n{features_help}"
         );
     }
 }
@@ -245,6 +288,10 @@ fn peptides2protein_help_lists_python_option_surface() {
     assert!(
         !help.contains("--topn_n"),
         "removed option `--topn_n` must not appear in help:\n{help}"
+    );
+    assert!(
+        help.contains("[possible values: pibaq, maxlfq, sum, directlfq"),
+        "dynamic quantification methods do not use the standard possible-values label:\n{help}"
     );
 }
 

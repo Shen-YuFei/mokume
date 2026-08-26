@@ -8,7 +8,7 @@ def add_protein_matrix_argument(parser):
         "--protein-matrix",
         metavar="<FILE>",
         required=True,
-        help="Protein intensity matrix CSV written by the Rust pipeline.",
+        help="CSV input.",
     )
 
 
@@ -19,21 +19,21 @@ def add_de_result_arguments(parser):
         metavar="<VALUE>",
         type=float,
         default=0.5,
-        help="|log2FC| significance threshold (matches --de-log2fc).",
+        help="|log2FC| threshold.",
     )
     parser.add_argument(
         "--fdr",
         metavar="<FRACTION>",
         type=float,
         default=0.05,
-        help="FDR significance threshold (matches --de-fdr).",
+        help="Significance threshold.",
     )
     parser.add_argument(
         "--highlight-protein",
         metavar="<PROTEIN>",
         action="append",
         default=[],
-        help="Protein name to highlight; repeat for multiple proteins.",
+        help="May be repeated.",
     )
     parser.add_argument(
         "--contrast",
@@ -41,5 +41,5 @@ def add_de_result_arguments(parser):
         action="append",
         default=[],
         metavar=("<KEY>", "<GROUP_A>", "<GROUP_B>", "<DE_FILE>"),
-        help="One contrast: output key, condition A, condition B, DE result CSV.",
+        help="May be repeated.",
     )
