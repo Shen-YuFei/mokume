@@ -14,14 +14,12 @@ method fallbacks compute capabilities that the kernel does not provide. These
 periphery and fallback paths are documented separately below. The pure-Python
 package computes the same capabilities through its own implementation.
 
-> **Distribution transition and measured performance.** `mokume<=0.1.0` was
-> pure Python. Starting with 0.2.0, `mokume` is the Rust-backed wheel and the
-> pure-Python distribution is `mokume-py`. Performance is workload-specific.
-> On the 2026-08-23 `sum` parity rerun (PXD003539 / PXD004701, 24 threads, one
-> warm-up, median of three measured runs), Rust/Python wall times were
-> 8.95/7.17 seconds and 17.84/13.99 seconds; peak memory was 0.86/4.25 GiB and
-> 1.29/8.02 GiB. Protein/sample sets and every matrix cell were exact. Quote
-> these measured trade-offs rather than an unbounded speed claim.
+> **Measured performance.** Performance is workload-specific. On the
+> 2026-08-23 `sum` parity rerun (PXD003539 / PXD004701, 24 threads, one warm-up,
+> median of three measured runs), Rust/Python wall times were 8.95/7.17 seconds
+> and 17.84/13.99 seconds; peak memory was 0.86/4.25 GiB and 1.29/8.02 GiB.
+> Protein/sample sets and every matrix cell were exact. Quote these measured
+> trade-offs rather than an unbounded speed claim.
 
 ## The Rust wheel
 

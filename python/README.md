@@ -112,7 +112,7 @@ mokume/
 │   ├── base.py              # Abstract base class
 │   ├── pibaq.py             # canonical piBAQ implementation
 │   ├── topn.py              # TopN quantification (generic, supports any N)
-│   ├── top3.py              # Top3 alias (backward compatibility)
+│   ├── top3.py              # Top3 alias for TopN with N=3
 │   ├── maxlfq.py            # MaxLFQ algorithm (parallelized)
 │   ├── directlfq.py         # DirectLFQ wrapper (optional)
 │   └── all_peptides.py      # Sum of all peptides
@@ -177,7 +177,7 @@ mokume/
 
 | Method | Description | Requires FASTA | Class | Optional |
 |--------|-------------|----------------|-------|----------|
-| **piBAQ** | Paralog-aware iBAQ | Yes | `peptides_to_protein()` | Yes (`pibaq`) |
+| **piBAQ** | Paralog-aware iBAQ | Yes | `peptides_to_protein()` | No |
 | **TopN** | Average of N most intense peptides (configurable N) | No | `TopNQuantification` | No |
 | **MaxLFQ** | Delayed normalization with parallelization | No | `MaxLFQQuantification` | No |
 | **DirectLFQ** | Intensity traces with hierarchical alignment | No | `DirectLFQQuantification` | Yes (`directlfq`) |
@@ -191,7 +191,7 @@ mokume/
 MaxLFQ automatically uses DirectLFQ when installed for best accuracy, falling
 back to the built-in implementation otherwise.
 
-> **Note:** `Top3Quantification` is available as a backward-compatible alias for `TopNQuantification(n=3)`.
+> **Note:** `Top3Quantification` is an alias for `TopNQuantification(n=3)`.
 
 ### MaxLFQ Algorithm Details
 

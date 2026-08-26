@@ -136,7 +136,10 @@ imputer; `missforest` remains the explicit Python fallback. The DE call supports
 `limma`, `deqms`, `rots`, `limrots`, `proda`, and `ensemble`, returning a list
 of dictionaries with the same result-column names as the corresponding command
 table. Because matrix-level DE has no quantification context, it requires a
-concrete method and rejects `auto`.
+concrete method and rejects `auto`. Protein identifiers must be non-empty and
+unique. `deqms` and ensembles containing `deqms` also require
+`peptide_counts=[...]`, aligned one-to-one with the protein rows and containing
+finite positive integers.
 
 ---
 

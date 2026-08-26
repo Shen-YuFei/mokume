@@ -1,7 +1,7 @@
 # PXD007683 LFQ Rust Quantification Benchmark
 
-This directory retains historical TMT-versus-LFQ assets, but the current,
-reproducible refresh covers the **11-sample LFQ arm** of PXD007683. The LFQ
+This directory contains TMT-versus-LFQ assets, while the reproducible refresh
+covers the **11-sample LFQ arm** of PXD007683. The LFQ
 input is `Bigbio_data/PXD_spike_in/PXD007683_LFQ`; it is not a different
 PXD007683 dataset.
 
@@ -24,7 +24,7 @@ The refresh runs `pibaq`, `maxlfq`, `directlfq`, `sum`, `top3`, `top5`, and
 `top10` through the Rust-backed `mokume.features2proteins()` API. No run-level
 or sample-level normalization and no imputation are applied.
 
-The `pibaq` path is the current implementation, not the legacy hand-written
+The `pibaq` path uses runtime pyOpenMS digestion rather than a hand-written
 `iBAQ` approximation. FASTA digestion uses the installed pyOpenMS Trypsin rule;
 the Rust kernel performs shared-peptide allocation, the piBAQ denominator, and
 matrix construction. The refresh uses peptide lengths 7–50 amino acids and zero
@@ -98,13 +98,13 @@ The script writes the seven protein matrices to the ignored
 `data/current-rust/lfq/` directory, versioned metric tables to `results/`, and
 the four refreshed LFQ figures shown above to `figures/`.
 
-## Scope of the historical files
+## Scope of files not refreshed
 
-The local input used for this refresh does not contain the TMT arm. Existing TMT
-plots, cross-technology plots, the old MaxQuant-iBAQ comparison, and the broad
-`results/BENCHMARK_REPORT.md` are legacy snapshots from the earlier Python
-workflow. They were not mixed into the current Rust LFQ results and should not
-be presented as a newly rerun TMT-versus-LFQ comparison.
+The local input used for this refresh does not contain the TMT arm. The tracked
+TMT plots, cross-technology plots, MaxQuant-iBAQ comparison, and broad
+`results/BENCHMARK_REPORT.md` come from a separate Python workflow. They were
+not mixed into the Rust LFQ results and should not be presented as a newly rerun
+TMT-versus-LFQ comparison.
 
 Large source data are not committed. Public processed-data locations remain:
 

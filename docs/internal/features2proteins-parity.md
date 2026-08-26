@@ -13,7 +13,7 @@ intent for each parameter.
 | `--parquet` | Input | Required QPX feature parquet input. | Required QPX feature parquet input. | Implemented |
 | `--sdrf` | Input | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Implemented subset |
 | `--output` | Output | Required protein matrix output path. | Required protein matrix output path. | Implemented |
-| `--quant-method` | Quantification | Feature-level `peptide_count` counts distinct peptides. | `peptide-count` uses the same feature-level definition; `spectral-count` uses PSM-QPX input and counts unique `(run_file_name, scan)` spectra. Missing cells for both count methods are additive zeroes in observed samples. | Intentional contract split |
+| `--quant-method` | Quantification | Feature-level `peptide_count` counts distinct peptides. | `peptide-count` uses the same feature-level definition; `spectral-count` pairs PSM and feature QPX, resolves groups through `feature_id`, and counts unique `(run_file_name, scan)` spectra. Missing cells for both count methods are additive zeroes in observed samples. | Intentional contract split |
 | `top<N>` method syntax | Quantification | Accepts N in the method name, such as `--quant-method top5`. | Same. | Implemented |
 | `--min-aa` | Filtering | Removes peptide sequences shorter than the threshold. | Removes peptide sequences shorter than the threshold. | Implemented |
 | `--min-unique` | Filtering | Requires a minimum number of unique peptides per protein/sample cell. | Requires a minimum number of unique peptides per protein/sample cell for non-piBAQ methods. | Implemented subset |
@@ -105,8 +105,8 @@ delegates to the directlfq path by default, matching Python — and the piBAQ
 family-allocation core), the run-level and sample-level normalizers listed above, and
 14 imputation methods.
 
-Feature-level `peptide_count` and PSM-level `spectral_count` have separate input
-contracts and are validated independently.
+Feature-level `peptide_count` and paired PSM/feature `spectral_count` have
+separate input contracts and are validated independently.
 
 Real-data parity (2026-06-21, Wave 1-C): `scripts/run_parity_matrix.sh` was run across
 all four cell-line datasets (PXD003539/004701/041421/030304) for the Phase-1

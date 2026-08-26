@@ -22,9 +22,10 @@ CSV: the first column is `ProteinName`, the remaining columns are one per sample
 | `median` | Median peptide intensity |
 
 `pibaq`, `ratio`, `abd`, `intensity`, and `peptide-count` are also valid for
-feature input. True `spectral-count` uses `--psm` plus SDRF; piBAQ is
-covered on the [Absolute Expression](absolute-expression.md) page. Both count
-methods use `none` for run/sample intensity normalization and reject IRS.
+feature input. True `spectral-count` pairs `--psm` with its matching feature QPX
+via `--parquet` and requires SDRF; piBAQ is covered on the
+[Absolute Expression](absolute-expression.md) page. Both count methods use
+`none` for run/sample intensity normalization and reject IRS.
 
 ## Run a quantification
 

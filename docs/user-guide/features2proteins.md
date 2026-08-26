@@ -49,13 +49,14 @@ The `features2proteins` command is the recommended way to go from raw feature da
 
 ## Input Formats
 
-Provide exactly one input:
+Choose one input mode:
 
-- `--parquet` accepts a quantms.io/QPX feature parquet file.
+- `--parquet` accepts a quantms.io/QPX feature parquet file. It is also the
+  required protein-group mapping paired with `--psm` for `spectral-count`.
 - `--msstats` accepts a native MSstats CSV and requires `--sdrf` so runs and
   channels can be mapped to samples.
-- `--psm` accepts a PSM-level QPX parquet for true `spectral-count` and requires
-  `--sdrf`.
+- `--psm` accepts a PSM-level QPX parquet for true `spectral-count`; it requires
+  both the matching feature QPX via `--parquet` and sample metadata via `--sdrf`.
 
 ```bash
 mokume quantify features2proteins \
@@ -84,7 +85,7 @@ therefore cannot use an MSstats feature table.
 | TMT Abundance | `--quant-method abd` | No | Median of log2 peptide intensities (TMT) |
 | TMT Reporter Intensity | `--quant-method intensity` | No | Sum of raw reporter intensities (TMT) |
 | Peptide Count | `--quant-method peptide-count` | No | Distinct canonical peptides from feature QPX |
-| Spectral Count | `--quant-method spectral-count --psm FILE` | No | Unique `(run_file_name, scan)` spectra from PSM QPX; requires SDRF |
+| Spectral Count | `--quant-method spectral-count --psm PSM --parquet FEATURE` | No | Unique `(run_file_name, scan)` spectra from feature-linked PSMs; requires SDRF |
 
 In practice:
 
@@ -100,8 +101,9 @@ In practice:
   `FamilyId` / `EvidenceLevel` metadata columns.
 - Use `ratio` for TMT PS-style reference-based analysis.
 - Use `peptide-count` for distinct peptide identifications from feature QPX;
-  use `spectral-count` for unique spectra from PSM QPX. Both are integer
-  evidence counts, so run/sample intensity normalization and IRS are rejected.
+  use `spectral-count` for unique feature-linked spectra from matching PSM and
+  feature QPX files. Both are integer evidence counts, so run/sample intensity
+  normalization and IRS are rejected.
 - Use `top<N>` for the classic Top3-style summary; `top3` is the method from
   Silva et al. 2006, and any other N works the same way (`top5`, `top10`, ...).
 

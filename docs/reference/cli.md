@@ -33,16 +33,17 @@ mokume quantify features2proteins [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-p/--parquet` | none | Input quantms.io/QPX feature parquet; mutually exclusive with the other inputs |
-| `--msstats` | none | Input MSstats CSV; mutually exclusive with the other inputs and requires `--sdrf` |
-| `--psm` | none | PSM-level QPX parquet for `spectral-count`; mutually exclusive with the other inputs and requires `--sdrf` |
+| `-p/--parquet` | none | Input quantms.io/QPX feature parquet; pair it with `--psm` for `spectral-count` |
+| `--msstats` | none | Input MSstats CSV; mutually exclusive with QPX inputs and requires `--sdrf` |
+| `--psm` | none | PSM-level QPX parquet for `spectral-count`; requires matching `--parquet` and `--sdrf` |
 | `-o/--output` | required | Output protein intensities CSV |
 
 The output schema is fixed: the protein identifier column is `ProteinName`.
 There is no alternate output-format switch.
 
-Provide exactly one of `--parquet`, `--msstats`, or `--psm`. `--psm` is the
-PSM-level QPX input used only by true `spectral-count` and requires SDRF. MSstats input requires
+Provide `--parquet`, `--msstats`, or the paired `--psm` and `--parquet` inputs.
+The paired QPX inputs are used only by true `spectral-count` and require SDRF.
+MSstats input requires
 `ProteinName`, `PeptideSequence`, `Intensity`, `Charge` or `PrecursorCharge`,
 and `Run` or `Reference`; isobaric data also requires `Channel`. Ratio
 quantification requires PSM-level QPX evidence and does not accept MSstats

@@ -85,7 +85,7 @@ the optional wheel workflows. After installing the matching extra, run
 `mokume plot tsne`, `mokume tissuemap`, `mokume plot de`, or
 `mokume interactive-report` directly.
 
-The optional Plugin/MCP workflow requires Python 3.10 or newer.
+Mokume and the optional Plugin/MCP workflow require Python 3.10 or newer.
 
 For the separate pure-Python implementation, use `pip install mokume-py`; its
 base install also includes pyOpenMS and piBAQ calls pyOpenMS digestion directly.
@@ -105,10 +105,6 @@ mokume quantify features2proteins \
   --quant-method maxlfq \
   --output proteins.csv
 ```
-
-> **Distribution transition.** `mokume<=0.1.0` was the pure-Python package.
-> Starting with 0.2.0, `mokume` is Rust-backed and the pure-Python package is
-> named `mokume-py`.
 
 Add differential expression by passing one or more contrasts; a DE option
 enables the stage directly:
@@ -223,9 +219,10 @@ Runnable examples per analysis: [quantification methods](docs/examples/quantific
   `top10`, ... — the N is part of the method name), `sum` (also `median`,
   `ratio`, `abd`, `intensity`, `peptide-count`, `spectral-count`). `peptide-count`
   counts distinct canonical peptides from feature QPX; true `spectral-count`
-  reads PSM QPX with `--psm` and deduplicates `(run_file_name, scan)`. piBAQ
-  requires a FASTA; TopN, MaxLFQ, and Sum do not. The two count methods reject
-  intensity normalization and IRS rather than silently accepting no-op scaling.
+  pairs PSM QPX (`--psm`) with its feature QPX (`--parquet`) and deduplicates
+  `(run_file_name, scan)`. piBAQ requires a FASTA; TopN, MaxLFQ, and Sum do not.
+  The two count methods reject intensity normalization and IRS rather than
+  silently accepting no-op scaling.
 - **Normalization:** run-level and sample-level options including `median`,
   `quantile`, `rlr`, and `loess`.
 - **Imputation:** a wide set of imputers, from simple (`mindet`, `knn`) to

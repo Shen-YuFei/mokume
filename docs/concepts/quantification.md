@@ -16,7 +16,7 @@ mokume supports multiple protein quantification methods, each suited to differen
 | **TMT Reporter Intensity** | Sum of raw reporter intensities | No | `intensity` |
 | **Median** | Median of peptide intensities | No | `median` |
 | **Peptide Count** | Distinct canonical peptides per (protein, sample) from feature QPX | No | `peptide-count` |
-| **Spectral Count** | Unique spectra per (protein group, sample) from PSM QPX | No | `spectral-count` |
+| **Spectral Count** | Unique spectra per (protein group, sample) from paired PSM/feature QPX | No | `spectral-count` |
 
 All aggregation methods run in the Rust kernel. piBAQ obtains its theoretical
 peptide map from the base pyOpenMS dependency; the other methods need no Python
@@ -257,17 +257,20 @@ mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method peptide-count
 ```
 
-`spectral-count` instead requires a PSM-level QPX parquet and SDRF. It removes
-decoys, identifies a spectrum by `(run_file_name, scan)`, maps runs to samples
-through the SDRF, and counts each unique spectrum once. If multiple accepted PSM
-rows describe the same spectrum, Mokume unions their peptide sequences and
-protein accessions before forming one sorted protein-group key; it does not
-double-count the spectrum or explode a shared group into independent proteins.
-Rows need non-empty `protein_accessions`. As with `peptide-count`, intensity
-normalization and IRS are rejected.
+`spectral-count` instead requires matching PSM-level and feature-level QPX
+parquets plus SDRF. A PSM's `feature_id` resolves its protein group from the
+feature table's `pg_accessions` (falling back to `anchor_protein`). Mokume
+removes decoys, identifies a spectrum by `(run_file_name, scan)`, maps runs to
+samples through the SDRF, and counts each unique spectrum once. If multiple
+accepted PSM rows describe the same spectrum, Mokume unions their peptide
+sequences and resolved protein groups before forming one sorted protein-group
+key; it does not double-count the spectrum or explode a shared group into
+independent proteins. PSM rows without a matching feature link are not counted.
+As with `peptide-count`, intensity normalization and IRS are rejected.
 
 ```bash
 mokume quantify features2proteins --psm identifications.psm.parquet \
+    --parquet quantified.feature.parquet \
     --sdrf experiment.sdrf.tsv -o spectral_counts.csv \
     --quant-method spectral-count
 ```

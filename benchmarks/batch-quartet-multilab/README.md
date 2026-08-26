@@ -85,7 +85,7 @@ python scripts/refresh_rust.py \
 The script validates the six `evidence.txt` inputs, reconstructs the balanced
 72-sample design, quantifies all four methods with the Rust kernel, runs native
 Rust ComBat, writes the result CSV files, and redraws the two existing PNG
-figures. It does not use the historical `inmoose` or median-fill path.
+figures. It does not use `inmoose` or median filling.
 
 ## Reference
 

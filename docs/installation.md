@@ -10,12 +10,6 @@ pip install mokume
 `mokume._mokume` extension, its Python API and periphery, and the `mokume`
 console command.
 
-!!! note "Distribution names changed in 0.2.0"
-
-    `mokume<=0.1.0` was the pure-Python implementation. Starting with 0.2.0,
-    `mokume` is the Rust-backed wheel and the pure-Python implementation is
-    published separately as `mokume-py`.
-
 !!! warning "Install `mokume` **or** `mokume-py` — never both"
 
     Both distributions install the same `mokume` import package, so having both
@@ -145,9 +139,8 @@ pip install ./rust
 
 ## Requirements
 
-- Python >= 3.9 for the default Rust-backed ``mokume`` distribution
-- Python >= 3.10 for ``mokume-py`` and the optional ``mokume[agentic]``
-  Plugin/MCP workflow
+- Python >= 3.10 for the Rust-backed ``mokume`` distribution, ``mokume-py``,
+  and the optional ``mokume[agentic]`` Plugin/MCP workflow
 - Both distributions declare pyOpenMS as a base dependency. In the default
   Rust-backed wheel, piBAQ reads every protease registered by the installed
   runtime, digests the FASTA in Python, and passes the complete theoretical-

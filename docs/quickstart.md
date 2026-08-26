@@ -19,10 +19,6 @@ For evidence-bound method recommendation, install `mokume[agentic]` and the
 [Mokume Plugin](user-guide/agentic-plugin.md). Do not configure a second MCP
 entry or put a model API key in Mokume.
 
-!!! note "Distribution names changed in 0.2.0"
-    `mokume<=0.1.0` was pure Python. Starting with 0.2.0, `mokume` is the
-    Rust-backed wheel; install `mokume-py` for the separate pure-Python API.
-
 ## One-Step Pipeline (Recommended)
 
 The `features2proteins` command handles everything: loading, filtering, normalization, and quantification.

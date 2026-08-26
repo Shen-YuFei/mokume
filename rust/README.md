@@ -34,10 +34,6 @@ The Python wheel is the recommended way to install mokume:
 pip install mokume
 ```
 
-> **Distribution transition:** `mokume<=0.1.0` was pure Python. Starting with
-> 0.2.0, this Rust-backed wheel is the default `mokume` distribution; the
-> pure-Python implementation is available as `mokume-py`.
-
 pyOpenMS and its numpy, pandas, and matplotlib dependencies are installed with
 the base wheel so piBAQ can use every protease in the runtime catalog. Optional
 plotting, reporting, tissue-map, and analysis stacks remain extras:
@@ -51,7 +47,7 @@ pip install "mokume[agentic]"    # local MCP service for the Mokume Plugin
 pip install "mokume[all]"        # everything above
 ```
 
-The optional Plugin/MCP workflow requires Python 3.10 or newer.
+Mokume and the optional Plugin/MCP workflow require Python 3.10 or newer.
 
 The wheel also installs the `mokume` console command. A conda/mamba environment
 is provided in `environment.yaml`. See
@@ -121,9 +117,9 @@ steps around them. The full catalog of methods is documented in the
 - **Quantification:** `maxlfq`, `directlfq`, `pibaq`, `top<N>`, `sum`
   (also `median`, `ratio`, `abd`, `intensity`, `peptide-count`,
   `spectral-count`). `peptide-count` uses feature QPX; true `spectral-count`
-  requires PSM QPX via `--psm`. piBAQ requires a FASTA; TopN, MaxLFQ, and Sum
-  do not. Both count methods require run/sample normalization `none` and reject
-  IRS.
+  pairs PSM QPX (`--psm`) with its feature QPX (`--parquet`). piBAQ requires a
+  FASTA; TopN, MaxLFQ, and Sum do not. Both count methods require run/sample
+  normalization `none` and reject IRS.
 - **Normalization:** run-level and sample-level options including `median`,
   `quantile`, `rlr`, and `loess`.
 - **Imputation:** a focused set of imputers, from simple (`mindet`, `knn`) to
