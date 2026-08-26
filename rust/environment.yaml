@@ -8,7 +8,7 @@ channels:
   - bioconda
 dependencies:
   # --- Python ---
-  - python >=3.9
+  - python >=3.10
   - pip
   - pyopenms >=3.4,<4  # base wheel runtime for piBAQ FASTA digestion
 

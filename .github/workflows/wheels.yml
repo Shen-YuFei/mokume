@@ -5,8 +5,8 @@
 # transitively depends on the `mokume-command` dispatch library -> `hdf5-metno`
 # (features = ["static"]),
 # every wheel statically compiles libhdf5 from C source at build time, so each
-# runner must provide cmake + a C compiler. The `abi3-py39` pyo3 feature yields a
-# single `cp39-abi3` wheel per platform that runs on CPython 3.9+.
+# runner must provide cmake + a C compiler. The `abi3-py310` pyo3 feature yields a
+# single `cp310-abi3` wheel per platform that runs on CPython 3.10+.
 #
 # This workflow only BUILDS wheels + an sdist and uploads them as artifacts (on
 # push / PR / tag / manual dispatch); it does not publish to PyPI. The
