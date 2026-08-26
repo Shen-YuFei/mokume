@@ -19,23 +19,24 @@ pub(crate) struct Features2PeptidesArgs {
     #[arg(
         short = 'p',
         long = "parquet",
+        value_name = "FILE",
         required_unless_present = "generate_filter_config"
     )]
     parquet: Option<PathBuf>,
 
-    #[arg(short = 's', long = "sdrf")]
+    #[arg(short = 's', long = "sdrf", value_name = "FILE")]
     sdrf: Option<PathBuf>,
 
-    #[arg(long = "min-aa")]
+    #[arg(long = "min-aa", value_name = "N")]
     min_aa: Option<usize>,
 
-    #[arg(long = "min-unique")]
+    #[arg(long = "min-unique", value_name = "N")]
     min_unique: Option<usize>,
 
     #[arg(long = "keep-shared-peptides")]
     keep_shared_peptides: bool,
 
-    #[arg(long = "remove-ids")]
+    #[arg(long = "remove-ids", value_name = "FILE")]
     remove_ids: Option<PathBuf>,
 
     #[arg(long = "remove-decoy-contaminants")]
@@ -47,6 +48,7 @@ pub(crate) struct Features2PeptidesArgs {
     #[arg(
         short = 'o',
         long = "output",
+        value_name = "FILE",
         required_unless_present = "generate_filter_config"
     )]
     output: Option<PathBuf>,
@@ -57,12 +59,12 @@ pub(crate) struct Features2PeptidesArgs {
     )]
     skip_normalization: bool,
 
-    #[arg(long = "run-normalization", value_parser = [
+    #[arg(long = "run-normalization", value_name = "METHOD", value_parser = [
         "none", "mean", "median", "max", "global", "max-min", "iqr",
     ], ignore_case = true)]
     run_normalization: Option<String>,
 
-    #[arg(long = "sample-normalization", value_parser = [
+    #[arg(long = "sample-normalization", value_name = "METHOD", value_parser = [
         "none",
         "global-median",
         "condition-median",
@@ -75,40 +77,52 @@ pub(crate) struct Features2PeptidesArgs {
     #[arg(long = "save-parquet")]
     save_parquet: bool,
 
-    #[arg(long = "irs-channel")]
+    #[arg(long = "irs-channel", value_name = "NAME")]
     irs_channel: Option<String>,
 
-    #[arg(long = "irs-autodetect-regex")]
+    #[arg(long = "irs-autodetect-regex", value_name = "REGEX")]
     irs_autodetect_regex: Option<String>,
 
-    #[arg(long = "irs-stat", default_value = "median", value_parser = ["median", "mean"], ignore_case = true)]
+    #[arg(long = "irs-stat", value_name = "STAT", default_value = "median", value_parser = ["median", "mean"], ignore_case = true)]
     irs_stat: String,
 
-    #[arg(long = "irs-scope", default_value = "global", value_parser = ["global", "by-mixture", "two-stage"], ignore_case = true)]
+    #[arg(long = "irs-scope", value_name = "SCOPE", default_value = "global", value_parser = ["global", "by-mixture", "two-stage"], ignore_case = true)]
     irs_scope: String,
 
-    #[arg(long = "aggregation-level", default_value = "sample", value_parser = ["sample", "run"], ignore_case = true)]
+    #[arg(long = "aggregation-level", value_name = "LEVEL", default_value = "sample", value_parser = ["sample", "run"], ignore_case = true)]
     aggregation_level: String,
 
-    #[arg(long = "filter-config")]
+    #[arg(long = "filter-config", value_name = "FILE")]
     filter_config: Option<PathBuf>,
 
-    #[arg(long = "generate-filter-config", exclusive = true)]
+    #[arg(long = "generate-filter-config", value_name = "FILE", exclusive = true)]
     generate_filter_config: Option<PathBuf>,
 
-    #[arg(long = "filter-min-intensity", value_parser = parse_nonnegative_f64)]
+    #[arg(
+        long = "filter-min-intensity",
+        value_name = "VALUE",
+        value_parser = parse_nonnegative_f64
+    )]
     filter_min_intensity: Option<f64>,
 
-    #[arg(long = "filter-cv-threshold", value_parser = parse_nonnegative_f64)]
+    #[arg(
+        long = "filter-cv-threshold",
+        value_name = "VALUE",
+        value_parser = parse_nonnegative_f64
+    )]
     filter_cv_threshold: Option<f64>,
 
-    #[arg(long = "filter-charge-state")]
+    #[arg(long = "filter-charge-state", value_name = "CHARGE")]
     filter_charge_state: Vec<i32>,
 
-    #[arg(long = "filter-max-missed-cleavages")]
+    #[arg(long = "filter-max-missed-cleavages", value_name = "N")]
     filter_max_missed_cleavages: Option<usize>,
 
-    #[arg(long = "filter-peptide-fdr", value_parser = parse_fraction)]
+    #[arg(
+        long = "filter-peptide-fdr",
+        value_name = "FRACTION",
+        value_parser = parse_fraction
+    )]
     filter_peptide_fdr: Option<f64>,
 
     #[arg(
@@ -119,16 +133,24 @@ pub(crate) struct Features2PeptidesArgs {
     )]
     filter_score: Option<NamedScoreFilterConfig>,
 
-    #[arg(long = "filter-exclude-modification")]
+    #[arg(long = "filter-exclude-modification", value_name = "NAME")]
     filter_exclude_modification: Vec<String>,
 
-    #[arg(long = "filter-protein-fdr", value_parser = parse_fraction)]
+    #[arg(
+        long = "filter-protein-fdr",
+        value_name = "FRACTION",
+        value_parser = parse_fraction
+    )]
     filter_protein_fdr: Option<f64>,
 
-    #[arg(long = "filter-min-features")]
+    #[arg(long = "filter-min-features", value_name = "N")]
     filter_min_features: Option<usize>,
 
-    #[arg(long = "filter-max-missing-rate", value_parser = parse_fraction)]
+    #[arg(
+        long = "filter-max-missing-rate",
+        value_name = "FRACTION",
+        value_parser = parse_fraction
+    )]
     filter_max_missing_rate: Option<f64>,
 }
 

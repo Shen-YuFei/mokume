@@ -58,12 +58,14 @@ def _parse_args(argv):
     parser.add_argument(
         "-s",
         "--sdrf",
+        metavar="<FILE>",
         required=True,
         help="SDRF file; the report needs the sample-to-condition mapping.",
     )
     parser.add_argument(
         "-o",
         "--output",
+        metavar="<FILE>",
         default=None,
         help="Output HTML path (default: ./report_<key>.html).",
     )

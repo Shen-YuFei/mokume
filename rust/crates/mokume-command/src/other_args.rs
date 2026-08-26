@@ -8,32 +8,32 @@ use crate::parsers::{
 
 #[derive(Debug, Args)]
 pub(crate) struct Peptides2ProteinArgs {
-    #[arg(short = 'f', long = "fasta")]
+    #[arg(short = 'f', long = "fasta", value_name = "FILE")]
     pub(crate) fasta: Option<PathBuf>,
 
-    #[arg(short = 'p', long = "peptides")]
+    #[arg(short = 'p', long = "peptides", value_name = "FILE")]
     pub(crate) peptides: PathBuf,
 
     #[arg(
         long = "quant-method",
         default_value = "pibaq",
-        value_name = "[pibaq|maxlfq|sum|directlfq|top<N>]",
+        value_name = "METHOD",
         value_parser = parse_peptides2protein_method,
         help = "Quantification method: pibaq, maxlfq, sum, directlfq, or top<N> -- the TopN \
 family spells its peptide count in the name (e.g. top3, top5)"
     )]
     pub(crate) quant_method: String,
 
-    #[arg(long = "enzyme", default_value = "Trypsin")]
+    #[arg(long = "enzyme", value_name = "NAME", default_value = "Trypsin")]
     pub(crate) enzyme: String,
 
     #[arg(long = "normalize")]
     pub(crate) normalize: bool,
 
-    #[arg(long = "min-aa", default_value_t = 7)]
+    #[arg(long = "min-aa", value_name = "N", default_value_t = 7)]
     pub(crate) min_aa: usize,
 
-    #[arg(long = "max-aa", default_value_t = 30)]
+    #[arg(long = "max-aa", value_name = "N", default_value_t = 30)]
     pub(crate) max_aa: usize,
 
     #[arg(long = "tpa")]
@@ -42,72 +42,98 @@ family spells its peptide count in the name (e.g. top3, top5)"
     #[arg(long = "ruler")]
     pub(crate) ruler: bool,
 
-    #[arg(long = "ploidy", value_parser = parse_positive_i32)]
+    #[arg(long = "ploidy", value_name = "N", value_parser = parse_positive_i32)]
     pub(crate) ploidy: Option<i32>,
 
-    #[arg(long = "organism")]
+    #[arg(long = "organism", value_name = "NAME")]
     pub(crate) organism: Option<String>,
 
-    #[arg(long = "cpc", value_parser = parse_positive_f64)]
+    #[arg(long = "cpc", value_name = "VALUE", value_parser = parse_positive_f64)]
     pub(crate) cpc: Option<f64>,
 
-    #[arg(short = 'o', long = "output", required = true)]
+    #[arg(short = 'o', long = "output", value_name = "FILE", required = true)]
     pub(crate) output: Option<PathBuf>,
 
-    #[arg(long = "qc-report")]
+    #[arg(long = "qc-report", value_name = "FILE")]
     pub(crate) qc_report: Option<PathBuf>,
 
     #[arg(
         short = 't',
         long = "threads",
+        value_name = "N",
         value_parser = parse_positive_usize,
         help = "DirectLFQ/MaxLFQ worker count"
     )]
     pub(crate) threads: Option<usize>,
 
-    #[arg(long = "directlfq-min-nonan", value_parser = parse_positive_usize)]
+    #[arg(
+        long = "directlfq-min-nonan",
+        value_name = "N",
+        value_parser = parse_positive_usize
+    )]
     pub(crate) directlfq_min_nonan: Option<usize>,
 
-    #[arg(long = "families")]
+    #[arg(long = "families", value_name = "FILE")]
     pub(crate) families_yaml: Option<PathBuf>,
 
-    #[arg(long = "min-shared", default_value_t = 2)]
+    #[arg(long = "min-shared", value_name = "N", default_value_t = 2)]
     pub(crate) min_shared: usize,
 
-    #[arg(long = "min-anchors", default_value_t = 1)]
+    #[arg(long = "min-anchors", value_name = "N", default_value_t = 1)]
     pub(crate) min_anchors: usize,
 
-    #[arg(long = "high-anchor-threshold", default_value_t = 3)]
+    #[arg(long = "high-anchor-threshold", value_name = "N", default_value_t = 3)]
     pub(crate) high_anchor_threshold: usize,
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct CorrectBatchesArgs {
-    #[arg(short = 'i', long = "input")]
+    #[arg(short = 'i', long = "input", value_name = "DIR")]
     pub(crate) input: PathBuf,
 
-    #[arg(short = 'p', long = "pattern", default_value = "*pibaq.tsv")]
+    #[arg(
+        short = 'p',
+        long = "pattern",
+        value_name = "GLOB",
+        default_value = "*pibaq.tsv"
+    )]
     pub(crate) pattern: String,
 
-    #[arg(long = "comment", default_value = "#")]
+    #[arg(long = "comment", value_name = "PREFIX", default_value = "#")]
     pub(crate) comment: String,
 
-    #[arg(long = "sep", default_value = "\t")]
+    #[arg(long = "sep", value_name = "TEXT", default_value = "\t")]
     pub(crate) sep: String,
 
-    #[arg(short = 'o', long = "output")]
+    #[arg(short = 'o', long = "output", value_name = "FILE")]
     pub(crate) output: PathBuf,
 
-    #[arg(long = "sample-id-column", default_value = "SampleID")]
+    #[arg(
+        long = "sample-id-column",
+        value_name = "COLUMN",
+        default_value = "SampleID"
+    )]
     pub(crate) sample_id_column: String,
 
-    #[arg(long = "protein-id-column", default_value = "ProteinName")]
+    #[arg(
+        long = "protein-id-column",
+        value_name = "COLUMN",
+        default_value = "ProteinName"
+    )]
     pub(crate) protein_id_column: String,
 
-    #[arg(long = "pibaq-raw-column", default_value = "PiBAQ")]
+    #[arg(
+        long = "pibaq-raw-column",
+        value_name = "COLUMN",
+        default_value = "PiBAQ"
+    )]
     pub(crate) pibaq_raw_column: String,
 
-    #[arg(long = "pibaq-corrected-column", default_value = "PiBAQBec")]
+    #[arg(
+        long = "pibaq-corrected-column",
+        value_name = "COLUMN",
+        default_value = "PiBAQBec"
+    )]
     pub(crate) pibaq_corrected_column: String,
 
     #[arg(long = "export-anndata")]

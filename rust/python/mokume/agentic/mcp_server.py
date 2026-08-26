@@ -78,7 +78,7 @@ def create_server(knowledge: str):
 def main(argv: list[str] | None = None) -> int:
     """Run the plugin MCP server over stdio."""
     parser = argparse.ArgumentParser(prog="mokume mcp serve")
-    parser.add_argument("--knowledge", required=True)
+    parser.add_argument("--knowledge", metavar="<FILE>", required=True)
     args = parser.parse_args(argv)
     knowledge = Path(args.knowledge).expanduser().resolve()
     if not knowledge.is_file():

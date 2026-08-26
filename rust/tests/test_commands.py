@@ -45,6 +45,8 @@ def test_console_root_help_covers_the_installed_wheel(monkeypatch, capsys):
     assert "quantify" in output
     assert "plot" in output
     assert "interactive-report" in output
+    assert "--log-level <LEVEL>" in output
+    assert "--log-file <FILE>" in output
     assert "mcp serve" not in output
 
 
@@ -71,6 +73,38 @@ def test_console_periphery_help_uses_public_command_path(path, monkeypatch, caps
 
     assert exc_info.value.code == 0
     assert f"usage: mokume {' '.join(path)}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_value_names"),
+    [
+        (("tissuemap",), ("--input <DIR>", "--threads <N>")),
+        (("plot", "pca"), ("--protein-matrix <FILE>", "--output <FILE>")),
+        (("plot", "tsne"), ("--input <DIR>", "--pattern <GLOB>")),
+        (
+            ("plot", "de"),
+            ("--outdir <DIR>", "<GROUP_A> <GROUP_B> <DE_FILE>"),
+        ),
+        (
+            ("interactive-report",),
+            ("--output <FILE>", "<GROUP_A> <GROUP_B> <DE_FILE>"),
+        ),
+    ],
+)
+def test_console_periphery_help_uses_semantic_value_names(
+    path, expected_value_names, monkeypatch, capsys
+):
+    """Periphery help should match the concise metavar style of the Rust CLI."""
+    entrypoint = importlib.import_module("mokume.__main__")
+    monkeypatch.setattr(entrypoint.sys, "argv", ["mokume", *path, "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    for expected in expected_value_names:
+        assert expected in output
 
 
 def test_console_dispatches_periphery_arguments(monkeypatch):

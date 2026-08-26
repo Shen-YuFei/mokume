@@ -139,6 +139,35 @@ fn features2proteins_help_lists_python_option_surface() {
 }
 
 #[test]
+fn help_uses_concise_semantic_value_names() {
+    let features_help = render_subcommand_help_path(&["quantify", "features2proteins"]);
+    for expected in [
+        "--parquet <FILE>",
+        "--quant-method <METHOD>",
+        "--de-contrast <GROUP_A> <GROUP_B>",
+        "--memory <SIZE>",
+        "--threads <N>",
+    ] {
+        assert!(
+            features_help.contains(expected),
+            "missing semantic value name `{expected}` in help:\n{features_help}"
+        );
+    }
+    assert!(
+        !features_help.contains("<DE_CONTRAST> <DE_CONTRAST>"),
+        "duplicate automatic contrast value names remain in help:\n{features_help}"
+    );
+
+    let correct_batches_help = render_subcommand_help_path(&["correct-batches"]);
+    for expected in ["--input <DIR>", "--pattern <GLOB>", "--output <FILE>"] {
+        assert!(
+            correct_batches_help.contains(expected),
+            "missing semantic value name `{expected}` in help:\n{correct_batches_help}"
+        );
+    }
+}
+
+#[test]
 fn features2peptides_help_lists_python_option_surface() {
     let help = render_subcommand_help_path(&["quantify", "features2peptides"]);
     for option in [

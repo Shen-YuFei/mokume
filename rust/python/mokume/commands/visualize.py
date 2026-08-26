@@ -30,18 +30,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "-i",
         "--input",
+        metavar="<DIR>",
         required=True,
         help="Folder that contains all the protein files.",
     )
     parser.add_argument(
         "-p",
         "--pattern",
+        metavar="<GLOB>",
         default="proteins.tsv",
         help="Protein file pattern (default: proteins.tsv).",
     )
     parser.add_argument(
         "-o",
         "--output",
+        metavar="<FILE>",
         required=True,
         help="Destination PDF.",
     )

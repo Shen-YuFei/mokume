@@ -49,28 +49,49 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         prog="mokume tissuemap",
         description="Per-dataset tissue proteome analysis (mokume command).",
     )
-    parser.add_argument("-i", "--input", dest="scan_dir", type=Path, default=None)
-    parser.add_argument("-o", "--outdir", dest="output_dir", type=Path, default=None)
-    parser.add_argument("--config", dest="config_path", type=Path, default=None)
-    parser.add_argument("--generate-config", type=Path, default=None)
     parser.add_argument(
-        "--tmt-dataset", dest="tmt_datasets", action="append", default=[]
+        "-i", "--input", dest="scan_dir", metavar="<DIR>", type=Path, default=None
     )
-    parser.add_argument("-t", "--threads", dest="n_jobs", type=int, default=None)
-    parser.add_argument("--dpi", type=int, default=None)
+    parser.add_argument(
+        "-o",
+        "--outdir",
+        dest="output_dir",
+        metavar="<DIR>",
+        type=Path,
+        default=None,
+    )
+    parser.add_argument(
+        "--config", dest="config_path", metavar="<FILE>", type=Path, default=None
+    )
+    parser.add_argument("--generate-config", metavar="<FILE>", type=Path, default=None)
+    parser.add_argument(
+        "--tmt-dataset",
+        dest="tmt_datasets",
+        metavar="<ID>",
+        action="append",
+        default=[],
+    )
+    parser.add_argument(
+        "-t", "--threads", dest="n_jobs", metavar="<N>", type=int, default=None
+    )
+    parser.add_argument("--dpi", metavar="<N>", type=int, default=None)
     parser.add_argument(
         "--impute-method",
         dest="imputation_method",
+        metavar="<METHOD>",
         type=str.lower,
         choices=_IMPUTATION_CHOICES,
         default=None,
+        help="Imputation method; choices: " + ", ".join(_IMPUTATION_CHOICES),
     )
     parser.add_argument(
         "--embedding-method",
         dest="embedding_method",
+        metavar="<METHOD>",
         type=str.lower,
         choices=("tsne", "umap"),
         default=None,
+        help="Embedding method; choices: tsne, umap",
     )
     return parser.parse_args(argv)
 

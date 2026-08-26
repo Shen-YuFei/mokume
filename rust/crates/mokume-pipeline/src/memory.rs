@@ -1,17 +1,17 @@
 #[cfg(target_os = "linux")]
 use std::fs::read_to_string;
 
+#[cfg(not(target_os = "linux"))]
+use memory_stats::memory_stats;
+
 use mokume_core::{parse_memory_to_bytes, MokumeError, Result, RuntimeConfig};
 use mokume_io::DEFAULT_QPX_BATCH_SIZE;
 
-#[cfg(target_os = "linux")]
 const MIN_QPX_BATCH_SIZE: usize = 256;
-#[cfg(target_os = "linux")]
 const STREAM_BUDGET_DIVISOR: u64 = 4;
-#[cfg(target_os = "linux")]
 const ESTIMATED_BYTES_PER_QPX_ROW: u64 = 8 * 1024;
 
-/// Execution plan derived from the optional `--memory` soft RSS budget.
+/// Execution plan derived from the optional `--memory` soft resident-memory budget.
 ///
 /// With no budget, the established high-throughput reader settings are kept.
 /// With a budget, QPX read-ahead is disabled and the Arrow batch size receives
@@ -31,18 +31,7 @@ impl MemoryPlan {
         match runtime.memory.as_deref() {
             Some(value) => {
                 let limit_bytes = parse_memory_to_bytes(value)?;
-                #[cfg(target_os = "linux")]
-                {
-                    Ok(Self::with_limit(limit_bytes))
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let _ = limit_bytes;
-                    Err(MokumeError::InvalidInput {
-                        message: "--memory RSS enforcement is currently supported on Linux only"
-                            .to_owned(),
-                    })
-                }
+                Ok(Self::with_limit(limit_bytes))
             }
             None => Ok(Self::unlimited()),
         }
@@ -57,7 +46,6 @@ impl MemoryPlan {
         }
     }
 
-    #[cfg(target_os = "linux")]
     fn with_limit(limit_bytes: u64) -> Self {
         let stream_bytes = limit_bytes / STREAM_BUDGET_DIVISOR;
         let planned_rows = stream_bytes / ESTIMATED_BYTES_PER_QPX_ROW;
@@ -93,14 +81,14 @@ impl MemoryPlan {
             return Ok(());
         };
         let rss_bytes = current_rss_bytes().ok_or_else(|| MokumeError::InvalidInput {
-            message: "--memory could not read process RSS from /proc/self/status".to_owned(),
+            message: "--memory could not read current process resident memory".to_owned(),
         })?;
         if rss_bytes <= limit_bytes {
             return Ok(());
         }
         Err(MokumeError::InvalidInput {
             message: format!(
-                "--memory budget exceeded during {stage}: process RSS is {} MiB, limit is {} MiB",
+                "--memory budget exceeded during {stage}: process resident memory is {} MiB, limit is {} MiB",
                 bytes_to_mib(rss_bytes),
                 bytes_to_mib(limit_bytes),
             ),
@@ -120,7 +108,7 @@ fn current_rss_bytes() -> Option<u64> {
 
 #[cfg(not(target_os = "linux"))]
 fn current_rss_bytes() -> Option<u64> {
-    None
+    u64::try_from(memory_stats()?.physical_mem).ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -138,7 +126,6 @@ mod tests {
     use super::parse_linux_rss_bytes;
     use super::MemoryPlan;
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn budget_changes_qpx_read_ahead_and_batch_size() {
         let result = MemoryPlan::from_runtime(&RuntimeConfig {
@@ -152,6 +139,39 @@ mod tests {
         assert_eq!(plan.qpx_batch_size(), 32_768);
         assert_eq!(plan.qpx_window(), 1);
         assert_eq!(plan.channel_capacity(), 0);
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "freebsd"
+    ))]
+    #[test]
+    fn reads_current_process_resident_memory() {
+        assert!(super::current_rss_bytes().is_some_and(|bytes| bytes > 0));
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "freebsd"
+    ))]
+    #[test]
+    fn reports_an_exceeded_resident_memory_budget() {
+        let error = MemoryPlan::with_limit(1).check("test checkpoint");
+        let Err(error) = error else {
+            panic!("one-byte process memory budget was not rejected");
+        };
+
+        assert!(error
+            .to_string()
+            .contains("--memory budget exceeded during test checkpoint: process resident memory"));
     }
 
     #[test]

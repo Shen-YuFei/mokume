@@ -96,6 +96,15 @@ jobs:
           pip install "$(ls dist/*.whl)"
           python -c "import mokume; print('mokume', mokume.version(), 'proteases', len(mokume.protease_catalog())); assert mokume.version() and mokume.protease_catalog()"
           mokume --version
+          mokume quantify features2proteins \
+            --parquet tests/example/feature_wide.parquet \
+            --output memory-smoke.tsv \
+            --quant-method sum \
+            --run-normalization none \
+            --sample-normalization none \
+            --min-unique 0 \
+            --threads 24 \
+            --memory 1GB
 
       - uses: actions/upload-artifact@v7
         with:

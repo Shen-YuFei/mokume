@@ -15,6 +15,7 @@ pub(crate) struct Features2ProteinsArgs {
     #[arg(
         short = 'p',
         long = "parquet",
+        value_name = "FILE",
         required_unless_present_any = ["msstats", "psm"],
         conflicts_with_all = ["msstats", "psm"]
     )]
@@ -22,6 +23,7 @@ pub(crate) struct Features2ProteinsArgs {
 
     #[arg(
         long = "msstats",
+        value_name = "FILE",
         required_unless_present_any = ["parquet", "psm"],
         conflicts_with_all = ["parquet", "psm"],
         requires = "sdrf"
@@ -30,6 +32,7 @@ pub(crate) struct Features2ProteinsArgs {
 
     #[arg(
         long = "psm",
+        value_name = "FILE",
         required_unless_present_any = ["parquet", "msstats"],
         conflicts_with_all = ["parquet", "msstats"],
         requires = "sdrf",
@@ -37,16 +40,16 @@ pub(crate) struct Features2ProteinsArgs {
     )]
     psm: Option<PathBuf>,
 
-    #[arg(short = 'o', long = "output")]
+    #[arg(short = 'o', long = "output", value_name = "FILE")]
     output: PathBuf,
 
-    #[arg(short = 's', long = "sdrf")]
+    #[arg(short = 's', long = "sdrf", value_name = "FILE")]
     sdrf: Option<PathBuf>,
 
     #[arg(
         long = "quant-method",
         default_value = "maxlfq",
-        value_name = "[directlfq|pibaq|maxlfq|sum|median|ratio|abd|intensity|peptide-count|spectral-count|top<N>]",
+        value_name = "METHOD",
         value_parser = parse_quant_method,
         help = "Quantification method: directlfq, pibaq, maxlfq, sum, median, ratio, abd, \
 intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells its peptide count in the name \
@@ -54,11 +57,12 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     )]
     quant_method: QuantMethodArg,
 
-    #[arg(long = "min-aa", default_value_t = 7)]
+    #[arg(long = "min-aa", value_name = "N", default_value_t = 7)]
     min_aa: usize,
 
     #[arg(
         long = "min-unique",
+        value_name = "N",
         help = "Minimum distinct peptides per protein/sample (default: 2; piBAQ uses 0 and rejects an explicit override)"
     )]
     min_unique: Option<usize>,
@@ -69,14 +73,14 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     )]
     keep_contaminants: bool,
 
-    #[arg(long = "run-normalization", value_parser = [
+    #[arg(long = "run-normalization", value_name = "METHOD", value_parser = [
         "none", "mean", "median", "max", "global", "max-min", "iqr",
     ], ignore_case = true,
     help = "Run-level intensity normalization; count methods require none"
     )]
     run_normalization: Option<String>,
 
-    #[arg(long = "sample-normalization", value_parser = [
+    #[arg(long = "sample-normalization", value_name = "METHOD", value_parser = [
         "none",
         "global-median",
         "condition-median",
@@ -92,37 +96,45 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     )]
     sample_normalization: Option<String>,
 
-    #[arg(long = "normalization-proteins")]
+    #[arg(long = "normalization-proteins", value_name = "FILE")]
     normalization_proteins: Option<PathBuf>,
 
-    #[arg(short = 'f', long = "fasta")]
+    #[arg(short = 'f', long = "fasta", value_name = "FILE")]
     fasta: Option<PathBuf>,
 
-    #[arg(long = "pibaq-enzyme", default_value = "Trypsin")]
+    #[arg(long = "pibaq-enzyme", value_name = "NAME", default_value = "Trypsin")]
     pibaq_enzyme: String,
 
-    #[arg(long = "pibaq-max-aa", default_value_t = 30)]
+    #[arg(long = "pibaq-max-aa", value_name = "N", default_value_t = 30)]
     pibaq_max_aa: usize,
 
-    #[arg(long = "pibaq-min-shared", default_value_t = 2)]
+    #[arg(long = "pibaq-min-shared", value_name = "N", default_value_t = 2)]
     pibaq_min_shared: usize,
 
-    #[arg(long = "pibaq-families")]
+    #[arg(long = "pibaq-families", value_name = "FILE")]
     pibaq_families_yaml: Option<PathBuf>,
 
-    #[arg(long = "pibaq-min-anchors", default_value_t = 1)]
+    #[arg(long = "pibaq-min-anchors", value_name = "N", default_value_t = 1)]
     pibaq_min_anchors: usize,
 
-    #[arg(long = "directlfq-min-nonan", value_parser = parse_positive_usize)]
+    #[arg(
+        long = "directlfq-min-nonan",
+        value_name = "N",
+        value_parser = parse_positive_usize
+    )]
     directlfq_min_nonan: Option<usize>,
 
-    #[arg(long = "directlfq-num-samples-quadratic", value_parser = parse_positive_usize)]
+    #[arg(
+        long = "directlfq-num-samples-quadratic",
+        value_name = "N",
+        value_parser = parse_positive_usize
+    )]
     directlfq_num_samples_quadratic: Option<usize>,
 
-    #[arg(long = "export-peptides")]
+    #[arg(long = "export-peptides", value_name = "FILE")]
     export_peptides: Option<PathBuf>,
 
-    #[arg(long = "export-ions")]
+    #[arg(long = "export-ions", value_name = "FILE")]
     export_ions: Option<PathBuf>,
 
     #[arg(long = "batch-correction")]
@@ -130,16 +142,17 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
 
     #[arg(
         long = "batch-method",
+        value_name = "METHOD",
         value_parser = ["sample-prefix", "column"],
         ignore_case = true,
         help = "How batch labels are detected: sample accession prefix or one SDRF column"
     )]
     batch_method: Option<String>,
 
-    #[arg(long = "batch-column")]
+    #[arg(long = "batch-column", value_name = "COLUMN")]
     batch_column: Option<String>,
 
-    #[arg(long = "batch-covariate")]
+    #[arg(long = "batch-covariate", value_name = "COLUMN")]
     batch_covariate: Vec<String>,
 
     #[arg(long = "batch-nonparametric")]
@@ -150,6 +163,7 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
 
     #[arg(
         long = "batch-ref",
+        value_name = "LABEL",
         help = "Reference batch using its original sample-prefix or SDRF-column label"
     )]
     batch_ref: Option<String>,
@@ -160,39 +174,54 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     )]
     irs: bool,
 
-    #[arg(long = "irs-reference-sample")]
+    #[arg(long = "irs-reference-sample", value_name = "SAMPLE")]
     irs_reference_sample: Vec<String>,
 
-    #[arg(long = "irs-sdrf-column")]
+    #[arg(long = "irs-sdrf-column", value_name = "COLUMN")]
     irs_sdrf_column: Option<String>,
 
-    #[arg(long = "irs-sdrf-value")]
+    #[arg(long = "irs-sdrf-value", value_name = "VALUE")]
     irs_sdrf_value: Vec<String>,
 
-    #[arg(long = "irs-reference-regex")]
+    #[arg(long = "irs-reference-regex", value_name = "REGEX")]
     irs_reference_regex: Option<String>,
 
-    #[arg(long = "irs-stat", value_parser = ["median", "mean"], ignore_case = true)]
+    #[arg(
+        long = "irs-stat",
+        value_name = "STAT",
+        value_parser = ["median", "mean"],
+        ignore_case = true
+    )]
     irs_stat: Option<String>,
 
     #[arg(long = "irs-remove-reference")]
     irs_remove_reference: bool,
 
-    #[arg(long = "coverage-threshold", value_parser = parse_fraction)]
+    #[arg(
+        long = "coverage-threshold",
+        value_name = "FRACTION",
+        value_parser = parse_fraction
+    )]
     coverage_threshold: Option<f64>,
 
     #[arg(
         long = "min-sample-correlation",
+        value_name = "CORRELATION",
         value_parser = parse_correlation,
         requires = "sdrf",
         help = "Drop samples whose mean Pearson correlation to same-condition peers is below this value"
     )]
     min_sample_correlation: Option<f64>,
 
-    #[arg(long = "ratio-fraction-merge", value_parser = ["mean", "max"], ignore_case = true)]
+    #[arg(
+        long = "ratio-fraction-merge",
+        value_name = "METHOD",
+        value_parser = ["mean", "max"],
+        ignore_case = true
+    )]
     ratio_fraction_merge: Option<String>,
 
-    #[arg(long = "impute-method", value_parser = [
+    #[arg(long = "impute-method", value_name = "METHOD", value_parser = [
         "mean",
         "median",
         "zero",
@@ -209,25 +238,45 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     ], ignore_case = true)]
     impute_method: Option<String>,
 
-    #[arg(long = "impute-quantile", value_parser = parse_fraction)]
+    #[arg(
+        long = "impute-quantile",
+        value_name = "FRACTION",
+        value_parser = parse_fraction
+    )]
     impute_quantile: Option<f64>,
 
-    #[arg(long = "impute-shift", value_parser = parse_finite_f64)]
+    #[arg(
+        long = "impute-shift",
+        value_name = "VALUE",
+        value_parser = parse_finite_f64
+    )]
     impute_shift: Option<f64>,
 
-    #[arg(long = "impute-scale", value_parser = parse_nonnegative_f64)]
+    #[arg(
+        long = "impute-scale",
+        value_name = "VALUE",
+        value_parser = parse_nonnegative_f64
+    )]
     impute_scale: Option<f64>,
 
-    #[arg(long = "impute-n-neighbors", value_parser = parse_positive_usize)]
+    #[arg(
+        long = "impute-n-neighbors",
+        value_name = "N",
+        value_parser = parse_positive_usize
+    )]
     impute_n_neighbors: Option<usize>,
 
-    #[arg(long = "de-contrast", num_args = 2)]
+    #[arg(
+        long = "de-contrast",
+        num_args = 2,
+        value_names = ["GROUP_A", "GROUP_B"]
+    )]
     de_contrast: Vec<String>,
 
-    #[arg(long = "de-contrast-file")]
+    #[arg(long = "de-contrast-file", value_name = "FILE")]
     de_contrast_file: Option<PathBuf>,
 
-    #[arg(long = "de-method", value_parser = [
+    #[arg(long = "de-method", value_name = "METHOD", value_parser = [
         "auto",
         "limrots",
         "limma",
@@ -238,41 +287,58 @@ intensity, peptide-count, spectral-count, or top<N> -- the TopN family spells it
     ], ignore_case = true)]
     de_method: Option<String>,
 
-    #[arg(long = "de-ensemble-method")]
+    #[arg(long = "de-ensemble-method", value_name = "METHOD")]
     de_ensemble_method: Vec<String>,
 
     #[arg(
         long = "de-ensemble-min-k",
+        value_name = "N",
         value_parser = parse_positive_usize,
         help = "Minimum agreeing ensemble members (default: 2; ensemble only)"
     )]
     de_ensemble_min_k: Option<usize>,
 
-    #[arg(long = "de-log2fc", value_parser = parse_de_log2fc)]
+    #[arg(
+        long = "de-log2fc",
+        value_name = "AUTO|VALUE",
+        value_parser = parse_de_log2fc
+    )]
     de_log2fc_threshold: Option<DeLog2FcArg>,
 
-    #[arg(long = "de-effect-size-gate", value_parser = ["mixture", "null-quantile"], ignore_case = true)]
+    #[arg(
+        long = "de-effect-size-gate",
+        value_name = "METHOD",
+        value_parser = ["mixture", "null-quantile"],
+        ignore_case = true
+    )]
     de_effect_size_gate: Option<String>,
 
-    #[arg(long = "de-fdr", value_parser = parse_fraction)]
+    #[arg(long = "de-fdr", value_name = "FRACTION", value_parser = parse_fraction)]
     de_fdr_threshold: Option<f64>,
 
-    #[arg(long = "de-fdr-method", value_parser = ["bh", "ihw", "bky", "storey"], ignore_case = true)]
+    #[arg(
+        long = "de-fdr-method",
+        value_name = "METHOD",
+        value_parser = ["bh", "ihw", "bky", "storey"],
+        ignore_case = true
+    )]
     de_fdr_method: Option<String>,
 
-    #[arg(long = "de-output")]
+    #[arg(long = "de-output", value_name = "FILE")]
     de_output: Option<PathBuf>,
 
     #[arg(
         long = "memory",
+        value_name = "SIZE",
         value_parser = parse_memory,
-        help = "Linux-only soft process RSS budget (for example 1GB or 512MB); also reduces QPX batch/read-ahead memory"
+        help = "Cross-platform soft process resident-memory budget (for example 1GB or 512MB); also reduces QPX batch/read-ahead memory"
     )]
     memory: Option<String>,
 
     #[arg(
         short = 't',
         long = "threads",
+        value_name = "N",
         value_parser = parse_positive_usize
     )]
     threads: Option<usize>,

@@ -6,6 +6,10 @@ workflows provide TissueMap, plots, and interactive reports. Most users start
 with `mokume quantify features2proteins`.
 Use `mokume --help` or `mokume help <COMMAND> [SUBCOMMAND]` for details.
 
+In generated help, angle brackets name a value that follows an option; they are
+not typed literally. For example, `--output <FILE>` expects one file path, while
+`--de-contrast <GROUP_A> <GROUP_B>` expects two condition labels.
+
 The compute flag surface below is single-sourced in Rust and shared with the
 wheel's thin Python API. Periphery commands dispatch to modules packaged in the
 same wheel and state their required extra in root help.
@@ -221,16 +225,17 @@ represent the normalized protein matrix.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-t/--threads` | Rayon default | Size the Rayon thread pool used by parallel Rust sections |
-| `--memory` | none | Linux-only soft process RSS budget, such as `512MB` or `1GB`; reduces QPX batch size/read-ahead and fails when a checkpoint observes RSS above the budget |
+| `--memory` | none | Cross-platform soft process resident-memory budget, such as `512MB` or `1GB`; reduces QPX batch size/read-ahead and fails when a checkpoint observes usage above the budget |
 
 `--memory` is a planner and runtime guard, not an operating-system hard limit.
-The Rust pipeline checks Linux `VmRSS` at startup, after decoded input batches,
-and between major phases. A batch may transiently cross the requested value,
-and dataset-sized aggregation state is not spilled to disk; if that state no
-longer fits, the command exits with an explicit error instead of continuing to
-grow unchecked. The smaller synchronous batches may reduce throughput. Use
-systemd/cgroup, SLURM, or container limits when the process must never exceed a
-hard ceiling.
+The Rust pipeline checks resident memory at startup, after decoded input
+batches, and between major phases. It reads RSS on Unix-like systems and the
+process Working Set on Windows. A batch may transiently cross the requested
+value, and dataset-sized aggregation state is not spilled to disk; if that
+state no longer fits, the command exits with an explicit error instead of
+continuing to grow unchecked. The smaller synchronous batches may reduce
+throughput. Use systemd/cgroup, SLURM, Windows Job Objects, or container limits
+when the process must never exceed a hard ceiling.
 
 The Rust path does not expose DuckDB-specific resource options because it does
 not use DuckDB.

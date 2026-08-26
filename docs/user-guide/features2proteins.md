@@ -138,13 +138,14 @@ mokume quantify features2proteins \
     --memory 1GB
 ```
 
-On Linux, `--memory` sets a soft process RSS budget. It reduces the QPX Arrow
-batch size, disables read-ahead, and checks RSS after input batches and major
+`--memory` sets a cross-platform soft process resident-memory budget. It reduces
+the QPX Arrow batch size, disables read-ahead, and checks RSS on Unix-like
+systems or the process Working Set on Windows after input batches and major
 pipeline phases. If in-memory aggregation state cannot fit, Mokume exits with a
 clear budget-exceeded error rather than silently ignoring the option. The guard
 can observe a transient overshoot only at the next checkpoint, and smaller
 synchronous batches may reduce throughput. Use an external cgroup, scheduler,
-or container limit when a hard ceiling is required.
+Windows Job Object, or container limit when a hard ceiling is required.
 
 The removed `--duckdb-memory` and `--duckdb-threads` options do not apply to the
 Rust path because it does not use DuckDB. Runtime pyOpenMS FASTA digestion for piBAQ occurs before the Rust

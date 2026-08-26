@@ -33,13 +33,14 @@ struct Cli {
     #[arg(
         short = 'v',
         long = "log-level",
+        value_name = "LEVEL",
         default_value = "debug",
         ignore_case = true,
         global = true
     )]
     log_level: LogLevel,
 
-    #[arg(long = "log-file", global = true)]
+    #[arg(long = "log-file", value_name = "FILE", global = true)]
     log_file: Option<PathBuf>,
 
     #[command(subcommand)]

@@ -550,7 +550,7 @@ impl Default for DifferentialExpressionConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
-    /// Optional Linux soft process-RSS budget (for example `512MB` or `1GB`).
+    /// Optional cross-platform soft resident-memory budget (for example `512MB` or `1GB`).
     pub memory: Option<String>,
     pub threads: Option<usize>,
 }

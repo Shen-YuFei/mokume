@@ -56,15 +56,16 @@ def _parse_args(argv, mode):
     )
     add_protein_matrix_argument(parser)
     if mode == "pca":
-        parser.add_argument("-s", "--sdrf", required=True)
-        parser.add_argument("-o", "--output", required=True)
+        parser.add_argument("-s", "--sdrf", metavar="<FILE>", required=True)
+        parser.add_argument("-o", "--output", metavar="<FILE>", required=True)
         return parser.parse_args(argv)
     if mode != "de":
         raise SystemExit(f"unknown plot mode: {mode}")
-    parser.add_argument("-o", "--outdir", required=True)
+    parser.add_argument("-o", "--outdir", metavar="<DIR>", required=True)
     parser.add_argument(
         "-s",
         "--sdrf",
+        metavar="<FILE>",
         default=None,
         help="SDRF file; required for heatmap condition annotation.",
     )

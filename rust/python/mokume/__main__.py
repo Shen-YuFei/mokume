@@ -30,7 +30,7 @@ Commands:
 
 Global options:
   -v, --log-level <LEVEL>  [default: debug] [possible values: debug, info, warn]
-      --log-file <PATH>
+      --log-file <FILE>
   -h, --help               Print help
   -V, --version            Print version
 
