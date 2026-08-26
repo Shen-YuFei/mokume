@@ -117,12 +117,11 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
 
 !!! note "Plots and reports are periphery commands"
 
-    `features2proteins` no longer accepts `--plot-*` / `--interactive-report`
-    flags — the kernel is pure-compute and only writes tables (the protein matrix
-    and, with `--de-output`, the DE result CSVs). Render figures afterward from
-    those tables with the Python periphery: `mokume plot de` for volcano/heatmap,
-    `mokume plot pca` for PCA, and `mokume interactive-report` for the HTML report (they need
-    the `plotting` / `reports` extras).
+    The compute kernel writes tables: the protein matrix and, with `--de-output`,
+    the DE result CSVs. Render figures from those tables with the Python
+    periphery: `mokume plot de` for volcano/heatmap, `mokume plot pca` for PCA,
+    and `mokume interactive-report` for the HTML report. These commands need the
+    `plotting` / `reports` extras.
 
 ## Two-Step Pipeline
 

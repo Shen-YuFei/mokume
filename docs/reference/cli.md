@@ -76,16 +76,13 @@ feature tables.
     TopN quantification takes its N from the method name — `--quant-method top3`,
     `top5`, `top10`, and so on for any N ≥ 1.
 
-    Write N directly in the method name. Bare `topn`, a separate `--topn`
-    option, and malformed names such as `topa` are rejected.
-
 ### Normalization
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--run-normalization` | method-dependent | Run-level: median, mean, max, global, max-min, iqr, none |
 | `--sample-normalization` | method-dependent | Sample-level: global-median, condition-median, hierarchical, quantile, median-center, mean-center, rlr, loess, tmm, none |
-| `--normalization-proteins` | none | File with protein IDs for normalization |
+| `--normalization-proteins` | none | Protein-ID file for applicable intensity normalizers; unavailable for directlfq, ratio, peptide-count, and spectral-count |
 
 DirectLFQ and Ratio manage normalization internally. `peptide-count` and
 `spectral-count` count evidence identities and do not use intensity
@@ -359,12 +356,12 @@ mokume quantify peptides2protein [OPTIONS]
 
 Use `--quant-method top5` or `--quant-method top10` for Top5 or Top10-style quantification; `top3` is the named method from [Silva et al. 2006](https://doi.org/10.1074/mcp.M500230-MCP200). `--output` is required for every method.
 
-!!! warning "`--topn_n` has been removed"
-    N now comes from the method name only. Replace `--quant-method topn --topn_n 5`
-    with `--quant-method top5`. Bare `--quant-method topn` is rejected.
-
 !!! note "piBAQ uses the installed pyOpenMS catalog"
-    Both piBAQ commands query the installed pyOpenMS `ProteaseDB` at runtime and support its complete catalog. Python digests the FASTA and passes the full protein-to-theoretical-peptide map into Rust; there is no separate unported-enzyme branch or `pibaq` extra. At `debug` or `info` log level, the run log records the pyOpenMS version, canonical enzyme, catalog SHA-256, peptide-length bounds, and missed-cleavage count.
+    Both piBAQ commands query the installed pyOpenMS `ProteaseDB` at runtime and
+    support its complete catalog. Python digests the FASTA and passes the full
+    protein-to-theoretical-peptide map into Rust. At `debug` or `info` log level,
+    the run log records the pyOpenMS version, canonical enzyme, catalog SHA-256,
+    peptide-length bounds, and missed-cleavage count.
 
 !!! note "`--qc-report` plots the native result table"
     Rust writes the piBAQ table first, then the wheel renders the density and box

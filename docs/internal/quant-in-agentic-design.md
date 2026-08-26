@@ -92,7 +92,7 @@ sample 层与 matrix 层则做同一件事(拉平样本之间)、只是层级不
 | `pibaq` | quantile 会实际应用; 其他 dataset-level 方法直接报错 |
 | `top<N>` / `sum` 等 cell-based 方法 | 请求的已支持 run/sample 方法均进入实际计算 |
 
-CLI 使用“是否显式传入”的参数来源信息区分默认值和用户请求; API 层也在运行前检查方法作用域。因此不再通过 warning 接受无效配置,也不存在 `--threads` 被 `--directlfq-cores` 覆盖的优先级。
+CLI 使用“是否显式传入”的参数来源信息区分默认值和用户请求; API 层也在运行前检查方法作用域,并拒绝不适用于所选方法的显式配置。
 
 此外 run 归一化在无技术重复时是空操作(`stages.py:440`、`:587`、`:683` 三处都以 `technical_repetitions > 1` 为条件),即对许多数据集,"被冻结的 run-norm 轴"根本不是一条真轴。
 

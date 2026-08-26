@@ -49,12 +49,8 @@ pip install "mokume[all]"          # everything
 ```
 
 The exact dependency lists are declared in `pyproject.toml`'s
-`[project.optional-dependencies]`.
-
-!!! note "Removed extras"
-    The old `directlfq`, `batch-correction`, and `pibaq` extras are **gone**.
-    DirectLFQ and ComBat are native Rust, while pyOpenMS-backed FASTA digestion
-    is now a base piBAQ capability.
+`[project.optional-dependencies]`. DirectLFQ and ComBat are native Rust, while
+pyOpenMS-backed FASTA digestion is part of the base piBAQ capability.
 
 ## CLI and Python entry points
 
@@ -74,7 +70,9 @@ Most also have an ergonomic wrapper on the top-level `mokume` package:
 import mokume
 
 # kwarg wrappers (the kwargs -> flags rule applies):
-mokume.tsne_visualization(input="./proteins", pattern="proteins.tsv")
+mokume.tsne_visualization(
+    input="./proteins", pattern="proteins.tsv", output="tsne.pdf"
+)
 mokume.tissuemap(input="./data", outdir="./out")
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
 

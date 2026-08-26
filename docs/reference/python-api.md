@@ -258,8 +258,7 @@ pip install "mokume[all]"          # everything
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | Mokume Plugin MCP service | `agentic` | mcp, numpy, pandas, scipy, scikit-learn, statsmodels, PyYAML |
 
-The exact dependency lists are declared in `pyproject.toml`. The retired
-`directlfq`, `batch-correction`, and `pibaq` extras are gone: DirectLFQ and ComBat
+The exact dependency lists are declared in `pyproject.toml`. DirectLFQ and ComBat
 are native Rust, while pyOpenMS-backed digestion is part of the base piBAQ path.
 
 !!! note "Agentic reasoning belongs to the host"

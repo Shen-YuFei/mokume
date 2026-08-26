@@ -18,13 +18,6 @@ recomputes the numbers).
     pip install "mokume[all]"        # everything
     ```
 
-!!! warning "The `--plot-*` / `--interactive-report` flags are gone"
-    `features2proteins` no longer accepts `--plot-dir`, `--plot-volcano`,
-    `--plot-heatmap`, `--plot-pca`, `--highlight-genes`, `--interactive-report`,
-    or `--report-output`. The CLI rejects these removed options. Run the kernel
-    to produce the protein matrix and DE CSVs, then call `mokume plot de`,
-    `mokume plot pca`, or `mokume interactive-report` on those files.
-
 ## DE Plots from features2proteins Output
 
 First run the kernel to write the protein matrix and one DE result CSV per

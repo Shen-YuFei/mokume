@@ -13,18 +13,18 @@ intent for each parameter.
 | `--parquet` | Input | Required QPX feature parquet input. | Required QPX feature parquet input. | Implemented |
 | `--sdrf` | Input | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Implemented subset |
 | `--output` | Output | Required protein matrix output path. | Required protein matrix output path. | Implemented |
-| `--quant-method` | Quantification | The historical Python feature-level count is a distinct-peptide count. | Rust exposes that behavior as `peptide_count`; `spectral_count` is now a separate PSM-QPX path that counts unique `(run_file_name, scan)` spectra. Missing cells for both count methods are additive zeroes in observed samples. | Intentional contract split |
-| `--topn` | Quantification | Removed: N is spelled in the method name (`--quant-method top5`). | Removed: same. Both CLIs parse `top<N>` themselves and reject a `top` name with no numeral. | Removed on both sides |
+| `--quant-method` | Quantification | Feature-level `peptide_count` counts distinct peptides. | `peptide-count` uses the same feature-level definition; `spectral-count` uses PSM-QPX input and counts unique `(run_file_name, scan)` spectra. Missing cells for both count methods are additive zeroes in observed samples. | Intentional contract split |
+| `top<N>` method syntax | Quantification | Accepts N in the method name, such as `--quant-method top5`. | Same. | Implemented |
 | `--min-aa` | Filtering | Removes peptide sequences shorter than the threshold. | Removes peptide sequences shorter than the threshold. | Implemented |
 | `--min-unique` | Filtering | Requires a minimum number of unique peptides per protein/sample cell. | Requires a minimum number of unique peptides per protein/sample cell for non-piBAQ methods. | Implemented subset |
 | contaminant policy | Filtering | `--remove-contaminants/--keep-contaminants` controls removal. | Removes by default; `--keep-contaminants` opts out. The redundant positive flag is not exposed. | Implemented subset |
 | `--run-normalization` | Normalization | Supports none, mean, median, max, global, max_min, and iqr. | Supports none, mean, median, max, global, max_min, and iqr. | Implemented subset |
 | `--sample-normalization` | Normalization | Supports none, globalmedian, conditionmedian, hierarchical, quantile, mediancenter, meancenter, rlr, and loess. | Supports none, globalmedian, conditionmedian, quantile, mediancenter, meancenter, rlr, loess, and hierarchical. hierarchical has non-identity real-path golden oracles and is cell-exact; loess is ~2e-3 vs statsmodels lowess; mediancenter/meancenter/hierarchical are real-data cell-exact on PXD003539. | Implemented subset |
-| `--threads` / compatibility thread aliases | Runtime | Caps Python-side DuckDB or method-specific workers depending on the path. | `--threads` configures the Rayon global pool; hidden `--duckdb-threads` and DirectLFQ-only `--directlfq-cores` map to that same setting. | Implemented subset |
-| `--memory` / `--duckdb-memory` | Runtime | Caps DuckDB memory in Python. | Exposes cross-platform `--memory` as a soft process resident-memory planner/guard: it reduces QPX batch/read-ahead memory and checks RSS or Working Set between batches/phases. It does not expose the misleading `--duckdb-memory` alias and cannot replace an operating-system, scheduler, or container hard limit. Runtime pyOpenMS piBAQ digestion occurs before the guarded Rust dispatch. | Implemented subset |
+| worker count | Runtime | `--duckdb-threads` caps DuckDB workers and `--directlfq-cores` caps DirectLFQ workers. | `--threads` configures the shared Rayon global pool. | Intentional CLI difference |
+| memory budget | Runtime | `--duckdb-memory` caps DuckDB memory. | `--memory` is a cross-platform soft process resident-memory planner/guard: it reduces QPX batch/read-ahead memory and checks RSS or Working Set between batches/phases. It cannot replace an operating-system, scheduler, or container hard limit. Runtime pyOpenMS piBAQ digestion occurs before the guarded Rust dispatch. | Intentional CLI difference |
 | `--export-peptides` | Output | Writes normalized peptide-level intermediates. | Writes Python-shaped peptide intermediates for non-DirectLFQ methods; DirectLFQ peptide export still returns `NotImplemented`. | Implemented subset |
 | `--export-ions` | Output | Streams DirectLFQ's normalized, within-protein-aligned ion matrix in linear intensity space. | Writes a Python-shaped Rust-native DirectLFQ input ion trace matrix; non-DirectLFQ methods return `NotImplemented`. | Implemented subset |
-| `--normalization-proteins` | Normalization | Restricts normalization proteins to the provided list for selected dataset-level normalizers without filtering the final matrix. | Implemented sample normalizers use the file to restrict factor inputs and still apply the factors to the full output matrix. Empty files or lists with no matching features fail clearly. | Implemented subset |
+| `--normalization-proteins` | Normalization | Restricts normalization proteins to the provided list for selected dataset-level normalizers without filtering the final matrix. | Implemented sample normalizers use the file to restrict factor inputs and still apply the factors to the full output matrix. It is unavailable for directlfq, ratio, peptide-count, and spectral-count. Empty files or lists with no matching features fail clearly. | Implemented subset |
 | `--coverage-threshold` | Postprocessing | Drops proteins below per-condition non-missing coverage. | Applies a per-condition coverage filter when SDRF condition metadata is available. | Implemented subset |
 | `--min-sample-correlation` | Postprocessing | Drops samples below mean within-condition Pearson correlation on the normalized protein matrix. | Same one-shot pairwise-complete log2 correlation and sample-column removal. | Implemented |
 | `--impute` and basic imputation options | Postprocessing | Supports a broad imputation catalog. | Supports mindet, minprob, mean, median, constant, zero, most_frequent, knn, seqknn, qrilc, impseq, gms, bpca, and impseqrob. `--impute` requires an explicit method. `missforest` is absent from the compute CLI and remains available through `mokume.impute`. | Implemented subset |
@@ -77,7 +77,7 @@ python -m mokume.mokume_cli features2proteins \
 `mokume` wheel baseline:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
   --parquet /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/qpx/PXD003539.feature.parquet \
   --sdrf /home/shenyufei/Git-repository/Bigbio/Bigbio_data/cell-lines/PXD003539/mokume/sdrf/PXD003539.sdrf.tsv \
   --output /tmp/mokume-parity/PXD003539/rust/sum_none.csv \
@@ -100,13 +100,13 @@ python scripts/compare_protein_matrices.py \
 
 As of the 2026-06-20 alignment audit, 26 computation-core methods are parity-checked
 and considered aligned: the quant methods reachable through `features2proteins`
-(sum, median, topn/top3, intensity, abd, peptide_count, directlfq, maxlfq — which
+(sum, median, `top<N>`, intensity, abd, peptide_count, directlfq, maxlfq — which
 delegates to the directlfq path by default, matching Python — and the piBAQ
 family-allocation core), the run-level and sample-level normalizers listed above, and
 14 imputation methods.
 
-True PSM-level `spectral_count` is validated against its own QPX PSM contract;
-it is not claimed as parity with the historically misnamed feature-level Python method.
+Feature-level `peptide_count` and PSM-level `spectral_count` have separate input
+contracts and are validated independently.
 
 Real-data parity (2026-06-21, Wave 1-C): `scripts/run_parity_matrix.sh` was run across
 all four cell-line datasets (PXD003539/004701/041421/030304) for the Phase-1

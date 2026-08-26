@@ -147,9 +147,8 @@ can observe a transient overshoot only at the next checkpoint, and smaller
 synchronous batches may reduce throughput. Use an external cgroup, scheduler,
 Windows Job Object, or container limit when a hard ceiling is required.
 
-The removed `--duckdb-memory` and `--duckdb-threads` options do not apply to the
-Rust path because it does not use DuckDB. Runtime pyOpenMS FASTA digestion for piBAQ occurs before the Rust
-pipeline starts, so it is not covered by `--memory`.
+Runtime pyOpenMS FASTA digestion for piBAQ occurs before the Rust pipeline
+starts, so it is not covered by `--memory`.
 
 ## Normalization Options
 
@@ -191,6 +190,9 @@ mokume quantify features2proteins -p data.parquet -o out.csv \
 mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization tmm
 ```
+
+`--normalization-proteins` is available for applicable intensity normalizers.
+It is unavailable for DirectLFQ, Ratio, peptide-count, and spectral-count.
 
 !!! note "Dataset-level normalizers"
     `quantile`, `median-center`, `mean-center`, `rlr`, `loess`, and `tmm` are

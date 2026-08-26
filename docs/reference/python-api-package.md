@@ -44,7 +44,7 @@ protein_matrix = dataset.get_level("proteins")  # protein x sample DataFrame
 ```
 
 `QuantificationPipeline(config).run_dataset()` returns the same `QpxDataset` from
-the pipeline object directly; the legacy `run()` returns the bare protein matrix.
+the pipeline object directly; `run()` returns the bare protein matrix.
 
 ### QpxDataset
 
