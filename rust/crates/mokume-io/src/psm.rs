@@ -9,6 +9,19 @@ use arrow::datatypes::DataType;
 use arrow::record_batch::RecordBatch;
 use mokume_core::{MokumeError, Result};
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
+use parquet::arrow::ProjectionMask;
+
+const PSM_COLUMNS: &[&str] = &[
+    "sequence",
+    "run_file_name",
+    "reference_file_name",
+    "run",
+    "raw_file",
+    "scan",
+    "feature_id",
+    "is_decoy",
+    "decoy",
+];
 
 /// The PSM evidence required for true spectral counting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,7 +29,7 @@ pub struct QpxPsmRecord {
     pub sequence: String,
     pub run_file_name: String,
     pub scan: Vec<i64>,
-    pub protein_accessions: Vec<String>,
+    pub feature_id: Option<i64>,
     pub is_decoy: bool,
 }
 
@@ -34,13 +47,26 @@ impl QpxPsmParquetReader {
             path: path.clone(),
             source,
         })?;
-        let inner = ParquetRecordBatchReaderBuilder::try_new(file)
-            .map_err(|source| {
-                invalid_input(format!(
-                    "failed to open QPX PSM parquet `{}`: {source}",
-                    path.display()
-                ))
-            })?
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|source| {
+            invalid_input(format!(
+                "failed to open QPX PSM parquet `{}`: {source}",
+                path.display()
+            ))
+        })?;
+        let roots = builder
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, field)| {
+                PSM_COLUMNS
+                    .contains(&field.name().as_str())
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let projection = ProjectionMask::roots(builder.parquet_schema(), roots);
+        let inner = builder
+            .with_projection(projection)
             .with_batch_size(batch_size)
             .build()
             .map_err(|source| {
@@ -72,7 +98,7 @@ pub fn flatten_psm_batch(batch: &RecordBatch) -> Result<Vec<QpxPsmRecord>> {
         &["run_file_name", "reference_file_name", "run", "raw_file"],
     )?;
     let scan = required_column(batch, &["scan"])?;
-    let proteins = required_column(batch, &["protein_accessions"])?;
+    let feature_id = optional_column(batch, &["feature_id"]);
     let is_decoy = optional_column(batch, &["is_decoy", "decoy"]);
 
     (0..batch.num_rows())
@@ -81,7 +107,10 @@ pub fn flatten_psm_batch(batch: &RecordBatch) -> Result<Vec<QpxPsmRecord>> {
                 sequence: required_string(sequence, row, "sequence")?,
                 run_file_name: required_string(run, row, "run_file_name")?,
                 scan: list_i64(scan, row, "scan")?,
-                protein_accessions: list_strings(proteins, row, "protein_accessions")?,
+                feature_id: feature_id
+                    .map(|column| optional_i64(column, row, "feature_id"))
+                    .transpose()?
+                    .flatten(),
                 is_decoy: is_decoy
                     .map(|column| optional_bool(column, row, "is_decoy"))
                     .transpose()?
@@ -142,16 +171,6 @@ fn optional_bool(array: &dyn Array, row: usize, name: &str) -> Result<Option<boo
     }
 }
 
-fn list_strings(array: &dyn Array, row: usize, name: &str) -> Result<Vec<String>> {
-    let Some(values) = list_values(array, row, name)? else {
-        return Ok(Vec::new());
-    };
-    (0..values.len())
-        .filter(|index| !values.is_null(*index))
-        .map(|index| required_string(values.as_ref(), index, name))
-        .collect()
-}
-
 fn list_i64(array: &dyn Array, row: usize, name: &str) -> Result<Vec<i64>> {
     let Some(values) = list_values(array, row, name)? else {
         return Ok(Vec::new());
@@ -181,6 +200,29 @@ fn list_i64(array: &dyn Array, row: usize, name: &str) -> Result<Vec<i64>> {
             })
             .collect(),
         _ => Err(unsupported(name, values.as_ref())),
+    }
+}
+
+fn optional_i64(array: &dyn Array, row: usize, name: &str) -> Result<Option<i64>> {
+    if array.is_null(row) {
+        return Ok(None);
+    }
+    match array.data_type() {
+        DataType::Int32 => {
+            downcast::<Int32Array>(array, name).map(|values| Some(i64::from(values.value(row))))
+        }
+        DataType::Int64 => {
+            downcast::<Int64Array>(array, name).map(|values| Some(values.value(row)))
+        }
+        DataType::UInt32 => {
+            downcast::<UInt32Array>(array, name).map(|values| Some(i64::from(values.value(row))))
+        }
+        DataType::UInt64 => downcast::<UInt64Array>(array, name)?
+            .value(row)
+            .try_into()
+            .map(Some)
+            .map_err(|_| invalid_input(format!("QPX PSM `{name}` value overflows i64"))),
+        _ => Err(unsupported(name, array)),
     }
 }
 
@@ -225,7 +267,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::array::{
-        ArrayRef, BooleanArray, Int32Builder, ListBuilder, StringArray, StringBuilder,
+        ArrayRef, BooleanArray, Int32Builder, Int64Array, ListBuilder, StringArray,
     };
     use arrow::record_batch::RecordBatch;
     use parquet::arrow::ArrowWriter;
@@ -240,13 +282,6 @@ mod tests {
         scans.values().append_value(203);
         scans.append(true);
 
-        let mut proteins = ListBuilder::new(StringBuilder::new());
-        proteins.values().append_value("P2");
-        proteins.values().append_value("P1");
-        proteins.append(true);
-        proteins.values().append_value("DECOY_P3");
-        proteins.append(true);
-
         Ok(RecordBatch::try_from_iter([
             (
                 "sequence",
@@ -258,8 +293,8 @@ mod tests {
             ),
             ("scan", Arc::new(scans.finish()) as ArrayRef),
             (
-                "protein_accessions",
-                Arc::new(proteins.finish()) as ArrayRef,
+                "feature_id",
+                Arc::new(Int64Array::from(vec![Some(10), None])) as ArrayRef,
             ),
             (
                 "is_decoy",
@@ -269,11 +304,12 @@ mod tests {
     }
 
     #[test]
-    fn flattens_psm_identity_and_full_protein_set() -> Result<(), Box<dyn std::error::Error>> {
+    fn flattens_psm_identity_and_feature_link() -> Result<(), Box<dyn std::error::Error>> {
         let records = flatten_psm_batch(&psm_batch()?)?;
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].scan, vec![101]);
-        assert_eq!(records[0].protein_accessions, vec!["P2", "P1"]);
+        assert_eq!(records[0].feature_id, Some(10));
+        assert_eq!(records[1].feature_id, None);
         assert!(!records[0].is_decoy);
         assert!(records[1].is_decoy);
         Ok(())

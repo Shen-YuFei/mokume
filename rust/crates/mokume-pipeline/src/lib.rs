@@ -6475,46 +6475,58 @@ fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
         &config.input.msstats,
         &config.input.psm,
     ) {
-        (Some(parquet), None, None) => {
-            require_existing_input(parquet)?;
-            if config.quantification == QuantMethod::SpectralCount {
-                return Err(invalid_input(
-                    "spectral_count requires PSM-level QPX input via --psm",
-                ));
-            }
-        }
-        (None, Some(msstats), None) => {
-            require_existing_input(msstats)?;
-            if config.input.sdrf.is_none() {
-                return Err(invalid_input("MSstats input requires --sdrf option"));
-            }
-            if config.quantification == QuantMethod::Ratio {
-                return Err(invalid_input(
-                    "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
-                ));
-            }
-            if config.quantification == QuantMethod::SpectralCount {
-                return Err(invalid_input(
-                    "spectral_count requires PSM-level QPX input via --psm",
-                ));
-            }
-        }
-        (None, None, Some(psm)) => {
-            require_existing_input(psm)?;
-            if config.quantification != QuantMethod::SpectralCount {
-                return Err(invalid_input(
-                    "--psm input only applies to spectral_count quantification",
-                ));
-            }
-            if config.input.sdrf.is_none() {
-                return Err(invalid_input("spectral_count requires --sdrf option"));
-            }
-        }
-        _ => {
-            return Err(invalid_input(
-                "provide exactly one input: --parquet, --msstats, or --psm",
-            ));
-        }
+        (Some(parquet), None, None) => validate_feature_qpx_input(parquet, config.quantification),
+        (None, Some(msstats), None) => validate_msstats_input(msstats, config),
+        (Some(parquet), None, Some(psm)) => validate_spectral_count_inputs(parquet, psm, config),
+        (None, None, Some(_)) => Err(invalid_input(
+            "spectral_count requires matching QPX inputs via --psm and --parquet",
+        )),
+        _ => Err(invalid_input(
+            "provide --parquet, --msstats, or matching --psm and --parquet inputs",
+        )),
+    }
+}
+
+fn validate_feature_qpx_input(parquet: &Path, method: QuantMethod) -> Result<()> {
+    require_existing_input(parquet)?;
+    if method == QuantMethod::SpectralCount {
+        return Err(invalid_input(
+            "spectral_count requires matching QPX inputs via --psm and --parquet",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_msstats_input(path: &Path, config: &FeatureToProteinsConfig) -> Result<()> {
+    require_existing_input(path)?;
+    if config.input.sdrf.is_none() {
+        return Err(invalid_input("MSstats input requires --sdrf option"));
+    }
+    match config.quantification {
+        QuantMethod::Ratio => Err(invalid_input(
+            "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
+        )),
+        QuantMethod::SpectralCount => Err(invalid_input(
+            "spectral_count requires matching QPX inputs via --psm and --parquet",
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn validate_spectral_count_inputs(
+    parquet: &Path,
+    psm: &Path,
+    config: &FeatureToProteinsConfig,
+) -> Result<()> {
+    require_existing_input(parquet)?;
+    require_existing_input(psm)?;
+    if config.quantification != QuantMethod::SpectralCount {
+        return Err(invalid_input(
+            "--psm with --parquet only applies to spectral_count quantification",
+        ));
+    }
+    if config.input.sdrf.is_none() {
+        return Err(invalid_input("spectral_count requires --sdrf option"));
     }
     Ok(())
 }

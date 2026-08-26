@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::Path;
 
-use mokume_core::{FeatureToProteinsConfig, Result};
-use mokume_io::{QpxPsmParquetReader, QpxPsmRecord, SdrfTable};
+use mokume_core::{FeatureToProteinsConfig, FilterConfig, Result};
+use mokume_io::{
+    QpxFeatureProteinGroup, QpxFeatureProteinGroupReader, QpxPsmParquetReader, QpxPsmRecord,
+    SdrfTable,
+};
 
 use crate::memory::MemoryPlan;
 
@@ -33,6 +37,13 @@ struct SpectrumAssignment {
     sequences: HashSet<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FeatureProteinGroup {
+    proteins: BTreeSet<String>,
+    contaminant: bool,
+    is_decoy: bool,
+}
+
 pub(crate) fn count(
     config: &FeatureToProteinsConfig,
     sdrf: &SdrfTable,
@@ -43,11 +54,18 @@ pub(crate) fn count(
         .psm
         .as_deref()
         .ok_or_else(|| super::invalid_input("spectral_count requires --psm input"))?;
+    let features =
+        config.input.parquet.as_deref().ok_or_else(|| {
+            super::invalid_input("spectral_count requires --parquet feature mapping")
+        })?;
+    let feature_ids = collect_feature_ids(psm, memory)?;
+    let feature_groups = load_feature_groups(features, &feature_ids, memory)?;
     let reader = QpxPsmParquetReader::open(psm, memory.qpx_batch_size())?;
-    let (assignments, target_psms) = collect_assignments(config, sdrf, memory, reader)?;
+    let (assignments, target_psms) =
+        collect_assignments(config, sdrf, memory, reader, &feature_groups)?;
     if assignments.is_empty() {
         return Err(super::invalid_input(
-            "spectral_count found no usable target PSM after decoy, peptide-length, contaminant, and protein-accession filtering",
+            "spectral_count found no usable feature-linked target PSM after decoy, peptide-length, contaminant, and protein-group filtering",
         ));
     }
     let unique_spectra = assignments.len();
@@ -59,11 +77,73 @@ pub(crate) fn count(
     })
 }
 
+fn collect_feature_ids(path: &Path, memory: &MemoryPlan) -> Result<HashSet<i64>> {
+    let mut reader = QpxPsmParquetReader::open(path, memory.qpx_batch_size())?;
+    let mut feature_ids = HashSet::new();
+    for batch in &mut reader {
+        feature_ids.extend(batch?.into_iter().filter_map(|record| record.feature_id));
+        memory.check("PSM feature-link scan")?;
+    }
+    if feature_ids.is_empty() {
+        return Err(super::invalid_input(
+            "spectral_count found no PSM linked to a QPX feature_id",
+        ));
+    }
+    Ok(feature_ids)
+}
+
+fn load_feature_groups(
+    path: &Path,
+    requested: &HashSet<i64>,
+    memory: &MemoryPlan,
+) -> Result<HashMap<i64, FeatureProteinGroup>> {
+    let mut reader = QpxFeatureProteinGroupReader::open(path, memory.qpx_batch_size())?;
+    let mut groups = HashMap::new();
+    for batch in &mut reader {
+        for record in batch? {
+            if requested.contains(&record.feature_id) {
+                insert_feature_group(&mut groups, record)?;
+            }
+        }
+        memory.check("QPX feature protein-group mapping")?;
+    }
+    if groups.is_empty() {
+        return Err(super::invalid_input(
+            "spectral_count found no referenced feature_id in the QPX feature mapping",
+        ));
+    }
+    Ok(groups)
+}
+
+fn insert_feature_group(
+    groups: &mut HashMap<i64, FeatureProteinGroup>,
+    record: QpxFeatureProteinGroup,
+) -> Result<()> {
+    let group = FeatureProteinGroup {
+        proteins: protein_set(&record.protein_accessions).unwrap_or_default(),
+        contaminant: record
+            .protein_accessions
+            .iter()
+            .any(|accession| super::is_contaminant(accession)),
+        is_decoy: record.is_decoy,
+    };
+    if let Some(existing) = groups.insert(record.feature_id, group.clone()) {
+        if existing != group {
+            return Err(super::invalid_input(format!(
+                "QPX feature_id {} has conflicting protein-group mappings",
+                record.feature_id
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn collect_assignments(
     config: &FeatureToProteinsConfig,
     sdrf: &SdrfTable,
     memory: &MemoryPlan,
     mut reader: QpxPsmParquetReader,
+    feature_groups: &HashMap<i64, FeatureProteinGroup>,
 ) -> Result<(HashMap<SpectrumKey, SpectrumAssignment>, usize)> {
     let mut assignments = HashMap::new();
     let mut run_samples = HashMap::new();
@@ -71,11 +151,12 @@ fn collect_assignments(
     for batch in &mut reader {
         for record in batch? {
             target_psms += usize::from(add_record(
-                config,
+                &config.filtering,
                 sdrf,
                 &mut run_samples,
                 &mut assignments,
                 record,
+                feature_groups,
             )?);
         }
         memory.check("PSM spectral-count streaming")?;
@@ -84,24 +165,26 @@ fn collect_assignments(
 }
 
 fn add_record(
-    config: &FeatureToProteinsConfig,
+    filtering: &FilterConfig,
     sdrf: &SdrfTable,
     run_samples: &mut HashMap<String, String>,
     assignments: &mut HashMap<SpectrumKey, SpectrumAssignment>,
     record: QpxPsmRecord,
+    feature_groups: &HashMap<i64, FeatureProteinGroup>,
 ) -> Result<bool> {
-    if record.is_decoy || record.sequence.len() < config.filtering.min_aa {
+    if record.is_decoy || record.sequence.len() < filtering.min_aa {
         return Ok(false);
     }
-    let Some(proteins) = protein_set(&record.protein_accessions) else {
+    let Some(group) = record
+        .feature_id
+        .and_then(|feature_id| feature_groups.get(&feature_id))
+    else {
         return Ok(false);
     };
-    if config.filtering.remove_contaminants
-        && record
-            .protein_accessions
-            .iter()
-            .any(|accession| super::is_contaminant(accession))
-    {
+    if group.is_decoy || group.proteins.is_empty() {
+        return Ok(false);
+    }
+    if filtering.remove_contaminants && group.contaminant {
         return Ok(false);
     }
     if record.scan.is_empty() {
@@ -111,7 +194,7 @@ fn add_record(
         )));
     }
     let sample = sample_for_run(sdrf, run_samples, &record.run_file_name)?;
-    insert_assignment(assignments, record, proteins, sample)?;
+    insert_assignment(assignments, record, group.proteins.clone(), sample)?;
     Ok(true)
 }
 
@@ -197,10 +280,12 @@ fn protein_set(accessions: &[String]) -> Option<BTreeSet<String>> {
 mod tests {
     use std::collections::{BTreeSet, HashMap, HashSet};
 
-    use mokume_io::QpxPsmRecord;
+    use mokume_core::FilterConfig;
+    use mokume_io::{QpxPsmRecord, SdrfTable};
 
     use super::{
-        collapse_assignments, insert_assignment, protein_set, SpectrumAssignment, SpectrumKey,
+        add_record, collapse_assignments, insert_assignment, protein_set, FeatureProteinGroup,
+        SpectrumAssignment, SpectrumKey,
     };
 
     fn assignment(protein: &str, sample: &str, sequence: &str) -> SpectrumAssignment {
@@ -249,7 +334,7 @@ mod tests {
             sequence: "PEPTIDEA".to_owned(),
             run_file_name: "run-a".to_owned(),
             scan: vec![1],
-            protein_accessions: vec!["P1".to_owned()],
+            feature_id: Some(10),
             is_decoy: false,
         };
         insert_assignment(
@@ -278,5 +363,43 @@ mod tests {
             protein_set(&accessions),
             Some(BTreeSet::from(["P1".to_owned(), "P2".to_owned()]))
         );
+    }
+
+    #[test]
+    fn maps_psm_feature_id_to_feature_protein_group() -> Result<(), Box<dyn std::error::Error>> {
+        let sdrf =
+            SdrfTable::from_reader(b"source name\tcomment[data file]\nS1\trun-a.raw\n".as_slice())?;
+        let feature_groups = HashMap::from([(
+            10,
+            FeatureProteinGroup {
+                proteins: BTreeSet::from(["P1".to_owned()]),
+                contaminant: false,
+                is_decoy: false,
+            },
+        )]);
+        let record = QpxPsmRecord {
+            sequence: "PEPTIDEA".to_owned(),
+            run_file_name: "run-a.mzML".to_owned(),
+            scan: vec![42],
+            feature_id: Some(10),
+            is_decoy: false,
+        };
+        let mut run_samples = HashMap::new();
+        let mut assignments = HashMap::new();
+
+        assert!(add_record(
+            &FilterConfig::default(),
+            &sdrf,
+            &mut run_samples,
+            &mut assignments,
+            record,
+            &feature_groups,
+        )?);
+        let cells = collapse_assignments(assignments, 1);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].protein_group, "P1");
+        assert_eq!(cells[0].sample, "S1");
+        assert_eq!(cells[0].spectra, 1);
+        Ok(())
     }
 }

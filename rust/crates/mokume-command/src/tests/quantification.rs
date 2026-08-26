@@ -12,6 +12,8 @@ fn parses_true_spectral_count_psm_input() {
         "features2proteins",
         "--psm",
         "input.psm.parquet",
+        "--parquet",
+        "input.feature.parquet",
         "--sdrf",
         "input.sdrf.tsv",
         "--output",
@@ -28,11 +30,53 @@ fn parses_true_spectral_count_psm_input() {
         Some(Path::new("input.psm.parquet"))
     );
     assert_eq!(
+        config.input.parquet.as_deref(),
+        Some(Path::new("input.feature.parquet"))
+    );
+    assert_eq!(
         config.quantification,
         mokume_core::QuantMethod::SpectralCount
     );
     assert_eq!(config.normalization.run_method, "none");
     assert_eq!(config.normalization.sample_method, "none");
+}
+
+#[test]
+fn spectral_count_requires_paired_qpx_inputs() {
+    let Err(error) = Cli::try_parse_from([
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "--psm",
+        "input.psm.parquet",
+        "--sdrf",
+        "input.sdrf.tsv",
+        "--output",
+        "counts.csv",
+        "--quant-method",
+        "spectral-count",
+    ]) else {
+        panic!("spectral-count accepted a PSM without its feature QPX");
+    };
+    assert!(error.to_string().contains("--parquet"), "{error}");
+
+    let cli = Cli::parse_from([
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "--parquet",
+        "input.feature.parquet",
+        "--sdrf",
+        "input.sdrf.tsv",
+        "--output",
+        "counts.csv",
+        "--quant-method",
+        "spectral-count",
+    ]);
+    let Err(error) = features_to_proteins_args(cli).into_config() else {
+        panic!("spectral-count accepted a feature QPX without its PSM QPX");
+    };
+    assert!(error.to_string().contains("--psm and --parquet"), "{error}");
 }
 
 #[test]
@@ -62,16 +106,21 @@ fn feature_input_uses_explicit_peptide_count_name() {
 
 #[test]
 fn count_methods_reject_irs() {
-    for (method, input_flag, input) in [
-        ("peptide-count", "--parquet", "input.feature.parquet"),
-        ("spectral-count", "--psm", "input.psm.parquet"),
+    for (method, inputs) in [
+        ("peptide-count", vec!["--parquet", "input.feature.parquet"]),
+        (
+            "spectral-count",
+            vec![
+                "--psm",
+                "input.psm.parquet",
+                "--parquet",
+                "input.feature.parquet",
+            ],
+        ),
     ] {
-        let cli = Cli::parse_from([
-            "mokume",
-            "quantify",
-            "features2proteins",
-            input_flag,
-            input,
+        let mut argv = vec!["mokume", "quantify", "features2proteins"];
+        argv.extend(inputs);
+        argv.extend([
             "--sdrf",
             "input.sdrf.tsv",
             "--output",
@@ -82,6 +131,7 @@ fn count_methods_reject_irs() {
             "--irs-reference-sample",
             "Pool",
         ]);
+        let cli = Cli::parse_from(argv);
         let args = features_to_proteins_args(cli);
         let Err(error) = args.into_config() else {
             panic!("IRS was accepted for a count method");

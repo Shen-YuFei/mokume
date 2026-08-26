@@ -98,9 +98,10 @@ fn validate_input_for_quantification(
     method: QuantMethod,
 ) -> mokume_core::Result<()> {
     if method == QuantMethod::SpectralCount {
-        if args.psm.is_none() {
+        if args.psm.is_none() || args.parquet.is_none() {
             return Err(MokumeError::InvalidInput {
-                message: "spectral_count requires PSM-level QPX input via --psm".to_owned(),
+                message: "spectral_count requires matching QPX inputs via --psm and --parquet"
+                    .to_owned(),
             });
         }
     } else if args.psm.is_some() {
