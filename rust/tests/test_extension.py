@@ -517,3 +517,27 @@ def test_matrix_level_compute_api():
     assert {"ProteinName", "log2FC", "pvalue", "adj_pvalue", "significance"} <= set(
         results[0]
     )
+
+
+def test_matrix_deqms_validates_peptide_count_contract():
+    """Reject missing or invalid DEqMS counts and duplicate protein IDs."""
+    matrix = [
+        [2.0, 4.0, 8.0, 32.0, 64.0, 128.0],
+        [8.0, 16.0, 32.0, 8.0, 16.0, 32.0],
+    ]
+
+    with pytest.raises(RuntimeError, match="peptide_counts are required"):
+        mokume.differential_expression(["P1", "P2"], matrix, 3, 3, "deqms")
+
+    with pytest.raises(RuntimeError, match="finite positive integers"):
+        mokume.differential_expression(
+            ["P1", "P2"],
+            matrix,
+            3,
+            3,
+            "deqms",
+            peptide_counts=[1, 0],
+        )
+
+    with pytest.raises(RuntimeError, match="must be unique"):
+        mokume.differential_expression(["P1", " P1 "], matrix, 3, 3, "limma")

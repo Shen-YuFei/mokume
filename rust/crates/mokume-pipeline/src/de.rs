@@ -148,7 +148,7 @@ pub fn differential_expression_matrix(
     threads: Option<usize>,
 ) -> Result<MatrixDifferentialExpressionResults> {
     validate_config(config, false)?;
-    validate_matrix_de_inputs(proteins, values, n_a, n_b, peptide_counts)?;
+    validate_matrix_de_inputs(proteins, values, n_a, n_b, peptide_counts, config)?;
 
     crate::threading::install(threads, || {
         let rows = log2_matrix(values);
@@ -185,6 +185,18 @@ fn validate_matrix_de_inputs(
     n_a: usize,
     n_b: usize,
     peptide_counts: Option<&[f64]>,
+    config: &DifferentialExpressionConfig,
+) -> Result<()> {
+    validate_matrix_shape(proteins.len(), values, n_a, n_b)?;
+    validate_protein_identifiers(proteins)?;
+    validate_matrix_peptide_counts(peptide_counts, values.len(), config)
+}
+
+fn validate_matrix_shape(
+    protein_count: usize,
+    values: &[Vec<f64>],
+    n_a: usize,
+    n_b: usize,
 ) -> Result<()> {
     if n_a == 0 || n_b == 0 {
         return Err(invalid_input(
@@ -201,23 +213,69 @@ fn validate_matrix_de_inputs(
             "matrix has {actual_width} columns but group sizes require {width}"
         )));
     }
-    if proteins.len() != values.len() {
+    if protein_count != values.len() {
         return Err(invalid_input(format!(
             "matrix has {} rows but {} protein names were supplied",
             values.len(),
-            proteins.len()
+            protein_count
         )));
     }
-    if let Some(counts) = peptide_counts {
-        if counts.len() != values.len() {
+    Ok(())
+}
+
+fn validate_protein_identifiers(proteins: &[String]) -> Result<()> {
+    let mut unique_proteins = HashSet::with_capacity(proteins.len());
+    for protein in proteins {
+        let protein = protein.trim();
+        if protein.is_empty() {
+            return Err(invalid_input("protein identifiers must be non-empty"));
+        }
+        if !unique_proteins.insert(protein) {
             return Err(invalid_input(format!(
-                "matrix has {} rows but {} peptide counts were supplied",
-                values.len(),
-                counts.len()
+                "protein identifiers must be unique; duplicate `{protein}`"
             )));
         }
     }
     Ok(())
+}
+
+fn validate_matrix_peptide_counts(
+    peptide_counts: Option<&[f64]>,
+    rows: usize,
+    config: &DifferentialExpressionConfig,
+) -> Result<()> {
+    if peptide_counts.is_none() && matrix_method_requires_counts(config)? {
+        return Err(invalid_input(
+            "peptide_counts are required for DEqMS and ensembles containing DEqMS",
+        ));
+    }
+    if let Some(counts) = peptide_counts {
+        if counts.len() != rows {
+            return Err(invalid_input(format!(
+                "matrix has {} rows but {} peptide counts were supplied",
+                rows,
+                counts.len()
+            )));
+        }
+        if counts
+            .iter()
+            .any(|count| !count.is_finite() || *count < 1.0 || count.fract() != 0.0)
+        {
+            return Err(invalid_input(
+                "peptide_counts must contain finite positive integers",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn matrix_method_requires_counts(config: &DifferentialExpressionConfig) -> Result<bool> {
+    match de_method(config)? {
+        DeMethod::Member(method) => Ok(method == MemberMethod::Deqms),
+        DeMethod::Ensemble => Ok(validated_ensemble_member_names(config)?
+            .iter()
+            .any(|method| method == "deqms")),
+    }
 }
 
 fn log2_matrix(values: &[Vec<f64>]) -> Vec<Vec<f64>> {
@@ -1619,6 +1677,117 @@ mod tests {
             panic!("Inf must be rejected");
         };
         assert!(error.to_string().contains("contains an infinite value"));
+    }
+
+    #[test]
+    fn matrix_deqms_requires_valid_counts() {
+        let proteins = vec!["P1".to_owned(), "P2".to_owned()];
+        let values = vec![vec![1.0, 2.0, 4.0, 8.0], vec![8.0, 4.0, 2.0, 1.0]];
+        let config = DifferentialExpressionConfig {
+            enabled: true,
+            method: "deqms".to_owned(),
+            ..DifferentialExpressionConfig::default()
+        };
+
+        let Err(error) =
+            differential_expression_matrix(&proteins, &values, 2, 2, None, &config, Some(2))
+        else {
+            panic!("DEqMS accepted missing peptide counts");
+        };
+        assert!(error.to_string().contains("peptide_counts are required"));
+
+        for counts in [
+            vec![0.0, 2.0],
+            vec![-1.0, 2.0],
+            vec![1.5, 2.0],
+            vec![f64::NAN, 2.0],
+        ] {
+            let Err(error) = differential_expression_matrix(
+                &proteins,
+                &values,
+                2,
+                2,
+                Some(&counts),
+                &config,
+                Some(2),
+            ) else {
+                panic!("DEqMS accepted invalid peptide counts");
+            };
+            assert!(error.to_string().contains("finite positive integers"));
+        }
+
+        assert!(differential_expression_matrix(
+            &proteins,
+            &values,
+            2,
+            2,
+            Some(&[1.0, 2.0]),
+            &config,
+            Some(2),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn matrix_de_rejects_invalid_protein_identifiers() {
+        let values = vec![vec![1.0, 2.0, 4.0, 8.0], vec![8.0, 4.0, 2.0, 1.0]];
+        let config = DifferentialExpressionConfig {
+            enabled: true,
+            method: "limma".to_owned(),
+            ..DifferentialExpressionConfig::default()
+        };
+
+        for proteins in [
+            vec!["P1".to_owned(), " P1 ".to_owned()],
+            vec!["P1".to_owned(), " ".to_owned()],
+        ] {
+            assert!(differential_expression_matrix(
+                &proteins,
+                &values,
+                2,
+                2,
+                None,
+                &config,
+                Some(2),
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn matrix_ensemble_counts_follow_member_set() {
+        let proteins = vec!["P1".to_owned(), "P2".to_owned()];
+        let values = vec![vec![1.0, 2.0, 4.0, 8.0], vec![8.0, 4.0, 2.0, 1.0]];
+        let config = DifferentialExpressionConfig {
+            enabled: true,
+            method: "ensemble".to_owned(),
+            ensemble_methods: Some(vec!["limma".to_owned(), "deqms".to_owned()]),
+            ..DifferentialExpressionConfig::default()
+        };
+
+        let Err(error) =
+            differential_expression_matrix(&proteins, &values, 2, 2, None, &config, Some(2))
+        else {
+            panic!("DEqMS ensemble accepted missing peptide counts");
+        };
+        assert!(error.to_string().contains("peptide_counts are required"));
+
+        let without_deqms = DifferentialExpressionConfig {
+            enabled: true,
+            method: "ensemble".to_owned(),
+            ensemble_methods: Some(vec!["limma".to_owned(), "proda".to_owned()]),
+            ..DifferentialExpressionConfig::default()
+        };
+        assert!(differential_expression_matrix(
+            &proteins,
+            &values,
+            2,
+            2,
+            None,
+            &without_deqms,
+            Some(2),
+        )
+        .is_ok());
     }
 
     #[test]
