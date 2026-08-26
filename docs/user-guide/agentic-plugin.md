@@ -18,8 +18,8 @@ Install the default Rust-backed distribution with the plugin dependencies:
 pip install "mokume[agentic]"
 ```
 
-The MCP SDK used by this optional workflow requires Python 3.10 or newer. The
-core `mokume` wheel continues to support its wider declared Python range.
+The Rust-backed `mokume` distribution and this optional MCP workflow require
+Python 3.10 or newer.
 
 ### Codex
 
