@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import multiprocessing as mp
 import os
@@ -124,7 +125,7 @@ def _protein_profiles_to_frame(
     sample_columns: Iterable[str],
 ) -> pd.DataFrame:
     """Build the linear protein matrix from streamed DirectLFQ profiles."""
-    from directlfq import config as lfq_config
+    lfq_config = importlib.import_module("directlfq.config")
 
     if not profile_rows:
         return pd.DataFrame(columns=[lfq_config.PROTEIN_ID, *sample_columns])

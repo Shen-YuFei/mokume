@@ -82,7 +82,7 @@ def _resolve_output_html(output, key, n_contrasts):
             return output
         base = output.rsplit(".", 1)
         return "{0}_{1}.html".format(base[0], key)
-    return str(Path(".") / "report_{0}.html".format(key))
+    return str(Path(".") / f"report_{key}.html")
 
 
 def _validate_args(args):

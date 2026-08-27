@@ -45,6 +45,7 @@ from mokume.core.constants import (
     AGGREGATION_LEVEL_SAMPLE,
     CONDITION,
     PIBAQ,
+    load_sdrf,
 )
 from mokume.core.logger import get_logger
 from mokume.postprocessing.batch_correction import (
@@ -2204,9 +2205,7 @@ class PostprocessingStage:
         if not self.config.input.sdrf or not self.config.batch.column:
             return None
 
-        from mokume.core.constants import load_sdrf as _load_sdrf
-
-        sdrf = _load_sdrf(self.config.input.sdrf)
+        sdrf = load_sdrf(self.config.input.sdrf)
         batch_col = self.config.batch.column.lower()
         if batch_col not in sdrf.columns:
             raise ValueError(f"Batch column '{self.config.batch.column}' not in SDRF")

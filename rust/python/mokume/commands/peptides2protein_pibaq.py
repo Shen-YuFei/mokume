@@ -120,6 +120,7 @@ def _resolve_options(args):
 
 
 def main(argv=None):
+    """Run the native-backed piBAQ compatibility command."""
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     ploidy, organism, cpc, qc_report = _resolve_options(args)
 

@@ -111,7 +111,7 @@ def _generate_volcano_plots(pd, contrasts, plot_dir, args):
             log2fc_threshold=args.log2fc,
             fdr_threshold=args.fdr,
             highlight_genes=highlight,
-            title="Volcano Plot: {0} ({1} vs {2})".format(key, cond_a, cond_b),
+            title=f"Volcano Plot: {key} ({cond_a} vs {cond_b})",
             output_file=output_file,
         )
         print("Volcano plot saved to {0}".format(output_file))
@@ -195,6 +195,7 @@ def _validate_de_args(args):
 
 
 def main(argv=None, mode="de"):
+    """Run the DE plotting command."""
     args = _parse_args(sys.argv[1:] if argv is None else argv, mode)
     if mode == "de":
         _validate_de_args(args)
