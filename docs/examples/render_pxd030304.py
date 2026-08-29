@@ -15,10 +15,15 @@ import scanpy as sc
 import seaborn as sns
 from threadpoolctl import threadpool_limits
 
-from mokume.tissuemap.config import EmbeddingConfig, TissueSpecificityConfig
+from mokume.tissuemap.config import (
+    EmbeddingConfig,
+    FilteringConfig,
+    TissueSpecificityConfig,
+)
 from mokume.tissuemap.embedding import embed
 from mokume.tissuemap.plotting.markers import compute_markers
 from mokume.tissuemap.preprocessing import canonicalize_tissue
+from mokume.tissuemap.protein_selection import filter_proteins
 from mokume.tissuemap.tissue_specificity import compute_ts_scores
 
 
@@ -62,8 +67,7 @@ def build_anndata(
     matrix: pd.DataFrame, metadata: pd.DataFrame, threads: int
 ) -> ad.AnnData:
     """Build the filtered AnnData object and compute stable embeddings."""
-    keep = matrix.isna().mean(axis=1) <= 0.95
-    filtered = matrix.loc[keep]
+    filtered = filter_proteins(matrix, FilteringConfig(max_nan_frac=0.95))
     adata = ad.AnnData(
         X=filtered.T.to_numpy(dtype=np.float32),
         obs=metadata.copy(),
@@ -244,10 +248,9 @@ def marker_table(adata: ad.AnnData, tissues: list[str]) -> pd.DataFrame:
     seen: set[str] = set()
     for tissue in tissues:
         result = sc.get.rank_genes_groups_df(adata, group=tissue, key="tissue_markers")
-        preferred = result[
+        candidates = result[
             (result["pvals_adj"] < 0.05) & (result["logfoldchanges"] > 0.5)
         ]
-        candidates = preferred if len(preferred) >= 2 else result
         kept = 0
         for row in candidates.itertuples(index=False):
             protein = str(row.names)
@@ -431,7 +434,7 @@ def write_summary(
     categories = ts_scores["enrichment_category"].value_counts().to_dict()
     payload = {
         "proteins": int(matrix.shape[0]),
-        "embedding_proteins": int(adata.n_vars),
+        "embedding_proteins": int(adata.uns["embedding_metrics"]["n_proteins_used"]),
         "samples": int(matrix.shape[1]),
         "tissues": int(adata.obs["tissue"].nunique()),
         "missing_fraction": float(matrix.isna().to_numpy().mean()),
