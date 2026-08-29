@@ -13,7 +13,7 @@ use crate::memory::MemoryPlan;
 pub(crate) struct SpectralCountCell {
     pub protein_group: String,
     pub sample: String,
-    pub spectra: usize,
+    pub psms: usize,
     pub sequences: HashSet<String>,
 }
 
@@ -21,20 +21,14 @@ pub(crate) struct SpectralCountCell {
 pub(crate) struct SpectralCountResult {
     pub cells: Vec<SpectralCountCell>,
     pub target_psms: usize,
-    pub unique_spectra: usize,
+    pub unique_psms: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct SpectrumKey {
-    run: String,
-    scan: Vec<i64>,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SpectrumAssignment {
     proteins: BTreeSet<String>,
     sample: String,
-    sequences: HashSet<String>,
+    sequence: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,12 +62,12 @@ pub(crate) fn count(
             "spectral_count found no usable feature-linked target PSM after decoy, peptide-length, contaminant, and protein-group filtering",
         ));
     }
-    let unique_spectra = assignments.len();
+    let unique_psms = assignments.len();
     let cells = collapse_assignments(assignments, config.filtering.min_unique_peptides);
     Ok(SpectralCountResult {
         cells,
         target_psms,
-        unique_spectra,
+        unique_psms,
     })
 }
 
@@ -144,7 +138,7 @@ fn collect_assignments(
     memory: &MemoryPlan,
     mut reader: QpxPsmParquetReader,
     feature_groups: &HashMap<i64, FeatureProteinGroup>,
-) -> Result<(HashMap<SpectrumKey, SpectrumAssignment>, usize)> {
+) -> Result<(HashMap<i64, SpectrumAssignment>, usize)> {
     let mut assignments = HashMap::new();
     let mut run_samples = HashMap::new();
     let mut target_psms = 0;
@@ -168,7 +162,7 @@ fn add_record(
     filtering: &FilterConfig,
     sdrf: &SdrfTable,
     run_samples: &mut HashMap<String, String>,
-    assignments: &mut HashMap<SpectrumKey, SpectrumAssignment>,
+    assignments: &mut HashMap<i64, SpectrumAssignment>,
     record: QpxPsmRecord,
     feature_groups: &HashMap<i64, FeatureProteinGroup>,
 ) -> Result<bool> {
@@ -186,12 +180,6 @@ fn add_record(
     }
     if filtering.remove_contaminants && group.contaminant {
         return Ok(false);
-    }
-    if record.scan.is_empty() {
-        return Err(super::invalid_input(format!(
-            "PSM in run `{}` has no scan identity; spectral_count cannot deduplicate it",
-            record.run_file_name
-        )));
     }
     let sample = sample_for_run(sdrf, run_samples, &record.run_file_name)?;
     insert_assignment(assignments, record, group.proteins.clone(), sample)?;
@@ -212,34 +200,32 @@ fn sample_for_run(
 }
 
 fn insert_assignment(
-    assignments: &mut HashMap<SpectrumKey, SpectrumAssignment>,
+    assignments: &mut HashMap<i64, SpectrumAssignment>,
     record: QpxPsmRecord,
     proteins: BTreeSet<String>,
     sample: String,
 ) -> Result<()> {
-    let key = SpectrumKey {
-        run: record.run_file_name,
-        scan: record.scan,
+    let psm_id = record.psm_id;
+    let assignment = SpectrumAssignment {
+        proteins,
+        sample,
+        sequence: record.sequence,
     };
-    let assignment = assignments
-        .entry(key)
-        .or_insert_with(|| SpectrumAssignment {
-            proteins: BTreeSet::new(),
-            sample: sample.clone(),
-            sequences: HashSet::new(),
-        });
-    if assignment.sample != sample {
-        return Err(super::invalid_input(
-            "one spectrum maps to multiple samples in the SDRF",
-        ));
+    if let Some(existing) = assignments.insert(psm_id, assignment.clone()) {
+        if existing != assignment {
+            return Err(super::invalid_input(format!(
+                "QPX psm_id {psm_id} has conflicting spectral-count assignments"
+            )));
+        }
+        return Err(super::invalid_input(format!(
+            "QPX psm_id {psm_id} is duplicated"
+        )));
     }
-    assignment.proteins.extend(proteins);
-    assignment.sequences.insert(record.sequence);
     Ok(())
 }
 
 fn collapse_assignments(
-    assignments: HashMap<SpectrumKey, SpectrumAssignment>,
+    assignments: HashMap<i64, SpectrumAssignment>,
     min_unique: usize,
 ) -> Vec<SpectralCountCell> {
     let mut cells = BTreeMap::<(String, String), (usize, HashSet<String>)>::new();
@@ -251,16 +237,16 @@ fn collapse_assignments(
             .join(";");
         let cell = cells.entry((protein_group, assignment.sample)).or_default();
         cell.0 += 1;
-        cell.1.extend(assignment.sequences);
+        cell.1.insert(assignment.sequence);
     }
     cells
         .into_iter()
         .filter(|(_, (_, sequences))| sequences.len() >= min_unique)
         .map(
-            |((protein_group, sample), (spectra, sequences))| SpectralCountCell {
+            |((protein_group, sample), (psms, sequences))| SpectralCountCell {
                 protein_group,
                 sample,
-                spectra,
+                psms,
                 sequences,
             },
         )
@@ -278,59 +264,42 @@ fn protein_set(accessions: &[String]) -> Option<BTreeSet<String>> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashMap, HashSet};
+    use std::collections::{BTreeSet, HashMap};
 
     use mokume_core::FilterConfig;
     use mokume_io::{QpxPsmRecord, SdrfTable};
 
     use super::{
         add_record, collapse_assignments, insert_assignment, protein_set, FeatureProteinGroup,
-        SpectrumAssignment, SpectrumKey,
+        SpectrumAssignment,
     };
 
     fn assignment(protein: &str, sample: &str, sequence: &str) -> SpectrumAssignment {
         SpectrumAssignment {
             proteins: BTreeSet::from([protein.to_owned()]),
             sample: sample.to_owned(),
-            sequences: HashSet::from([sequence.to_owned()]),
+            sequence: sequence.to_owned(),
         }
     }
 
     #[test]
-    fn counts_unique_spectra_not_unique_peptides() {
+    fn counts_psms_not_unique_peptides() {
         let assignments = HashMap::from([
-            (
-                SpectrumKey {
-                    run: "run-a".to_owned(),
-                    scan: vec![1],
-                },
-                assignment("P1", "S1", "PEPTIDEA"),
-            ),
-            (
-                SpectrumKey {
-                    run: "run-a".to_owned(),
-                    scan: vec![2],
-                },
-                assignment("P1", "S1", "PEPTIDEA"),
-            ),
-            (
-                SpectrumKey {
-                    run: "run-a".to_owned(),
-                    scan: vec![3],
-                },
-                assignment("P1", "S1", "PEPTIDEB"),
-            ),
+            (1, assignment("P1", "S1", "PEPTIDEA")),
+            (2, assignment("P1", "S1", "PEPTIDEA")),
+            (3, assignment("P1", "S1", "PEPTIDEB")),
         ]);
         let cells = collapse_assignments(assignments, 2);
         assert_eq!(cells.len(), 1);
-        assert_eq!(cells[0].spectra, 3);
+        assert_eq!(cells[0].psms, 3);
         assert_eq!(cells[0].sequences.len(), 2);
     }
 
     #[test]
-    fn merges_all_assignments_for_one_spectrum() -> Result<(), Box<dyn std::error::Error>> {
+    fn keeps_distinct_psms_from_one_spectrum_separate() -> Result<(), Box<dyn std::error::Error>> {
         let mut assignments = HashMap::new();
         let first = QpxPsmRecord {
+            psm_id: 1,
             sequence: "PEPTIDEA".to_owned(),
             run_file_name: "run-a".to_owned(),
             scan: vec![1],
@@ -339,20 +308,30 @@ mod tests {
         };
         insert_assignment(
             &mut assignments,
-            first.clone(),
+            first,
             BTreeSet::from(["P1".to_owned()]),
             "S1".to_owned(),
         )?;
+        let second = QpxPsmRecord {
+            psm_id: 2,
+            sequence: "PEPTIDEB".to_owned(),
+            run_file_name: "run-a".to_owned(),
+            scan: vec![1],
+            feature_id: Some(20),
+            is_decoy: false,
+        };
         insert_assignment(
             &mut assignments,
-            first,
+            second,
             BTreeSet::from(["P2".to_owned()]),
             "S1".to_owned(),
         )?;
         let cells = collapse_assignments(assignments, 1);
-        assert_eq!(cells.len(), 1);
-        assert_eq!(cells[0].protein_group, "P1;P2");
-        assert_eq!(cells[0].spectra, 1);
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].protein_group, "P1");
+        assert_eq!(cells[0].psms, 1);
+        assert_eq!(cells[1].protein_group, "P2");
+        assert_eq!(cells[1].psms, 1);
         Ok(())
     }
 
@@ -378,6 +357,7 @@ mod tests {
             },
         )]);
         let record = QpxPsmRecord {
+            psm_id: 42,
             sequence: "PEPTIDEA".to_owned(),
             run_file_name: "run-a.mzML".to_owned(),
             scan: vec![42],
@@ -399,7 +379,7 @@ mod tests {
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].protein_group, "P1");
         assert_eq!(cells[0].sample, "S1");
-        assert_eq!(cells[0].spectra, 1);
+        assert_eq!(cells[0].psms, 1);
         Ok(())
     }
 }

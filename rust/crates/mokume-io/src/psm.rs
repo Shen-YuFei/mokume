@@ -12,6 +12,7 @@ use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchR
 use parquet::arrow::ProjectionMask;
 
 const PSM_COLUMNS: &[&str] = &[
+    "psm_id",
     "sequence",
     "run_file_name",
     "reference_file_name",
@@ -26,6 +27,7 @@ const PSM_COLUMNS: &[&str] = &[
 /// The PSM evidence required for true spectral counting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QpxPsmRecord {
+    pub psm_id: i64,
     pub sequence: String,
     pub run_file_name: String,
     pub scan: Vec<i64>,
@@ -92,6 +94,7 @@ impl Iterator for QpxPsmParquetReader {
 }
 
 pub fn flatten_psm_batch(batch: &RecordBatch) -> Result<Vec<QpxPsmRecord>> {
+    let psm_id = required_column(batch, &["psm_id"])?;
     let sequence = required_column(batch, &["sequence"])?;
     let run = required_column(
         batch,
@@ -104,6 +107,7 @@ pub fn flatten_psm_batch(batch: &RecordBatch) -> Result<Vec<QpxPsmRecord>> {
     (0..batch.num_rows())
         .map(|row| {
             Ok(QpxPsmRecord {
+                psm_id: required_i64(psm_id, row, "psm_id")?,
                 sequence: required_string(sequence, row, "sequence")?,
                 run_file_name: required_string(run, row, "run_file_name")?,
                 scan: list_i64(scan, row, "scan")?,
@@ -226,6 +230,14 @@ fn optional_i64(array: &dyn Array, row: usize, name: &str) -> Result<Option<i64>
     }
 }
 
+fn required_i64(array: &dyn Array, row: usize, name: &str) -> Result<i64> {
+    optional_i64(array, row, name)?.ok_or_else(|| {
+        invalid_input(format!(
+            "required QPX PSM column `{name}` is null at row {row}"
+        ))
+    })
+}
+
 fn list_values(array: &dyn Array, row: usize, name: &str) -> Result<Option<ArrayRef>> {
     if array.is_null(row) {
         return Ok(None);
@@ -284,6 +296,10 @@ mod tests {
 
         Ok(RecordBatch::try_from_iter([
             (
+                "psm_id",
+                Arc::new(Int64Array::from(vec![1001, 1002])) as ArrayRef,
+            ),
+            (
                 "sequence",
                 Arc::new(StringArray::from(vec!["PEPTIDE", "DECOYPEP"])) as ArrayRef,
             ),
@@ -307,6 +323,7 @@ mod tests {
     fn flattens_psm_identity_and_feature_link() -> Result<(), Box<dyn std::error::Error>> {
         let records = flatten_psm_batch(&psm_batch()?)?;
         assert_eq!(records.len(), 2);
+        assert_eq!(records[0].psm_id, 1001);
         assert_eq!(records[0].scan, vec![101]);
         assert_eq!(records[0].feature_id, Some(10));
         assert_eq!(records[1].feature_id, None);

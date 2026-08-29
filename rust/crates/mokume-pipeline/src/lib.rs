@@ -5421,7 +5421,7 @@ fn spectral_count_matrix(
                 protein: protein_id,
                 sample: sample_id,
             },
-            cell.spectra as f64,
+            cell.psms as f64,
         );
         peptide_sets
             .entry(protein_id)
@@ -5435,7 +5435,7 @@ fn spectral_count_matrix(
         .collect();
     info!(
         target_psms = counted.target_psms,
-        unique_spectra = counted.unique_spectra,
+        unique_psms = counted.unique_psms,
         proteins = proteins.len(),
         samples = samples.len(),
         "PSM spectral counting finished"

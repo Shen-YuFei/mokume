@@ -13,7 +13,7 @@ intent for each parameter.
 | `--parquet` | Input | Required QPX feature parquet input. | Required QPX feature parquet input. | Implemented |
 | `--sdrf` | Input | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Optional SDRF sample metadata. Required for ratio and metadata-aware stages. | Implemented subset |
 | `--output` | Output | Required protein matrix output path. | Required protein matrix output path. | Implemented |
-| `--quant-method` | Quantification | Feature-level `peptide_count` counts distinct peptides. | `peptide-count` uses the same feature-level definition; `spectral-count` pairs PSM and feature QPX, resolves groups through `feature_id`, and counts unique `(run_file_name, scan)` spectra. Missing cells for both count methods are additive zeroes in observed samples. | Intentional contract split |
+| `--quant-method` | Quantification | Feature-level `peptide_count` counts distinct peptides. | `peptide-count` uses the same feature-level definition; `spectral-count` pairs PSM and feature QPX, resolves groups through `feature_id`, and counts unique QPX `psm_id` values. Missing cells for both count methods are additive zeroes in observed samples. | Intentional contract split |
 | `top<N>` method syntax | Quantification | Accepts N in the method name, such as `--quant-method top5`. | Same. | Implemented |
 | `--min-aa` | Filtering | Removes peptide sequences shorter than the threshold. | Removes peptide sequences shorter than the threshold. | Implemented |
 | `--min-unique` | Filtering | Requires a minimum number of unique peptides per protein/sample cell. | Requires a minimum number of unique peptides per protein/sample cell for non-piBAQ methods. | Implemented subset |

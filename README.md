@@ -219,8 +219,8 @@ Runnable examples per analysis: [quantification methods](docs/examples/quantific
   `top10`, ... — the N is part of the method name), `sum` (also `median`,
   `ratio`, `abd`, `intensity`, `peptide-count`, `spectral-count`). `peptide-count`
   counts distinct canonical peptides from feature QPX; true `spectral-count`
-  pairs PSM QPX (`--psm`) with its feature QPX (`--parquet`) and deduplicates
-  `(run_file_name, scan)`. piBAQ requires a FASTA; TopN, MaxLFQ, and Sum do not.
+  pairs PSM QPX (`--psm`) with its feature QPX (`--parquet`) and counts each
+  unique QPX `psm_id`. piBAQ requires a FASTA; TopN, MaxLFQ, and Sum do not.
   The two count methods reject intensity normalization and IRS rather than
   silently accepting no-op scaling.
 - **Normalization:** run-level and sample-level options including `median`,

@@ -260,13 +260,12 @@ mokume quantify features2proteins -p features.parquet -o proteins.csv \
 `spectral-count` instead requires matching PSM-level and feature-level QPX
 parquets plus SDRF. A PSM's `feature_id` resolves its protein group from the
 feature table's `pg_accessions` (falling back to `anchor_protein`). Mokume
-removes decoys, identifies a spectrum by `(run_file_name, scan)`, maps runs to
-samples through the SDRF, and counts each unique spectrum once. If multiple
-accepted PSM rows describe the same spectrum, Mokume unions their peptide
-sequences and resolved protein groups before forming one sorted protein-group
-key; it does not double-count the spectrum or explode a shared group into
-independent proteins. PSM rows without a matching feature link are not counted.
-As with `peptide-count`, intensity normalization and IRS are rejected.
+removes decoys, maps runs to samples through the SDRF, and counts each unique
+QPX `psm_id` once. Protein ambiguity within one linked feature remains one
+sorted protein-group key, while distinct PSMs sharing a scan remain separate.
+Duplicate `psm_id` values are rejected. PSM rows without a matching feature
+link are not counted. As with `peptide-count`, intensity normalization and IRS
+are rejected.
 
 ```bash
 mokume quantify features2proteins --psm identifications.psm.parquet \

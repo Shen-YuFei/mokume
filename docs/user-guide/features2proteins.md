@@ -85,7 +85,7 @@ therefore cannot use an MSstats feature table.
 | TMT Abundance | `--quant-method abd` | No | Median of log2 peptide intensities (TMT) |
 | TMT Reporter Intensity | `--quant-method intensity` | No | Sum of raw reporter intensities (TMT) |
 | Peptide Count | `--quant-method peptide-count` | No | Distinct canonical peptides from feature QPX |
-| Spectral Count | `--quant-method spectral-count --psm PSM --parquet FEATURE` | No | Unique `(run_file_name, scan)` spectra from feature-linked PSMs; requires SDRF |
+| Spectral Count | `--quant-method spectral-count --psm PSM --parquet FEATURE` | No | Unique QPX `psm_id` values from feature-linked PSMs; requires SDRF |
 
 In practice:
 
@@ -101,7 +101,7 @@ In practice:
   `FamilyId` / `EvidenceLevel` metadata columns.
 - Use `ratio` for TMT PS-style reference-based analysis.
 - Use `peptide-count` for distinct peptide identifications from feature QPX;
-  use `spectral-count` for unique feature-linked spectra from matching PSM and
+  use `spectral-count` for unique feature-linked PSMs from matching PSM and
   feature QPX files. Both are integer evidence counts, so run/sample intensity
   normalization and IRS are rejected.
 - Use `top<N>` for the classic Top3-style summary; `top3` is the method from
