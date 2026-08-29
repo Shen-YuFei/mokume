@@ -4,7 +4,7 @@ name = "mokume-py"
 version = "0.2.0"
 description = "Pure-Python proteomics quantification library supporting piBAQ, TopN, MaxLFQ, and DirectLFQ"
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [
     { name = "Yasset Perez-Riverol", email = "ypriverol@gmail.com" },
