@@ -5,6 +5,7 @@ t-SNE / UMAP.
 
 from __future__ import annotations
 
+import importlib
 import logging
 
 import anndata as ad
@@ -12,11 +13,6 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-
-try:
-    import umap as _umap_module  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - optional dependency
-    _umap_module = None
 
 from mokume.imputation import (
     impute_bpca,
@@ -198,15 +194,17 @@ def _run_umap(
     changes). UMAP 1.0+ honours ``n_jobs`` only when ``random_state`` is
     ``None``; otherwise it must stay single-threaded for reproducibility.
     """
-    if _umap_module is None:
+    try:
+        umap_module = importlib.import_module("umap")
+    except ImportError as exc:  # pragma: no cover - optional dependency
         raise ImportError(
             "UMAP requested but 'umap-learn' is not installed. "
             "Install it with `pip install umap-learn`."
-        )
+        ) from exc
 
     n_neighbors = min(config.umap_n_neighbors, max(2, adata.n_obs - 1))
     umap_jobs = 1 if config.random_state is not None else n_jobs
-    reducer = _umap_module.UMAP(
+    reducer = umap_module.UMAP(
         n_components=2,
         n_neighbors=n_neighbors,
         min_dist=config.umap_min_dist,
