@@ -476,6 +476,11 @@ def _ground_truth_metrics(
     tp, fp, fn, tn = _de_tp_fp(de_df, ground_truth)
     sensitivity = tp / max(tp + fn, 1)
     specificity = tn / max(tn + fp, 1)
+    recall_curve = recall_at_emp_fdr_curve(
+        de_df,
+        ground_truth,
+        expected_direction=expected_direction,
+    )
     direction_correct, direction_incorrect, direction_accuracy = (
         _truth_direction_diagnostics(de_df, ground_truth, expected_direction)
     )
@@ -498,13 +503,7 @@ def _ground_truth_metrics(
         pauc005=_pauc(de_df, ground_truth, max_fpr=0.05),
         nmcc=normalized_mcc(tp, fp, fn, tn),
         gmean=math.sqrt(sensitivity * specificity),
-        recall_emp_fdr_curve=tuple(
-            recall_at_emp_fdr_curve(
-                de_df,
-                ground_truth,
-                expected_direction=expected_direction,
-            )
-        ),
+        recall_emp_fdr_curve=None if recall_curve is None else tuple(recall_curve),
     )
     return metrics, _fdr_calibration(
         de_df,

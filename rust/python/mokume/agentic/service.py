@@ -148,6 +148,21 @@ class ProfileInputs(NamedTuple):
     peptide_counts: pd.Series | None
 
 
+def _validate_ground_truth_overlap(
+    frame: pd.DataFrame,
+    ground_truth: set[str] | None,
+) -> None:
+    """Reject a ground-truth namespace absent from the tested matrix."""
+    if ground_truth is None:
+        return
+    tested_proteins = set(frame.iloc[:, 0].astype(str))
+    if ground_truth.isdisjoint(tested_proteins):
+        raise ValueError(
+            "Ground-truth proteins do not overlap the tested matrix "
+            f"(0/{len(ground_truth)} identifiers)"
+        )
+
+
 class RecommendationService:
     """Bind one immutable knowledge graph to the two public MCP operations."""
 
@@ -211,6 +226,7 @@ class RecommendationService:
             threads=prepared.runtime.threads,
         )
         ground_truth = _load_ground_truth(prepared.runtime.ground_truth)
+        _validate_ground_truth_overlap(linear_frame, ground_truth)
         candidates = [
             _candidate(item, prepared.generated, prepared.runtime.fdr_threshold)
             for item in prepared.generated.configs
