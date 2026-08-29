@@ -78,15 +78,19 @@ def _extract_global_options(args):
 
 
 def _run_periphery(command, args, global_options):
-    level = (
-        "warning" if global_options.log_level == "warn" else global_options.log_level
-    )
-    configure_logging(level=level, log_file=global_options.log_file)
+    _configure_global_logging(global_options)
     module_name, mode = command
     module = importlib.import_module(f"mokume.commands.{module_name}")
     command_main = getattr(module, "main")
     result = command_main(args, mode=mode) if mode is not None else command_main(args)
     return 0 if result is None else result
+
+
+def _configure_global_logging(global_options):
+    level = (
+        "warning" if global_options.log_level == "warn" else global_options.log_level
+    )
+    configure_logging(level=level, log_file=global_options.log_file)
 
 
 def _render_requested_pibaq_qc(args, package):
@@ -128,6 +132,10 @@ def main():
         _print_root_help(sys.stderr)
         raise SystemExit(2)
     global_options, routed_args = _extract_global_options(args)
+    if global_options.version:
+        package = importlib.import_module("mokume")
+        print(getattr(package, "__version__"))
+        raise SystemExit(0)
     if routed_args in (["-h"], ["--help"], ["help"]):
         _print_root_help(sys.stdout)
         raise SystemExit(0)
@@ -141,19 +149,16 @@ def main():
         raise SystemExit(0)
     periphery = _periphery_request(routed_args)
     if periphery is not None:
-        if global_options.version:
-            package = importlib.import_module("mokume")
-            print(getattr(package, "__version__"))
-            raise SystemExit(0)
         command, command_args = periphery
         raise SystemExit(_run_periphery(command, command_args, global_options))
-    if args[:2] == ["mcp", "serve"]:
+    if routed_args[:2] == ["mcp", "serve"]:
+        _configure_global_logging(global_options)
         module = importlib.import_module("mokume.agentic.mcp_server")
         try:
-            raise SystemExit(getattr(module, "main")(args[2:]))
+            raise SystemExit(getattr(module, "main")(routed_args[2:]))
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from None
-    if args and args[0] == "mcp":
+    if routed_args and routed_args[0] == "mcp":
         raise SystemExit("Usage: mokume mcp serve --knowledge PATH")
     package = importlib.import_module("mokume")
     if routed_args[:1] == ["help"]:

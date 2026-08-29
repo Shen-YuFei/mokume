@@ -158,6 +158,74 @@ def test_console_dispatches_periphery_arguments(monkeypatch):
     assert observed["args"] == ["--input", "datasets"]
 
 
+def test_console_dispatches_mcp_with_global_options(monkeypatch):
+    """Global logging options must be consumed before MCP argparse runs."""
+    observed = {}
+    module = SimpleNamespace(
+        main=lambda args: observed.update(args=args) or 0,
+    )
+
+    def import_module(name):
+        if name == "mokume.agentic.mcp_server":
+            return module
+        raise AssertionError(f"unexpected import: {name}")
+
+    def configure_logging(**kwargs):
+        observed["logging"] = kwargs
+
+    entrypoint = importlib.import_module("mokume.__main__")
+    monkeypatch.setattr(
+        entrypoint.importlib,
+        "import_module",
+        import_module,
+    )
+    monkeypatch.setattr(
+        entrypoint,
+        "configure_logging",
+        configure_logging,
+    )
+    monkeypatch.setattr(
+        entrypoint.sys,
+        "argv",
+        [
+            "mokume",
+            "--log-level",
+            "info",
+            "mcp",
+            "serve",
+            "--knowledge",
+            "knowledge.yaml",
+            "--log-file",
+            "mokume.log",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 0
+    assert observed["args"] == ["--knowledge", "knowledge.yaml"]
+    assert observed["logging"] == {"level": "info", "log_file": "mokume.log"}
+
+
+def test_console_global_version_does_not_enter_mcp(monkeypatch, capsys):
+    """The global version flag must not require MCP-specific arguments."""
+    entrypoint = importlib.import_module("mokume.__main__")
+    package = SimpleNamespace(__version__="0.2.0")
+    monkeypatch.setattr(entrypoint.importlib, "import_module", lambda _name: package)
+    monkeypatch.setattr(
+        entrypoint.sys,
+        "argv",
+        ["mokume", "mcp", "serve", "--version"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out == "0.2.0\n"
+
+
 def test_pibaq_qc_wrapper_accepts_global_options_before_subcommand(monkeypatch):
     """Global options must not prevent post-command piBAQ QC rendering."""
     observed = {}
