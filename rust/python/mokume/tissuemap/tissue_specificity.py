@@ -331,11 +331,17 @@ def _compute_ts_vectorized_mad(
     mu[too_sparse] = np.nan
     sigma[too_sparse] = np.nan
 
-    # Population proportion: fraction within ±2σ
-    within_2s = np.abs(log2_matrix - mu[np.newaxis, :]) <= 2.0 * sigma[np.newaxis, :]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        pi = np.nanmean(within_2s.astype(np.float32), axis=0)
+    # Population proportion among observed values, matching the loop path.
+    observed = ~np.isnan(log2_matrix)
+    within_2s = observed & (
+        np.abs(log2_matrix - mu[np.newaxis, :]) <= 2.0 * sigma[np.newaxis, :]
+    )
+    pi = np.divide(
+        within_2s.sum(axis=0),
+        n_valid,
+        out=np.zeros(n_proteins, dtype=float),
+        where=n_valid > 0,
+    )
     pi[too_sparse] = 0.0
 
     # Full z-score matrix  (NaN propagates naturally)

@@ -17,6 +17,8 @@ import pandas as pd
 from pandas.errors import PerformanceWarning
 import scanpy as sc
 
+from mokume.imputation.censored import impute_mindet
+
 logger = logging.getLogger(__name__)
 
 # Custom colormaps
@@ -28,6 +30,8 @@ _HEATMAP_CMAP = LinearSegmentedColormap.from_list(
 # starts near-white so even low-expression points remain visible.
 _EXPR_CMAP = matplotlib.colormaps["plasma"]
 _EXPR_NA_COLOR = "#BDBDBD"  # mid-grey for samples where the protein is NaN
+_MARKER_FDR = 0.05
+_MARKER_MIN_LOG2FC = 0.5
 
 
 def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
@@ -66,9 +70,12 @@ def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
     else:
         adata_sub = adata
 
-    # Ensure X has no NaN for rank_genes_groups
+    # Scanpy cannot rank matrices containing NaN. Use the same scale-aware,
+    # per-sample MNAR assumption as the default TissueMap embedding rather than
+    # treating missing log2 intensities as the arbitrary numeric value zero.
     x_backup = adata_sub.X.copy()
-    adata_sub.X = np.nan_to_num(adata_sub.X, nan=0.0).astype(np.float32)
+    protein_by_sample = pd.DataFrame(np.asarray(adata_sub.X).T)
+    adata_sub.X = impute_mindet(protein_by_sample).T.to_numpy(dtype=np.float32)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -88,6 +95,14 @@ def compute_markers(adata: ad.AnnData, min_group_size: int = 2) -> ad.AnnData:
     return adata
 
 
+def _significant_markers(result: pd.DataFrame) -> pd.DataFrame:
+    """Return positively enriched markers passing the display thresholds."""
+    return result[
+        (result["pvals_adj"] < _MARKER_FDR)
+        & (result["logfoldchanges"] > _MARKER_MIN_LOG2FC)
+    ]
+
+
 def _collect_top_markers(
     adata: ad.AnnData,
     tissue_order: list[str],
@@ -103,6 +118,7 @@ def _collect_top_markers(
             )
         except (KeyError, ValueError):
             continue
+        result = _significant_markers(result)
         count = 0
         for _, row in result.iterrows():
             prot = row["names"]
@@ -287,6 +303,7 @@ def _select_showcase_markers(
             result = sc.get.rank_genes_groups_df(adata, group=t, key="tissue_markers")
         except (KeyError, ValueError):
             continue
+        result = _significant_markers(result)
         for _, row in result.iterrows():
             prot = row["names"]
             if prot not in seen_prots and prot in adata.var.index:
@@ -443,6 +460,7 @@ def _collect_dotplot_genes(
             )
         except (KeyError, ValueError):
             continue
+        result = _significant_markers(result)
         count = 0
         for _, row in result.iterrows():
             g = row["names"]
@@ -521,7 +539,7 @@ def save_markers_csv(
             )
         except (KeyError, ValueError):
             continue
-        top = result.head(n_top)
+        top = _significant_markers(result).head(n_top)
         for _, row in top.iterrows():
             records.append(
                 {
