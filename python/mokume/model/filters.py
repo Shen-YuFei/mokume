@@ -166,7 +166,7 @@ class ProteinFilterConfig(_FdrThresholdConfig):
     remove_contaminants: bool = True
     remove_decoys: bool = True
     contaminant_patterns: List[str] = field(
-        default_factory=lambda: ["CONTAMINANT", "ENTRAP", "DECOY"]
+        default_factory=lambda: ["CONTAMINANT", "CONTAM_", "ENTRAP", "DECOY"]
     )
 
     @classmethod

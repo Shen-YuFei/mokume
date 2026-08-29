@@ -2043,16 +2043,9 @@ fn features2peptides_missing_rate_drops_incomplete_technical_run() -> Result<(),
     Ok(())
 }
 
-// Custom contaminant patterns (Python `ProteinFilterConfig.contaminant_patterns`).
-// A `CONTAM_*` protein is NOT a contaminant under the default patterns
-// (CONTAMINANT/ENTRAP/DECOY), so the default-patterns pipeline keeps it. Adding
-// `CONTAM_` to the patterns drops every row whose raw `pg_accessions` contains
-// `CONTAM_` (`matches_sql_contaminant` in the median pre-pass + `collect_run_qc`,
-// `matches_protein_contaminant` at ingest). On real PXD003539 the `CONTAM_`
-// pattern (64169 matching rows) keeps only_py=0/only_rs=0 with rel<=2.5e-7.
+// Default and custom contaminant patterns (`ProteinFilterConfig`).
 #[test]
-fn features2peptides_custom_contaminant_patterns_drop_matching_rows() -> Result<(), Box<dyn Error>>
-{
+fn features2peptides_default_patterns_drop_contam_prefix() -> Result<(), Box<dyn Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.contam.features.parquet");
@@ -2069,7 +2062,7 @@ fn features2peptides_custom_contaminant_patterns_drop_matching_rows() -> Result<
         ],
     )?;
 
-    // Default patterns keep the `CONTAM_` protein (not a default contaminant).
+    // The default patterns remove the common DIA-NN `CONTAM_` prefix.
     let base_out = root.join("contam.base.csv");
     let mut base = default_peptides_config(parquet.clone(), base_out.clone());
     base.filter_pipeline = Some(PreprocessingFilterConfig::default());
@@ -2077,13 +2070,13 @@ fn features2peptides_custom_contaminant_patterns_drop_matching_rows() -> Result<
     let base_table = read_csv(&base_out)?;
     assert_eq!(
         base_table.rows.len(),
-        4,
-        "default patterns keep CONTAM_ protein:\n{:#?}",
+        2,
+        "default patterns must drop CONTAM_ protein:\n{:#?}",
         base_table.rows
     );
 
-    // Adding `CONTAM_` to the patterns drops the CONTAM_ protein's rows; the
-    // genuine P1 cells survive unchanged (skip_normalization -> raw sums).
+    // An explicit custom list still replaces the defaults. The historical
+    // three-pattern list therefore retains `CONTAM_` while preserving P1.
     let out = root.join("contam.custom.csv");
     let mut config = default_peptides_config(parquet, out.clone());
     config.filter_pipeline = Some(PreprocessingFilterConfig {
@@ -2092,7 +2085,6 @@ fn features2peptides_custom_contaminant_patterns_drop_matching_rows() -> Result<
                 "CONTAMINANT".to_owned(),
                 "ENTRAP".to_owned(),
                 "DECOY".to_owned(),
-                "CONTAM_".to_owned(),
             ],
             ..ProteinFilterConfig::default()
         },
@@ -2103,16 +2095,8 @@ fn features2peptides_custom_contaminant_patterns_drop_matching_rows() -> Result<
     let table = read_csv(&out)?;
     assert_eq!(
         table.rows.len(),
-        2,
-        "custom CONTAM_ pattern drops the contaminant protein:\n{:#?}",
-        table.rows
-    );
-    assert!(
-        table
-            .rows
-            .iter()
-            .all(|row| row.first().is_none_or(|value| value != "CONTAM_P00001")),
-        "CONTAM_P00001 rows must be removed:\n{:#?}",
+        4,
+        "explicit custom patterns must replace defaults:\n{:#?}",
         table.rows
     );
     assert_peptide_cell(&table, "P1", "PEPTIDEAK", "run1", 100.0)?;

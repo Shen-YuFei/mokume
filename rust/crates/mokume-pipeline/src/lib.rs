@@ -7048,14 +7048,10 @@ fn collect_run_qc_proteins(
         }
         // Run-QC shares the median pre-pass contaminant semantics (Python computes
         // both via `SQLFilterBuilder` ahead of the per-sample chain): match the
-        // **raw** `pg_accessions`, case-sensitive substring, DECOY handled by the
-        // `is_decoy` load filter.
+        // **raw** `pg_accessions` as a case-sensitive substring; structured
+        // `is_decoy` flags are handled independently by the load filter.
         if source.filtering.remove_contaminants
-            && matches_sql_contaminant(
-                &feature.protein_accessions,
-                source.contaminant_patterns,
-                feature.is_decoy.is_some(),
-            )
+            && matches_sql_contaminant(&feature.protein_accessions, source.contaminant_patterns)
         {
             return Ok(());
         }
@@ -7390,11 +7386,7 @@ fn collect_irs_scale(
         // pre-pass / Python's `SQLFilterBuilder` (case-sensitive substring; the
         // default pattern list routes through the `is_contaminant` fallback).
         if remove_contaminants
-            && matches_sql_contaminant(
-                &feature.protein_accessions,
-                contaminant_patterns,
-                feature.is_decoy.is_some(),
-            )
+            && matches_sql_contaminant(&feature.protein_accessions, contaminant_patterns)
         {
             return Ok(());
         }
@@ -7799,16 +7791,10 @@ impl<'a> NormalizationFactorCollector<'a> {
         }
         // Contaminant removal in the median pre-pass mirrors Python's
         // `SQLFilterBuilder`: match the **raw** `pg_accessions` (not the parsed
-        // group), case-sensitive `%pattern%` substring. The DECOY-via-`is_decoy`
-        // column substitution is already covered by `passes_feature_filter`
-        // dropping `is_decoy` rows, so the matcher skips DECOY when the column is
-        // present (`feature.is_decoy.is_some()`).
+        // group), as a case-sensitive literal substring. Structured `is_decoy`
+        // flags are handled independently by `passes_feature_filter`.
         if filtering.remove_contaminants
-            && matches_sql_contaminant(
-                &feature.protein_accessions,
-                self.contaminant_patterns,
-                feature.is_decoy.is_some(),
-            )
+            && matches_sql_contaminant(&feature.protein_accessions, self.contaminant_patterns)
         {
             return Ok(());
         }
@@ -8085,45 +8071,39 @@ fn peptide_key(feature: &QpxFeatureRecord) -> String {
 }
 
 fn is_contaminant(accession: &str) -> bool {
-    // Mirrors Python's contaminant deletion semantics exactly: both
-    // `SQLFilterBuilder._build_contaminant_filter` (pg_accessions substring
-    // `%pattern%`) and `ContaminantFilter.apply` (uppercased ProteinName
-    // substring) match only the default patterns CONTAMINANT/ENTRAP/DECOY.
-    // No `con__`/`cont_` prefix rule exists upstream, so none is applied here.
+    // Mirrors Python's default contaminant deletion semantics exactly.
     let upper = accession.to_ascii_uppercase();
-    upper.contains("CONTAMINANT") || upper.contains("ENTRAP") || upper.contains("DECOY")
+    upper.contains("CONTAMINANT")
+        || upper.contains("CONTAM_")
+        || upper.contains("ENTRAP")
+        || upper.contains("DECOY")
 }
 
-/// The default contaminant patterns (`["CONTAMINANT", "ENTRAP", "DECOY"]`).
+/// The default contaminant patterns.
 /// When the configured patterns are empty or equal this list, the two custom
-/// matchers below are bypassed in favour of [`is_contaminant`], so the default
-/// path keeps its already-verified cell-lines parity bit-for-bit.
+/// matchers below are bypassed in favour of [`is_contaminant`].
 fn is_default_contaminant_patterns(patterns: &[String]) -> bool {
     patterns.is_empty()
-        || (patterns.len() == 3
+        || (patterns.len() == 4
             && patterns[0] == "CONTAMINANT"
-            && patterns[1] == "ENTRAP"
-            && patterns[2] == "DECOY")
+            && patterns[1] == "CONTAM_"
+            && patterns[2] == "ENTRAP"
+            && patterns[3] == "DECOY")
 }
 
 /// Median / Run-QC pre-pass contaminant match. Replicates Python's
-/// `SQLFilterBuilder._build_contaminant_filter` (`feature.py:98-109`): each
-/// pattern is matched as a **case-sensitive** `%pattern%` substring against the
-/// **raw** `pg_accessions` (Rust's unparsed `feature.protein_accessions`), with
-/// no SQL escaping. A feature is a contaminant when ANY pattern matches ANY
-/// accession. DECOY special case (`feature.py:104`): when a pattern is `DECOY`
-/// (case-insensitive) and the parquet carries an `is_decoy` column, Python uses
-/// `is_decoy = false` instead of a name match; the load-time
-/// `passes_feature_filter` already drops `is_decoy` rows, so the DECOY pattern
-/// contributes no name match here and is skipped.
-fn matches_sql_contaminant(accessions: &[String], patterns: &[String], has_is_decoy: bool) -> bool {
+/// `SQLFilterBuilder._build_contaminant_filter`: each pattern is matched as a
+/// case-sensitive literal substring against the raw `pg_accessions` (Rust's
+/// unparsed `feature.protein_accessions`). A feature is a contaminant when ANY
+/// pattern matches ANY accession. When the parquet carries an `is_decoy`
+/// column, the load-time `passes_feature_filter` independently handles that
+/// structured flag; the accession check remains necessary for incomplete
+/// upstream annotations.
+fn matches_sql_contaminant(accessions: &[String], patterns: &[String]) -> bool {
     if is_default_contaminant_patterns(patterns) {
         return accessions.iter().any(|accession| is_contaminant(accession));
     }
     patterns.iter().any(|pattern| {
-        if has_is_decoy && pattern.eq_ignore_ascii_case("DECOY") {
-            return false;
-        }
         accessions
             .iter()
             .any(|accession| accession.contains(pattern.as_str()))

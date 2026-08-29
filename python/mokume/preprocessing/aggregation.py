@@ -94,7 +94,7 @@ def remove_contaminants_entrapments_decoys(
     pd.DataFrame
         A DataFrame with the contaminants, entrapments, and decoys removed.
     """
-    contaminants = ["CONTAMINANT", "ENTRAP", "DECOY"]
+    contaminants = ["CONTAMINANT", "CONTAM_", "ENTRAP", "DECOY"]
     cregex = "|".join(contaminants)
     return dataset[~dataset[protein_field].str.contains(cregex)]
 

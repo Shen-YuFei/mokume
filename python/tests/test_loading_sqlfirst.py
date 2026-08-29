@@ -109,11 +109,8 @@ def _make_lfq_parquet(path: str) -> List[str]:
         rows.append(("KEPTPEPAR", "KEPTPEPAR", p99999, 2, sample_run, 600.0))
         rows.append(("KEPTPEPBR", "KEPTPEPBR", p99999, 3, sample_run, 700.0))
 
-    # Contaminant accession → must be filtered out by remove_contaminants. Real
-    # quantms.io parquets prefix the keyword into the short accession itself
-    # (e.g. ``sp|CONTAMINANT_P00761|TRYP_PIG``) so that both the parquet-level
-    # filter (raw pg_accessions text match) and the post-parse regex agree.
-    contam = "sp|CONTAMINANT_P00761|TRYP_PIG"
+    # DIA-NN contaminant prefix → must be filtered out by remove_contaminants.
+    contam = "sp|CONTAM_P00761|TRYP_PIG"
     for sample_run in runs:
         rows.append(("CONTAMPEPA", "CONTAMPEPA", contam, 2, sample_run, 800.0))
         rows.append(("CONTAMPEPB", "CONTAMPEPB", contam, 2, sample_run, 900.0))
@@ -281,6 +278,17 @@ def test_sqlfirst_filters_unique_min_aa_decoy_contam_entrap(lfq_dataset):
     assert {"PEPTIDEAR", "PEPTIDEBR", "PEPTIDECR", "KEPTPEPAR", "KEPTPEPBR"}.issubset(
         peptides
     )
+
+
+def test_sqlfirst_respects_disabled_contaminant_filter(request):
+    """The SQL-first path must not apply a second hard-coded name filter."""
+    parquet, sdrf = request.getfixturevalue("lfq_dataset")
+    cfg = _make_config(parquet, sdrf)
+    cfg.filtering.remove_contaminants = False
+
+    proteins = set(LoadingStage(cfg).load_for_mokume()[PROTEIN_NAME].astype(str))
+
+    assert "CONTAM_P00761" in proteins
 
 
 def test_sqlfirst_peptidoform_sums_charges_per_sample(lfq_dataset):

@@ -34,6 +34,7 @@ protein:
   remove_decoys: true            # Remove decoy proteins
   contaminant_patterns:          # Patterns identifying contaminants
     - CONTAMINANT
+    - CONTAM_
     - ENTRAP
     - DECOY
 
@@ -72,6 +73,7 @@ pub(crate) const EXAMPLE_FILTER_CONFIG_JSON: &str = r#"{
     "remove_decoys": true,
     "contaminant_patterns": [
       "CONTAMINANT",
+      "CONTAM_",
       "ENTRAP",
       "DECOY"
     ]

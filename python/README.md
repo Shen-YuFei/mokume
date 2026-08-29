@@ -1016,6 +1016,7 @@ protein:
   remove_decoys: true
   contaminant_patterns:
     - CONTAMINANT
+    - CONTAM_
     - ENTRAP
     - DECOY
 ```

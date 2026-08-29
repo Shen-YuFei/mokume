@@ -182,7 +182,7 @@ class SQLFilterBuilder:
 
     remove_contaminants: bool = True
     contaminant_patterns: list[str] = field(
-        default_factory=lambda: ["CONTAMINANT", "ENTRAP", "DECOY"]
+        default_factory=lambda: ["CONTAMINANT", "CONTAM_", "ENTRAP", "DECOY"]
     )
     min_intensity: float = 0.0
     min_peptide_length: int = 7
@@ -227,7 +227,7 @@ class SQLFilterBuilder:
 
         # Contaminant/decoy filter
         if self.remove_contaminants and self.contaminant_patterns:
-            cont_conds, cont_params = self._build_contaminant_filter()
+            cont_conds, cont_params = self.build_contaminant_filter()
             conditions.append("(" + " AND ".join(cont_conds) + ")")
             params.extend(cont_params)
 
@@ -250,17 +250,17 @@ class SQLFilterBuilder:
             self.named_score_threshold,
         ]
 
-    def _build_contaminant_filter(self) -> tuple[list[str], list]:
+    def build_contaminant_filter(self) -> tuple[list[str], list]:
         """Build contaminant/decoy filter conditions and params."""
         conditions: list[str] = []
         params: list = []
         for pattern in self.contaminant_patterns:
-            # Use is_decoy column for DECOY filtering when available (more efficient)
+            # Respect the structured flag when present, while retaining the
+            # accession-name check for imperfect upstream annotations.
             if pattern.upper() == "DECOY" and self.has_is_decoy:
                 conditions.append("is_decoy = false")
-            else:
-                conditions.append("pg_accessions::text NOT LIKE ?")
-                params.append("%" + pattern + "%")
+            conditions.append("strpos(pg_accessions::text, ?) = 0")
+            params.append(pattern)
         return conditions, params
 
 
@@ -1174,9 +1174,9 @@ class Feature:
         irs_params: list = []
 
         if self.filter_builder and self.filter_builder.remove_contaminants:
-            for pattern in self.filter_builder.contaminant_patterns:
-                filter_conditions.append("pg_accessions::text NOT LIKE ?")
-                irs_params.append("%" + pattern + "%")
+            contaminant_filter = self.filter_builder.build_contaminant_filter()
+            filter_conditions.extend(contaminant_filter[0])
+            irs_params.extend(contaminant_filter[1])
 
         if self.filter_builder and self.filter_builder.min_intensity > 0:
             filter_conditions.append("intensity >= ?")

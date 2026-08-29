@@ -113,18 +113,12 @@ _SQLFIRST_LOAD_QUERY_AFTER_WHERE = """)
               AND (condition IS NULL OR condition != 'Empty')
               AND run IS NOT NULL
         ),
-        no_contam AS (
-            SELECT * FROM base
-            WHERE "ProteinName" NOT LIKE '%CONTAMINANT%'
-              AND "ProteinName" NOT LIKE '%ENTRAP%'
-              AND "ProteinName" NOT LIKE '%DECOY%'
-        ),
         with_n_unique AS (
             SELECT *,
                 COUNT(DISTINCT "PeptideCanonical") OVER (
                     PARTITION BY "ProteinName", "SampleID"
                 ) AS _n_unique_pep
-            FROM no_contam
+            FROM base
         ),
         min_unique_kept AS (
             SELECT * FROM with_n_unique WHERE _n_unique_pep >= ?
@@ -200,18 +194,12 @@ _RUN_SCALE_QUERY_AFTER_WHERE = """)
               AND (condition IS NULL OR condition != 'Empty')
               AND run IS NOT NULL
         ),
-        no_contam AS (
-            SELECT * FROM base
-            WHERE "ProteinName" NOT LIKE '%CONTAMINANT%'
-              AND "ProteinName" NOT LIKE '%ENTRAP%'
-              AND "ProteinName" NOT LIKE '%DECOY%'
-        ),
         with_n_unique AS (
             SELECT *,
                 COUNT(DISTINCT "PeptideCanonical") OVER (
                     PARTITION BY "ProteinName", "SampleID"
                 ) AS _n_unique_pep
-            FROM no_contam
+            FROM base
         ),
         kept AS (
             SELECT "SampleID", "Run", "Intensity"

@@ -327,6 +327,7 @@ impl Default for ProteinFilterConfig {
             remove_decoys: true,
             contaminant_patterns: vec![
                 "CONTAMINANT".to_string(),
+                "CONTAM_".to_string(),
                 "ENTRAP".to_string(),
                 "DECOY".to_string(),
             ],

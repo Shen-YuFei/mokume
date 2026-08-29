@@ -32,10 +32,11 @@ class TestSQLFilterBuilder:
         # Should include unique peptide filter
         assert '"unique" = 1' in where_clause
         # Should include contaminant filters (parameterized with ? placeholders)
-        assert "NOT LIKE ?" in where_clause
-        assert "%CONTAMINANT%" in params
-        assert "%DECOY%" in params
-        assert "%ENTRAP%" in params
+        assert "strpos(pg_accessions::text, ?) = 0" in where_clause
+        assert "CONTAMINANT" in params
+        assert "CONTAM_" in params
+        assert "DECOY" in params
+        assert "ENTRAP" in params
 
     def test_custom_contaminant_patterns(self):
         """Test filter builder with custom contaminant patterns."""
@@ -45,19 +46,18 @@ class TestSQLFilterBuilder:
         )
         where_clause, params = builder.build_where_clause()
 
-        assert "%CONTAM%" in params
-        assert "%REV_%" in params
-        assert "%DECOY%" not in params
+        assert "CONTAM" in params
+        assert "REV_" in params
+        assert "DECOY" not in params
         assert 'LENGTH("sequence") >= ?' in where_clause
         assert 5 in params
 
     def test_disable_contaminant_filter(self):
         """Test that contaminant filter can be disabled."""
         builder = SQLFilterBuilder(remove_contaminants=False)
-        where_clause, params = builder.build_where_clause()
+        where_clause, _params = builder.build_where_clause()
 
-        assert "NOT LIKE" not in where_clause
-        assert not any("%" in str(p) for p in params)
+        assert "strpos(pg_accessions::text, ?) = 0" not in where_clause
         # Other filters should still be present
         assert "intensity > 0" in where_clause
 
@@ -75,9 +75,10 @@ class TestSQLFilterBuilder:
         )
         _where_clause, params = builder.build_where_clause()
 
-        assert "%DECOY%" in params
-        assert "%CONTAMINANT%" not in params
-        assert "%ENTRAP%" not in params
+        assert "DECOY" in params
+        assert "CONTAMINANT" not in params
+        assert "CONTAM_" not in params
+        assert "ENTRAP" not in params
 
     def test_min_intensity_threshold(self):
         """Test that min intensity threshold is applied."""

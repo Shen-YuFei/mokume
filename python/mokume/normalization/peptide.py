@@ -179,7 +179,7 @@ def peptide_normalization(
     else:
         filter_builder = SQLFilterBuilder(
             remove_contaminants=remove_decoy_contaminants,
-            contaminant_patterns=["CONTAMINANT", "ENTRAP", "DECOY"],
+            contaminant_patterns=["CONTAMINANT", "CONTAM_", "ENTRAP", "DECOY"],
             min_intensity=0.0,
             min_peptide_length=min_aa,
             require_unique=not keep_shared_peptides,
