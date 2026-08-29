@@ -8,10 +8,11 @@ pub mod stats;
 
 pub use config::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig,
-    InputConfig, IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat,
-    MaxLfqConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig,
-    PreprocessingFilterConfig, ProteinFilterConfig, RatioConfig, RunQcFilterConfig, RuntimeConfig,
+    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
+    IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
+    NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig,
+    PibaqConfig, PreprocessingFilterConfig, ProteinFilterConfig, RatioConfig, RunQcFilterConfig,
+    RuntimeConfig,
 };
 pub use error::{MokumeError, Result};
 pub use ids::{IonId, PeptideId, ProteinId, RunId, SampleId};

@@ -2,16 +2,16 @@
 byte-locked (sidecar-drift CI gate) and therefore cannot carry an
 ``@PluginRegistry.register`` decorator inline.
 
-At present this covers iBAQ. ``mokume.quantification.ibaq`` is locked and
-exposes iBAQ as a *function* core (:func:`compute_pibaq` /
+At present this covers piBAQ. ``mokume.quantification.pibaq`` is locked and
+exposes piBAQ as a *function* core (:func:`compute_pibaq` /
 :func:`peptides_to_protein`, plus :class:`ConcentrationWeightByProteomicRuler`)
 rather than a :class:`ProteinQuantificationMethod` subclass. To expose it
 through :class:`~mokume.core.registry.PluginRegistry` we register a thin
 adapter that *delegates* to that locked core -- it adds no quantification
 math of its own. The delegation target (``compute_pibaq`` plus the FASTA
 digest / family discovery it needs) is exactly the core used by
-``FeaturesToProteins`` iBAQ stage and the standalone ``peptides2protein``
-CLI, so all three entry points agree on iBAQ values when configured
+``FeaturesToProteins`` piBAQ stage and the standalone ``peptides2protein``
+CLI, so all three entry points agree on piBAQ values when configured
 identically.
 
 Import this module for its side effect of registering the adapter::
@@ -29,15 +29,15 @@ from mokume.core.constants import (
     PEPTIDE_CANONICAL,
     NORM_INTENSITY,
     SAMPLE_ID,
-    IBAQ,
+    PIBAQ,
 )
 from mokume.core.logger import get_logger
 from mokume.core.registry import PluginRegistry
 from mokume.quantification.base import ProteinQuantificationMethod
 
-# Delegation targets -- all imported FROM the locked iBAQ / families sources.
+# Delegation targets -- all imported from the locked piBAQ / families sources.
 # Nothing here reimplements their algorithm; the adapter only marshals inputs.
-from mokume.quantification.ibaq import compute_pibaq
+from mokume.quantification.pibaq import compute_pibaq
 from mokume.quantification.families import (
     discover_families,
     load_families_yaml,
@@ -47,12 +47,12 @@ from mokume.quantification.families import (
 logger = get_logger("mokume.quantification._dev_registrations")
 
 
-@PluginRegistry.register("quantification", "ibaq")
-class IbaqQuantification(ProteinQuantificationMethod):
-    """Registry adapter for paralog-aware iBAQ (piBAQ).
+@PluginRegistry.register("quantification", "pibaq")
+class PibaqQuantification(ProteinQuantificationMethod):
+    """Registry adapter for piBAQ.
 
     This is a thin wrapper around the locked
-    :func:`mokume.quantification.ibaq.compute_pibaq` core. iBAQ needs
+    :func:`mokume.quantification.pibaq.compute_pibaq` core. piBAQ needs
     external context that a bare ``peptide_df`` cannot supply -- namely a
     FASTA digest (to count theoretically observable peptides per protein)
     and the protein families discovered from it. Those are built here with
@@ -100,11 +100,11 @@ class IbaqQuantification(ProteinQuantificationMethod):
 
     @property
     def name(self) -> str:
-        return "iBAQ"
+        return "piBAQ"
 
     @property
     def input_level(self) -> str:
-        # iBAQ consumes assembled, normalized peptide intensities -- the
+        # piBAQ consumes assembled, normalized peptide intensities -- the
         # "standard" flow, same level as TopN / sum / median.
         return "peptides"
 
@@ -117,20 +117,20 @@ class IbaqQuantification(ProteinQuantificationMethod):
         sample_column: str = SAMPLE_ID,
         run_column: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Compute iBAQ by delegating to the locked ``compute_pibaq`` core.
+        """Compute piBAQ by delegating to the locked ``compute_pibaq`` core.
 
         The FASTA is a configuration input supplied at construction time
-        (``IbaqQuantification(fasta=...)``); it is mandatory here. The
+        (``PibaqQuantification(fasta=...)``); it is mandatory here. The
         method returns a long-format table (protein x sample) with the
-        :data:`~mokume.core.constants.IBAQ` intensity renamed to the
+        :data:`~mokume.core.constants.PIBAQ` intensity renamed to the
         standard ``"Intensity"`` column for parity with the other
         quantification methods.
         """
         fasta_path = self.fasta
         if not fasta_path:
             raise ValueError(
-                "iBAQ quantification requires a FASTA file. Provide it via "
-                "IbaqQuantification(fasta=...)."
+                "piBAQ quantification requires a FASTA file. Provide it via "
+                "PibaqQuantification(fasta=...)."
             )
 
         # Local import keeps io.fasta out of module import time (mirrors the
@@ -168,6 +168,6 @@ class IbaqQuantification(ProteinQuantificationMethod):
             return pd.DataFrame(columns=[protein_column, sample_column, "Intensity"])
 
         # Normalize output to the shared "Intensity" contract.
-        if IBAQ in long_df.columns:
-            long_df = long_df.rename(columns={IBAQ: "Intensity"})
+        if PIBAQ in long_df.columns:
+            long_df = long_df.rename(columns={PIBAQ: "Intensity"})
         return long_df

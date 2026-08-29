@@ -103,7 +103,7 @@ def _flatten_sample_meta(meta: pd.DataFrame) -> pd.DataFrame:
     # Expand additional_properties dicts into individual columns
     if "additional_properties" in out.columns:
         extra_rows = []
-        for idx, val in out["additional_properties"].items():
+        for val in out["additional_properties"]:
             row_extra = {}
             if isinstance(val, dict):
                 for k, v in val.items():
@@ -702,7 +702,7 @@ class QpxDataset:
         except ImportError:
             raise ImportError(
                 "anndata is required for to_anndata(). "
-                "Install with: pip install mokume[h5ad]"
+                "Install with: pip install mokume-py[h5ad]"
             )
 
         df = self.get_level(level)

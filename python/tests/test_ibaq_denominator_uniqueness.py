@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from mokume.io.fasta import extract_fasta as extract_fasta_io
-from mokume.quantification.ibaq import extract_fasta
+from mokume.quantification.pibaq import extract_fasta
 
 # Two toy proteins that share three tryptic peptides and each carry one
 # extra cleanly-tryptic peptide that is unique to that accession. The unique

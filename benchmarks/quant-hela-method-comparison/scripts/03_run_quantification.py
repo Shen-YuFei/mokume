@@ -96,8 +96,8 @@ def run_top3(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 
 def run_topn(peptide_df: pd.DataFrame, n: int = 10) -> Optional[pd.DataFrame]:
-    """Run TopN quantification."""
-    return _run_method(peptide_df, method="topn", topn_n=n)
+    """Run TopN quantification. N is spelled in the method name (``top10``)."""
+    return _run_method(peptide_df, method=f"top{n}")
 
 
 def run_sum(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:

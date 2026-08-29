@@ -3,36 +3,36 @@ from pathlib import Path
 
 import pandas as pd
 
-from mokume.io.parquet import create_anndata, combine_ibaq_tsv_files
+from mokume.io.parquet import combine_pibaq_tsv_files, create_anndata
 from mokume.core.constants import (
     SAMPLE_ID,
     PROTEIN_NAME,
-    IBAQ,
-    IBAQ_NORMALIZED,
-    IBAQ_LOG,
+    PIBAQ,
+    PIBAQ_NORMALIZED,
+    PIBAQ_LOG,
 )
 
 TESTS_DIR = Path(__file__).parent
 
 
-def test_combine_ibaq_tsv_files():
+def test_combine_pibaq_tsv_files():
     """
     Test functions for combining iBAQ TSV files and creating AnnData objects.
 
     Functions:
-    - test_combine_ibaq_tsv_files: Tests the combination of multiple iBAQ TSV files
+    - test_combine_pibaq_tsv_files: Tests the combination of multiple TSV files
       into a single DataFrame and verifies the shape of the resulting DataFrame.
     - test_create_anndata: Tests the creation of an AnnData object from a DataFrame
       with specified observation and variable columns, additional layers, and metadata.
     """
     ibaq_dir = TESTS_DIR / "ibaq-raw-hela"
     files_pattern = "*ibaq.tsv"
-    df_ibaq = combine_ibaq_tsv_files(
+    df_pibaq = combine_pibaq_tsv_files(
         dir_path=str(ibaq_dir), pattern=files_pattern, sep="\t"
     )
-    logging.info(df_ibaq.head())
-    if df_ibaq.shape != (83725, 14):
-        raise AssertionError(f"Expected shape (83725, 14), got {df_ibaq.shape}")
+    logging.info(df_pibaq.head())
+    if df_pibaq.shape != (83725, 14):
+        raise AssertionError(f"Expected shape (83725, 14), got {df_pibaq.shape}")
 
 
 def test_create_anndata():
@@ -40,16 +40,19 @@ def test_create_anndata():
     Test functions for combining iBAQ TSV files and creating AnnData objects.
 
     Functions:
-    - test_combine_ibaq_tsv_files: Tests the combination of multiple iBAQ TSV files
+    - test_combine_pibaq_tsv_files: Tests the combination of multiple TSV files
       into a single DataFrame and verifies the shape of the resulting DataFrame.
     - test_create_anndata: Tests the creation of an AnnData object from a DataFrame
       with specified observation and variable columns, additional layers, and metadata.
     """
     df = pd.read_csv(TESTS_DIR / "ibaq-raw-hela/PXD000396.ibaq.tsv", sep="\t")
+    df = df.rename(
+        columns={"Ibaq": PIBAQ, "IbaqNorm": PIBAQ_NORMALIZED, "IbaqLog": PIBAQ_LOG}
+    )
     obs_col = SAMPLE_ID
     var_col = PROTEIN_NAME
-    value_col = IBAQ
-    layers = [IBAQ_NORMALIZED, IBAQ_LOG]
+    value_col = PIBAQ
+    layers = [PIBAQ_NORMALIZED, PIBAQ_LOG]
     adata = create_anndata(
         df=df,
         obs_col=obs_col,
@@ -62,13 +65,13 @@ def test_create_anndata():
     logging.info(adata)
     if adata.shape != (12, 3096):
         raise AssertionError(f"Expected shape (12, 3096), got {adata.shape}")
-    if adata.layers[IBAQ_NORMALIZED].shape != (12, 3096):
+    if adata.layers[PIBAQ_NORMALIZED].shape != (12, 3096):
         raise AssertionError(
-            f"Expected IBAQ_NORMALIZED shape (12, 3096), got {adata.layers[IBAQ_NORMALIZED].shape}"
+            f"Expected PIBAQ_NORMALIZED shape (12, 3096), got {adata.layers[PIBAQ_NORMALIZED].shape}"
         )
-    if adata.layers[IBAQ_LOG].shape != (12, 3096):
+    if adata.layers[PIBAQ_LOG].shape != (12, 3096):
         raise AssertionError(
-            f"Expected IBAQ_LOG shape (12, 3096), got {adata.layers[IBAQ_LOG].shape}"
+            f"Expected PIBAQ_LOG shape (12, 3096), got {adata.layers[PIBAQ_LOG].shape}"
         )
     if "HeLa" not in adata.obs["Condition"].values:
         raise AssertionError("'HeLa' not found in adata.obs['Condition'].values")

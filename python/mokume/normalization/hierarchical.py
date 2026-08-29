@@ -3,7 +3,7 @@ Hierarchical clustering-based sample normalization.
 
 This module provides a native mokume implementation of DirectLFQ-style
 normalization algorithms, enabling the use of hierarchical sample alignment
-with any quantification method (iBAQ, Top3, MaxLFQ, etc.).
+with any quantification method (piBAQ, Top3, MaxLFQ, etc.).
 
 The implementation is inspired by DirectLFQ's approach but does not depend
 on the directlfq package.
@@ -71,7 +71,7 @@ class HierarchicalSampleNormalizer:
     3. Iterative shifting of samples to align distributions
 
     This is mokume's native implementation, inspired by DirectLFQ's approach.
-    Use this with any quantification method (iBAQ, Top3, MaxLFQ, etc.).
+    Use this with any quantification method (piBAQ, Top3, MaxLFQ, etc.).
 
     Parameters
     ----------

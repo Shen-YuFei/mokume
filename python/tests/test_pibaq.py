@@ -6,13 +6,14 @@ Covers:
   ``canonicalize_isoforms_map``)
 * Shared-peptide connected-component family discovery
 * YAML override loading and merge semantics
-* The proportional and fallback branches of ``compute_pibaq``
+* Proportional and equal shared-peptide allocation in ``compute_pibaq``
 * End-to-end integration with a toy FASTA + peptide table, including the
-  TPA mode (per-protein vs family-summed MW)
+  per-protein TPA mode
 """
 
 from __future__ import annotations
 
+import inspect
 import textwrap
 from pathlib import Path
 from typing import Dict, Set
@@ -28,7 +29,7 @@ from mokume.core.constants import (
     EVIDENCE_MEDIUM,
     FAMILY_ID,
     FAMILY_SIZE,
-    IBAQ,
+    PIBAQ,
     MOLECULARWEIGHT,
     NORM_INTENSITY,
     PEPTIDE_CANONICAL,
@@ -49,11 +50,12 @@ from mokume.quantification.families import (
     load_families_yaml,
     merge_overrides,
 )
-from mokume.quantification.ibaq import (
+from mokume.quantification.pibaq import (
     _membership_mask,
     compute_pibaq,
     peptides_to_protein,
 )
+from mokume.quantification import get_quantification_method
 
 
 class _NonIterableContainer:
@@ -67,6 +69,29 @@ class _NonIterableContainer:
 
     def __iter__(self):
         raise AssertionError("membership filtering must not materialize the container")
+
+
+def test_compute_pibaq_preserves_public_signature():
+    """The static-analysis refactor must not narrow the public call contract."""
+    parameters = inspect.signature(compute_pibaq).parameters
+    assert tuple(parameters) == (
+        "peptide_df",
+        "accession_to_peptides",
+        "peptide_to_accessions",
+        "families",
+        "mw_map",
+        "min_anchors",
+        "high_anchor_threshold",
+        "extra_group_cols",
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        for parameter in tuple(parameters.values())[:4]
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in tuple(parameters.values())[4:]
+    )
 
 
 def test_membership_mask_probes_observed_values_without_iterating_container():
@@ -307,7 +332,7 @@ def test_compute_pibaq_singleton_family_matches_baseline_formula():
     row = result.iloc[0]
     assert row[PROTEIN_NAME] == "LONE"
     assert row[NORM_INTENSITY] == pytest.approx(300.0)
-    assert row[IBAQ] == pytest.approx(300.0 / 3)
+    assert row[PIBAQ] == pytest.approx(300.0 / 3)
     assert row[FAMILY_ID] == "LONE"
     assert row[FAMILY_SIZE] == 1
     assert row[EVIDENCE_LEVEL] == EVIDENCE_MEDIUM  # 2 anchors
@@ -345,21 +370,19 @@ def test_compute_pibaq_proportional_branch_splits_shared_peptide_by_anchor_ratio
     # A gets 3 unique + 3/4 of shared = 300 + 300 = 600; denominator = 5 total
     # potential peptides (3 proteotypic ua* + 2 shared sh*).
     assert by_acc.loc["A", NORM_INTENSITY] == pytest.approx(300 + 400 * 0.75)
-    assert by_acc.loc["A", IBAQ] == pytest.approx((300 + 300) / 5)
+    assert by_acc.loc["A", PIBAQ] == pytest.approx((300 + 300) / 5)
     # B gets 1 unique + 1/4 of shared = 100 + 100 = 200; denominator = 3 total
     # potential peptides (1 proteotypic ub1 + 2 shared sh*).
     assert by_acc.loc["B", NORM_INTENSITY] == pytest.approx(100 + 400 * 0.25)
-    assert by_acc.loc["B", IBAQ] == pytest.approx((100 + 100) / 3)
+    assert by_acc.loc["B", PIBAQ] == pytest.approx((100 + 100) / 3)
     # Both rows share the same family metadata.
     assert set(result[FAMILY_ID]) == {by_acc.loc["A", FAMILY_ID]}
     assert all(result[FAMILY_SIZE] == 2)
     assert set(result[EVIDENCE_LEVEL]) == {EVIDENCE_MEDIUM}
 
 
-def test_compute_pibaq_fallback_branch_replicates_family_ibaq():
-    """When at least one family member has zero unique anchors the whole
-    family receives a single family-level iBAQ that is replicated across members.
-    """
+def test_compute_pibaq_without_anchors_splits_shared_signal_equally():
+    """An unresolved family conserves signal by splitting it among members."""
     acc_to_peps = {
         "ACTC1": {"s1", "s2", "s3"},
         "ACTB": {"s1", "s2", "s3"},
@@ -377,11 +400,12 @@ def test_compute_pibaq_fallback_branch_replicates_family_ibaq():
 
     result = compute_pibaq(peptide_df, acc_to_peps, pep_to_accs, families)
     assert len(result) == 3
-    # All members carry the same family-level iBAQ.
-    ibaq_values = result[IBAQ].unique()
-    assert len(ibaq_values) == 1
-    # family_intensity = 600, family_proteotypic = 3 -> iBAQ = 200
-    assert ibaq_values[0] == pytest.approx(200.0)
+    # The 600 total intensity is allocated once, not replicated three times.
+    assert result[NORM_INTENSITY].sum() == pytest.approx(600.0)
+    by_acc = result.set_index(PROTEIN_NAME)
+    for member in acc_to_peps:
+        assert by_acc.loc[member, NORM_INTENSITY] == pytest.approx(200.0)
+        assert by_acc.loc[member, PIBAQ] == pytest.approx(200.0 / 3.0)
     assert set(result[EVIDENCE_LEVEL]) == {EVIDENCE_FAMILY_ONLY}
     assert set(result[FAMILY_SIZE]) == {3}
 
@@ -391,12 +415,9 @@ def test_compute_pibaq_shared_allocation_is_per_sample_intensity_weighted():
     intensity in that sample -- not by a single global anchor-count ratio.
 
     Member ``A`` is observed (with unique peptides) only in ``S1``; in ``S2``
-    only ``B`` is present. The shared peptide ``sh1`` is detected in both
-    samples. A global, count-based split (the previous behaviour) would hand
-    ``A`` 3/4 of ``sh1`` in ``S2`` too -- a phantom intensity for a protein
-    that was never detected there. The per-sample, intensity-weighted split
-    must instead give ``A`` ~0 of ``S2``'s shared signal and route it all to
-    ``B``.
+    only ``B`` is present. The shared peptide ``sh1`` is also observed alone
+    in ``S3``. Allocation must give ``A`` exactly zero in ``S2`` and split the
+    unanchored ``S3`` signal equally.
     """
     acc_to_peps = {
         "A": {"sh1", "sh2", "ua1", "ua2", "ua3"},
@@ -416,6 +437,8 @@ def test_compute_pibaq_shared_allocation_is_per_sample_intensity_weighted():
             # S2: A absent (no unique peptides); only B + the shared peptide.
             ("B", "ub1", "S2", "C1", 100.0),
             ("B", "sh1", "S2", "C1", 400.0),
+            # S3: neither member has unique signal.
+            ("A", "sh1", "S3", "C1", 400.0),
         ]
     )
 
@@ -426,22 +449,20 @@ def test_compute_pibaq_shared_allocation_is_per_sample_intensity_weighted():
     # 400 shared splits 300/100 -> A=600, B=200.
     assert by.loc[("A", "S1"), NORM_INTENSITY] == pytest.approx(600.0)
     assert by.loc[("B", "S1"), NORM_INTENSITY] == pytest.approx(200.0)
-    assert by.loc[("A", "S1"), IBAQ] == pytest.approx(600.0 / 5)
+    assert by.loc[("A", "S1"), PIBAQ] == pytest.approx(600.0 / 5)
 
-    # S2 (A absent): A has zero unique signal, so it receives ~0 of the shared
-    # peptide (only the _WEIGHT_FLOOR tie-breaker) and B keeps all of it.
-    assert by.loc[("A", "S2"), NORM_INTENSITY] == pytest.approx(0.0, abs=1e-3)
-    assert by.loc[("A", "S2"), IBAQ] == pytest.approx(0.0, abs=1e-3)
+    # S2 (A absent): a zero-weight member receives no phantom row or signal.
+    assert ("A", "S2") not in by.index
     assert by.loc[("B", "S2"), NORM_INTENSITY] == pytest.approx(500.0)
-    assert by.loc[("B", "S2"), IBAQ] == pytest.approx(500.0 / 3)
+    assert by.loc[("B", "S2"), PIBAQ] == pytest.approx(500.0 / 3)
+
+    # S3 (no anchors): shared signal is split equally among mapped members.
+    assert by.loc[("A", "S3"), NORM_INTENSITY] == pytest.approx(200.0)
+    assert by.loc[("B", "S3"), NORM_INTENSITY] == pytest.approx(200.0)
 
 
 def test_compute_pibaq_partial_family_stays_proportional():
-    """A family rolls up to one shared value only when *no* member has a
-    unique anchor. When some members are resolvable, the family stays on the
-    proportional branch and the anchorless member falls to ~0 instead of
-    flattening every member onto a single family-level iBAQ.
-    """
+    """A zero-anchor member receives no shared signal when peers are anchored."""
     acc_to_peps = {
         "P1": {"u1", "u2", "sh1", "sh2"},  # 2 unique anchors
         "P2": {"u3", "sh1", "sh2"},  # 1 unique anchor
@@ -462,16 +483,30 @@ def test_compute_pibaq_partial_family_stays_proportional():
     result = compute_pibaq(peptide_df, acc_to_peps, pep_to_accs, families)
     by = result.set_index(PROTEIN_NAME)
 
-    # Three distinct per-protein iBAQ values -> NOT a single family rollup.
-    assert result[IBAQ].nunique() == 3
+    assert set(result[PROTEIN_NAME]) == {"P1", "P2"}
     # P1: (200 unique + 200 shared) / 4 owned peptides = 100.
-    assert by.loc["P1", IBAQ] == pytest.approx(100.0)
+    assert by.loc["P1", PIBAQ] == pytest.approx(100.0)
     # P2: (100 unique + 100 shared) / 3 owned peptides = 66.67.
-    assert by.loc["P2", IBAQ] == pytest.approx(200.0 / 3)
-    # P3: no unique signal -> ~0 (only the floor share of the shared peptide).
-    assert by.loc["P3", IBAQ] == pytest.approx(0.0, abs=1e-3)
-    # Evidence still reflects the weakest member (P3 has 0 anchors).
-    assert set(result[EVIDENCE_LEVEL]) == {EVIDENCE_FAMILY_ONLY}
+    assert by.loc["P2", PIBAQ] == pytest.approx(200.0 / 3)
+    assert "P3" not in by.index
+    # At least one member is supported, so the family is member-resolving.
+    assert set(result[EVIDENCE_LEVEL]) == {EVIDENCE_MEDIUM}
+
+    family_only = compute_pibaq(
+        peptide_df,
+        acc_to_peps,
+        pep_to_accs,
+        families,
+        min_anchors=3,
+    )
+    by = family_only.set_index(PROTEIN_NAME)
+    # No member reaches the stricter threshold, so the 300 shared intensity
+    # is split 100/100/100 while each member keeps its own unique signal.
+    assert by.loc["P1", NORM_INTENSITY] == pytest.approx(300.0)
+    assert by.loc["P2", NORM_INTENSITY] == pytest.approx(200.0)
+    assert by.loc["P3", NORM_INTENSITY] == pytest.approx(100.0)
+    assert family_only[NORM_INTENSITY].sum() == pytest.approx(600.0)
+    assert set(family_only[EVIDENCE_LEVEL]) == {EVIDENCE_FAMILY_ONLY}
 
 
 def test_compute_pibaq_evidence_high_at_threshold():
@@ -518,7 +553,7 @@ def test_compute_pibaq_tpa_uses_per_member_mw_in_proportional_branch():
     assert by_acc.loc["A", TPA] == pytest.approx(by_acc.loc["A", NORM_INTENSITY] / 50.0)
 
 
-def test_compute_pibaq_tpa_uses_family_summed_mw_in_fallback():
+def test_compute_pibaq_tpa_uses_member_mw_without_anchors():
     acc_to_peps = {
         "ACTC1": {"s1", "s2"},
         "ACTB": {"s1", "s2"},
@@ -536,16 +571,19 @@ def test_compute_pibaq_tpa_uses_family_summed_mw_in_fallback():
     result = compute_pibaq(
         peptide_df, acc_to_peps, pep_to_accs, families, mw_map=mw_map
     )
-    expected_family_mw = 10.0 + 20.0 + 30.0
-    assert set(result[MOLECULARWEIGHT].unique()) == {expected_family_mw}
-    # Family intensity 300 split equally as TPA = 300 / 60 = 5 across members.
-    tpa_unique = list(result[TPA].round(6).unique())
-    assert len(tpa_unique) == 1
-    assert tpa_unique[0] == pytest.approx(300.0 / 60.0)
+    by_acc = result.set_index(PROTEIN_NAME)
+    assert list(by_acc.loc[["ACTC1", "ACTB", "ACTG1"], MOLECULARWEIGHT]) == [
+        10.0,
+        20.0,
+        30.0,
+    ]
+    assert list(by_acc.loc[["ACTC1", "ACTB", "ACTG1"], TPA]) == pytest.approx(
+        [10.0, 5.0, 100.0 / 30.0]
+    )
 
 
 def test_compute_pibaq_tpa_finalizes_mixed_branch_weights_together():
-    """Per-member and family-summed masses remain distinct in one result."""
+    """Every family uses its members' own molecular weights."""
     acc_to_peps = {
         "A": {"ua"},
         "B": {"s1", "s2"},
@@ -571,8 +609,8 @@ def test_compute_pibaq_tpa_finalizes_mixed_branch_weights_together():
 
     assert result.loc["A", MOLECULARWEIGHT] == pytest.approx(10.0)
     assert result.loc["A", TPA] == pytest.approx(10.0)
-    assert set(result.loc[["B", "C"], MOLECULARWEIGHT]) == {50.0}
-    assert list(result.loc[["B", "C"], TPA]) == pytest.approx([6.0, 6.0])
+    assert list(result.loc[["B", "C"], MOLECULARWEIGHT]) == [20.0, 30.0]
+    assert list(result.loc[["B", "C"], TPA]) == pytest.approx([7.5, 5.0])
 
 
 def test_compute_pibaq_empty_inputs_return_typed_empty_frame():
@@ -648,20 +686,20 @@ def test_peptides_to_protein_pibaq_default_routes_to_compute_pibaq(
 
     output_tsv = tmp_path / "out.tsv"
     peptides_to_protein(
-        fasta=str(pibaq_fasta),
-        peptides=str(peptide_table),
-        enzyme="Trypsin",
-        normalize=False,
-        min_aa=7,
-        max_aa=40,
-        tpa=False,
-        ruler=False,
-        ploidy=0,
-        cpc=0.0,
-        organism="",
-        output=str(output_tsv),
-        verbose=False,
-        qc_report=str(tmp_path / "qc.pdf"),
+        str(pibaq_fasta),
+        str(peptide_table),
+        "Trypsin",
+        False,
+        7,
+        40,
+        False,
+        False,
+        0,
+        0.0,
+        "",
+        str(output_tsv),
+        False,
+        str(tmp_path / "qc.pdf"),
     )
     result = pd.read_csv(output_tsv, sep="\t")
     by_acc = result.set_index(PROTEIN_NAME)
@@ -710,3 +748,43 @@ def test_digest_fasta_full_canonicalises_isoforms(tmp_path: Path):
         "GGGGGGGGGGGGGGK",
     }
     assert "P10004-2" not in acc_to_peps
+
+
+def test_total_histone_intensities_matches_accession_protein_names():
+    """Regression for issue #19.
+
+    ``ProteinName`` holds UniProt accessions (from ``pg_accessions``), so histones
+    must be matched by accession (``histone_proteins``), not only by entry name
+    (``histone_entries``); otherwise no histone is found, the intensity falls back
+    to 1.0, and ProteomicsRuler CopyNumber is inflated.
+    """
+    from mokume.core.constants import NORM_INTENSITY, PROTEIN_NAME
+    from mokume.model.organism import OrganismDescription
+    from mokume.quantification.pibaq import ConcentrationWeightByProteomicRuler
+
+    organism = OrganismDescription(
+        name="test",
+        genome_size=1,
+        histone_proteins=["P0C0S8", "P62805"],  # accessions (match ProteinName)
+        histone_entries=["H4_HUMAN"],  # entry name (legacy match, no accession row)
+    )
+    ruler = ConcentrationWeightByProteomicRuler(
+        organism, ploidy=2, concentration_per_cell=1.0
+    )
+    protein_intensities = pd.DataFrame(
+        {
+            PROTEIN_NAME: ["P0C0S8", "P62805", "Q99999"],
+            NORM_INTENSITY: [10.0, 20.0, 5.0],
+        }
+    )
+    # The two histone accessions sum to 30.0 (not the 1.0 fallback); the
+    # non-histone accession is excluded.
+    assert ruler.total_histone_intensities(protein_intensities) == 30.0
+
+
+def test_public_factory_uses_only_pibaq_name():
+    canonical = get_quantification_method("pibaq", fasta="unused.fasta")
+    assert canonical.name == "piBAQ"
+
+    with pytest.raises(ValueError, match="Unknown quantification method"):
+        get_quantification_method("ibaq", fasta="unused.fasta")

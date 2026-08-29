@@ -404,52 +404,6 @@ def plot_pipeline_comparison(results_df: pd.DataFrame, output_path: Path):
     plt.savefig(output_path, dpi=FIGURE_DPI)
     plt.close()
 
-def plot_radar_chart(results_df: pd.DataFrame, output_path: Path):
-    """Plot radar chart comparing pipelines."""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-
-    metrics = ["n_proteins", "pct_good_cv", "within_cv_inv", "fc_rmse_inv"]
-    metric_labels = ["Proteins", "% Good CV", "1/CV", "1/RMSE"]
-
-    for ax, tech in zip(axes, ["tmt", "lfq"]):
-        tech_df = results_df[results_df["technology"] == tech].copy()
-
-        if len(tech_df) == 0:
-            continue
-
-        tech_df["within_cv_inv"] = 1 / tech_df["within_cv"]
-        tech_df["fc_rmse_inv"] = 1 / tech_df["fc_rmse"].replace(0, np.nan)
-
-        for m in metrics:
-            if m in tech_df.columns:
-                min_val = tech_df[m].min()
-                max_val = tech_df[m].max()
-                if max_val > min_val:
-                    tech_df[m + "_norm"] = (tech_df[m] - min_val) / (max_val - min_val)
-                else:
-                    tech_df[m + "_norm"] = 0.5
-
-        angles = np.linspace(0, 2 * np.pi, len(metrics), endpoint=False).tolist()
-        angles += angles[:1]
-
-        colors = plt.cm.Set2(np.linspace(0, 1, len(tech_df)))
-        for i, (_, row) in enumerate(tech_df.iterrows()):
-            values = [row.get(m + "_norm", 0) for m in metrics]
-            values += values[:1]
-
-            ax.plot(angles, values, "o-", linewidth=2, label=row["pipeline"],
-                   color=colors[i])
-            ax.fill(angles, values, alpha=0.1, color=colors[i])
-
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(metric_labels)
-        ax.set_title(f"{tech.upper()}: Pipeline Comparison")
-        ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1))
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=FIGURE_DPI)
-    plt.close()
-
 def main():
     """Run Phase 5: Optimal Pipeline Selection."""
     print("=" * 60)

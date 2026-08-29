@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 def folder_retrieval(folder: str) -> dict:
-    """Retrieve SDRF and ibaq results from a folder."""
+    """Retrieve SDRF and piBAQ results from a folder."""
     folder = folder + os.sep if not folder.endswith(os.sep) else folder
-    results = {"sdrf": [], "ibaq": []}
+    results = {"sdrf": [], "pibaq": []}
     items = os.listdir(folder)
     for item in items:
         try:
@@ -31,25 +31,25 @@ def folder_retrieval(folder: str) -> dict:
                     if i.endswith(".sdrf.tsv")
                 ]
             )
-            results["ibaq"].extend(
+            results["pibaq"].extend(
                 [
                     f"{folder}{item}/{i}"
                     for i in os.listdir(f"{folder}{item}/")
-                    if i.endswith("ibaq.csv") or i.endswith("ibaq.parquet")
+                    if i.endswith(("pibaq.csv", "pibaq.parquet"))
                 ]
             )
         except Exception as e:
             logger.warning("Error: %s", e)
             if item.endswith(".sdrf.tsv"):
                 results["sdrf"].append(folder + item)
-            elif item.endswith("ibaq.csv"):
-                results["ibaq"].append(folder + item)
+            elif item.endswith("pibaq.csv"):
+                results["pibaq"].append(folder + item)
     if len(results["sdrf"]) == 0:
         raise SystemExit("No SDRF founded!")
-    if len(results["ibaq"]) == 0:
-        raise SystemExit("No ibaq results founded!")
-    if len(results["sdrf"]) != len(results["ibaq"]):
-        raise SystemExit("Number of SDRFs should be equal to ibaq results!")
+    if len(results["pibaq"]) == 0:
+        raise SystemExit("No piBAQ results found!")
+    if len(results["sdrf"]) != len(results["pibaq"]):
+        raise SystemExit("Number of SDRFs should be equal to piBAQ results!")
     return results
 
 
@@ -98,7 +98,7 @@ def generate_meta(sdrf_df: pd.DataFrame) -> pd.DataFrame:
 
 
 class Combiner:
-    """Combine and process SDRF and iBAQ data from multiple datasets."""
+    """Combine and process SDRF and piBAQ data from multiple datasets."""
 
     def __init__(
         self, data_folder: os.PathLike, covariate: str = None, organism: str = "HUMAN"
@@ -109,7 +109,7 @@ class Combiner:
         self.samples_number = None
         self.datasets = None
 
-        logger.info("Combining SDRFs and ibaq results ...")
+        logger.info("Combining SDRFs and piBAQ results ...")
         self.data_folder = Path(data_folder)
         if not self.data_folder.exists() or not self.data_folder.is_dir():
             raise FileNotFoundError(f"Data folder {self.data_folder} does not exist!")
@@ -124,8 +124,8 @@ class Combiner:
         self.metadata = self.metadata.drop_duplicates()
         self.metadata.index = self.metadata["sample_id"]
 
-        for ibaq in files["ibaq"]:
-            self.df = pd.concat([self.df, load_feature(ibaq)])
+        for pibaq in files["pibaq"]:
+            self.df = pd.concat([self.df, load_feature(pibaq)])
         self.df = self.df[self.df["ProteinName"].str.endswith(organism)]
         self.df.index = self.df["SampleID"]
         self.df = self.df.join(self.metadata, how="left")

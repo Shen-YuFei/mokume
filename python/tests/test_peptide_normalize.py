@@ -61,6 +61,24 @@ class TestSQLFilterBuilder:
         # Other filters should still be present
         assert "intensity > 0" in where_clause
 
+    def test_decoy_only_filter_patterns(self):
+        """A config can remove decoys without removing contaminants."""
+        from mokume.model.filters import PreprocessingFilterConfig
+
+        config = PreprocessingFilterConfig(name="decoys_only")
+        config.protein.remove_contaminants = False
+        config.protein.remove_decoys = True
+
+        builder = SQLFilterBuilder(
+            remove_contaminants=True,
+            contaminant_patterns=config.protein.active_contaminant_patterns(),
+        )
+        _where_clause, params = builder.build_where_clause()
+
+        assert "%DECOY%" in params
+        assert "%CONTAMINANT%" not in params
+        assert "%ENTRAP%" not in params
+
     def test_min_intensity_threshold(self):
         """Test that min intensity threshold is applied."""
         builder = SQLFilterBuilder(min_intensity=1000.0)

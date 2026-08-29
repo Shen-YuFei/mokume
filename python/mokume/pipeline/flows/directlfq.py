@@ -33,8 +33,8 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
     ``run_pipeline`` yields a protein matrix identical to
     ``run_dataset``: it loads through the streaming Arrow reader, runs
     DirectLFQ sample normalization, then estimates protein intensities via
-    the streaming helper (which returns linear-scale intensities). Ion-table
-    export is intentionally unsupported on this streaming path.
+    the streaming helper (which returns linear-scale intensities). Requested
+    normalized ion output is written incrementally by the same helper.
 
     Parameters
     ----------
@@ -55,7 +55,7 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
         raise ImportError(
             "DirectLFQ quantification requires the directlfq package.\n"
             "Install with: pip install directlfq\n"
-            "Or: pip install mokume[directlfq]"
+            "Or: pip install mokume-py[directlfq]"
         ) from exc
 
     from mokume.pipeline.stages import LoadingStage
@@ -83,13 +83,6 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
     del filtered_table
     gc.collect()
 
-    # The streaming estimator cannot emit a normalized ion table; refuse
-    # --export-ions rather than silently dropping it (mirrors run_dataset).
-    if config.output.export_ions:
-        raise ValueError(
-            "--export-ions is not supported by streaming DirectLFQ estimation; "
-            "normalized ion tables can be much larger than the protein matrix."
-        )
     lfq_config.set_global_protein_and_ion_id(protein_id="protein", quant_id="ion")
     lfq_config.set_compile_normalized_ion_table(False)
 
@@ -109,6 +102,7 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
         min_nonan=config.quantification.directlfq_min_nonan,
         num_samples_quadratic=config.quantification.directlfq_num_samples_quadratic,
         num_cores=config.quantification.directlfq_num_cores,
+        export_ions=config.output.export_ions,
     )
 
     dataset.proteins = protein_df

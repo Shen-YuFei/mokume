@@ -12,13 +12,13 @@ from mokume.core.constants import (
     PEPTIDE_SEQUENCE,
     PEPTIDE_CANONICAL,
     PEPTIDE_CHARGE,
-    SEARCH_ENGINE,
 )
 from mokume.preprocessing.filters.base import BaseFilter, FilterResult
 from mokume.preprocessing.filters.enums import FilterLevel
 
 
 logger = get_logger("mokume.preprocessing.filters.peptide")
+PEPTIDE_QVALUE = "peptide_qvalue"
 
 
 class PeptideLengthFilter(BaseFilter):
@@ -309,63 +309,6 @@ class MissedCleavageFilter(BaseFilter):
         )
 
 
-class SearchScoreFilter(BaseFilter):
-    """Filter peptides by search engine score."""
-
-    def __init__(
-        self,
-        min_score: float,
-        score_column: str = SEARCH_ENGINE,
-    ):
-        """
-        Initialize the filter.
-
-        Parameters
-        ----------
-        min_score : float
-            Minimum search engine score threshold.
-        score_column : str, optional
-            Column name containing search scores.
-        """
-        self.min_score = min_score
-        self.score_column = score_column
-
-    @property
-    def name(self) -> str:
-        return "SearchScoreFilter"
-
-    @property
-    def level(self) -> FilterLevel:
-        return FilterLevel.PEPTIDE
-
-    def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
-        input_count = len(df)
-
-        if self.score_column not in df.columns:
-            logger.warning(
-                "%s: Score column '%s' not found, skipping filter",
-                self.name,
-                self.score_column,
-            )
-            return df, self._create_result(input_count, input_count)
-
-        mask = df[self.score_column] >= self.min_score
-        filtered_df = df[mask].copy()
-
-        output_count = len(filtered_df)
-
-        logger.debug(
-            "%s: Removed %d peptides with score < %.3f",
-            self.name,
-            input_count - output_count,
-            self.min_score,
-        )
-
-        return filtered_df, self._create_result(
-            input_count, output_count, {"min_score": self.min_score}
-        )
-
-
 class SequencePatternFilter(BaseFilter):
     """Filter peptides by sequence patterns (regex)."""
 
@@ -432,24 +375,10 @@ class SequencePatternFilter(BaseFilter):
         )
 
 
-class FDRFilter(BaseFilter):
-    """Filter peptides by FDR threshold."""
+class PeptideFDRFilter(BaseFilter):
+    """Filter peptide rows by the dedicated QPX peptide q-value."""
 
-    def __init__(
-        self,
-        fdr_threshold: float = 0.01,
-        fdr_column: str = "q_value",
-    ):
-        """
-        Initialize the filter.
-
-        Parameters
-        ----------
-        fdr_threshold : float, optional
-            Maximum FDR threshold (e.g., 0.01 for 1%).
-        fdr_column : str, optional
-            Column name containing FDR/q-value.
-        """
+    def __init__(self, fdr_threshold: float, fdr_column: str = PEPTIDE_QVALUE) -> None:
         self.fdr_threshold = fdr_threshold
         self.fdr_column = fdr_column
 
@@ -463,27 +392,14 @@ class FDRFilter(BaseFilter):
 
     def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
         input_count = len(df)
-
-        if self.fdr_column not in df.columns:
-            logger.debug(
-                "%s: FDR column '%s' not found, skipping filter",
-                self.name,
-                self.fdr_column,
+        if self.fdr_column not in df.columns or not df[self.fdr_column].notna().any():
+            raise ValueError(
+                "peptide FDR filtering requires a populated QPX "
+                f"'{self.fdr_column}' column"
             )
-            return df, self._create_result(input_count, input_count)
-
-        mask = df[self.fdr_column] <= self.fdr_threshold
-        filtered_df = df[mask].copy()
-
-        output_count = len(filtered_df)
-
-        logger.debug(
-            "%s: Removed %d peptides with FDR > %.3f",
-            self.name,
-            input_count - output_count,
-            self.fdr_threshold,
-        )
-
+        filtered_df = df[df[self.fdr_column] <= self.fdr_threshold].copy()
         return filtered_df, self._create_result(
-            input_count, output_count, {"fdr_threshold": self.fdr_threshold}
+            input_count,
+            len(filtered_df),
+            {"fdr_threshold": self.fdr_threshold},
         )

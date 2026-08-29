@@ -29,6 +29,7 @@ def impute_minprob(
     quantile: float = 0.01,
     shift: float = 1.6,
     scale: float = 0.3,
+    random_state: int = 42,
 ) -> pd.DataFrame:
     """Perform MinProb imputation using a low-tail normal draw per sample.
 
@@ -37,8 +38,13 @@ def impute_minprob(
     low observed quantile, which is more aggressive (lower) than Perseus's
     mean-anchored MinProb; adjust ``quantile`` / ``shift`` / ``scale`` to match a
     specific convention.
+
+    ``random_state`` seeds the draws so repeated runs on the same matrix agree.
+    Without it a benchmark cannot rank this method against a deterministic one:
+    the run-to-run spread gets read as a difference between methods.
     """
     result = data.copy()
+    rng = np.random.default_rng(random_state)
     n_imputed = 0
 
     for col in data.columns:
@@ -55,7 +61,7 @@ def impute_minprob(
             sd = 0.1
         mu = q_low - shift * sd
 
-        imputed = np.random.normal(mu, sd, size=missing.sum())
+        imputed = rng.normal(mu, sd, size=missing.sum())
         result.loc[missing, col] = imputed
         n_imputed += missing.sum()
 
@@ -93,7 +99,7 @@ def _knn_impute(data: pd.DataFrame, **kwargs) -> pd.DataFrame:
     except ImportError as exc:
         raise ImportError(
             "scikit-learn is required for KNN imputation. "
-            "Install it with: pip install mokume[imputation]"
+            "Install it with: pip install mokume-py[imputation]"
         ) from exc
     imputer = KNNImputer(
         n_neighbors=kwargs.get("n_neighbors", 5),

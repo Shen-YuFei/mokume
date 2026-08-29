@@ -2,8 +2,8 @@
 mokume - A comprehensive proteomics quantification library.
 
 This package provides tools for processing and analyzing proteomics data using
-multiple protein quantification methods including iBAQ (intensity-based absolute
-quantification), Top3, TopN, and MaxLFQ.
+multiple protein quantification methods including piBAQ (paralog-aware iBAQ),
+Top3, TopN, and MaxLFQ.
 """
 
 import importlib.metadata
@@ -19,22 +19,22 @@ warnings.filterwarnings(
 # Suppress pyopenms false-positive OPENMS_DATA_PATH warning
 warnings.filterwarnings("ignore", message=".*OPENMS_DATA_PATH.*")
 
-# `mokume` (pure Python) and `mokume-rs` (Rust kernel) both install the `mokume`
+# `mokume-py` (pure Python) and `mokume` (Rust kernel) both install the `mokume`
 # import package, so pip silently overwrites files when both are present. Warn so
 # the user keeps only one.
 try:
-    importlib.metadata.distribution("mokume-rs")
+    importlib.metadata.distribution("mokume")
     warnings.warn(
-        "Both 'mokume' (pure-Python) and 'mokume-rs' (Rust kernel) are installed; "
+        "Both 'mokume-py' (pure-Python) and 'mokume' (Rust kernel) are installed; "
         "they share the 'mokume' import name and overwrite each other's files. "
-        "Keep only one: uninstall the other (`pip uninstall mokume-rs`).",
+        "Keep only one: uninstall the other (`pip uninstall mokume`).",
         RuntimeWarning,
         stacklevel=2,
     )
 except importlib.metadata.PackageNotFoundError:
     pass
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Initialize logging with default settings
 # Users can override these settings by calling initialize_logging with their own settings

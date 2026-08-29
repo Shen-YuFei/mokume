@@ -116,23 +116,6 @@ def _fit_population_fallback(
     return PopulationParams(mu=mu, sigma=sigma, pi=pi)
 
 
-def _fit_pure_mad(
-    x: np.ndarray,
-    sigma_floor: float = 0.01,
-) -> PopulationParams:
-    """Pure MAD estimator — most robust across TMT and LFQ datasets.
-
-    Uses median as μ and raw MAD (without 1.4826 scaling) as σ.
-    This avoids DPD's tendency to collapse σ on TMT data while
-    remaining consistent with LFQ data where σ is naturally large.
-    """
-    mu = float(np.median(x))
-    mad = float(np.median(np.abs(x - mu)))
-    sigma = max(mad, sigma_floor)
-    pi = float(np.mean(np.abs(x - mu) <= 2.0 * sigma))
-    return PopulationParams(mu=mu, sigma=sigma, pi=pi)
-
-
 _SIGMA_FLOOR_ABSOLUTE_MIN = 0.01
 _SIGMA_FLOOR_PERCENTILE = 5
 

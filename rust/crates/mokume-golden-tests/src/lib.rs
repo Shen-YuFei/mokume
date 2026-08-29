@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::{create_dir_all, File};
 use std::path::{Path, PathBuf};
@@ -7,20 +8,23 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow::array::{
-    ArrayRef, BooleanArray, Float32Builder, Int16Array, Int32Builder, ListBuilder, StringArray,
-    StringBuilder, StructBuilder,
+    ArrayRef, BooleanArray, BooleanBuilder, Float32Builder, Float64Array, Float64Builder,
+    Int16Array, Int32Builder, ListBuilder, StringArray, StringBuilder, StructBuilder,
 };
 use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::record_batch::RecordBatch;
 use mokume_core::{
     AggregationLevel, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig,
-    InputConfig, IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat,
-    MaxLfqConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideFilterConfig,
-    PreprocessingFilterConfig, ProteinFilterConfig, QuantMethod, RatioConfig, RunQcFilterConfig,
-    RuntimeConfig,
+    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig,
+    IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig,
+    MokumeError, NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat,
+    PeptideFilterConfig, PibaqConfig, PreprocessingFilterConfig, ProteinFilterConfig, QuantMethod,
+    RatioConfig, RunQcFilterConfig, RuntimeConfig,
 };
-use mokume_pipeline::{run_features_to_peptides, run_features_to_proteins};
+use mokume_pipeline::{
+    run_features_to_peptides, run_features_to_proteins, run_features_to_proteins_with_pibaq_digest,
+    PibaqDigest, PibaqDigestProvenance,
+};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 
@@ -28,6 +32,58 @@ use parquet::arrow::ArrowWriter;
 fn features2proteins_sum_matches_synthetic_golden_matrix() -> Result<(), Box<dyn Error>> {
     let table = run_synthetic_quantification(QuantMethod::Sum, 3)?;
     assert_sum_table(&table)
+}
+
+#[test]
+fn features2proteins_preserves_biological_replicate_peptide_rows() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("bioreplicate.features.parquet");
+    let sdrf = root.join("bioreplicate.sdrf.tsv");
+
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new("PEPTIDEAK", "run1.raw", 100.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run1.raw", 200.0, &["P1"]),
+            QpxRow::new("PEPTIDEAK", "run2.raw", 300.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run2.raw", 400.0, &["P1"]),
+        ],
+    )?;
+    std::fs::write(
+        &sdrf,
+        concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\tcharacteristics[biological replicate]\tfactor value[cell line]\n",
+            "sample-1\trun 1\trun1.raw\tAC=MS:1002038;NT=label free sample\t1\tA\n",
+            "sample-1\trun 2\trun2.raw\tAC=MS:1002038;NT=label free sample\t2\tA\n",
+        ),
+    )?;
+
+    for (method, expected) in [
+        (QuantMethod::Sum, 1000.0),
+        (QuantMethod::Median, 250.0),
+        (QuantMethod::TopN, 300.0),
+        (QuantMethod::PeptideCount, 4.0),
+    ] {
+        let output = root.join(format!("{}.csv", method.as_str()));
+        let mut config = default_sum_config(parquet.clone(), sdrf.clone(), output.clone());
+        config.quantification = method;
+        config.topn_peptides = 3;
+        run_features_to_proteins(&config)?;
+        let table = read_csv(&output)?;
+        let actual = table
+            .rows
+            .first()
+            .and_then(|row| row.get(1))
+            .ok_or("missing protein matrix value")?
+            .parse::<f64>()?;
+        assert!(
+            (actual - expected).abs() <= 1e-12,
+            "{} collapsed biological-replicate peptide rows: {actual} != {expected}",
+            method.as_str()
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -237,6 +293,7 @@ fn default_peptides_config(parquet: PathBuf, output: PathBuf) -> FeatureToPeptid
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: None,
             fasta: None,
         },
@@ -301,7 +358,6 @@ fn features2peptides_disabled_filter_pipeline_is_inert() -> Result<(), Box<dyn E
             min_total_intensity: 1_000_000.0,
             min_identified_features: 99,
             min_identified_proteins: 99,
-            min_sample_correlation: Some(1.0),
             max_missing_rate: 0.0,
         },
         ..PreprocessingFilterConfig::default()
@@ -1350,7 +1406,7 @@ fn features2peptides_keep_shared_still_applies_min_peptide_filter() -> Result<()
 // pre-pass must INCLUDE shared (non-unique) peptides, mirroring Python's
 // `SQLFilterBuilder(require_unique = not keep_shared)` (`peptide.py:168/176`,
 // consumed by `get_median_map` at `peptide.py:197`). Previously the Rust median
-// collector derived `keep_shared = (quantification == Ibaq)`, but the peptide
+// collector derived `keep_shared = (quantification == Pibaq)`, but the peptide
 // path pins quantification to `Sum` (`peptide_export_config`), so shared rows
 // were always excluded -- biasing every per-sample factor and scaling every
 // NormIntensity in the sample by a constant (~0.41% on PXD003539, max_rel
@@ -1436,7 +1492,7 @@ fn features2peptides_keep_shared_median_includes_shared_peptides() -> Result<(),
 // not dropped by the unique gate before razor runs):
 //   P1 anchors ANCHORPONEK(200)/ANCHORPTWOK(210); P2 anchors ANCHORQONEK(300)/
 //   ANCHORQTWOK(310); RAZORSHAREDK shared as [P1](500) + [P2](505).
-// The razor block isolation (min_unique_peptides=0, min_peptides=0, no
+// The razor block isolation (min_unique_peptides=0, no
 // contaminant/decoy removal) keeps the anchors and exercises only razor.
 //
 // Cross-language parity (validated out-of-band against the `mokume` CLI on the
@@ -1457,7 +1513,6 @@ fn razor_filter_pipeline(handling: &str) -> PreprocessingFilterConfig {
             // Isolate razor: no unique/peptide-count gate, no contaminant or
             // decoy removal, so the only protein-level effect is razor handling.
             min_unique_peptides: 0,
-            min_peptides: 0,
             remove_contaminants: false,
             remove_decoys: false,
             razor_peptide_handling: handling.to_owned(),
@@ -1723,54 +1778,189 @@ fn features2peptides_razor_assign_to_top_flips_winner_on_row_order() -> Result<(
     Ok(())
 }
 
-// `min_search_score` and `min_coverage` are no-ops on QPX inputs: the QPX schema
-// carries neither a search-engine score nor a coverage column, so they match
-// Python's column-absent skip. Setting them must not change the output.
+// The synthetic QPX lacks the requested score and any coverage column. Reject
+// both instead of accepting filters that cannot affect output.
 #[test]
-fn features2peptides_search_score_and_coverage_filters_are_no_ops() -> Result<(), Box<dyn Error>> {
+fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
+) -> Result<(), Box<dyn Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
-    let parquet = root.join("peptides.noop.features.parquet");
+    let parquet = root.join("peptides.unsupported.features.parquet");
     write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
 
-    let base_out = root.join("noop.base.csv");
-    let mut base = default_peptides_config(parquet.clone(), base_out.clone());
-    base.filter_pipeline = Some(PreprocessingFilterConfig::default());
-    run_features_to_peptides(&base)?;
-
-    let noop_out = root.join("noop.set.csv");
-    let mut noop = default_peptides_config(parquet, noop_out.clone());
-    noop.filter_pipeline = Some(PreprocessingFilterConfig {
+    let mut search_score = default_peptides_config(parquet.clone(), root.join("search-score.csv"));
+    search_score.filter_pipeline = Some(PreprocessingFilterConfig {
         peptide: PeptideFilterConfig {
-            min_search_score: Some(0.9),
+            score: Some(NamedScoreFilterConfig {
+                name: "missing_score".to_owned(),
+                threshold: 0.9,
+            }),
             ..PeptideFilterConfig::default()
         },
+        ..PreprocessingFilterConfig::default()
+    });
+    assert!(matches!(
+        run_features_to_peptides(&search_score),
+        Err(MokumeError::InvalidInput { message })
+            if message.contains("missing_score")
+    ));
+
+    let mut coverage = default_peptides_config(parquet, root.join("coverage.csv"));
+    coverage.filter_pipeline = Some(PreprocessingFilterConfig {
         protein: ProteinFilterConfig {
             min_coverage: 0.5,
             ..ProteinFilterConfig::default()
         },
         ..PreprocessingFilterConfig::default()
     });
-    run_features_to_peptides(&noop)?;
-
-    assert_eq!(read_csv(&base_out)?.rows, read_csv(&noop_out)?.rows);
+    assert!(matches!(
+        run_features_to_peptides(&coverage),
+        Err(MokumeError::NotImplemented {
+            stage: "features2peptides filter min-coverage"
+        })
+    ));
     Ok(())
 }
 
-// Run-QC group filter (min-features) drops whole samples below the threshold,
-// matching Python `run_qc.py` MinFeaturesFilter applied first in the per-sample
-// chain. Feature counts are taken AFTER the per-protein min_unique gate (Python
-// applies it before the pipeline): run1 keeps P1 (3 features: two PEPTIDEAK
-// charges + APEPTIDECK; P2/ONEPEPTK fails min_unique=2), run2 keeps 2 features.
-// min_features=3 therefore drops run2 and keeps run1. Real-data sample-set +
-// value parity is verified on PXD003539 (min-features / min-proteins).
+#[test]
+fn features2peptides_applies_named_score_direction() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+
+    for (case, higher_better) in [("higher", true), ("lower", false)] {
+        let mut rows = synthetic_peptide_rows();
+        for (index, row) in rows.iter_mut().enumerate() {
+            let passes = index != 1;
+            let value = if passes == higher_better { 0.9 } else { 0.1 };
+            *row = row.with_score("engine_score", value, higher_better);
+        }
+        let parquet = root.join(format!("score-{case}.features.parquet"));
+        let output = root.join(format!("score-{case}.csv"));
+        write_qpx_rows(&parquet, &rows)?;
+
+        let mut config = default_peptides_config(parquet, output.clone());
+        config.filter_pipeline = Some(PreprocessingFilterConfig {
+            peptide: PeptideFilterConfig {
+                score: Some(NamedScoreFilterConfig {
+                    name: "engine_score".to_owned(),
+                    threshold: 0.5,
+                }),
+                ..PeptideFilterConfig::default()
+            },
+            ..PreprocessingFilterConfig::default()
+        });
+        run_features_to_peptides(&config)?;
+
+        let table = read_csv(&output)?;
+        assert_peptide_cell(&table, "P1", "PEPTIDEAK", "run1", 100.0)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn features2peptides_applies_explicit_qpx_fdr_filters() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.fdr.features.parquet");
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new("PEPTIDEAK", "run1", 100.0, &["P1"]).with_qvalues(Some(0.005), Some(0.02)),
+            QpxRow::new("APEPTIDECK", "run1", 200.0, &["P1"]).with_qvalues(Some(0.02), Some(0.02)),
+            QpxRow::new("PEPTIDEBK", "run1", 300.0, &["P2"]).with_qvalues(Some(0.005), Some(0.02)),
+            QpxRow::new("BPEPTIDECK", "run1", 400.0, &["P2"])
+                .with_qvalues(Some(0.005), Some(0.005)),
+        ],
+    )?;
+
+    let peptide_output = root.join("peptides.peptide-fdr.csv");
+    let mut peptide = default_peptides_config(parquet.clone(), peptide_output.clone());
+    peptide.filter_pipeline = Some(PreprocessingFilterConfig {
+        peptide: PeptideFilterConfig {
+            fdr_threshold: Some(0.01),
+            ..PeptideFilterConfig::default()
+        },
+        protein: ProteinFilterConfig {
+            min_unique_peptides: 1,
+            ..ProteinFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&peptide)?;
+    let peptide_table = read_csv(&peptide_output)?;
+    assert!(peptide_table
+        .rows
+        .iter()
+        .all(|row| row.get(1).is_none_or(|sequence| sequence != "APEPTIDECK")));
+
+    let protein_output = root.join("peptides.protein-fdr.csv");
+    let mut protein = default_peptides_config(parquet, protein_output.clone());
+    protein.filter_pipeline = Some(PreprocessingFilterConfig {
+        protein: ProteinFilterConfig {
+            fdr_threshold: Some(0.01),
+            min_unique_peptides: 1,
+            ..ProteinFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&protein)?;
+    let protein_table = read_csv(&protein_output)?;
+    assert!(protein_table
+        .rows
+        .iter()
+        .all(|row| row.first().is_none_or(|value| value == "P2")));
+    assert_eq!(protein_table.rows.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn features2peptides_fdr_request_rejects_unpopulated_qvalue() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.missing-fdr.features.parquet");
+    let output = root.join("peptides.missing-fdr.csv");
+    write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
+    let mut config = default_peptides_config(parquet, output.clone());
+    config.filter_pipeline = Some(PreprocessingFilterConfig {
+        peptide: PeptideFilterConfig {
+            fdr_threshold: Some(0.01),
+            ..PeptideFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+
+    let error = match run_features_to_peptides(&config) {
+        Ok(()) => return Err("unpopulated peptide q-value was accepted".into()),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("requires a populated QPX `peptide_qvalue` column"));
+    assert!(!output.exists());
+    Ok(())
+}
+
+// Run-QC MinFeaturesFilter counts distinct `(protein, canonical)` features per
+// technical run after the per-sample protein min_unique gate. Duplicate charge
+// states must not inflate the count: run1 has three canonicals, while run2 has
+// two, so min_features=3 keeps only run1.
 #[test]
 fn features2peptides_run_qc_drops_low_feature_samples() -> Result<(), Box<dyn Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.runqc.features.parquet");
     let output = root.join("peptides.runqc.csv");
-    write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new_with_charge("PEPTIDEAK", "run1", 100.0, 2, &["P1"]),
+            QpxRow::new_with_charge("PEPTIDEAK", "run1", 150.0, 3, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run1", 200.0, &["P1"]),
+            QpxRow::new("THIDPEAK", "run1", 250.0, &["P1"]),
+            QpxRow::new("PEPTIDEAK", "run2", 300.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run2", 400.0, &["P1"]),
+        ],
+    )?;
 
     let mut config = default_peptides_config(parquet, output.clone());
     config.filter_pipeline = Some(PreprocessingFilterConfig {
@@ -1800,6 +1990,56 @@ fn features2peptides_run_qc_drops_low_feature_samples() -> Result<(), Box<dyn Er
         "run1 (3 features >= 3) must survive Run-QC:\n{:#?}",
         table.rows
     );
+    Ok(())
+}
+
+// MissingRateFilter uses the complete `(protein, canonical)` universe of the
+// surviving technical runs within a sample. run_a detects A/B/C; run_b detects
+// only A, so its missing rate is 2/3 and a 0.4 cutoff removes run_b only. The
+// shared sample remains, and A's sample-level intensity proves the rejected run
+// did not leak into aggregation (10 rather than 10 + 9).
+#[test]
+fn features2peptides_missing_rate_drops_incomplete_technical_run() -> Result<(), Box<dyn Error>> {
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.missing-rate.features.parquet");
+    let sdrf = root.join("peptides.missing-rate.sdrf.tsv");
+    let output = root.join("peptides.missing-rate.csv");
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new("PEPTIDEAK", "run_a.raw", 10.0, &["P1"]),
+            QpxRow::new("APEPTIDECK", "run_a.raw", 11.0, &["P1"]),
+            QpxRow::new("THIDPEAK", "run_a.raw", 12.0, &["P1"]),
+            QpxRow::new("PEPTIDEAK", "run_b.raw", 9.0, &["P1"]),
+        ],
+    )?;
+    write_run_replicate_sdrf(&sdrf)?;
+
+    let mut config = default_peptides_config(parquet, output.clone());
+    config.input.sdrf = Some(sdrf);
+    config.filtering.min_unique_peptides = 1;
+    config.aggregation_level = AggregationLevel::Run;
+    config.filter_pipeline = Some(PreprocessingFilterConfig {
+        run_qc: RunQcFilterConfig {
+            max_missing_rate: 0.4,
+            ..RunQcFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&config)?;
+
+    let table = read_csv(&output)?;
+    assert_eq!(table.rows.len(), 3, "unexpected filtered table: {table:#?}");
+    assert_eq!(
+        peptide_norm_intensity(&table, "P1", "PEPTIDEAK", "sample-run")?,
+        10.0,
+        "run_b must be excluded before peptide aggregation"
+    );
+    let run = header_index(&table.headers, "Run")?;
+    let technical_replicate = header_index(&table.headers, "TechReplicate")?;
+    assert!(table.rows.iter().all(|row| row[run] == "run_a.raw"));
+    assert!(table.rows.iter().all(|row| row[technical_replicate] == "1"));
     Ok(())
 }
 
@@ -2086,26 +2326,11 @@ fn features2peptides_aggregation_run_parquet_matches_python_schema() -> Result<(
     Ok(())
 }
 
-// Dataset-level sample normalization (quantile/rlr/loess/hierarchical/
-// median-center/mean-center) is a deterministic NO-OP in the standalone
-// `features2peptides` command. Python's `peptide_normalization` (peptide.py:370)
-// calls the per-sample placeholder fns (model/normalization.py:416-453) that
-// return the frame unchanged, and the command has no post-loop dataset pass --
-// the `_apply_dataset_normalization` pivot lives in `LoadingStage`, consumed
-// only by `features2proteins` (features_to_proteins.py:300). So a dataset-level
-// request yields exactly the `--sample-normalization none` matrix.
-//
-// Verified byte-identical on PXD003539 (`mokume features2peptides
-// --sample-normalization {quantile,mediancenter}` == `none`, only_py=0/
-// only_rs=0/max_rel<=2.5e-7). On this no-SDRF fixture run=median is inert
-// (one tech rep per run), so the oracle is the raw summed matrix:
-//   P1,APEPTIDECK,run1=200  P1,PEPTIDEAK,run1=250 (z2 100 + z3 150)
-//   P1,APEPTIDECK,run2=400  P1,PEPTIDEAK,run2=300
-// distinct from the globalMedian factor oracle (300/375/300/225), so the assert
-// is non-vacuous. Python oracle (`features2peptides -p synth.parquet
-// --sample-normalization quantile`, no sdrf): identical to the `none` output.
+// Dataset-level sample-normalization methods are not implemented by the
+// standalone peptide command. Reject them instead of silently returning the
+// same matrix as `--sample-normalization none`.
 #[test]
-fn features2peptides_dataset_level_sample_normalization_is_noop() -> Result<(), Box<dyn Error>> {
+fn features2peptides_rejects_dataset_level_sample_normalization() -> Result<(), Box<dyn Error>> {
     for method in [
         "quantile",
         "mediancenter",
@@ -2117,40 +2342,20 @@ fn features2peptides_dataset_level_sample_normalization_is_noop() -> Result<(), 
         let root = temp_root()?;
         create_dir_all(&root)?;
         let parquet = root.join(format!("peptides.noop.{method}.features.parquet"));
-        let output = root.join(format!("peptides.noop.{method}.csv"));
+        let output = root.join(format!("peptides.unsupported.{method}.csv"));
         write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
 
-        let mut config = default_peptides_config(parquet, output.clone());
+        let mut config = default_peptides_config(parquet, output);
         config.skip_normalization = false;
         config.sample_normalization = method.to_owned();
-        run_features_to_peptides(&config)?;
-
-        let table = read_csv(&output)?;
-        assert_eq!(
-            table.rows.len(),
-            4,
-            "{method}: unexpected rows:\n{:#?}",
-            table.rows
-        );
-        // Identical to `--sample-normalization none` (the dataset-level method is
-        // never applied), and distinct from the globalMedian factor oracle.
-        assert_peptide_cell(&table, "P1", "APEPTIDECK", "run1", 200.0)?;
-        assert_peptide_cell(&table, "P1", "PEPTIDEAK", "run1", 250.0)?;
-        assert_peptide_cell(&table, "P1", "APEPTIDECK", "run2", 400.0)?;
-        assert_peptide_cell(&table, "P1", "PEPTIDEAK", "run2", 300.0)?;
-        // Dataset-level methods must NOT drop BioReplicate/Condition (no pivot
-        // happens on this path, unlike `features2proteins --export-peptides`).
-        assert_eq!(
-            table.headers,
-            vec![
-                "ProteinName",
-                "PeptideCanonical",
-                "SampleID",
-                "BioReplicate",
-                "Condition",
-                "NormIntensity",
-            ],
-            "{method}: no-op path must keep all six columns"
+        assert!(
+            matches!(
+                run_features_to_peptides(&config),
+                Err(MokumeError::NotImplemented {
+                    stage: "features2peptides sample-normalization-method"
+                })
+            ),
+            "{method} must be rejected instead of ignored"
         );
     }
     Ok(())
@@ -2381,18 +2586,19 @@ fn features2proteins_extra_quant_methods_match_synthetic_oracles() -> Result<(),
     assert_numeric_cell_close(&intensity, "P1", "sample-1", 350.0);
     assert_numeric_cell_close(&intensity, "P4A;P4B", "sample-1", 30.0);
 
-    let spectral_count = run_synthetic_quantification(QuantMethod::SpectralCount, 3)?;
-    assert_numeric_cell_close(&spectral_count, "P1", "sample-1", 2.0);
-    assert_numeric_cell_close(&spectral_count, "P3", "sample-1", 2.0);
-    assert_numeric_cell_close(&spectral_count, "P4A;P4B", "sample-1", 2.0);
+    let peptide_count = run_synthetic_quantification(QuantMethod::PeptideCount, 3)?;
+    assert_numeric_cell_close(&peptide_count, "P1", "sample-1", 2.0);
+    assert_numeric_cell_close(&peptide_count, "P3", "sample-1", 2.0);
+    assert_numeric_cell_close(&peptide_count, "P4A;P4B", "sample-1", 2.0);
 
-    let ibaq = run_synthetic_quantification(QuantMethod::Ibaq, 3)?;
-    assert_numeric_cell_close(&ibaq, "P1", "sample-1", 3450.0);
-    assert_numeric_cell_close(&ibaq, "P1", "sample-2", 100.0);
-    assert_numeric_cell_close(&ibaq, "P2", "sample-1", 500.0);
-    assert_numeric_cell_close(&ibaq, "P3", "sample-1", 800.0);
-    assert_numeric_cell_close(&ibaq, "P4A", "sample-1", 15.0);
-    assert_numeric_cell_close(&ibaq, "P4B", "sample-1", 15.0);
+    let pibaq = run_synthetic_quantification(QuantMethod::Pibaq, 3)?;
+    assert_numeric_cell_close(&pibaq, "P1", "sample-1", 3450.0);
+    assert_numeric_cell_close(&pibaq, "P1", "sample-2", 100.0);
+    assert_numeric_cell_close(&pibaq, "P2", "sample-1", 500.0);
+    assert_numeric_cell_close(&pibaq, "P3", "sample-1", 800.0);
+    // P4A/P4B have no unique anchors, so their shared signal is split once.
+    assert_numeric_cell_close(&pibaq, "P4A", "sample-1", 7.5);
+    assert_numeric_cell_close(&pibaq, "P4B", "sample-1", 7.5);
     Ok(())
 }
 
@@ -2422,8 +2628,8 @@ fn features2proteins_collapses_charges_into_canonical_before_rollup() -> Result<
         (140.0_f64.log2() + 30.0_f64.log2()) / 2.0,
     );
 
-    let spectral_count = run_canonical_collapse_quantification(QuantMethod::SpectralCount, 3)?;
-    assert_numeric_cell_close(&spectral_count, "P50", "sample-1", 2.0);
+    let peptide_count = run_canonical_collapse_quantification(QuantMethod::PeptideCount, 3)?;
+    assert_numeric_cell_close(&peptide_count, "P50", "sample-1", 2.0);
     Ok(())
 }
 
@@ -2511,8 +2717,8 @@ fn features2proteins_ratio_per_plex_differs_from_global_reference() -> Result<()
 }
 
 #[test]
-fn features2proteins_ibaq_allocates_family_shared_peptides() -> Result<(), Box<dyn Error>> {
-    let table = run_family_ibaq_quantification()?;
+fn features2proteins_pibaq_allocates_family_shared_peptides() -> Result<(), Box<dyn Error>> {
+    let table = run_family_pibaq_quantification()?;
 
     assert_numeric_cell_close(&table, "P5A", "sample-1", 250.0);
     assert_numeric_cell_close(&table, "P5B", "sample-1", 250.0 / 3.0);
@@ -3117,17 +3323,18 @@ fn run_synthetic_quantification(
 
     write_synthetic_qpx(&parquet)?;
     write_synthetic_sdrf(&sdrf)?;
-    let fasta = if quantification == QuantMethod::Ibaq {
+    let fasta = if quantification == QuantMethod::Pibaq {
         write_synthetic_fasta(&fasta)?;
         Some(fasta)
     } else {
         None
     };
 
-    run_features_to_proteins(&FeatureToProteinsConfig {
+    let config = FeatureToProteinsConfig {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta,
         },
@@ -3150,11 +3357,12 @@ fn run_synthetic_quantification(
         quantification,
         topn_peptides,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -3162,7 +3370,21 @@ fn run_synthetic_quantification(
             memory: None,
             threads: Some(24),
         },
-    })?;
+    };
+    if quantification == QuantMethod::Pibaq {
+        run_features_to_proteins_with_pibaq_digest(
+            &config,
+            test_pibaq_digest(&[
+                ("P1", &["PEPTIDEAK", "APEPTIDECK", "ASHAEDPEPK"]),
+                ("P2", &["ALYAAEK"]),
+                ("P3", &["THIDPEAK", "ATHIDPECK"]),
+                ("P4A", &["GAAAPEAK", "AGAAAPECK"]),
+                ("P4B", &["GAAAPEAK", "AGAAAPECK"]),
+            ]),
+        )?;
+    } else {
+        run_features_to_proteins(&config)?;
+    }
 
     read_csv(&output)
 }
@@ -3219,10 +3441,11 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
     )?;
     write_ratio_sdrf(&sdrf)?;
 
-    run_features_to_proteins(&FeatureToProteinsConfig {
+    let config = FeatureToProteinsConfig {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -3245,7 +3468,7 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
         quantification: QuantMethod::Ratio,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig {
@@ -3253,6 +3476,7 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
             ..IrsConfig::default()
         },
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -3260,7 +3484,8 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
             memory: None,
             threads: Some(24),
         },
-    })?;
+    };
+    run_features_to_proteins(&config)?;
 
     read_csv(&output)
 }
@@ -3303,7 +3528,7 @@ fn run_ratio_multiplex_quantification() -> Result<CsvTable, Box<dyn Error>> {
     read_csv(&output)
 }
 
-fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
+fn run_family_pibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
     let root = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("family.features.parquet");
@@ -3323,10 +3548,11 @@ fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
     write_synthetic_sdrf(&sdrf)?;
     write_family_fasta(&fasta)?;
 
-    run_features_to_proteins(&FeatureToProteinsConfig {
+    let config = FeatureToProteinsConfig {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: Some(fasta),
         },
@@ -3346,14 +3572,15 @@ fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
             sample_method: "none".to_owned(),
             normalization_proteins: None,
         },
-        quantification: QuantMethod::Ibaq,
+        quantification: QuantMethod::Pibaq,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -3361,7 +3588,14 @@ fn run_family_ibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
             memory: None,
             threads: Some(24),
         },
-    })?;
+    };
+    run_features_to_proteins_with_pibaq_digest(
+        &config,
+        test_pibaq_digest(&[
+            ("P5A", &["ACDEFGK", "LMNSTYK", "QASTVWK"]),
+            ("P5B", &["ACDEFGK", "LMNSTYK", "GHILMVK"]),
+        ]),
+    )?;
 
     read_csv(&output)
 }
@@ -4003,6 +4237,7 @@ fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> Featu
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -4025,11 +4260,12 @@ fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> Featu
         quantification: QuantMethod::Sum,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -4064,6 +4300,7 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
         input: InputConfig {
             parquet: Some(parquet),
             msstats: None,
+            psm: None,
             sdrf: Some(sdrf),
             fasta: None,
         },
@@ -4086,11 +4323,12 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
         quantification: QuantMethod::Sum,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: Some(1.0),
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -4521,6 +4759,32 @@ fn write_synthetic_fasta(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn test_pibaq_digest(entries: &[(&str, &[&str])]) -> PibaqDigest {
+    let accession_peptides = entries
+        .iter()
+        .map(|(accession, peptides)| {
+            (
+                (*accession).to_owned(),
+                peptides
+                    .iter()
+                    .map(|peptide| (*peptide).to_owned())
+                    .collect::<HashSet<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    PibaqDigest {
+        accession_peptides,
+        provenance: PibaqDigestProvenance {
+            pyopenms_version: "test".to_owned(),
+            enzyme: "Trypsin".to_owned(),
+            catalog_hash: "test".to_owned(),
+            min_aa: 7,
+            max_aa: 30,
+            missed_cleavages: 0,
+        },
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct QpxRow<'a> {
     sequence: &'a str,
@@ -4532,6 +4796,9 @@ struct QpxRow<'a> {
     /// which Python's `SQLFilterBuilder` keeps in the median pre-pass only when
     /// `--keep-shared-peptides` is set (`require_unique = not keep_shared`).
     unique: bool,
+    peptide_qvalue: Option<f64>,
+    protein_qvalue: Option<f64>,
+    score: Option<(&'a str, f64, bool)>,
 }
 
 impl<'a> QpxRow<'a> {
@@ -4548,6 +4815,9 @@ impl<'a> QpxRow<'a> {
             charge: 2,
             accessions,
             unique: true,
+            peptide_qvalue: None,
+            protein_qvalue: None,
+            score: None,
         }
     }
 
@@ -4565,6 +4835,9 @@ impl<'a> QpxRow<'a> {
             charge,
             accessions,
             unique: true,
+            peptide_qvalue: None,
+            protein_qvalue: None,
+            score: None,
         }
     }
 
@@ -4581,7 +4854,21 @@ impl<'a> QpxRow<'a> {
             charge: 2,
             accessions,
             unique: false,
+            peptide_qvalue: None,
+            protein_qvalue: None,
+            score: None,
         }
+    }
+
+    const fn with_qvalues(mut self, peptide: Option<f64>, protein: Option<f64>) -> Self {
+        self.peptide_qvalue = peptide;
+        self.protein_qvalue = protein;
+        self
+    }
+
+    const fn with_score(mut self, name: &'a str, value: f64, higher_better: bool) -> Self {
+        self.score = Some((name, value, higher_better));
+        self
     }
 }
 
@@ -4602,10 +4889,26 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
     let unique = Arc::new(BooleanArray::from(
         rows.iter().map(|row| row.unique).collect::<Vec<_>>(),
     )) as ArrayRef;
+    let peptide_qvalue = Arc::new(Float64Array::from(
+        rows.iter()
+            .map(|row| row.peptide_qvalue)
+            .collect::<Vec<_>>(),
+    )) as ArrayRef;
+    let protein_qvalue = Arc::new(Float64Array::from(
+        rows.iter()
+            .map(|row| row.protein_qvalue)
+            .collect::<Vec<_>>(),
+    )) as ArrayRef;
+    let additional_scores = qpx_row_scores(rows)?;
     let intensities = qpx_row_intensities(rows)?;
     let proteins = qpx_row_proteins(rows)?;
     let intensities_field = Field::new("intensities", intensities.data_type().clone(), true);
     let proteins_field = Field::new("pg_accessions", proteins.data_type().clone(), true);
+    let scores_field = Field::new(
+        "additional_scores",
+        additional_scores.data_type().clone(),
+        true,
+    );
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("sequence", DataType::Utf8, false),
@@ -4614,6 +4917,9 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
         Field::new("run_file_name", DataType::Utf8, false),
         Field::new("is_decoy", DataType::Boolean, false),
         Field::new("unique", DataType::Boolean, false),
+        Field::new("peptide_qvalue", DataType::Float64, true),
+        Field::new("pg_global_qvalue", DataType::Float64, true),
+        scores_field,
         intensities_field,
         proteins_field,
     ]));
@@ -4626,6 +4932,9 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
             run_file_name,
             is_decoy,
             unique,
+            peptide_qvalue,
+            protein_qvalue,
+            additional_scores,
             intensities,
             proteins,
         ],
@@ -4636,6 +4945,41 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
     writer.write(&batch)?;
     writer.close()?;
     Ok(())
+}
+
+fn qpx_row_scores(rows: &[QpxRow<'_>]) -> Result<ArrayRef, Box<dyn Error>> {
+    let fields = Fields::from(vec![
+        Field::new("score_name", DataType::Utf8, false),
+        Field::new("score_value", DataType::Float64, false),
+        Field::new("higher_better", DataType::Boolean, false),
+    ]);
+    let struct_builder = StructBuilder::new(
+        fields,
+        vec![
+            Box::new(StringBuilder::new()),
+            Box::new(Float64Builder::new()),
+            Box::new(BooleanBuilder::new()),
+        ],
+    );
+    let mut builder = ListBuilder::new(struct_builder);
+    for row in rows {
+        if let Some((name, value, higher_better)) = row.score {
+            append_string_field(builder.values(), 0, name)?;
+            builder
+                .values()
+                .field_builder::<Float64Builder>(1)
+                .ok_or("missing score_value builder")?
+                .append_value(value);
+            builder
+                .values()
+                .field_builder::<BooleanBuilder>(2)
+                .ok_or("missing higher_better builder")?
+                .append_value(higher_better);
+            builder.values().append(true);
+        }
+        builder.append(true);
+    }
+    Ok(Arc::new(builder.finish()) as ArrayRef)
 }
 
 fn qpx_row_intensities(rows: &[QpxRow<'_>]) -> Result<ArrayRef, Box<dyn Error>> {
@@ -5392,6 +5736,7 @@ fn features2proteins_deqms_wires_per_protein_peptide_counts() -> Result<(), Box<
             "n_a",
             "n_b",
             "peptide_count",
+            "log_pvalue",
             "significance",
         ]
     );
@@ -5406,7 +5751,7 @@ fn features2proteins_deqms_wires_per_protein_peptide_counts() -> Result<(), Box<
 /// Assert every protein row matches the count-aware Python deqms oracle. Field
 /// layout: ProteinName(0), log2FC(1), pvalue(2), adj_pvalue(3), sca_t(4),
 /// sca_pvalue(5), sca_adj_pvalue(6), mean_A(7), mean_B(8), n_a(9), n_b(10),
-/// peptide_count(11), significance(12).
+/// peptide_count(11), log_pvalue(12), significance(13).
 fn assert_deqms_oracle_rows(table: &CsvTable) -> Result<(), Box<dyn Error>> {
     for &(protein, log2fc, sca_t, sca_p, count) in DEQMS_PIPELINE_ORACLE {
         let row = find_de_row(table, protein)?;

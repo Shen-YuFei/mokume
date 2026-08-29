@@ -16,7 +16,7 @@ pub struct PeptideMeasurement {
 pub fn supported_methods() -> &'static [QuantMethod] {
     &[
         QuantMethod::DirectLfq,
-        QuantMethod::Ibaq,
+        QuantMethod::Pibaq,
         QuantMethod::MaxLfq,
         QuantMethod::TopN,
         QuantMethod::Sum,
@@ -24,6 +24,7 @@ pub fn supported_methods() -> &'static [QuantMethod] {
         QuantMethod::Ratio,
         QuantMethod::Abd,
         QuantMethod::Intensity,
+        QuantMethod::PeptideCount,
         QuantMethod::SpectralCount,
     ]
 }

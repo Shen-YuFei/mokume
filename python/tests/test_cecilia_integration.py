@@ -177,27 +177,17 @@ class TestRatioQuantification:
 
 
 class TestIRSNormalization:
-    """Standard flow + IRS post-processing.
+    """Standard flow + IRS post-processing."""
 
-    The dev fixture (PXD020192) has no pooled/reference samples, so IRS is
-    expected to no-op. The test asserts the pipeline still completes and,
-    when IRS *did* run, that it is reflected in provenance.
-    """
-
-    def test_median_irs_pipeline(self):
+    def test_median_irs_without_references_is_rejected(self):
         config = _make_config(
             quant_method="median",
             irs=True,
             irs_remove_ref=True,
         )
         pipeline = QuantificationPipeline(config)
-        dataset = pipeline.run_dataset()
-        _assert_valid_result(dataset, min_proteins=10)
-
-        step_names = [s["name"] for s in dataset.uns["provenance"]["steps"]]
-        if "irs_normalization" in step_names:
-            # When IRS ran, provenance must reflect it (>= 3 steps).
-            assert len(dataset.uns["provenance"]["steps"]) >= 3
+        with pytest.raises(ValueError, match="no reference samples"):
+            pipeline.run_dataset()
 
 
 class TestQpxDatasetSaveLoad:

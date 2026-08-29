@@ -38,7 +38,7 @@
 //!     cluster or integer-rounded coordinates with exact ties), the MST
 //!     tie-breaking path can diverge from sklearn's KD-tree/Boruvka path, so a
 //!     point on a density boundary may flip between cluster and noise. This is
-//!     the documented tolerance; iBAQ matrices are continuous-valued, so the
+//!     the documented tolerance; piBAQ matrices are continuous-valued, so the
 //!     outlier pass operates in the regime where the noise set matches.
 
 use std::collections::{HashMap, HashSet};

@@ -8,7 +8,7 @@ feature data access.
 
 from mokume.io.parquet import (
     create_anndata,
-    combine_ibaq_tsv_files,
+    combine_pibaq_tsv_files,
 )
 from mokume.io.fasta import (
     load_fasta,
@@ -23,7 +23,7 @@ from mokume.io.feature import (
 
 __all__ = [
     "create_anndata",
-    "combine_ibaq_tsv_files",
+    "combine_pibaq_tsv_files",
     "load_fasta",
     "digest_protein",
     "extract_fasta",

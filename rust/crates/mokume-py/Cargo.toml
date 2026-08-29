@@ -18,10 +18,13 @@ crate-type = ["cdylib"]
 # it deliberately does NOT opt into the workspace `unsafe_code = "forbid"` lint
 # (PyO3's `#[pymodule]`/`#[pyfunction]` macros expand to unsafe FFI glue). The
 # compute kernel crates keep `unsafe_code = "forbid"`.
-# `abi3-py39` builds against the CPython stable ABI (limited API) with a 3.9
-# floor, so one `cp39-abi3` wheel per platform covers Python 3.9+ instead of a
-# wheel per minor version. The floor matches `requires-python = ">=3.9"`.
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
-# Reuse the CLI's single-source clap parsing + dispatch via `run_from_args`, so
-# the flag -> config mapping is not duplicated across the binary and the wheel.
-mokume-cli = { path = "../mokume-cli" }
+# `abi3-py310` builds against the CPython stable ABI (limited API) with a 3.10
+# floor, so one `cp310-abi3` wheel per platform covers Python 3.10+ instead of a
+# wheel per minor version. The floor matches `requires-python = ">=3.10"`.
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
+# Reuse the shared clap parsing + dispatch via `run_from_args`, so the flag ->
+# config mapping is not duplicated in the PyO3 bindings.
+mokume-command = { path = "../mokume-command" }
+mokume-core = { path = "../mokume-core" }
+mokume-pipeline = { path = "../mokume-pipeline" }
+mokume-stats = { path = "../mokume-stats" }

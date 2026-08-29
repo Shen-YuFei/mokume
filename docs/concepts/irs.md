@@ -42,8 +42,8 @@ mokume automatically detects reference samples from SDRF metadata using a priori
 | Priority | Method | SDRF Source |
 |:--------:|--------|-------------|
 | 1 | `characteristics[pooled sample]` column | Values: `"pooled"` or `"SN=sample1;SN=sample2"` |
-| 2 | Explicit sample names | `--irs-reference-samples` CLI option |
-| 3 | Column + values | `--irs-sdrf-column` + `--irs-sdrf-values` |
+| 2 | Explicit sample names | Repeated `--irs-reference-sample` options |
+| 3 | Column + values | `--irs-sdrf-column` + repeated `--irs-sdrf-value` |
 | 4 | Regex scan | Searches all factor/characteristic columns for pattern |
 
 Default regex: `pool|powder|ref|reference|bridge`
@@ -66,18 +66,18 @@ The naming convention is `{plex}_{channel}`, where the plex ID is everything bef
 
 ```bash
 # Auto-detect references from SDRF
-mokume features2proteins \
+mokume quantify features2proteins \
     -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method median \
     --irs --irs-remove-reference
 
 # Explicit reference samples
-mokume features2proteins \
+mokume quantify features2proteins \
     -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --irs --irs-reference-samples "p1_11,p2_11"
+    --irs --irs-reference-sample p1_11 --irs-reference-sample p2_11
 
 # Custom regex for reference detection
-mokume features2proteins \
+mokume quantify features2proteins \
     -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --irs --irs-reference-regex "pool|bridge|control"
 ```
@@ -103,7 +103,7 @@ mokume.features2proteins(
     output="proteins.csv",
     sdrf="experiment.sdrf.tsv",
     irs=True,
-    irs_reference_samples="p1_11,p2_11",
+    irs_reference_sample=["p1_11", "p2_11"],
 )
 ```
 
@@ -112,11 +112,11 @@ never recomputes them.
 
 !!! note "Channel-based IRS"
     The SDRF-driven multi-plex IRS described here runs in `features2proteins`.
-    The `features2peptides` channel path (`--irs_channel` /
-    `--irs_autodetect_regex`) scales on the TMT `mixture` / `channel` columns and
-    is implemented for all three scopes (`--irs_scope global` / `by_mixture` /
-    `two_stage`); the reference channel is taken from `--irs_channel`, or
-    auto-detected from the SDRF when `--irs_autodetect_regex` is given.
+    The `features2peptides` channel path (`--irs-channel` /
+    `--irs-autodetect-regex`) scales on the TMT `mixture` / `channel` columns and
+    is implemented for all three scopes (`--irs-scope global` / `by-mixture` /
+    `two-stage`); the reference channel is taken from `--irs-channel`, or
+    auto-detected from the SDRF when `--irs-autodetect-regex` is given.
 
 ## Options
 

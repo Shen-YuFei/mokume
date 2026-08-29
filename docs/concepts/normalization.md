@@ -27,12 +27,12 @@ Run normalization (`--run-normalization`) adjusts for intensity differences betw
 | `mean` | Normalize by mean | intensity / mean(intensity) |
 | `max` | Normalize by max | intensity / max(intensity) |
 | `global` | Normalize by sum | intensity / sum(intensity) |
-| `max_min` | Min-max scaling | (intensity - min) / (max - min) |
+| `max-min` | Min-max scaling | (intensity - min) / (max - min) |
 | `iqr` | Interquartile range | Uses IQR for scaling |
 | `none` | No normalization | — |
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --run-normalization median
 ```
 
@@ -46,8 +46,8 @@ Applied during data loading, one sample at a time:
 
 | Method | Description |
 |--------|-------------|
-| `globalMedian` | Divides each sample by its median, normalized to the global median |
-| `conditionMedian` | Same as globalMedian but within each experimental condition |
+| `global-median` | Divides each sample by its median, normalized to the global median |
+| `condition-median` | Same as global-median but within each experimental condition |
 | `none` | No normalization |
 
 ### Dataset-Level Methods
@@ -57,15 +57,15 @@ Applied after all samples are loaded, operating on the complete dataset:
 | Method | Description |
 |--------|-------------|
 | `quantile` | Quantile normalization — forces identical intensity distributions across samples |
-| `mediancenter` | Median centering — subtracts each sample's log2 median (location shift) |
-| `meancenter` | Mean centering — subtracts each sample's log2 mean (location shift) |
+| `median-center` | Median centering — subtracts each sample's log2 median (location shift) |
+| `mean-center` | Mean centering — subtracts each sample's log2 mean (location shift) |
 | `rlr` | Robust Linear Regression against a reference profile (NormalyzerDE-style) |
 | `loess` | LOESS regression on MA-plot residuals (intensity-dependent bias) |
 | `tmm` | Trimmed Mean of M-values — robust to composition bias from highly abundant proteins |
 | `hierarchical` | DirectLFQ-style hierarchical clustering normalization |
 
 !!! tip "When to use hierarchical normalization"
-    Use `--sample-normalization hierarchical` when you want DirectLFQ-style normalization **combined with a different quantification method** (e.g., iBAQ). This gives you the normalization quality of DirectLFQ with the quantification approach of your choice.
+    Use `--sample-normalization hierarchical` when you want DirectLFQ-style normalization **combined with a different quantification method** (e.g., piBAQ). This gives you the normalization quality of DirectLFQ with the quantification approach of your choice.
 
 ### Global Median
 
@@ -86,7 +86,7 @@ Uses the DirectLFQ hierarchical clustering approach (Ammar et al., 2023) impleme
 You can optionally specify a set of proteins to use for normalization:
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization hierarchical \
     --normalization-proteins housekeeping_proteins.txt
 ```
@@ -99,7 +99,7 @@ A = log2 mean). Exposed via the pipeline as `--sample-normalization loess`
 or as a standalone utility on a log2-scale wide matrix.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization loess
 ```
 
@@ -114,7 +114,7 @@ up with the same sorted profile. It is the strongest distributional correction
 available and assumes most features are unchanged across samples.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization quantile
 ```
 
@@ -123,15 +123,15 @@ Quantile normalization runs natively in the Rust kernel.
 ### Median and Mean Centering
 
 Centering applies a **location shift in log2 space**: for each sample it
-subtracts that sample's log2 median (`mediancenter`) or log2 mean
-(`meancenter`), then maps the values back to linear scale
+subtracts that sample's log2 median (`median-center`) or log2 mean
+(`mean-center`), then maps the values back to linear scale
 ($2^{\log_2 x - \text{center}}$). Unlike quantile normalization it only aligns
 the central level of each sample and leaves the within-sample spread untouched,
 making it a lighter-touch alternative when distributions are already similar.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
-    --sample-normalization mediancenter   # or: meancenter
+mokume quantify features2proteins -p data.parquet -o out.csv \
+    --sample-normalization median-center   # or: mean-center
 ```
 
 Both centering variants run natively in the Rust kernel.
@@ -145,7 +145,7 @@ genuinely changing proteins, so a handful of large fold-changes do not distort
 the normalization (the approach used by NormalyzerDE).
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization rlr
 ```
 
@@ -162,11 +162,20 @@ sample up or down (the edgeR/limma approach adapted for proteomics). Implemented
 in `mokume.normalization.tmm.TMMNormalizer`.
 
 ```bash
-mokume features2proteins -p data.parquet -o out.csv \
+mokume quantify features2proteins -p data.parquet -o out.csv \
     --sample-normalization tmm
 ```
 
 ## DirectLFQ Mode
 
 !!! warning "DirectLFQ handles its own normalization"
-    When using `--quant-method directlfq`, the kernel runs **all processing** (normalization + quantification) through the native Rust DirectLFQ estimator. The `--run-normalization` and `--sample-normalization` options are ignored.
+    When using `--quant-method directlfq`, the kernel runs normalization and
+    quantification through the native Rust DirectLFQ estimator. The CLI defaults
+    both external normalization settings to `none` and rejects any non-`none`
+    value instead of ignoring it.
+
+!!! note "Count methods do not normalize intensities"
+    `peptide-count` and `spectral-count` count distinct evidence identities,
+    not intensity values. Their run/sample normalization defaults are `none`,
+    and active intensity normalization or IRS options are rejected instead of
+    being silently ignored.

@@ -77,6 +77,7 @@ def _rust_features2proteins(
     if not hasattr(mokume, "_mokume"):
         pytest.skip("mokume._mokume (Rust kernel) not available in this interpreter")
     args = [
+        "quantify",
         "features2proteins",
         "--parquet",
         str(parquet),
@@ -84,8 +85,6 @@ def _rust_features2proteins(
         method,
         "--output",
         str(out_path),
-        "--output-format",
-        "python-compatible",
     ]
     if sample_normalization is not None:
         args += ["--sample-normalization", sample_normalization]

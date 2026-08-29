@@ -50,6 +50,7 @@ use super::correct::bh_adjust;
 use super::limma::{run_limma_moderation, LimmaModeration};
 use super::rots::{build_n_grid, build_ssq_grid, rank_abs, reproducibility_score, SplitMix64};
 use super::{classify, DeResult};
+use rayon::prelude::*;
 
 /// Default bootstrap iterations, matching `run_limrots(n_boot=100)`
 /// (limrots.py:42).
@@ -210,36 +211,42 @@ fn bootstrap_optimize(
     }
     let n_k = k_values.len();
 
-    // repro_real[b][pi][ki], repro_perm[b][pi][ki].
-    let mut repro_real = vec![vec![vec![0.0; n_k]; n_params]; n_boot];
-    let mut repro_perm = vec![vec![vec![0.0; n_k]; n_params]; n_boot];
-
-    for b in 0..n_boot {
-        // idx1/idx2: two INDEPENDENT bootstrap resamples, each = choice(n_a, n_a)
-        // ++ choice(n_b, n_b)+n_a (limrots.py:113-124).
-        let idx1 = bootstrap_indices(rng, n_a, n_b);
-        let idx2 = bootstrap_indices(rng, n_a, n_b);
-        let fit1 = boot_ebayes_bootstrap(mat, &idx1, n_a);
-        let fit2 = boot_ebayes_bootstrap(mat, &idx2, n_a);
-
-        // perm_idx applied to the DESIGN (limrots.py:135).
-        let perm_idx = rng.permutation(n_total);
-        let fit_p = boot_ebayes_permuted(mat, &perm_idx, n_a);
-
-        for (pi, &a1) in a1_grid.iter().enumerate() {
-            // a2_grid is all ones (limrots.py:89).
-            let d1 = limrots_d_stat(&fit1.beta, &fit1.s_post, &fit1.u, a1, 1.0);
-            let d2 = limrots_d_stat(&fit2.beta, &fit2.s_post, &fit2.u, a1, 1.0);
-            let dp = limrots_d_stat(&fit_p.beta, &fit_p.s_post, &fit_p.u, a1, 1.0);
-            let r1 = rank_abs(&d1);
-            let r2 = rank_abs(&d2);
-            let rp = rank_abs(&dp);
-            for (ki, &k) in k_values.iter().enumerate() {
-                repro_real[b][pi][ki] = reproducibility_score(&r1, &r2, k);
-                repro_perm[b][pi][ki] = reproducibility_score(&r1, &rp, k);
+    // Generate random indices serially in the original order, then parallelize
+    // the independent eBayes fits and parameter grids. This preserves the exact
+    // RNG stream regardless of the configured thread count.
+    let resamples = (0..n_boot)
+        .map(|_| {
+            (
+                bootstrap_indices(rng, n_a, n_b),
+                bootstrap_indices(rng, n_a, n_b),
+                rng.permutation(n_total),
+            )
+        })
+        .collect::<Vec<_>>();
+    let repro = resamples
+        .into_par_iter()
+        .map(|(idx1, idx2, perm_idx)| {
+            let fit1 = boot_ebayes_bootstrap(mat, &idx1, n_a);
+            let fit2 = boot_ebayes_bootstrap(mat, &idx2, n_a);
+            let fit_p = boot_ebayes_permuted(mat, &perm_idx, n_a);
+            let mut real = vec![vec![0.0; n_k]; n_params];
+            let mut perm = vec![vec![0.0; n_k]; n_params];
+            for (pi, &a1) in a1_grid.iter().enumerate() {
+                let d1 = limrots_d_stat(&fit1.beta, &fit1.s_post, &fit1.u, a1, 1.0);
+                let d2 = limrots_d_stat(&fit2.beta, &fit2.s_post, &fit2.u, a1, 1.0);
+                let dp = limrots_d_stat(&fit_p.beta, &fit_p.s_post, &fit_p.u, a1, 1.0);
+                let r1 = rank_abs(&d1);
+                let r2 = rank_abs(&d2);
+                let rp = rank_abs(&dp);
+                for (ki, &k) in k_values.iter().enumerate() {
+                    real[pi][ki] = reproducibility_score(&r1, &r2, k);
+                    perm[pi][ki] = reproducibility_score(&r1, &rp, k);
+                }
             }
-        }
-    }
+            (real, perm)
+        })
+        .collect::<Vec<_>>();
+    let (repro_real, repro_perm): (Vec<_>, Vec<_>) = repro.into_iter().unzip();
 
     // z = (mean_real - mean_perm) / max(std_real(ddof=1), 1e-10); best =
     // nanargmax(z) unraveled; return (a1_grid[best_pi], a2_grid[best_pi]==1.0)
@@ -301,12 +308,18 @@ fn pvalue_permutation(
     let n_genes = d_obs.len();
     let abs_d = d_obs.iter().map(|value| value.abs()).collect::<Vec<_>>();
     let mut count = vec![1.0; n_genes];
-
-    for _ in 0..n_perm {
-        let perm_idx = rng.permutation(n_total);
-        let fit = boot_ebayes_permuted(mat, &perm_idx, n_a);
-        let d_p = limrots_d_stat(&fit.beta, &fit.s_post, &fit.u, a1, a2);
-        accumulate_counts(&mut count, &d_p, &abs_d);
+    let permutations = (0..n_perm)
+        .map(|_| rng.permutation(n_total))
+        .collect::<Vec<_>>();
+    let permuted = permutations
+        .into_par_iter()
+        .map(|perm_idx| {
+            let fit = boot_ebayes_permuted(mat, &perm_idx, n_a);
+            limrots_d_stat(&fit.beta, &fit.s_post, &fit.u, a1, a2)
+        })
+        .collect::<Vec<_>>();
+    for d_p in &permuted {
+        accumulate_counts(&mut count, d_p, &abs_d);
     }
 
     let denom = (n_genes * (n_perm + 1)) as f64;
@@ -316,8 +329,19 @@ fn pvalue_permutation(
 /// Add, for every gene `j`, the number of permuted `|d_p|_g` (over all genes `g`)
 /// that are `>=` `|d_obs|_j` (the pooled `np.sum(...)` of limrots.py:227).
 fn accumulate_counts(count: &mut [f64], d_p: &[f64], abs_d_obs: &[f64]) {
+    let mut permuted = d_p
+        .iter()
+        .map(|value| value.abs())
+        .filter(|value| !value.is_nan())
+        .collect::<Vec<_>>();
+    permuted.sort_by(f64::total_cmp);
     for (slot, &threshold) in count.iter_mut().zip(abs_d_obs) {
-        let hits = d_p.iter().filter(|value| value.abs() >= threshold).count();
+        let hits = if threshold.is_nan() {
+            0
+        } else {
+            let first_hit = permuted.partition_point(|value| *value < threshold);
+            permuted.len() - first_hit
+        };
         *slot += hits as f64;
     }
 }
@@ -485,6 +509,7 @@ fn limrots_two_group_seeded(
             protein: protein.clone(),
             log2_fold_change,
             p_value,
+            log_p_value: p_value.ln(),
             adj_p_value,
             t_statistic: d_stat[position],
             // LimROTS emits no AveExpr/B columns (its extra column is t_stat ==

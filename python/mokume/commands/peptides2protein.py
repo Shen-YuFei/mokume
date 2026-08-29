@@ -3,11 +3,12 @@ CLI command for computing protein quantification values.
 """
 
 import logging
+import re
 
 import click
 import pandas as pd
 
-from mokume.quantification.ibaq import peptides_to_protein
+from mokume.quantification.pibaq import peptides_to_protein
 from mokume.quantification import (
     get_quantification_method,
     is_directlfq_available,
@@ -25,23 +26,119 @@ from mokume.core.constants import (
 logger = logging.getLogger(__name__)
 
 
-# Base methods always available
-QUANTIFICATION_METHODS = ["ibaq", "top3", "topn", "maxlfq", "sum", "directlfq"]
+# Methods with a fixed name. The TopN family is not listed here: ``top<N>``
+# already covers ``top3``, and spelling both would advertise one method twice.
+# QuantMethodParam accepts any ``top<N>``; the help text names top3 as the
+# common choice.
+QUANTIFICATION_METHODS = ["pibaq", "maxlfq", "sum", "directlfq"]
+
+# A ``top<N>`` method name carries its own N (top1, top3, top5, top10, ...).
+TOPN_METHOD_RE = re.compile(r"top(\d+)")
+
+
+def _nonzero_threads(_ctx, _param, value):
+    if value == 0:
+        raise click.BadParameter("must be a non-zero integer")
+    return value
+
+
+def _supplied(ctx: click.Context, *names: str) -> bool:
+    return any(
+        ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+        for name in names
+    )
+
+
+def _validate_method_options(
+    ctx: click.Context,
+    method: str,
+    *,
+    verbose: bool,
+    tpa: bool,
+    ruler: bool,
+) -> None:
+    pibaq_options = (
+        "fasta",
+        "enzyme",
+        "min_aa",
+        "max_aa",
+        "tpa",
+        "ruler",
+        "organism",
+        "ploidy",
+        "cpc",
+        "verbose",
+        "qc_report",
+        "families_yaml",
+        "min_shared",
+        "min_anchors",
+        "high_anchor_threshold",
+    )
+    if method != "pibaq" and _supplied(ctx, *pibaq_options):
+        raise click.UsageError(
+            "piBAQ digestion/TPA/ruler/QC options require --method pibaq"
+        )
+    if method != "maxlfq" and _supplied(ctx, "threads"):
+        raise click.UsageError("--threads only applies to --method maxlfq")
+    if method != "directlfq" and _supplied(ctx, "min_nonan"):
+        raise click.UsageError("--min_nonan only applies to --method directlfq")
+    if method == "pibaq" and _supplied(ctx, "qc_report") and not verbose:
+        raise click.UsageError("--qc_report requires --verbose")
+    if ruler and not tpa:
+        raise click.UsageError("--ruler requires --tpa")
+    if not ruler and _supplied(ctx, "ploidy", "organism", "cpc"):
+        raise click.UsageError("--ploidy/--organism/--cpc require --ruler")
 
 
 def get_available_methods():
     """Get list of available quantification methods based on installed packages."""
-    methods = ["ibaq", "top3", "topn", "maxlfq", "sum"]
+    methods = ["pibaq", "top3", "maxlfq", "sum"]
     if is_directlfq_available():
         methods.append("directlfq")
     return methods
+
+
+class QuantMethodParam(click.ParamType):
+    """A ``click.Choice`` that additionally accepts any ``top<N>`` method name.
+
+    Fixed names are matched case-insensitively against ``methods``. On top of
+    those, ``top<N>`` for any integer N >= 1 is accepted: the method name is the
+    only place N is spelled (``top5`` means Top 5). The converted value is
+    always lower-cased.
+    """
+
+    name = "quant_method"
+
+    def __init__(self, methods):
+        self.methods = [m.lower() for m in methods]
+
+    def get_metavar(self, *_args, **_kwargs):
+        return "[" + "|".join([*self.methods, "top<N>"]) + "]"
+
+    def convert(self, value, param, ctx):
+        value_lower = str(value).lower()
+        if value_lower in self.methods:
+            return value_lower
+        # ``topn`` keeps the placeholder letter and means the canonical Top3, so
+        # it normalizes here and downstream only ever sees ``top<digits>``.
+        if value_lower == "topn":
+            return "top3"
+        match = TOPN_METHOD_RE.fullmatch(value_lower)
+        if match and int(match.group(1)) >= 1:
+            return value_lower
+        self.fail(
+            f"{value!r} is not a valid quantification method. Choose from "
+            f"{', '.join(self.methods)}, or top<N> for any N >= 1 (e.g. top5).",
+            param,
+            ctx,
+        )
 
 
 @click.command("peptides2protein", short_help="Compute protein quantification values")
 @click.option(
     "-f",
     "--fasta",
-    help="Protein database to compute IBAQ values (required for ibaq method)",
+    help="Protein database used to compute piBAQ values (required for pibaq)",
     type=click.Path(exists=True),
 )
 @click.option(
@@ -53,9 +150,12 @@ def get_available_methods():
 )
 @click.option(
     "--method",
-    help="Quantification method to use (directlfq requires: pip install mokume[directlfq])",
-    type=click.Choice(QUANTIFICATION_METHODS, case_sensitive=False),
-    default="ibaq",
+    help=(
+        "Quantification method to use: pibaq, top<N> (top1/top3/top5/...), "
+        "maxlfq, sum, directlfq (directlfq requires: pip install mokume-py[directlfq])"
+    ),
+    type=QuantMethodParam(QUANTIFICATION_METHODS),
+    default="pibaq",
 )
 @click.option(
     "-e",
@@ -76,12 +176,12 @@ def get_available_methods():
     "--max_aa", help="Maximum number of amino acids to consider a peptide", default=30
 )
 @click.option(
-    "-t", "--tpa", help="Whether calculate TPA (iBAQ method only)", is_flag=True
+    "-t", "--tpa", help="Whether to calculate TPA (piBAQ method only)", is_flag=True
 )
 @click.option(
     "-r",
     "--ruler",
-    help="Whether to use ProteomicRuler (iBAQ method only)",
+    help="Whether to use ProteomicRuler (piBAQ method only)",
     is_flag=True,
 )
 @click.option("-i", "--ploidy", help="Ploidy number (default: 2)", default=2)
@@ -102,7 +202,10 @@ def get_available_methods():
     default=200,
 )
 @click.option(
-    "-o", "--output", help="Output file with the proteins and quantification values"
+    "-o",
+    "--output",
+    help="Output file with the proteins and quantification values",
+    required=True,
 )
 @click.option(
     "--verbose",
@@ -111,20 +214,15 @@ def get_available_methods():
 )
 @click.option(
     "--qc_report",
-    help="PDF file to store multiple QC images (iBAQ method only)",
+    help="PDF file to store multiple QC images (piBAQ method only)",
     default="QCprofile.pdf",
-)
-@click.option(
-    "--topn_n",
-    help="Number of top peptides to use for TopN method (default: 3)",
-    default=3,
-    type=int,
 )
 @click.option(
     "--threads",
     help="Number of parallel threads for MaxLFQ (-1 for all cores, default: -1)",
     default=-1,
     type=int,
+    callback=_nonzero_threads,
 )
 @click.option(
     "--min_nonan",
@@ -150,7 +248,7 @@ def get_available_methods():
     show_default=True,
     help=(
         "Minimum number of distinct peptides two proteins must share to be "
-        "automatically grouped into the same iBAQ family."
+        "automatically grouped into the same piBAQ family."
     ),
 )
 @click.option(
@@ -160,9 +258,8 @@ def get_available_methods():
     default=1,
     show_default=True,
     help=(
-        "Minimum proteotypic ('anchor') peptides a family member needs for the "
-        "family to stay on the per-protein branch. The family rolls up to a "
-        "single iBAQ only when NO member reaches this threshold (iBAQ only)."
+        "Unique-anchor threshold; if no family member reaches it, shared "
+        "signal is split equally (piBAQ only)."
     ),
 )
 @click.option(
@@ -173,12 +270,12 @@ def get_available_methods():
     show_default=True,
     help=(
         "Minimum anchor count (weakest member) for a family to be labelled "
-        "EvidenceLevel='high' (iBAQ only)."
+        "EvidenceLevel='high' (piBAQ only)."
     ),
 )
 @click.pass_context
 def peptides2protein(
-    click_context,
+    ctx: click.Context,
     fasta: str,
     peptides: str,
     method: str,
@@ -194,7 +291,6 @@ def peptides2protein(
     output: str,
     verbose: bool,
     qc_report: str,
-    topn_n: int,
     threads: int,
     min_nonan: int,
     families_yaml: str,
@@ -209,39 +305,47 @@ def peptides2protein(
     quantification values using various methods:
 
     \b
-    - ibaq: Intensity-Based Absolute Quantification (default, requires FASTA)
-    - top3: Average of the 3 most intense peptides
-    - topn: Average of the N most intense peptides (use --topn_n)
+    - pibaq: Paralog-aware iBAQ with shared-peptide allocation (default, requires FASTA)
+    - top<N>: Average of the N most intense peptides (top1, top3, top5, top10, ...)
     - maxlfq: MaxLFQ delayed normalization algorithm (parallelized)
     - sum: Sum of all peptide intensities
-    - directlfq: DirectLFQ intensity traces (requires: pip install mokume[directlfq])
+    - directlfq: DirectLFQ intensity traces (requires: pip install mokume-py[directlfq])
 
-    For the iBAQ method, a FASTA file is required. Other methods can work
+    For piBAQ, a FASTA file is required. Other methods can work
     without a FASTA file.
 
     \b
     Examples:
-        # Using iBAQ (requires FASTA)
-        mokume peptides2protein --method ibaq -f proteome.fasta -p peptides.csv -o proteins.tsv
+        # Using piBAQ (requires FASTA)
+        mokume peptides2protein --method pibaq -f proteome.fasta -p peptides.csv -o proteins.tsv
 
         # Using MaxLFQ with 4 threads
         mokume peptides2protein --method maxlfq --threads 4 -p peptides.csv -o proteins.tsv
 
         # Using DirectLFQ (requires optional install)
         mokume peptides2protein --method directlfq -p peptides.csv -o proteins.tsv
+
+        # Using Top5 (N comes from the method name)
+        mokume peptides2protein --method top5 -p peptides.csv -o proteins.tsv
     """
     method_lower = method.lower()
+    _validate_method_options(
+        ctx,
+        method_lower,
+        verbose=verbose,
+        tpa=tpa,
+        ruler=ruler,
+    )
 
     # Check DirectLFQ availability
     if method_lower == "directlfq" and not is_directlfq_available():
         raise click.UsageError(
-            "DirectLFQ is not installed. Install with: pip install mokume[directlfq]"
+            "DirectLFQ is not installed. Install with: pip install mokume-py[directlfq]"
         )
 
-    if method_lower == "ibaq":
-        # Use the existing iBAQ implementation
+    if method_lower == "pibaq":
         if not fasta:
-            raise click.UsageError("The --fasta option is required for the iBAQ method")
+            raise click.UsageError("The --fasta option is required for piBAQ")
 
         peptides_to_protein(
             fasta=fasta,
@@ -276,8 +380,9 @@ def peptides2protein(
         click.echo(f"Loaded {len(peptide_df)} peptide measurements")
 
         # Get the quantification method with appropriate parameters
-        if method_lower == "topn":
-            quant_method = get_quantification_method(method, n=topn_n)
+        if TOPN_METHOD_RE.fullmatch(method_lower):
+            # ``top<N>`` carries N in the name; the engine reads it back out.
+            quant_method = get_quantification_method(method_lower)
         elif method_lower == "maxlfq":
             quant_method = get_quantification_method(
                 method, threads=threads, min_peptides=2
@@ -342,11 +447,8 @@ def peptides2protein(
                 ].transform(lambda x: x / x.sum())
 
         # Save output
-        if output:
-            if output.endswith(".parquet"):
-                result_df.to_parquet(output, index=False)
-            else:
-                result_df.to_csv(output, sep="\t", index=False)
-            click.echo(f"Results saved to {output}")
+        if output.endswith(".parquet"):
+            result_df.to_parquet(output, index=False)
         else:
-            click.echo(result_df.to_string())
+            result_df.to_csv(output, sep="\t", index=False)
+        click.echo(f"Results saved to {output}")

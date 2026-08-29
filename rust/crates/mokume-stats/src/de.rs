@@ -10,6 +10,7 @@
 
 mod correct;
 mod deqms;
+mod effect_size;
 mod ensemble;
 mod ihw;
 mod limma;
@@ -21,7 +22,9 @@ mod special;
 mod student_t;
 
 use correct::bh_adjust;
+pub use correct::{adaptive_adjust, AdaptiveFdrMethod, AppliedFdrMethod};
 pub use deqms::deqms_two_group;
+pub use effect_size::{estimate_effect_size_gate, EffectSizeGateMethod};
 pub use ensemble::{combine_de_results, EnsembleResult};
 pub use ihw::ihw_correction;
 use limma::run_limma;
@@ -29,13 +32,13 @@ pub use limrots::limrots_two_group;
 use proda::proda_run;
 pub use rots::rots_two_group;
 
-/// Direction call for a tested protein, matching mokume's `significance`
-/// column ("UP" / "DOWN" / "Unchanged").
+/// Direction call matching mokume's `significance` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Significance {
     Up,
     Down,
     Unchanged,
+    NotTested,
 }
 
 /// One differential-expression result row, mirroring the columns mokume's
@@ -46,6 +49,7 @@ pub struct DeResult {
     pub protein: String,
     pub log2_fold_change: f64,
     pub p_value: f64,
+    pub log_p_value: f64,
     pub adj_p_value: f64,
     pub t_statistic: f64,
     pub ave_expr: f64,
@@ -99,6 +103,7 @@ pub fn limma_two_group(
                 protein,
                 log2_fold_change: stat.log2_fold_change,
                 p_value: stat.p_value,
+                log_p_value: stat.p_value.ln(),
                 adj_p_value,
                 t_statistic: stat.t_statistic,
                 ave_expr: stat.ave_expr,
@@ -175,6 +180,7 @@ pub fn proda_two_group(
                 protein,
                 log2_fold_change: stat.log2_fold_change,
                 p_value: stat.p_value,
+                log_p_value: stat.p_value.ln(),
                 adj_p_value,
                 t_statistic: stat.t_stat,
                 ave_expr: f64::NAN,
@@ -216,12 +222,8 @@ fn classify(
     fdr_threshold: f64,
     log2fc_threshold: f64,
 ) -> Significance {
-    // mokume's `_finalize_results` coerces a non-finite log2FC to NaN before
-    // classification, so an infinite fold change (e.g. from an upstream
-    // imputation overflow) never passes the `> threshold` test. NaN and +/-Inf
-    // both map to Unchanged here.
-    if !log2_fold_change.is_finite() {
-        return Significance::Unchanged;
+    if !adj_p_value.is_finite() || !log2_fold_change.is_finite() {
+        return Significance::NotTested;
     }
     if adj_p_value < fdr_threshold && log2_fold_change > log2fc_threshold {
         Significance::Up
@@ -398,17 +400,18 @@ mod tests {
         }
     }
 
-    // P20: a non-finite log2FC (NaN or +/-Inf) must classify as Unchanged even
-    // with a significant adjusted p-value, matching mokume's coerce-to-NaN guard.
+    // A non-estimable fold change or adjusted p-value is NotTested, not evidence
+    // that the protein is unchanged.
     #[test]
-    fn classify_treats_non_finite_log2fc_as_unchanged() {
+    fn classify_marks_non_finite_results_not_tested() {
         for log2fc in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
             assert_eq!(
                 classify(1e-9, log2fc, 0.05, 0.5),
-                Significance::Unchanged,
-                "non-finite log2FC {log2fc} should be Unchanged"
+                Significance::NotTested,
+                "non-finite log2FC {log2fc} should be NotTested"
             );
         }
+        assert_eq!(classify(f64::NAN, 2.0, 0.05, 0.5), Significance::NotTested);
         // Sanity: a finite, significant, above-threshold fold change still calls UP.
         assert_eq!(classify(1e-9, 2.0, 0.05, 0.5), Significance::Up);
     }

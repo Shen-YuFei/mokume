@@ -19,7 +19,7 @@ pub fn parse_memory_to_bytes(value: &str) -> Result<u64> {
         .map_err(|_| MokumeError::InvalidMemory {
             value: value.to_string(),
         })?;
-    if !quantity.is_finite() || quantity < 0.0 {
+    if !quantity.is_finite() || quantity <= 0.0 {
         return Err(MokumeError::InvalidMemory {
             value: value.to_string(),
         });
@@ -38,7 +38,13 @@ pub fn parse_memory_to_bytes(value: &str) -> Result<u64> {
         }
     };
 
-    Ok((quantity * multiplier as f64).round() as u64)
+    let bytes = quantity * multiplier as f64;
+    if !bytes.is_finite() || bytes > u64::MAX as f64 || bytes.round() < 1.0 {
+        return Err(MokumeError::InvalidMemory {
+            value: value.to_string(),
+        });
+    }
+    Ok(bytes.round() as u64)
 }
 
 pub fn parse_memory_to_gib(value: &str) -> Result<f64> {
@@ -60,7 +66,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_units() {
+    fn rejects_invalid_memory_values() {
         assert!(parse_memory_to_bytes("4XB").is_err());
+        assert!(parse_memory_to_bytes("0GB").is_err());
+        assert!(parse_memory_to_bytes("0.1B").is_err());
     }
 }

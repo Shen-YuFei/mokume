@@ -81,7 +81,7 @@ def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFra
     )
 
     plt.rcParams["figure.figsize"] = (12, 6)
-    fig, ax = plt.subplots()
+    _, ax = plt.subplots()
     xi = np.arange(1, n_components + 1, step=1)
     y = np.cumsum(pca.explained_variance_ratio_)
 

@@ -121,7 +121,7 @@ nav:
       - Installation: installation.md
       - Quick Start: quickstart.md
       - Architecture: architecture.md
-      - CLI vs Wheel: cli-vs-wheel.md
+      - Rust Wheel: rust-wheel.md
       - Maintenance Scope: maintenance-scope.md
   - Concepts:
       - concepts/index.md
@@ -138,8 +138,11 @@ nav:
       - Differential Expression: examples/differential-expression.md
       - Absolute Expression: examples/absolute-expression.md
       - Full Pipeline: examples/pipeline.md
+      - CPTAC UCEC Total Proteome: examples/cptac-ucec.md
+      - PXD030304 Cancer Cell-Line Atlas: examples/pxd030304-cell-lines.md
   - User Guide (CLI):
       - user-guide/index.md
+      - Mokume Plugin: user-guide/agentic-plugin.md
       - features2proteins: user-guide/features2proteins.md
       - features2peptides: user-guide/features2peptides.md
       - peptides2protein: user-guide/peptides2protein.md

@@ -7,6 +7,7 @@ result finalisation helpers used by the various DE methods.
 
 from __future__ import annotations
 
+import importlib
 from typing import Iterable
 
 import numpy as np
@@ -16,18 +17,29 @@ __all__ = [
     "bh_adjust",
     "filter_testable",
     "finalize_de_result",
+    "load_multipletests",
     "per_group_summary",
 ]
 
 
+def load_multipletests():
+    """Lazily load statsmodels' multiple-testing implementation."""
+    try:
+        module = importlib.import_module("statsmodels.stats.multitest")
+    except ImportError as exc:
+        raise ImportError(
+            "statsmodels is required for differential-expression FDR correction. "
+            "Install it with: pip install mokume-py[analysis]"
+        ) from exc
+    return module.multipletests
+
+
 def bh_adjust(pvalues: np.ndarray) -> np.ndarray:
     """Apply Benjamini-Hochberg correction, tolerating NaN/Inf p-values."""
-    from statsmodels.stats.multitest import multipletests
-
     valid = np.isfinite(pvalues)
     adj = np.full_like(pvalues, np.nan, dtype=float)
     if valid.any():
-        adj[valid] = multipletests(pvalues[valid], method="fdr_bh")[1]
+        adj[valid] = load_multipletests()(pvalues[valid], method="fdr_bh")[1]
     return adj
 
 
@@ -41,13 +53,15 @@ def per_group_summary(
     """Compute per-protein mean and observation counts for both groups."""
     sub_a = log2_matrix[samples_a]
     sub_b = log2_matrix[samples_b]
+    finite_a = np.isfinite(sub_a)
+    finite_b = np.isfinite(sub_b)
     return pd.DataFrame(
         {
             "ProteinName": log2_matrix.index,
-            f"mean_{cond_a}": sub_a.mean(axis=1).values,
-            f"mean_{cond_b}": sub_b.mean(axis=1).values,
-            "n_a": sub_a.notna().sum(axis=1).values,
-            "n_b": sub_b.notna().sum(axis=1).values,
+            f"mean_{cond_a}": sub_a.where(finite_a).mean(axis=1).values,
+            f"mean_{cond_b}": sub_b.where(finite_b).mean(axis=1).values,
+            "n_a": finite_a.sum(axis=1).values,
+            "n_b": finite_b.sum(axis=1).values,
         }
     )
 
@@ -59,10 +73,11 @@ def filter_testable(
     min_per_group: int = 2,
 ) -> pd.DataFrame:
     """Drop proteins lacking enough finite observations in both groups."""
-    nobs_a = log2_matrix[samples_a].notna().sum(axis=1)
-    nobs_b = log2_matrix[samples_b].notna().sum(axis=1)
+    finite_matrix = log2_matrix.where(np.isfinite(log2_matrix))
+    nobs_a = finite_matrix[samples_a].notna().sum(axis=1)
+    nobs_b = finite_matrix[samples_b].notna().sum(axis=1)
     keep = (nobs_a >= min_per_group) & (nobs_b >= min_per_group)
-    return log2_matrix.loc[keep]
+    return finite_matrix.loc[keep]
 
 
 def finalize_de_result(

@@ -7,7 +7,7 @@
 # Usage:
 #   bash scripts/run_parity_matrix.sh [PXD ...]
 # With no arguments, runs the four Phase-1 datasets. Override behaviour via env:
-#   DATA_ROOT, OUT_ROOT, PY_MOKUME, RUST_BIN, THREADS, COMBOS
+#   DATA_ROOT, OUT_ROOT, PY_MOKUME, RUST_PYTHON, THREADS, COMBOS
 #
 # All multi-threaded steps use 24 threads per project convention.
 set -uo pipefail
@@ -17,7 +17,7 @@ DATA_ROOT="${DATA_ROOT:-/home/shenyufei/Git-repository/Bigbio/Bigbio_data}"
 OUT_ROOT="${OUT_ROOT:-/tmp/mokume-parity}"
 THREADS="${THREADS:-24}"
 PY_MOKUME="${PY_MOKUME:-conda run -n Bigbio python -m mokume.mokume_cli}"
-RUST_BIN="${RUST_BIN:-${REPO_ROOT}/target/release/mokume}"
+RUST_PYTHON="${RUST_PYTHON:-python}"
 COMPARE="${REPO_ROOT}/scripts/compare_protein_matrices.py"
 
 # Datasets: CLI args override the default Phase-1 set.
@@ -30,7 +30,7 @@ fi
 # Method combos: "name|quant|run_norm|sample_norm". Phase-1 default set.
 DEFAULT_COMBOS=(
   "sum_none_none|sum|none|none"
-  "topn_none_none|topn|none|none"
+  "top3_none_none|top3|none|none"
   "median_none_none|median|none|none"
   "sum_runmedian_none|sum|median|none"
   "sum_none_globalmedian|sum|none|globalmedian"
@@ -42,9 +42,8 @@ else
   COMBO_LIST=("${DEFAULT_COMBOS[@]}")
 fi
 
-echo "[parity] building Rust release binary (one-off, for real-data speed)"
-if ! cargo build --release -p mokume-cli --jobs "${THREADS}"; then
-  echo "[parity] FATAL: cargo build failed" >&2
+if ! "${RUST_PYTHON}" -c "import mokume._mokume"; then
+  echo "[parity] FATAL: RUST_PYTHON must point to an environment with mokume installed" >&2
   exit 1
 fi
 
@@ -83,7 +82,7 @@ run_one() {
     || { echo "[parity][${pxd}] ${name}: python FAILED" >&2; return 1; }
 
   echo "[parity][${pxd}] ${name}: rust"
-  "${RUST_BIN}" features2proteins \
+  "${RUST_PYTHON}" -m mokume quantify features2proteins \
     --parquet "${parquet}" "${sdrf_rs[@]}" --output "${rs_csv}" \
     --quant-method "${quant}" \
     --run-normalization "${run_norm}" \

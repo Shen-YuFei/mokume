@@ -8,7 +8,7 @@ common post-processing. The production CLI uses ``features_to_proteins``
 (i.e. ``QuantificationPipeline.run_dataset``) instead, so before these tests
 no coverage exercised ``run_pipeline`` against real data.
 
-The correctness oracle here is that, for the pure-Python backend,
+The correctness oracle here is that the pure-Python pipeline's
 ``run_pipeline(config)`` must produce a protein matrix identical (within
 1e-9) to ``QuantificationPipeline(config).run_dataset().get_level('proteins')``
 for the same config. A divergence would mean a flow loads or normalizes
@@ -22,6 +22,7 @@ with its SDRF), so the test is self-contained.
 import os
 
 import numpy as np
+import pandas as pd
 import pytest
 
 # Paths ---------------------------------------------------------------
@@ -55,6 +56,7 @@ def _make_config(quant_method: str) -> PipelineConfig:
     ``min_unique_peptides=1`` is used because the fixture is a tiny slice;
     the default of 2 leaves too few proteins to be a useful signal.
     """
+    manages_normalization = quant_method == "directlfq"
     return PipelineConfig(
         input=InputConfig(parquet=PARQUET, sdrf=SDRF),
         filtering=FilterConfig(
@@ -63,8 +65,8 @@ def _make_config(quant_method: str) -> PipelineConfig:
             remove_contaminants=True,
         ),
         normalization=NormalizationConfig(
-            run_method="median",
-            sample_method="globalMedian",
+            run_method="none" if manages_normalization else "median",
+            sample_method="none" if manages_normalization else "globalMedian",
         ),
         quantification=QuantificationConfig(method=quant_method),
     )
@@ -113,7 +115,7 @@ def _max_abs_diff(quant_method: str) -> float:
 
 
 class TestRunPipelineMatchesRunDataset:
-    """run_pipeline must equal run_dataset within 1e-9 (pure-Python backend)."""
+    """run_pipeline must equal run_dataset within 1e-9."""
 
     @pytest.mark.parametrize("quant_method", ["median", "sum"])
     def test_standard_flow_matches(self, quant_method):
@@ -123,6 +125,31 @@ class TestRunPipelineMatchesRunDataset:
         pytest.importorskip("directlfq")
         pytest.importorskip("polars")
         assert _max_abs_diff("directlfq") < 1e-9
+
+    def test_directlfq_ion_export_matches(self, tmp_path):
+        pytest.importorskip("directlfq")
+        pytest.importorskip("polars")
+        run_config = _make_config("directlfq")
+        reference_config = _make_config("directlfq")
+        run_config.output.export_ions = str(tmp_path / "run-ions.csv")
+        reference_config.output.export_ions = str(tmp_path / "reference-ions.csv")
+
+        run_pipeline(run_config)
+        QuantificationPipeline(reference_config).run_dataset()
+
+        pd.testing.assert_frame_equal(
+            pd.read_csv(run_config.output.export_ions),
+            pd.read_csv(reference_config.output.export_ions),
+        )
+
+    def test_directlfq_rejects_external_normalization(self):
+        config = _make_config("directlfq")
+        config.normalization.run_method = "median"
+
+        with pytest.raises(ValueError, match="manages normalization internally"):
+            run_pipeline(config)
+        with pytest.raises(ValueError, match="manages normalization internally"):
+            QuantificationPipeline(config).run_dataset()
 
 
 class TestRunPipelineProvenance:

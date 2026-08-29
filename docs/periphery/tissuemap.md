@@ -5,14 +5,12 @@ per-dataset tissue proteome atlas from QPX parquet outputs. It is intended for
 atlas-style tissue exploration and tissue-specificity scoring, not for standard
 protein quantification from a single experiment.
 
-!!! note "Periphery command — not a CLI subcommand"
-    `tissuemap` is **not** one of the four Rust CLI subcommands
-    (`features2proteins`, `features2peptides`, `peptides2protein`,
-    `correct-batches`). It lives only in the Python wheel as
-    `mokume.tissuemap(**kwargs)` (or `python -m mokume.commands.tissuemap`) and
+!!! note "Python periphery command"
+    `mokume tissuemap` is exposed by the wheel's unified CLI, but it is not a
+    Rust-native compute command. It dispatches to the Python periphery and
     requires the `tissuemap` extra:
     ```bash
-    pip install "mokume-rs[tissuemap]"
+    pip install "mokume[tissuemap]"
     ```
 
 ## When to Use TissueMap
@@ -29,7 +27,7 @@ If your goal is standard LFQ or TMT protein quantification, start with
 
 ## Expected Input Layout
 
-`scan_dir` can point to either:
+`--input` can point to either:
 
 - a single dataset directory containing `qpx_output/`
 - a parent directory containing multiple dataset directories, each with `qpx_output/`
@@ -39,38 +37,26 @@ with repeated `tmt_dataset` values.
 
 ## Quick Start
 
-```python
-import mokume
-
+```bash
 # Generate a default YAML template
-mokume.tissuemap(generate_config="tissuemap.yaml")
+mokume tissuemap --generate-config tissuemap.yaml
 
 # Run a single dataset directory
-mokume.tissuemap(
-    scan_dir="QPX_data/tissues-mq/PXD016999",
-    output_dir="./results",
-)
+mokume tissuemap --input QPX_data/tissues-mq/PXD016999 \
+    --outdir ./results
 
-# Run a parent directory containing multiple datasets
-mokume.tissuemap(
-    scan_dir="QPX_data/tissues-mq",
-    tmt_dataset=["PXD016999"],   # a list repeats --tmt-dataset
-    output_dir="./results",
-    n_jobs=8,
-)
+# Run a parent directory and identify a TMT dataset explicitly
+mokume tissuemap --input QPX_data/tissues-mq \
+    --tmt-dataset PXD016999 --outdir ./results --threads 8
 
 # Run with a custom YAML configuration
-mokume.tissuemap(
-    scan_dir="QPX_data/tissues-mq",
-    config="tissuemap.yaml",
-    output_dir="./results",
-)
+mokume tissuemap --input QPX_data/tissues-mq \
+    --config tissuemap.yaml --outdir ./results
 ```
 
-The wrapper maps keyword arguments to the command's flags (`key=value` →
-`--key value` with `_` rewritten to `-`; a list repeats the flag). The same
-command is runnable from a shell as `python -m mokume.commands.tissuemap
---scan-dir ... --output-dir ...`.
+The equivalent Python API is `mokume.tissuemap(**kwargs)`. Its wrapper validates
+keyword arguments and maps them to the command's exact flags; a `tmt_dataset`
+list repeats `--tmt-dataset`.
 
 ## What the Pipeline Does
 
@@ -91,15 +77,15 @@ The current TissueMap workflow is organized around per-dataset processing:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `scan_dir` | required unless `generate_config` | Dataset directory or parent directory containing datasets |
-| `output_dir` | `tissuemap_output` | Output directory for all results |
-| `config` | none | YAML configuration file |
-| `generate_config` | none | Write a default YAML template and exit |
-| `tmt_dataset` | auto | Mark one or more dataset IDs as TMT (list repeats the flag) |
-| `n_jobs` | `8` | Threads for dataset processing and embedding |
-| `dpi` | `250` | Plot resolution override |
-| `imputation_method` | config default | Imputation method used before embedding |
-| `embedding_method` | config default | `tsne` or `umap` |
+| `-i`, `--input` | required unless `--generate-config` | Dataset directory or parent directory containing datasets |
+| `-o`, `--outdir` | `tissuemap_output` | Output directory for all results |
+| `--config` | none | YAML configuration file |
+| `--generate-config` | none | Write a default YAML template and exit |
+| `--tmt-dataset` | auto | Mark one or more dataset IDs as TMT; repeat for multiple datasets |
+| `-t`, `--threads` | `8` | Threads for dataset processing and embedding |
+| `--dpi` | `250` | Plot resolution override |
+| `--impute-method` | config default | Imputation method used before embedding |
+| `--embedding-method` | config default | `tsne` or `umap` |
 
 ## Configuration Workflow
 
@@ -121,8 +107,8 @@ The generated YAML exposes the main configuration groups:
 - `plotting` — DPI, PDF export, marker plot controls
 - `output` — output directory
 
-Argument values such as `scan_dir`, `output_dir`, `n_jobs`, and `dpi` override
-the YAML file.
+CLI values such as `--input`, `--outdir`, `--threads`, and `--dpi`
+override the YAML file.
 
 ## Output Files
 
@@ -172,7 +158,7 @@ GMM-fitted thresholds) and the tissue-specific protein count per tissue.*
 
 ## Practical Tips
 
-- Use `features2proteins` for standard quantification workflows; use `tissuemap`
+- Use `quantify features2proteins` for standard quantification workflows; use `tissuemap`
   for atlas-style tissue analysis.
 - Start with the generated YAML template if you expect to rerun multiple datasets.
 - Pass a list to `tmt_dataset` when one or more datasets should be treated as TMT

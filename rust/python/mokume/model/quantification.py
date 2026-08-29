@@ -14,10 +14,8 @@ class QuantificationMethod(Enum):
 
     Attributes
     ----------
-    IBAQ : auto
-        Intensity-Based Absolute Quantification.
-        Divides the sum of peptide intensities by the number of
-        theoretically observable peptides.
+    PIBAQ : auto
+        Paralog-aware iBAQ with explicit shared-peptide allocation.
     TOP3 : auto
         Top3 quantification method.
         Uses the average of the three most intense peptides.
@@ -40,7 +38,7 @@ class QuantificationMethod(Enum):
         log2(sample / reference) per PSM, median-aggregated to protein.
     """
 
-    IBAQ = auto()
+    PIBAQ = auto()
     TOP3 = auto()
     TOPN = auto()
     ALL_PEPTIDES = auto()
@@ -86,7 +84,7 @@ class QuantificationMethod(Enum):
             Description of the quantification method.
         """
         descriptions = {
-            QuantificationMethod.IBAQ: "Intensity-Based Absolute Quantification",
+            QuantificationMethod.PIBAQ: "Paralog-aware iBAQ",
             QuantificationMethod.TOP3: "Average of top 3 most intense peptides",
             QuantificationMethod.TOPN: "Average of top N most intense peptides",
             QuantificationMethod.ALL_PEPTIDES: "Sum of all peptide intensities",

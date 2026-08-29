@@ -15,19 +15,19 @@ Design (matches ``peptides2protein_qc.py``: Rust writes the tables, Python
 only draws): we never recompute DE or the protein matrix here. We read the CSVs
 Rust produced and call the shared mokume plotting helpers, so the cells in the
 plots are the cells in the Rust CSVs. No mokume algorithm is duplicated -- a
-system ``pip install mokume-rs[plotting]`` provides the helpers.
+system ``pip install mokume[plotting]`` provides the helpers.
 
-argv contract (runnable via ``python -m mokume.commands.de_plots``):
+argv contract:
 
-    python -m mokume.commands.de_plots \
-        --protein-matrix <proteins.csv> \
-        --plot-dir <plots/> \
+    mokume plot de \
+        -p <proteins.csv> -o <plots/> \
         [--sdrf <sdrf.tsv>] \
-        [--volcano] [--heatmap] [--pca] \
-        [--log2fc-threshold 0.5] [--fdr-threshold 0.05] \
-        [--highlight-genes GENE1,GENE2] \
-        [--irs-remove-reference] \
+        [--volcano] [--heatmap] \
+        [--log2fc 0.5] [--fdr 0.05] \
+        [--highlight-protein PROTEIN] ... \
         [--contrast <key> <condA> <condB> <de_csv>] ...
+
+    mokume plot pca -p <proteins.csv> -s <sdrf.tsv> -o <pca.png>
 
 Each ``--contrast`` flag carries one contrast: its output-file key (Python's
 ``f"{condA}-{condB}"`` or the single-contrast ``--de-output`` stem), the two
@@ -43,76 +43,44 @@ from __future__ import annotations
 import argparse
 import sys
 
+from mokume.commands._de_cli import (
+    add_de_result_arguments,
+    add_protein_matrix_argument,
+)
 
-def _parse_args(argv):
+
+def _parse_args(argv, mode):
+    description = (
+        "Render a PCA-by-condition plot."
+        if mode == "pca"
+        else "Render volcano plots and DE heatmaps."
+    )
     parser = argparse.ArgumentParser(
-        prog="de_plots.py",
-        description="Render features2proteins DE plots from Rust-written CSVs.",
+        prog=f"mokume plot {mode}", description=description
     )
+    add_protein_matrix_argument(parser)
+    if mode == "pca":
+        parser.add_argument("-s", "--sdrf", metavar="<FILE>", required=True)
+        parser.add_argument("-o", "--output", metavar="<FILE>", required=True)
+        return parser.parse_args(argv)
+    if mode != "de":
+        raise SystemExit(f"unknown plot mode: {mode}")
+    parser.add_argument("-o", "--outdir", metavar="<DIR>", required=True)
     parser.add_argument(
-        "--protein-matrix",
-        required=True,
-        help="Protein intensity matrix CSV written by the Rust pipeline.",
-    )
-    parser.add_argument(
-        "--plot-dir",
-        required=True,
-        help="Output directory for the PNG plots (created if absent).",
-    )
-    parser.add_argument(
+        "-s",
         "--sdrf",
+        metavar="<FILE>",
         default=None,
-        help="SDRF file; required for heatmap (condition annotation) and PCA.",
+        help="Required for heatmap annotations.",
     )
-    parser.add_argument("--volcano", action="store_true", help="Render volcano plots.")
-    parser.add_argument("--heatmap", action="store_true", help="Render DE heatmaps.")
-    parser.add_argument(
-        "--pca", action="store_true", help="Render the PCA-by-condition plot."
-    )
-    parser.add_argument(
-        "--log2fc-threshold",
-        type=float,
-        default=0.5,
-        help="|log2FC| significance threshold (matches --de-log2fc).",
-    )
-    parser.add_argument(
-        "--fdr-threshold",
-        type=float,
-        default=0.05,
-        help="FDR significance threshold (matches --de-fdr).",
-    )
-    parser.add_argument(
-        "--highlight-genes",
-        default=None,
-        help="Comma-separated protein names to label on volcano plots.",
-    )
-    parser.add_argument(
-        "--irs-remove-reference",
-        action="store_true",
-        help=(
-            "Restrict the condition mapping to matrix columns "
-            "(mirrors stages._plot_sample_conditions when IRS removed reference)."
-        ),
-    )
-    parser.add_argument(
-        "--contrast",
-        nargs=4,
-        action="append",
-        default=[],
-        metavar=("KEY", "COND_A", "COND_B", "DE_CSV"),
-        help="One contrast: output key, condition A, condition B, DE result CSV.",
-    )
+    parser.add_argument("--volcano", action="store_true")
+    parser.add_argument("--heatmap", action="store_true")
+    add_de_result_arguments(parser)
     return parser.parse_args(argv)
 
 
-def _plot_sample_conditions(sample_to_condition, protein_df, irs_remove_reference):
-    """Mirror ``stages.MokumePostprocessing._plot_sample_conditions``.
-
-    Without ``--irs-remove-reference`` the full SDRF mapping is returned; with
-    it, only conditions for samples that survive as matrix columns are kept.
-    """
-    if not irs_remove_reference:
-        return sample_to_condition
+def _plot_sample_conditions(sample_to_condition, protein_df):
+    """Restrict SDRF conditions to samples present in the protein matrix."""
     protein_col = protein_df.columns[0]
     available = [column for column in protein_df.columns if column != protein_col]
     return {
@@ -134,20 +102,16 @@ def _generate_volcano_plots(pd, contrasts, plot_dir, args):
     """Mirror ``stages._generate_volcano_plots``: one volcano per contrast."""
     from mokume.plotting.differential_expression import plot_volcano
 
-    highlight = (
-        [gene.strip() for gene in args.highlight_genes.split(",") if gene.strip()]
-        if args.highlight_genes
-        else None
-    )
-    for key, _cond_a, _cond_b, de_csv in contrasts:
-        de_df = pd.read_csv(de_csv)
+    highlight = args.highlight_protein or None
+    for key, cond_a, cond_b, de_csv in contrasts:
+        de_df = pd.read_csv(de_csv, float_precision="round_trip")
         output_file = str(plot_dir / "volcano_{0}.png".format(key))
         plot_volcano(
             de_df,
-            log2fc_threshold=args.log2fc_threshold,
-            fdr_threshold=args.fdr_threshold,
+            log2fc_threshold=args.log2fc,
+            fdr_threshold=args.fdr,
             highlight_genes=highlight,
-            title="Volcano Plot: {0}".format(key),
+            title=f"Volcano Plot: {key} ({cond_a} vs {cond_b})",
             output_file=output_file,
         )
         print("Volcano plot saved to {0}".format(output_file))
@@ -161,8 +125,8 @@ def _generate_heatmap_plots(
 
     protein_col = protein_df.columns[0]
     for key, cond_a, cond_b, de_csv in contrasts:
-        de_df = pd.read_csv(de_csv)
-        sig = _significant_de_proteins(de_df, args.log2fc_threshold, args.fdr_threshold)
+        de_df = pd.read_csv(de_csv, float_precision="round_trip")
+        sig = _significant_de_proteins(de_df, args.log2fc, args.fdr)
         if sig.empty:
             print("Heatmap skipped for {0}: no significant proteins".format(key))
             continue
@@ -198,11 +162,10 @@ def _generate_heatmap_plots(
         print("Heatmap saved to {0}".format(output_file))
 
 
-def _generate_pca_plot(protein_df, sample_to_condition, plot_dir):
+def _generate_pca_plot(protein_df, sample_to_condition, output_file):
     """Mirror ``stages._generate_pca_plot``: one PCA figure over all conditions."""
     from mokume.plotting.differential_expression import plot_pca_conditions
 
-    output_file = str(plot_dir / "pca_conditions.png")
     plot_pca_conditions(
         protein_df,
         sample_to_condition,
@@ -212,8 +175,30 @@ def _generate_pca_plot(protein_df, sample_to_condition, plot_dir):
     print("PCA plot saved to {0}".format(output_file))
 
 
-def main(argv=None):
-    args = _parse_args(sys.argv[1:] if argv is None else argv)
+def _validate_de_args(args):
+    if not any((args.volcano, args.heatmap)):
+        raise SystemExit("DE plots aborted: select --volcano or --heatmap")
+    if (args.volcano or args.heatmap) and not args.contrast:
+        raise SystemExit(
+            "DE plots aborted: --volcano/--heatmap require at least one --contrast"
+        )
+    if args.heatmap and not args.sdrf:
+        raise SystemExit("DE plots aborted: --heatmap requires --sdrf")
+    if args.sdrf and not args.heatmap:
+        raise SystemExit("DE plots aborted: --sdrf only applies to --heatmap")
+    if args.highlight_protein and not args.volcano:
+        raise SystemExit("DE plots aborted: --highlight-protein requires --volcano")
+    if args.log2fc < 0:
+        raise SystemExit("DE plots aborted: --log2fc must be non-negative")
+    if not 0 <= args.fdr <= 1:
+        raise SystemExit("DE plots aborted: --fdr must be between 0 and 1")
+
+
+def main(argv=None, mode="de"):
+    """Run the DE plotting command."""
+    args = _parse_args(sys.argv[1:] if argv is None else argv, mode)
+    if mode == "de":
+        _validate_de_args(args)
 
     from pathlib import Path
 
@@ -224,7 +209,7 @@ def main(argv=None):
     except ImportError as exc:  # pragma: no cover - environment guard
         raise SystemExit(
             "DE plots aborted: pandas is not installed ({0}). "
-            "Install with: pip install mokume-rs[plotting]".format(exc)
+            "Install with: pip install mokume[plotting]".format(exc)
         )
 
     try:
@@ -232,31 +217,36 @@ def main(argv=None):
     except ImportError as exc:
         raise SystemExit(
             "DE plots aborted: mokume plotting dependencies are not installed "
-            "({0}). Install with: pip install mokume-rs[plotting]".format(exc)
+            "({0}). Install with: pip install mokume[plotting]".format(exc)
         )
 
     if not is_plotting_available():
         raise SystemExit(
             "DE plots aborted: mokume plotting dependencies (matplotlib, seaborn) "
-            "are not installed. Install with: pip install mokume-rs[plotting]"
+            "are not installed. Install with: pip install mokume[plotting]"
         )
-
-    plot_dir = Path(args.plot_dir)
-    plot_dir.mkdir(parents=True, exist_ok=True)
 
     protein_df = pd.read_csv(args.protein_matrix)
 
     # Sample -> condition mapping (heatmap annotation + PCA coloring) mirrors
-    # ``stages``: derive it from the SDRF, then apply the IRS-remove-reference
-    # restriction exactly as ``_plot_sample_conditions`` does.
+    # ``stages`` and is restricted to columns present in the protein matrix.
     sample_to_condition = {}
-    if args.sdrf:
+    if mode == "pca" or args.sdrf:
         from mokume.normalization.irs import detect_condition_from_sdrf
 
         sample_to_condition = detect_condition_from_sdrf(args.sdrf)
-    sample_to_condition = _plot_sample_conditions(
-        sample_to_condition, protein_df, args.irs_remove_reference
-    )
+        if not sample_to_condition:
+            raise SystemExit("DE plots aborted: the SDRF yielded no sample conditions")
+    sample_to_condition = _plot_sample_conditions(sample_to_condition, protein_df)
+
+    if mode == "pca":
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _generate_pca_plot(protein_df, sample_to_condition, str(output))
+        return 0
+
+    plot_dir = Path(args.outdir)
+    plot_dir.mkdir(parents=True, exist_ok=True)
 
     if args.volcano and args.contrast:
         _generate_volcano_plots(pd, args.contrast, plot_dir, args)
@@ -264,9 +254,6 @@ def main(argv=None):
         _generate_heatmap_plots(
             pd, args.contrast, protein_df, sample_to_condition, plot_dir, args
         )
-    if args.pca and sample_to_condition:
-        _generate_pca_plot(protein_df, sample_to_condition, plot_dir)
-
     return 0
 
 

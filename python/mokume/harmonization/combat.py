@@ -3,7 +3,7 @@ ComBat batch correction implementation.
 
 Wraps the existing batch correction logic and registers it with the PluginRegistry.
 
-Requires: pip install mokume[batch-correction]
+Requires: pip install mokume-py[batch-correction]
 """
 
 from typing import List, Optional

@@ -1,0 +1,20 @@
+{
+  "name": "bigbio",
+  "interface": {
+    "displayName": "BigBio"
+  },
+  "plugins": [
+    {
+      "name": "mokume",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mokume"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Sciences"
+    }
+  ]
+}

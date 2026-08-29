@@ -8,6 +8,7 @@ differences between experimental conditions.
 import numpy as np
 import pandas as pd
 
+from mokume.analysis._helpers import load_multipletests
 from mokume.analysis.ensemble_config import SUPPORTED_DE_METHODS
 from mokume.analysis.deqms import run_deqms
 from mokume.analysis.limma import run_limma
@@ -27,18 +28,6 @@ _DE_OPTION_DEFAULTS = {
     "n_boot": 100,
     "seed": 42,
 }
-
-
-def _multipletests():
-    """Lazily import statsmodels' ``multipletests`` (needs ``mokume[analysis]``)."""
-    try:
-        from statsmodels.stats.multitest import multipletests
-    except ImportError as exc:
-        raise ImportError(
-            "statsmodels is required for differential-expression FDR correction. "
-            "Install it with: pip install mokume[analysis]"
-        ) from exc
-    return multipletests
 
 
 class DifferentialExpression:
@@ -123,6 +112,10 @@ class DifferentialExpression:
             len(samples_b),
         )
         intensity = protein_df.set_index(protein_col)[sample_cols]
+        if np.isinf(intensity.to_numpy(dtype=float)).any():
+            raise ValueError(
+                "Differential-expression matrix contains an infinite intensity"
+            )
         log2_mat = _log2_transform(intensity, self.skip_log2)
         return log2_mat, samples_a, samples_b
 
@@ -224,62 +217,112 @@ class DifferentialExpression:
         return self._classify_and_sort(result)
 
     def _finalize_results(self, de_df: pd.DataFrame) -> pd.DataFrame:
-        """Apply BH/IHW FDR correction over ``pvalue``, then classify and sort.
+        """Apply the configured FDR correction over ``pvalue``, then classify.
 
-        Methods that already carry their own permutation-based FDR in
-        ``adj_pvalue`` (LimROTS, ROTS) call :meth:`_classify_and_sort` directly
-        instead, so their method-specific FDR is preserved rather than
-        overwritten with BH/IHW.
+        Supports BH (default), IHW, and the adaptive-pi0 procedures ``bky``
+        (Benjamini-Krieger-Yekutieli two-stage) and ``storey`` (q-values). The
+        adaptive procedures fall back to BH when pi0 cannot be trusted (see
+        :func:`mokume.analysis.adaptive_fdr.adjust_pvalues`). Methods that
+        already carry their own permutation-based FDR in ``adj_pvalue``
+        (LimROTS, ROTS) call :meth:`_classify_and_sort` directly instead.
         """
         pvalues = de_df["pvalue"].values
         valid = np.isfinite(pvalues)
         adj = np.full(len(pvalues), np.nan)
         if valid.any():
-            if self.fdr_method == "ihw":
-                adj[valid] = _ihw_correction(
-                    pvalues[valid],
-                    de_df.loc[valid],
-                    alpha=self.fdr_threshold,
-                )
-            else:
-                adj[valid] = _multipletests()(pvalues[valid], method="fdr_bh")[1]
+            adj[valid] = self._adjust_pvalues(pvalues[valid], de_df.loc[valid])
         de_df["adj_pvalue"] = adj
         return self._classify_and_sort(de_df)
 
+    def _adjust_pvalues(self, pvals: np.ndarray, de_valid: pd.DataFrame) -> np.ndarray:
+        """Dispatch FDR correction of finite p-values by ``self.fdr_method``.
+
+        IHW needs the DE table (for its covariate) and stays here; bh/bky/storey
+        — including the adaptive-pi0 fallback to BH — are shared with the
+        ensemble layer via :func:`mokume.analysis.adaptive_fdr.adjust_pvalues`.
+        """
+        if self.fdr_method == "ihw":
+            return _ihw_correction(pvals, de_valid, alpha=self.fdr_threshold)
+
+        from mokume.analysis.adaptive_fdr import (  # pylint: disable=import-outside-toplevel
+            adjust_pvalues,
+        )
+
+        adjusted, method_used = adjust_pvalues(
+            pvals, method=self.fdr_method, alpha=self.fdr_threshold
+        )
+        if method_used != self.fdr_method:
+            logger.info(
+                "DE FDR: requested %s, applied %s", self.fdr_method, method_used
+            )
+        return adjusted
+
+    def _resolve_log2fc_gate(self, de_df: pd.DataFrame) -> float:
+        """Return the effect-size gate: a fixed float, or data-driven for "auto".
+
+        A fixed ``|log2FC|`` gate calibrated for label-free is too strict for
+        compressed isobaric (TMT) ratios. Setting ``log2fc_threshold="auto"``
+        estimates the gate from the fold-change null so it tracks the data (a
+        compressed signal -> a lower gate), with no lower clamp — specificity is
+        FDR-controlled, so the gate is about biological relevance, not error
+        control. The estimator logs a warning if it had to fall back to its
+        fixed default because the null was not estimable.
+        """
+        thr: float | str = self.log2fc_threshold
+        if isinstance(thr, str):
+            if thr.lower() == "auto":
+                from mokume.analysis.effect_size_gate import (  # pylint: disable=import-outside-toplevel
+                    estimate_effect_size_gate,
+                )
+
+                gate = estimate_effect_size_gate(de_df["log2FC"].to_numpy(dtype=float))
+                logger.info("Auto effect-size gate estimated from data: %.3f", gate)
+                return gate
+        return float(thr)
+
     def _classify_and_sort(self, de_df: pd.DataFrame) -> pd.DataFrame:
-        """Label UP/DOWN/Unchanged from ``adj_pvalue``, sort, and log.
+        """Label tested rows UP/DOWN/Unchanged, then sort and log.
 
         Operates on the FDR estimate already present in ``adj_pvalue`` (whether
         written by :meth:`_finalize_results` or by a method's own permutation
         FDR), so it never re-adjusts p-values.
         """
-        # A protein that is absent (or imputed to a degenerate/extreme value)
-        # in one group can yield a non-finite log2 fold change, e.g. when an
-        # imputer overflows the intensity to +inf or produces a non-positive
-        # value. Such a fold change is undefined, so coerce it to NaN: this
-        # keeps it out of the significance classification below (NaN
-        # comparisons are False) instead of letting an Inf silently pass the
-        # ``|log2FC| > threshold`` filter and be counted as differential.
-        if "log2FC" in de_df.columns:
-            nonfinite = ~np.isfinite(de_df["log2FC"].to_numpy(dtype=float))
+        for column in ("pvalue", "adj_pvalue", "log2FC"):
+            if column not in de_df.columns:
+                continue
+            nonfinite = ~np.isfinite(de_df[column].to_numpy(dtype=float))
             if nonfinite.any():
                 logger.warning(
-                    "DE results: %d proteins had a non-finite log2FC "
-                    "(coerced to NaN, excluded from significance)",
+                    "DE results: %d proteins had a non-finite %s "
+                    "(coerced to NaN, marked NotTested)",
                     int(nonfinite.sum()),
+                    column,
                 )
-                de_df.loc[nonfinite, "log2FC"] = np.nan
+                de_df.loc[nonfinite, column] = np.nan
 
-        # Classify significance
-        de_df["significance"] = "Unchanged"
+        # Resolve the effect-size gate (fixed float, or data-driven when "auto").
+        gate = self._resolve_log2fc_gate(de_df)
+
+        tested = np.isfinite(de_df["adj_pvalue"].to_numpy(dtype=float)) & np.isfinite(
+            de_df["log2FC"].to_numpy(dtype=float)
+        )
+        if "pvalue" in de_df.columns:
+            tested &= np.isfinite(de_df["pvalue"].to_numpy(dtype=float))
+
+        # Classify significance. A non-estimable row is not evidence of no
+        # change, so it remains NotTested rather than becoming Unchanged.
+        de_df["significance"] = "NotTested"
+        de_df.loc[tested, "significance"] = "Unchanged"
         de_df.loc[
-            (de_df["adj_pvalue"] < self.fdr_threshold)
-            & (de_df["log2FC"] > self.log2fc_threshold),
+            tested
+            & (de_df["adj_pvalue"] < self.fdr_threshold)
+            & (de_df["log2FC"] > gate),
             "significance",
         ] = "UP"
         de_df.loc[
-            (de_df["adj_pvalue"] < self.fdr_threshold)
-            & (de_df["log2FC"] < -self.log2fc_threshold),
+            tested
+            & (de_df["adj_pvalue"] < self.fdr_threshold)
+            & (de_df["log2FC"] < -gate),
             "significance",
         ] = "DOWN"
 
@@ -288,13 +331,16 @@ class DifferentialExpression:
 
         n_up = (de_df["significance"] == "UP").sum()
         n_down = (de_df["significance"] == "DOWN").sum()
+        n_tested = int(tested.sum())
+        n_not_tested = len(de_df) - n_tested
         logger.info(
-            "DE results: %d proteins tested, %d UP, %d DOWN "
-            "(|log2FC| > %.1f, FDR < %.2f)",
-            len(de_df),
+            "DE results: %d proteins tested, %d NotTested, %d UP, %d DOWN "
+            "(|log2FC| > %.3f, FDR < %.2f)",
+            n_tested,
+            n_not_tested,
             n_up,
             n_down,
-            self.log2fc_threshold,
+            gate,
             self.fdr_threshold,
         )
 
@@ -365,7 +411,7 @@ def _ihw_optimize_weights(
         w_p = pvalues / np.clip(w_exp, 0.01, None)
         rej = np.zeros(n_bins)
         for idx, bval in enumerate(unique_bins):
-            _, adj, _, _ = _multipletests()(
+            _, adj, _, _ = load_multipletests()(
                 w_p[bins == bval], method="fdr_bh", alpha=alpha
             )
             rej[idx] = (adj < alpha).sum()
@@ -381,7 +427,7 @@ def _ihw_optimize_weights(
 
 def _bh_adjust(pvalues: np.ndarray) -> np.ndarray:
     """Apply Benjamini-Hochberg correction."""
-    return _multipletests()(pvalues, method="fdr_bh")[1]
+    return load_multipletests()(pvalues, method="fdr_bh")[1]
 
 
 def _ihw_adjust_valid(
@@ -431,8 +477,8 @@ def _ihw_correction(
     logger.info(
         "IHW: %d bins, BH=%d, IHW=%d (gain=%+d)",
         len(unique_bins),
-        _multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
+        load_multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
         n_ihw,
-        n_ihw - _multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
+        n_ihw - load_multipletests()(pvalues[valid], method="fdr_bh")[0].sum(),
     )
     return adj

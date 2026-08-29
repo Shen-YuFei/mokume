@@ -11,13 +11,13 @@ import click
 import numpy as np
 import pandas as pd
 
-from mokume.io.parquet import create_anndata, combine_ibaq_tsv_files
+from mokume.io.parquet import create_anndata, combine_pibaq_tsv_files
 from mokume.core.constants import (
     SAMPLE_ID_REGEX,
     SAMPLE_ID,
     PROTEIN_NAME,
-    IBAQ,
-    IBAQ_BEC,
+    PIBAQ,
+    PIBAQ_BEC,
 )
 from mokume.postprocessing.reshape import pivot_wider, pivot_longer
 from mokume.postprocessing.batch_correction import apply_batch_correction
@@ -73,25 +73,25 @@ def run_batch_correction(
     output: str,
     sample_id_column: str = SAMPLE_ID,
     protein_id_column: str = PROTEIN_NAME,
-    ibaq_raw_column: str = IBAQ,
-    ibaq_corrected_column: str = IBAQ_BEC,
+    pibaq_raw_column: str = PIBAQ,
+    pibaq_corrected_column: str = PIBAQ_BEC,
     export_anndata: bool = False,
 ) -> pd.DataFrame:
-    """Run batch correction on iBAQ data from TSV files."""
-    logger.info("Loading iBAQ data from TSV files in folder '%s'", folder)
+    """Run batch correction on piBAQ data from TSV files."""
+    logger.info("Loading piBAQ data from TSV files in folder '%s'", folder)
 
     try:
-        df_ibaq = combine_ibaq_tsv_files(
+        df_pibaq = combine_pibaq_tsv_files(
             folder, pattern=pattern, comment=comment, sep=sep
         )
     except Exception as e:
         raise ValueError(f"Failed to load input files: {str(e)}") from e
 
     df_wide = pivot_wider(
-        df_ibaq,
+        df_pibaq,
         row_name=protein_id_column,
         col_name=sample_id_column,
-        values=ibaq_raw_column,
+        values=pibaq_raw_column,
         fillna=True,
     )
 
@@ -100,7 +100,7 @@ def run_batch_correction(
 
     batch_ids = get_batch_id_from_sample_names(df_wide.columns)
 
-    logger.info("Applying batch correction to iBAQ values")
+    logger.info("Applying batch correction to piBAQ values")
     df_corrected = apply_batch_correction(df_wide, list(batch_ids), kwargs={})
 
     df_corrected = df_corrected.reset_index()
@@ -108,30 +108,30 @@ def run_batch_correction(
         df_corrected,
         row_name=protein_id_column,
         col_name=sample_id_column,
-        values=ibaq_corrected_column,
+        values=pibaq_corrected_column,
     )
 
-    df_ibaq = df_ibaq.merge(
+    df_pibaq = df_pibaq.merge(
         df_corrected_long, how="left", on=[sample_id_column, protein_id_column]
     )
 
     if output:
         try:
-            df_ibaq.to_csv(output, sep=sep, index=False)
+            df_pibaq.to_csv(output, sep=sep, index=False)
         except Exception as e:
             raise ValueError(f"Failed to save output file: {str(e)}") from e
 
     if export_anndata:
-        logger.info("Exporting raw and corrected iBAQ values to an AnnData object")
+        logger.info("Exporting raw and corrected piBAQ values to an AnnData object")
         output_path = Path(output)
         if not output_path.exists():
             raise FileNotFoundError(f"Output file {output} does not exist!")
         adata = create_anndata(
-            df_ibaq,
+            df_pibaq,
             obs_col=sample_id_column,
             var_col=protein_id_column,
-            value_col=ibaq_raw_column,
-            layer_cols=[ibaq_corrected_column],
+            value_col=pibaq_raw_column,
+            layer_cols=[pibaq_corrected_column],
         )
         adata_filename = output_path.with_suffix(".h5ad")
         try:
@@ -140,23 +140,25 @@ def run_batch_correction(
             raise ValueError(f"Failed to write AnnData object: {e}") from e
 
     logger.info("Batch correction completed...")
-    return df_ibaq
+    return df_pibaq
 
 
-@click.command("correct-batches", short_help="Batch effect correction for iBAQ values.")
+@click.command(
+    "correct-batches", short_help="Batch effect correction for piBAQ values."
+)
 @click.option(
     "-f",
     "--folder",
-    help="Folder that contains all TSV files with raw iBAQ values",
+    help="Folder that contains all TSV files with raw piBAQ values",
     required=True,
     default=None,
 )
 @click.option(
     "-p",
     "--pattern",
-    help="Pattern for the TSV files with raw iBAQ values",
+    help="Pattern for the TSV files with raw piBAQ values",
     required=True,
-    default="*ibaq.tsv",
+    default="*pibaq.tsv",
 )
 @click.option(
     "--comment",
@@ -168,7 +170,7 @@ def run_batch_correction(
 @click.option(
     "-o",
     "--output",
-    help="Output file name for the combined iBAQ corrected values",
+    help="Output file name for the combined piBAQ corrected values",
     required=True,
 )
 @click.option(
@@ -186,21 +188,21 @@ def run_batch_correction(
     default=PROTEIN_NAME,
 )
 @click.option(
-    "-ibaq",
-    "--ibaq_raw_column",
-    help="Name of the raw iBAQ column",
+    "-pibaq",
+    "--pibaq_raw_column",
+    help="Name of the raw piBAQ column",
     required=False,
-    default=IBAQ,
+    default=PIBAQ,
 )
 @click.option(
-    "--ibaq_corrected_column",
-    help="Name for the corrected iBAQ column",
+    "--pibaq_corrected_column",
+    help="Name for the corrected piBAQ column",
     required=False,
-    default=IBAQ_BEC,
+    default=PIBAQ_BEC,
 )
 @click.option(
     "--export_anndata",
-    help="Export the raw and corrected iBAQ values to an AnnData object",
+    help="Export the raw and corrected piBAQ values to an AnnData object",
     is_flag=True,
 )
 @click.pass_context
@@ -213,11 +215,11 @@ def correct_batches(
     output: str,
     sample_id_column: str,
     protein_id_column: str,
-    ibaq_raw_column: str,
-    ibaq_corrected_column: str,
+    pibaq_raw_column: str,
+    pibaq_corrected_column: str,
     export_anndata: bool,
 ):
-    """Correcting batch effects in iBAQ data."""
+    """Correct batch effects in piBAQ data."""
     run_batch_correction(
         folder=folder,
         pattern=pattern,
@@ -226,7 +228,7 @@ def correct_batches(
         output=output,
         sample_id_column=sample_id_column,
         protein_id_column=protein_id_column,
-        ibaq_raw_column=ibaq_raw_column,
-        ibaq_corrected_column=ibaq_corrected_column,
+        pibaq_raw_column=pibaq_raw_column,
+        pibaq_corrected_column=pibaq_corrected_column,
         export_anndata=export_anndata,
     )

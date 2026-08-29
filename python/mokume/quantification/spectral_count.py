@@ -1,14 +1,9 @@
-"""
-Spectral count protein quantification method.
+"""Count-based protein quantification methods.
 
-Protein abundance is measured as the number of identified spectra
-(PSMs) per protein per sample.  This is the simplest count-based
-quantification and serves as a baseline for label-free experiments.
-
-In the ``features2proteins`` pipeline the input is already aggregated to
-the canonical peptide, so the count returned there is the number of
-distinct peptides per (protein, sample) rather than a raw PSM count -- use
-it as an identification-depth indicator, not a strict spectral count.
+``SpectralCountQuantification`` counts PSM rows, whereas
+``PeptideCountQuantification`` counts distinct canonical peptide sequences.
+Keeping both contracts explicit prevents feature-level input from being
+misreported as a spectral count.
 
 References
 ----------
@@ -82,5 +77,36 @@ class SpectralCountQuantification(ProteinQuantificationMethod):
         else:
             group_cols = [protein_column, sample_column]
 
-        result = peptide_df.groupby(group_cols).size().reset_index(name="Intensity")
-        return result
+        return self._aggregate(peptide_df, group_cols, peptide_column)
+
+    @staticmethod
+    def _aggregate(
+        peptide_df: pd.DataFrame,
+        group_cols: list[str],
+        peptide_column: str,
+    ) -> pd.DataFrame:
+        """Aggregate PSM rows into one count per protein and sample or run."""
+        del peptide_column
+        return peptide_df.groupby(group_cols).size().reset_index(name="Intensity")
+
+
+@PluginRegistry.register("quantification", "peptide_count")
+class PeptideCountQuantification(SpectralCountQuantification):
+    """Count distinct canonical peptides per protein and sample."""
+
+    @property
+    def name(self) -> str:
+        return "PeptideCount"
+
+    @staticmethod
+    def _aggregate(
+        peptide_df: pd.DataFrame,
+        group_cols: list[str],
+        peptide_column: str,
+    ) -> pd.DataFrame:
+        """Count unique peptide sequences per protein and sample or run."""
+        return (
+            peptide_df.groupby(group_cols, dropna=False)[peptide_column]
+            .nunique()
+            .reset_index(name="Intensity")
+        )

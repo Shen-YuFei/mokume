@@ -57,7 +57,7 @@ def create_anndata(
     except ImportError as exc:
         raise ImportError(
             "anndata is required for AnnData/.h5ad export. "
-            "Install it with: pip install mokume[h5ad]"
+            "Install it with: pip install mokume-py[h5ad]"
         ) from exc
 
     if df.empty:
@@ -113,7 +113,7 @@ def create_anndata(
     return adata
 
 
-def combine_ibaq_tsv_files(
+def combine_pibaq_tsv_files(
     dir_path: str, pattern: str = "*", comment: str = "#", sep: str = "\t"
 ) -> pd.DataFrame:
     """

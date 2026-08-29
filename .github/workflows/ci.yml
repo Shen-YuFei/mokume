@@ -63,11 +63,15 @@ jobs:
       - name: Build and install wheel (debug)
         run: |
           pip install maturin pytest
-          maturin build
-          pip install target/wheels/mokume_rs-*.whl
-
-      - name: Install plotting extra for periphery tests
-        run: pip install "numpy" "pandas" "scipy" "matplotlib" "seaborn" "scikit-learn" "pyarrow"
+          wheel_dir="$(mktemp -d "$RUNNER_TEMP/mokume-wheels.XXXXXX")"
+          maturin build --out "$wheel_dir"
+          shopt -s nullglob
+          wheels=("$wheel_dir"/mokume-*.whl)
+          if (( ${#wheels[@]} != 1 )); then
+            printf 'Expected exactly one Mokume wheel, found %d\n' "${#wheels[@]}" >&2
+            exit 1
+          fi
+          pip install "${wheels[0]}[plotting,agentic]" pyarrow
 
       - name: Run the Python test suite
         run: pytest tests -v --tb=short

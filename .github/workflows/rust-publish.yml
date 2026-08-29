@@ -1,4 +1,4 @@
-# Publish the cross-platform `mokume-rs` wheels (+ sdist) to PyPI when a GitHub
+# Publish the cross-platform `mokume` wheels (+ sdist) to PyPI when a GitHub
 # Release is published -- the Rust-wheel counterpart of the pure-Python
 # `python-publish.yml`, using the same release-only trigger and the same
 # `PYPI_API_TOKEN` secret.
@@ -9,7 +9,7 @@
 # maturin matrix as `wheels.yml`, so a released wheel matches what CI built --
 # and then uploads them. To use PyPI Trusted Publishing (OIDC) instead of a
 # token, drop `password:` from the publish job and add `id-token: write`.
-name: rust-publish
+name: Publish mokume
 
 on:
   release:
@@ -93,8 +93,18 @@ jobs:
           python -m venv smoke
           if [ -f smoke/bin/activate ]; then . smoke/bin/activate; else . smoke/Scripts/activate; fi
           python -m pip install --upgrade pip
-          pip install --no-index --find-links dist mokume-rs
-          python -c "import mokume._mokume as m; print('mokume', m.version()); assert m.version()"
+          pip install "$(ls dist/*.whl)"
+          python -c "import mokume; print('mokume', mokume.version(), 'proteases', len(mokume.protease_catalog())); assert mokume.version() and mokume.protease_catalog()"
+          mokume --version
+          mokume quantify features2proteins \
+            --parquet tests/example/feature_wide.parquet \
+            --output memory-smoke.tsv \
+            --quant-method sum \
+            --run-normalization none \
+            --sample-normalization none \
+            --min-unique 0 \
+            --threads 24 \
+            --memory 1GB
 
       - uses: actions/upload-artifact@v7
         with:
@@ -117,9 +127,8 @@ jobs:
           name: sdist
           path: rust/dist/*.tar.gz
 
-  # Gather every platform wheel + the sdist and upload them under `mokume-rs`.
-  # `PYPI_API_TOKEN` must be able to publish `mokume-rs` (an account-scoped
-  # token, or a mokume-rs project token stored under this name).
+  # Gather every platform wheel + the sdist and upload them under `mokume`.
+  # `PYPI_API_TOKEN` must be able to publish the existing `mokume` project.
   publish:
     name: publish to PyPI
     needs: [build, sdist]

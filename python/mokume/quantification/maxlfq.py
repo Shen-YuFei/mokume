@@ -9,7 +9,7 @@ If DirectLFQ is not available, it falls back to a built-in implementation
 that uses peptide trace alignment (inspired by DirectLFQ).
 
 To install DirectLFQ for best results:
-    pip install mokume[directlfq]
+    pip install mokume-py[directlfq]
 
 The built-in fallback implementation:
 - Aligns peptide intensity traces within each protein using median shifts
@@ -330,7 +330,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
     not available, it falls back to a built-in implementation.
 
     **Recommended:** Install DirectLFQ for best results:
-        pip install mokume[directlfq]
+        pip install mokume-py[directlfq]
 
     Parameters
     ----------
@@ -372,7 +372,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
     DirectLFQ typically provides slightly better accuracy than the built-in
     implementation. If you need the most accurate results, install DirectLFQ:
 
-        pip install mokume[directlfq]
+        pip install mokume-py[directlfq]
 
     The built-in implementation uses peptide trace alignment (inspired by
     DirectLFQ) and achieves ~0.95 correlation with DIA-NN's MaxLFQ values.
@@ -425,7 +425,7 @@ class MaxLFQQuantification(ProteinQuantificationMethod):
             else:
                 logger.info(
                     "MaxLFQ: Using built-in implementation "
-                    "(install 'directlfq' for better accuracy: pip install mokume[directlfq])"
+                    "(install 'directlfq' for better accuracy: pip install mokume-py[directlfq])"
                 )
 
     @property

@@ -1,6 +1,6 @@
 # Full Pipeline
 
-The pure-Python package (`pip install mokume`) exposes an object-oriented pipeline
+The pure-Python package (`pip install mokume-py`) exposes an object-oriented pipeline
 API. You build one `PipelineConfig` — grouping input, filtering, normalization,
 quantification, IRS, batch correction, imputation, and DE into nested dataclasses
 — and run it through `run_pipeline` or `QuantificationPipeline`. The result is a
@@ -33,7 +33,6 @@ imputation.
         BatchCorrectionConfig,
         IRSConfig,
         DEConfig,
-        RuntimeConfig,
     )
 
     warnings.filterwarnings("ignore")
@@ -54,7 +53,6 @@ imputation.
         batch=BatchCorrectionConfig(enabled=False),
         irs=IRSConfig(enabled=False),
         de=DEConfig(enabled=False),
-        runtime=RuntimeConfig(backend="python"),
     )
 
     dataset = run_pipeline(config)
@@ -146,41 +144,51 @@ The dataset materializes each level on demand and can pivot or export it.
     need `to_wide_matrix` on it. Use `to_wide_matrix` for the *long* levels such as
     `peptides`.
 
-## Switching to the Rust backend
+## Runtime resources
 
-`RuntimeConfig(backend="rust")` routes the features-to-proteins path through the
-compiled `mokume-rs` kernel instead of the pure-Python flows, keeping the same
-`QpxDataset` result contract. The post-processing stages (imputation, batch
-correction, DE) still run in Python on both backends.
+`RuntimeConfig` controls the DuckDB resource hints used by the pure-Python
+pipeline. It does not select a computation implementation.
 
 === "Python (package)"
 
     ```python
     from mokume.pipeline.config import RuntimeConfig
 
-    config.runtime = RuntimeConfig(backend="rust")
-    dataset = run_pipeline(config)     # same QpxDataset, kernel-computed proteins
+    config.runtime = RuntimeConfig(duckdb_memory="80GB", duckdb_threads=24)
+    dataset = run_pipeline(config)
     ```
 
-!!! warning "The Rust backend needs the wheel"
+## Choosing the computation package
 
-    `backend="rust"` imports the compiled extension `mokume._mokume`. If only the
-    pure-Python package is installed, `run_pipeline` stops with
-    *"The Rust backend requires the mokume-rs wheel (mokume._mokume), which is not
-    installed in this environment. Install mokume-rs or use backend='python'."*
-    Install `mokume-rs` alongside the package to enable it, or keep
-    `backend="python"` (the default). `RuntimeConfig` also carries the DuckDB
-    resource hints `duckdb_memory` (e.g. `"80GB"`) and `duckdb_threads`, but
-    those hints are Python-backend settings. The hybrid Rust backend rejects
-    them because an in-process kernel call cannot reliably apply their
-    documented per-run limits. It likewise rejects ion alignment other than
-    `None` or `"none"` before invoking the extension.
+`run_pipeline` belongs to the pure-Python `mokume-py` distribution and always uses
+its Python implementation. To use the Rust implementation, install `mokume`
+in a separate environment and call its Rust-backed API directly:
+
+=== "Python (wheel)"
+
+    ```python
+    import mokume
+
+    mokume.features2proteins(
+        parquet="features.parquet",
+        sdrf="experiment.sdrf.tsv",
+        output="proteins.csv",
+        quant_method="maxlfq",
+        threads=24,
+    )
+    ```
+
+!!! warning "Install one distribution per environment"
+
+    `mokume` and `mokume-py` both provide the `mokume` import package, so they
+    overwrite each other's files when installed together. Select the
+    distribution at installation time rather than through `RuntimeConfig`.
 
 ## What's next
 
-- [CLI vs Wheel](../cli-vs-wheel.md) — when to use the kernel, the wheel, or the
-  package.
+- [Rust Wheel](../rust-wheel.md) — use the Rust kernel from Python or the
+  installed console command.
 - [Differential Expression](differential-expression.md) — run DE on the
-  `QpxDataset`, including the agentic `optimize_from_dataset` entry point.
+  `QpxDataset` or hand its protein matrix to the separate Mokume Plugin.
 - [Python API (package)](../reference/python-api-package.md) — the full generated
   reference for `PipelineConfig`, `QpxDataset`, and the pipeline classes.

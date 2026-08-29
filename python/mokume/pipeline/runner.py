@@ -24,7 +24,7 @@ logger = get_logger("mokume.pipeline.runner")
 # Map input_level -> flow module.
 # Each flow module must have a run(method, config) -> QpxDataset function.
 FLOW_DISPATCH: Dict[str, object] = {
-    "peptides": flows.standard,  # iBAQ, TopN, sum, median
+    "peptides": flows.standard,  # piBAQ, TopN, sum, median
     "psms": flows.ratio,  # Ratio quantification (PS protocol)
     "peptides_raw": flows.directlfq,  # DirectLFQ (handles its own normalization)
 }
@@ -54,20 +54,33 @@ def run_pipeline(config: PipelineConfig) -> QpxDataset:
     quant_method_name = config.quantification.method.lower()
     logger.info(f"Starting pipeline with quant_method={quant_method_name}")
 
+    if quant_method_name in {"directlfq", "ratio", "peptide_count"} and (
+        config.normalization.run_method.lower() != "none"
+        or config.normalization.sample_method.lower() != "none"
+    ):
+        reason = (
+            "does not use intensity normalization"
+            if quant_method_name == "peptide_count"
+            else "manages normalization internally"
+        )
+        raise ValueError(
+            f"{quant_method_name} {reason}; use run/sample normalization 'none'"
+        )
+    if quant_method_name == "peptide_count" and config.irs.enabled:
+        raise ValueError("peptide_count quantification cannot apply IRS")
+
     if config.input.msstats and quant_method_name == "ratio":
         raise ValueError(
             "Ratio quantification requires PSM-level QPX input; "
             "MSstats feature tables do not contain the required PSM evidence"
         )
-
-    # The Rust backend routes every method through the kernel flow. The kernel
-    # owns method dispatch via ``--quant-method``, so it needs neither the
-    # Python plugin registry nor an input_level lookup.
-    if config.runtime.backend == "rust":
-        import mokume.pipeline.flows.rust as _rust_flow
-
-        dataset = _rust_flow.run(None, config)
-        return _postprocess(dataset, config)
+    if (
+        config.quantification.sample_correlation_threshold is not None
+        and not config.input.sdrf
+    ):
+        raise ValueError("Sample correlation filtering requires an SDRF file")
+    if config.output.export_ions and quant_method_name != "directlfq":
+        raise ValueError("export_ions is supported only by the directlfq pipeline")
 
     # Ensure built-in methods are registered
     import mokume.quantification  # noqa: F401
@@ -138,6 +151,10 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
         dataset.proteins = protein_df
         dataset.record_step("irs_normalization", method=config.irs.stat)
 
+    protein_df = _apply_sample_correlation_filter(
+        protein_df, norm_stage, dataset, config
+    )
+
     # Coverage filter
     if config.quantification.coverage_threshold is not None:
         protein_df = norm_stage.apply_coverage_filter(protein_df, dataset=dataset)
@@ -148,17 +165,13 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
             rows_out=len(protein_df),
         )
 
-    # Imputation (after the coverage filter, before batch correction). This
-    # mirrors QuantificationPipeline.run(): the Rust kernel only loads, filters,
-    # normalizes and quantifies, so imputation runs in Python for both backends.
+    # Imputation (after the coverage filter, before batch correction)
     if config.imputation.enabled:
         protein_df = ImputationStage(config).impute(protein_df)
         dataset.proteins = protein_df
         dataset.record_step("imputation", method=config.imputation.method)
 
-    # Batch correction. The Rust kernel does not apply batch correction, so this
-    # pass runs in Python for both backends (after imputation), keeping the two
-    # backends on an identical post-processing path.
+    # Batch correction (after imputation)
     if config.batch.enabled:
         protein_df = post_stage.apply_batch_correction(protein_df, dataset=dataset)
         dataset.proteins = protein_df
@@ -198,6 +211,22 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
         _export_anndata(dataset, config)
 
     return dataset
+
+
+def _apply_sample_correlation_filter(
+    protein_df, norm_stage, dataset: QpxDataset, config: PipelineConfig
+):
+    """Apply matrix QC and record it only when the option is enabled."""
+    threshold = config.quantification.sample_correlation_threshold
+    filtered = norm_stage.apply_sample_correlation_filter(protein_df)
+    if threshold is not None:
+        dataset.proteins = filtered
+        dataset.record_step(
+            "sample_correlation_filter",
+            threshold=threshold,
+            columns_out=len(filtered.columns) - 1,
+        )
+    return filtered
 
 
 def _export_anndata(dataset: QpxDataset, config: PipelineConfig) -> None:

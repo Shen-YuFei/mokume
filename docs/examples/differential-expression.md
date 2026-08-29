@@ -4,13 +4,13 @@ Test proteins for abundance changes between two conditions. mokume offers severa
 DE methods — `limma`, `deqms`, `proda`, `limrots`, `rots`, a top-k `ensemble`, and
 `auto` (pick a method from the data shape) — reachable from three surfaces:
 
-- the kernel's `features2proteins --de ...` flags (single-sourced Rust);
+- the kernel's `mokume quantify features2proteins` DE flags (single-sourced Rust);
 - the pure-Python `mokume.analysis.DifferentialExpression` class and the
   standalone `run_deqms` / `run_limma` / `run_limrots` / `run_proda` functions;
-- the LLM-free agentic optimizer, which searches preprocessing + DE choices for
-  you.
+- the Mokume Plugin, which binds traceable evidence and evaluates bounded
+  preprocessing + DE candidates through the Rust kernel.
 
-## (a) Kernel DE via `features2proteins --de`
+## (a) Kernel DE via `mokume quantify features2proteins`
 
 The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
 (named from `--de-output`). A contrast is written `GroupA vs GroupB` (or
@@ -20,22 +20,22 @@ The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
 
     ```bash
     # One inline contrast, limma, one result CSV per contrast
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \
         --quant-method maxlfq \
-        --de --de-contrasts "NASH vs HL" \
+        --de-contrast "NASH" "HL" \
         --de-method limma \
         --de-fdr-method bh \
         --de-output de_results.csv
 
     # Many contrasts from a TSV file (columns: group1<TAB>group2)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \
-        --de --de-contrasts-file contrasts.tsv \
+        --de-contrast-file contrasts.tsv \
         --de-method ensemble \
         --de-output de_results.csv
     ```
@@ -54,14 +54,13 @@ The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
     ```python
     import mokume
 
-    # de_contrasts takes a list; each entry is "GroupA vs GroupB".
+    # de_contrast takes a list of two-item condition pairs.
     mokume.features2proteins(
         parquet="features.parquet",
         output="proteins.csv",
         sdrf="experiment.sdrf.tsv",
         quant_method="maxlfq",
-        de=True,
-        de_contrasts=["NASH vs HL"],
+        de_contrast=[("NASH", "HL")],
         de_method="limma",
         de_fdr_method="bh",
         de_output="de_results.csv",
@@ -72,8 +71,7 @@ The kernel quantifies, then runs DE per contrast and writes one CSV per contrast
         parquet="features.parquet",
         output="proteins.csv",
         sdrf="experiment.sdrf.tsv",
-        de=True,
-        de_contrasts_file="contrasts.tsv",
+        de_contrast_file="contrasts.tsv",
         de_method="ensemble",
         de_output="de_results.csv",
     )
@@ -97,7 +95,7 @@ for the full column reference.
 
 ## (b) Python `DifferentialExpression` and the `run_*` functions
 
-The pure-Python package (`pip install mokume`) exposes DE directly on an
+The pure-Python package (`pip install mokume-py`) exposes DE directly on an
 in-memory protein matrix, so you control the sample-to-condition mapping. This
 runs fully against the fixture.
 
@@ -196,68 +194,20 @@ sample lists:
     is no runtime R dependency and no R-to-Python fallback; the Python path always
     runs.
 
-## (c) Agentic optimization (no LLM required)
+## (c) Mokume Plugin
 
-The `mokume.agentic` optimizer searches normalization, imputation, and DE choices
-for each contrast and reports the best-scoring configuration. Set
-`use_llm=False` to run a purely rule-based search with no API key.
+Install `mokume[agentic]` and the [Mokume Plugin](../user-guide/agentic-plugin.md),
+then ask the host to use `$mokume:analyze-proteomics`. Provide absolute paths
+for the protein matrix, SDRF, and output directory plus the contrast and known
+acquisition metadata.
 
-=== "Python (package)"
+The plugin first calls `mokume.inspect_dataset` with the requested two-condition
+contrast. It returns a typed profile scoped to those conditions, policy
+diagnostics, compatible benchmark evidence, and a candidate contract.
+The host then sends an exact recommendation block to
+`mokume.evaluate_recommendation`, which validates it and runs the Rust-backed
+normalization, imputation, and DE methods.
 
-    ```python
-    import warnings
-    from mokume.pipeline.features_to_proteins import QuantificationPipeline
-    from mokume.pipeline.config import (
-        PipelineConfig,
-        InputConfig,
-        QuantificationConfig,
-    )
-    from mokume.agentic.optimizer import optimize
-    from mokume.agentic.config import AgenticConfig
-
-    warnings.filterwarnings("ignore")
-
-    config = PipelineConfig(
-        input=InputConfig(
-            parquet="python/tests/example/feature_wide.parquet",
-            sdrf="python/tests/example/PXD020192.sdrf.tsv",
-        ),
-        quantification=QuantificationConfig(method="maxlfq"),
-    )
-    proteins = QuantificationPipeline(config).run()
-
-    samples = [c for c in proteins.columns if c != proteins.columns[0]]
-    half = len(samples) // 2
-    sample_to_condition = {
-        s: ("groupA" if i < half else "groupB")
-        for i, s in enumerate(samples)
-    }
-
-    agentic = AgenticConfig(
-        use_llm=False,                    # rule-based search, no API key
-        contrasts=[("groupA", "groupB")],
-        max_rounds=2,
-        max_experiments=4,
-        output_dir="./optimization",
-    )
-    states = optimize(proteins, sample_to_condition, agentic)
-
-    # states is keyed by "<A>_vs_<B>"; each value is an AgenticState.
-    state = states["groupA_vs_groupB"]
-    print("best score:", state.best_score)
-    print("experiments run:", state.total_experiments)
-    print("converged:", state.converged)
-    ```
-
-If you already have a `QpxDataset` (see the [Full Pipeline](pipeline.md) page),
-call `optimize_from_dataset` instead — it pulls the wide protein matrix off the
-dataset and delegates to `optimize`:
-
-=== "Python (package)"
-
-    ```python
-    from mokume.agentic.optimizer import optimize_from_dataset
-
-    dataset = QuantificationPipeline(config).run_dataset()
-    states = optimize_from_dataset(dataset, sample_to_condition, agentic)
-    ```
+Supply a ground-truth protein list for a spike-in benchmark to enable Score A
+ranking. Without ground truth, the result is exploratory and unranked: no
+candidate is labelled best.

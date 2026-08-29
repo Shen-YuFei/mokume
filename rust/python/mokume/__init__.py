@@ -10,31 +10,42 @@ operations the kernel does not provide.
 
 This is the PyO3/maturin layout used by projects such as polars and
 pydantic-core (Python imports a compiled Rust extension). The compute commands
-run *in-process* (no subprocess) through the same clap parsing + dispatch the
-standalone CLI binary uses, so the flag handling stays single-sourced in Rust.
+run *in-process* (no subprocess) through the same clap parsing + dispatch as the
+installed console command, so the flag handling stays single-sourced in Rust.
 
-Each wrapper maps keyword arguments to CLI flags (``key=value`` -> ``--key
-value`` with ``_`` rewritten to ``-``; ``key=True`` -> ``--key``; a list value
-repeats the flag once per item; ``None`` / ``False`` are skipped). For full
-control, call :func:`run` with an explicit argument list.
+Each wrapper validates keyword names and translates them according to that
+command's real CLI contract, including CSV versus repeatable options and
+reverse booleans. For full control, call :func:`run` with explicit argv.
 """
 
 import importlib
 import importlib.metadata
+import sys
 import warnings
 
-from mokume._mokume import run as _run
-from mokume._mokume import version
+flags_for = getattr(importlib.import_module(f"{__name__}._command_flags"), "flags_for")
+_NATIVE_EXTENSION = importlib.import_module("mokume._mokume")
+_differential_expression = getattr(_NATIVE_EXTENSION, "differential_expression")
+_impute_matrix = getattr(_NATIVE_EXTENSION, "impute_matrix")
+normalize_matrix = getattr(_NATIVE_EXTENSION, "normalize_matrix")
+_native_run = getattr(_NATIVE_EXTENSION, "run")
+version = getattr(_NATIVE_EXTENSION, "version")
+_pibaq_digest_request = getattr(_NATIVE_EXTENSION, "pibaq_digest_request")
+_native_run_cli = getattr(_NATIVE_EXTENSION, "run_cli")
+_native_run_cli_with_pibaq_digest = getattr(
+    _NATIVE_EXTENSION, "run_cli_with_pibaq_digest"
+)
+_native_run_with_pibaq_digest = getattr(_NATIVE_EXTENSION, "run_with_pibaq_digest")
 
-# `mokume-rs` (this Rust kernel) and `mokume` (pure Python) both install the
+# `mokume` (this Rust kernel) and `mokume-py` (pure Python) both install the
 # `mokume` import package, so pip silently overwrites files when both are
 # present. Warn so the user keeps only one.
 try:
-    importlib.metadata.distribution("mokume")
+    importlib.metadata.distribution("mokume-py")
     warnings.warn(
-        "Both 'mokume-rs' (Rust kernel) and 'mokume' (pure-Python) are installed; "
+        "Both 'mokume' (Rust kernel) and 'mokume-py' (pure-Python) are installed; "
         "they share the 'mokume' import name and overwrite each other's files. "
-        "Keep only one: uninstall the other (`pip uninstall mokume`).",
+        "Keep only one: uninstall the other (`pip uninstall mokume-py`).",
         RuntimeWarning,
         stacklevel=2,
     )
@@ -48,10 +59,14 @@ __all__ = [
     "features2proteins",
     "peptides2protein",
     "correct_batches",
+    "normalize_matrix",
+    "impute_matrix",
+    "differential_expression",
+    "protease_catalog",
     "tsne_visualization",
     "tissuemap",
     "peptides2protein_qc",
-    "peptides2protein_ibaq",
+    "peptides2protein_pibaq",
     "de_plots",
     "interactive_report",
     "qc_report",
@@ -87,28 +102,70 @@ def _bootstrap():
     _BOOTSTRAPPED.append(True)
 
 
-def _flags(kwargs):
-    """Translate ``key=value`` keyword arguments into a CLI flag list."""
-    args = []
-    for key, value in kwargs.items():
-        if value is None or value is False:
-            continue
-        flag = "--" + key.replace("_", "-")
-        if value is True:
-            args.append(flag)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                args.append(flag)
-                args.append(str(item))
-        else:
-            args.append(flag)
-            args.append(str(value))
-    return args
-
-
 def _build_args(command, kwargs):
     """Prefix the subcommand name to the flags built from ``kwargs``."""
-    return [command, *_flags(kwargs)]
+    path = (
+        ["quantify", command]
+        if command in {"features2peptides", "features2proteins", "peptides2protein"}
+        else [command]
+    )
+    return [*path, *flags_for(command, kwargs)]
+
+
+def _prepare_pibaq_digest(args):
+    request = _pibaq_digest_request(args)
+    if request is None:
+        return None
+    module = importlib.import_module("mokume._pibaq_digest")
+    return getattr(module, "build_pibaq_digest")(request)
+
+
+def _pibaq_provenance_tuple(provenance):
+    return (
+        provenance["pyopenms_version"],
+        provenance["enzyme"],
+        provenance["catalog_hash"],
+        provenance["min_aa"],
+        provenance["max_aa"],
+        provenance["missed_cleavages"],
+    )
+
+
+def _run(args):
+    args = list(args)
+    try:
+        payload = _prepare_pibaq_digest(args)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"piBAQ digestion failed: {exc}") from None
+    if payload is None:
+        result = _native_run(args)
+    else:
+        accession_peptides, provenance = payload
+        result = _native_run_with_pibaq_digest(
+            args,
+            accession_peptides,
+            _pibaq_provenance_tuple(provenance),
+        )
+    entrypoint = importlib.import_module("mokume.__main__")
+    getattr(entrypoint, "_render_requested_pibaq_qc")(args, sys.modules[__name__])
+    return result
+
+
+def _run_cli(args):
+    args = list(args)
+    try:
+        payload = _prepare_pibaq_digest(args)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"piBAQ digestion failed: {exc}", file=sys.stderr)
+        return 1
+    if payload is None:
+        return _native_run_cli(args)
+    accession_peptides, provenance = payload
+    return _native_run_cli_with_pibaq_digest(
+        args,
+        accession_peptides,
+        _pibaq_provenance_tuple(provenance),
+    )
 
 
 def run(args):
@@ -116,30 +173,60 @@ def run(args):
 
     Example::
 
-        mokume.run(["features2proteins", "--parquet", "x.parquet",
+        mokume.run(["quantify", "features2proteins", "--parquet", "x.parquet",
                     "--output", "y.csv"])
     """
     _run(list(args))
 
 
+def protease_catalog():
+    """Return every protease registered by the installed pyOpenMS runtime."""
+    module = importlib.import_module("mokume._pibaq_digest")
+    return getattr(module, "installed_protease_catalog")()
+
+
 def features2peptides(**kwargs):
-    """Run ``features2peptides`` (feature parquet -> peptide-level output)."""
+    """Run ``quantify features2peptides`` (feature parquet -> peptide output)."""
     _run(_build_args("features2peptides", kwargs))
 
 
 def features2proteins(**kwargs):
-    """Run ``features2proteins`` (feature parquet -> protein matrix, optional DE)."""
+    """Run ``quantify features2proteins`` from QPX or MSstats input."""
     _run(_build_args("features2proteins", kwargs))
 
 
 def peptides2protein(**kwargs):
-    """Run ``peptides2protein`` (peptide-level input -> protein quantities)."""
+    """Run ``quantify peptides2protein`` (peptide input -> protein quantities)."""
     _run(_build_args("peptides2protein", kwargs))
 
 
 def correct_batches(**kwargs):
-    """Run ``correct-batches`` (ComBat batch-effect correction on iBAQ output)."""
+    """Run ``correct-batches`` (ComBat batch-effect correction on piBAQ output)."""
     _run(_build_args("correct-batches", kwargs))
+
+
+def impute_matrix(values, method, **options):
+    """Run matrix-level Rust imputation without QPX I/O."""
+    return _impute_matrix(values, method, options or None)
+
+
+def differential_expression(proteins, values, n_a, n_b, method, **options):
+    """Run matrix-level Rust differential expression without QPX I/O.
+
+    ``values`` is a row-major linear-intensity matrix whose first ``n_a``
+    columns are group A and next ``n_b`` columns are group B. Missing cells may
+    be ``None`` or non-finite floats. ``peptide_counts`` is required for DEqMS
+    and ensembles containing DEqMS. Other options include ``ensemble_methods``,
+    thresholds, condition labels, and ``threads``.
+    """
+    return _differential_expression(
+        list(proteins),
+        values,
+        n_a,
+        n_b,
+        method,
+        options or None,
+    )
 
 
 def _run_command(module_name, argv):
@@ -166,22 +253,22 @@ def _run_command(module_name, argv):
 
 def tsne_visualization(**kwargs):
     """Render the t-SNE plot for a folder of protein files (``plotting`` extra)."""
-    _run_command("visualize", _flags(kwargs))
+    _run_command("visualize", flags_for("visualize", kwargs))
 
 
 def tissuemap(**kwargs):
     """Run the per-dataset tissue proteome analysis (``tissuemap`` extra)."""
-    _run_command("tissuemap", _flags(kwargs))
+    _run_command("tissuemap", flags_for("tissuemap", kwargs))
 
 
 def peptides2protein_qc(**kwargs):
-    """Render the iBAQ QC report from a protein table (``plotting`` extra)."""
-    _run_command("peptides2protein_qc", _flags(kwargs))
+    """Render the piBAQ QC report from a protein table (``plotting`` extra)."""
+    _run_command("peptides2protein_qc", flags_for("peptides2protein_qc", kwargs))
 
 
-def peptides2protein_ibaq(**kwargs):
-    """Compute iBAQ in pure Python for non-Rust-ported enzymes (``ibaq`` extra)."""
-    _run_command("peptides2protein_ibaq", _flags(kwargs))
+def peptides2protein_pibaq(**kwargs):
+    """Run the native-backed piBAQ compatibility command."""
+    _run_command("peptides2protein_pibaq", flags_for("peptides2protein_pibaq", kwargs))
 
 
 def de_plots(args):
@@ -189,7 +276,7 @@ def de_plots(args):
 
     Takes an explicit argument list (the per-contrast ``--contrast KEY A B CSV``
     flag repeats, which keyword arguments cannot express). See
-    ``python -m mokume.commands.de_plots --help``.
+    ``mokume plot de --help``.
     """
     _run_command("de_plots", args)
 
@@ -198,7 +285,7 @@ def interactive_report(args):
     """Render the features2proteins interactive HTML report from kernel CSVs.
 
     Takes an explicit argument list (see ``de_plots`` for why) — run
-    ``python -m mokume.commands.interactive_report --help`` for the flags.
+    ``mokume interactive-report --help`` for the flags.
     """
     _run_command("interactive_report", args)
 
@@ -230,7 +317,9 @@ def qc_report(
         from mokume.normalization.irs import detect_condition_from_sdrf
 
         sample_to_condition = detect_condition_from_sdrf(sdrf)
-    de_df = pd.read_csv(de_results) if de_results else None
+    de_df = (
+        pd.read_csv(de_results, float_precision="round_trip") if de_results else None
+    )
     return generate_qc_report(
         protein_df,
         sample_to_condition,
@@ -271,7 +360,7 @@ def workflow_comparison(
             entry["de_results"] = (
                 de_results
                 if hasattr(de_results, "columns")
-                else pd.read_csv(de_results)
+                else pd.read_csv(de_results, float_precision="round_trip")
             )
         condition = workflow.get("sample_to_condition")
         if condition is None and workflow.get("sdrf"):

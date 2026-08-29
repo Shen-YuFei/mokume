@@ -37,6 +37,8 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
             "directlfq",
             "--directlfq-min-nonan",
             "3",
+            "--export-ions",
+            "ions.csv",
             "--batch-correction",
             "--batch-method",
             "column",
@@ -48,6 +50,11 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
             "--batch-mean-only",
             "--batch-ref",
             "2",
+            "--de",
+            "--de-contrasts",
+            "A vs B",
+            "--de-output",
+            "de.csv",
             "--de-fdr-method",
             "ihw",
         ],
@@ -55,6 +62,7 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
 
     assert result.exit_code == 0
     assert captured["directlfq_min_nonan"] == 3
+    assert captured["export_ions"] == "ions.csv"
     assert captured["batch_correction"] is True
     assert captured["batch_method"] == "column"
     assert captured["batch_column"] == "characteristics[batch]"
@@ -66,6 +74,73 @@ def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_p
     assert captured["batch_mean_only"] is True
     assert captured["batch_ref"] == 2
     assert captured["de_fdr_method"] == "ihw"
+
+
+def test_features2proteins_passes_sample_correlation_threshold(monkeypatch, tmp_path):
+    parquet, sdrf = _make_input_files(tmp_path)
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(pipeline, "features_to_proteins", fake_run_pipeline)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "-s",
+            sdrf,
+            "--min-sample-correlation",
+            "0.85",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["sample_correlation_threshold"] == 0.85
+
+
+def test_features2proteins_requires_sdrf_for_sample_correlation(tmp_path):
+    parquet, _ = _make_input_files(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "--min-sample-correlation",
+            "0.85",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--min-sample-correlation requires --sdrf" in result.output
+
+
+def test_features2proteins_rejects_ion_export_for_non_directlfq(tmp_path):
+    parquet, _ = _make_input_files(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "--quant-method",
+            "sum",
+            "--export-ions",
+            "ions.csv",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--export-ions require --quant-method directlfq" in result.output
 
 
 def test_features2proteins_requires_batch_column_for_column_method(tmp_path):
@@ -92,7 +167,7 @@ def test_features2proteins_requires_batch_column_for_column_method(tmp_path):
 
 
 def test_features2proteins_preserves_empty_ensemble_members(monkeypatch, tmp_path):
-    parquet, _ = _make_input_files(tmp_path)
+    parquet, sdrf = _make_input_files(tmp_path)
     captured = {}
 
     def fake_run_pipeline(**kwargs):
@@ -108,6 +183,15 @@ def test_features2proteins_preserves_empty_ensemble_members(monkeypatch, tmp_pat
             parquet,
             "-o",
             "out.csv",
+            "-s",
+            sdrf,
+            "--de",
+            "--de-method",
+            "ensemble",
+            "--de-contrasts",
+            "A vs B",
+            "--de-output",
+            "de.csv",
             "--de-ensemble-methods",
             "",
         ],
@@ -115,6 +199,35 @@ def test_features2proteins_preserves_empty_ensemble_members(monkeypatch, tmp_pat
 
     assert result.exit_code == 0
     assert captured["de_ensemble_methods"] == [""]
+
+
+def test_features2proteins_rejects_ensemble_k_for_single_method(tmp_path):
+    parquet, sdrf = _make_input_files(tmp_path)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "-s",
+            sdrf,
+            "--de",
+            "--de-method",
+            "limma",
+            "--de-contrasts",
+            "A vs B",
+            "--de-output",
+            "de.csv",
+            "--de-ensemble-min-k",
+            "2",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "require --de-method ensemble" in result.output
 
 
 def test_features2proteins_accepts_msstats_with_sdrf(monkeypatch, tmp_path):

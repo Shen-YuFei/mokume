@@ -302,7 +302,7 @@ def test_sqlfirst_peptidoform_sums_charges_per_sample(lfq_dataset):
     )
 
 
-def test_sqlfirst_ibaq_keeps_shared_rows_and_skips_min_unique(lfq_dataset):
+def test_sqlfirst_pibaq_keeps_shared_rows_and_skips_min_unique(lfq_dataset):
     parquet, sdrf = lfq_dataset
     cfg = PipelineConfig(
         input=InputConfig(parquet=parquet, sdrf=sdrf),
@@ -310,7 +310,7 @@ def test_sqlfirst_ibaq_keeps_shared_rows_and_skips_min_unique(lfq_dataset):
             remove_contaminants=True, min_aa=7, min_unique_peptides=2
         ),
         normalization=NormalizationConfig(run_method="none", sample_method="none"),
-        quantification=QuantificationConfig(method="ibaq"),
+        quantification=QuantificationConfig(method="pibaq"),
     )
     df = LoadingStage(cfg).load_for_mokume()
 

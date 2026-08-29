@@ -49,7 +49,7 @@ Based on comprehensive benchmarking comparing 7 algorithms × 3 quantification m
 
 - [x] **Protein-level batch correction** - benchmark confirms most robust strategy
 - [x] **ComBat** - native Rust implementation (oracle-verified against inmoose), with covariate support
-- [x] **MaxLFQ, Top3/TopN, iBAQ quantification** - all three tested, MaxLFQ recommended
+- [x] **MaxLFQ, Top3/TopN, piBAQ quantification** - all three tested, MaxLFQ recommended
 
 ### Evaluation Metrics to Consider
 
@@ -157,6 +157,6 @@ From SCP benchmarks:
 
 ### Integration
 
-- [x] Export to AnnData format — via tissuemap pipeline (`.h5ad`) and `correct-batches --export_anndata`
-- [x] Differential expression (limma, DEqMS, proDA, LimROTS, ROTS) — in the Rust kernel (`features2proteins --de`)
+- [x] Export to AnnData format — via tissuemap pipeline (`.h5ad`) and `correct-batches --export-anndata`
+- [x] Differential expression (limma, DEqMS, proDA, LimROTS, ROTS) — in the Rust kernel (`quantify features2proteins --de-contrast A B`)
 - [ ] Nextflow/Snakemake workflow templates

@@ -62,6 +62,7 @@ def _summary_counts(de: pd.DataFrame) -> dict:
         "n_up": (de["significance"] == "UP").sum(),
         "n_down": (de["significance"] == "DOWN").sum(),
         "n_unchanged": (de["significance"] == "Unchanged").sum(),
+        "n_not_tested": (de["significance"] == "NotTested").sum(),
     }
 
 
@@ -100,6 +101,7 @@ def _volcano_traces(de: pd.DataFrame) -> list[dict]:
     traces = []
     for sig_class, color, name in [
         ("Unchanged", "#cccccc", "Unchanged"),
+        ("NotTested", "#666666", "NotTested"),
         ("UP", "#d62728", "UP"),
         ("DOWN", "#1f77b4", "DOWN"),
     ]:
@@ -204,6 +206,7 @@ def generate_de_report(
         n_up=counts["n_up"],
         n_down=counts["n_down"],
         n_unchanged=counts["n_unchanged"],
+        n_not_tested=counts["n_not_tested"],
         log2fc_threshold=log2fc_threshold,
         fdr_threshold=fdr_threshold,
     )
@@ -228,6 +231,7 @@ def _build_html(
     n_up,
     n_down,
     n_unchanged,
+    n_not_tested,
     log2fc_threshold,
     fdr_threshold,
 ):
@@ -349,6 +353,7 @@ def _build_html(
         .sig-up { color: #d62728; font-weight: bold; }
         .sig-down { color: #1f77b4; font-weight: bold; }
         .sig-unchanged { color: #999; }
+        .sig-nottested { color: #666; }
         .table-wrapper { max-height: 400px; overflow-y: auto; border: 1px solid #ddd;
                           border-radius: 4px; }
         .info-text { font-size: 12px; color: #666; margin-top: 8px; }
@@ -375,6 +380,10 @@ def _build_html(
         <div class="stat-box">
             <div class="number">$n_unchanged</div>
             <div class="label">Unchanged</div>
+        </div>
+        <div class="stat-box">
+            <div class="number">$n_not_tested</div>
+            <div class="label">Not tested</div>
         </div>
         <div class="stat-box">
             <div class="number">$log2fc_threshold</div>
@@ -414,6 +423,7 @@ def _build_html(
                         <option value="all">All</option>
                         <option value="UP">UP only</option>
                         <option value="DOWN">DOWN only</option>
+                        <option value="NotTested">Not tested</option>
                         <option value="significant">Significant (UP + DOWN)</option>
                     </select>
                     <span id="table-count" style="font-size: 12px; color: #666;"></span>
@@ -505,7 +515,8 @@ function populateTable(filter, search) {
     tableRows.forEach(row => {
         if (filter === 'UP' && row.sig !== 'UP') return;
         if (filter === 'DOWN' && row.sig !== 'DOWN') return;
-        if (filter === 'significant' && row.sig === 'Unchanged') return;
+        if (filter === 'NotTested' && row.sig !== 'NotTested') return;
+        if (filter === 'significant' && row.sig !== 'UP' && row.sig !== 'DOWN') return;
         if (search && !row.protein.toLowerCase().includes(search.toLowerCase())) return;
 
         count++;
@@ -516,7 +527,10 @@ function populateTable(filter, search) {
             highlightTableRow(row.protein);
         };
 
-        const sigClass = row.sig === 'UP' ? 'sig-up' : row.sig === 'DOWN' ? 'sig-down' : 'sig-unchanged';
+        const sigClass = row.sig === 'UP' ? 'sig-up'
+            : row.sig === 'DOWN' ? 'sig-down'
+            : row.sig === 'NotTested' ? 'sig-nottested'
+            : 'sig-unchanged';
 
         tr.innerHTML = '<td>' + (row.highlighted ? '<b>' + row.protein + '</b>' : row.protein) + '</td>'
             + '<td style="text-align:right">' + row.log2FC.toFixed(3) + '</td>'
@@ -580,6 +594,7 @@ if (firstHighlight) showExpression(firstHighlight.protein);
         n_up=n_up,
         n_down=n_down,
         n_unchanged=n_unchanged,
+        n_not_tested=n_not_tested,
         log2fc_threshold=log2fc_threshold,
         fdr_threshold=fdr_threshold,
         intensity_data=intensity_data,

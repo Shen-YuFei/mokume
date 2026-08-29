@@ -72,6 +72,13 @@ if TYPE_CHECKING:
 logger = get_logger("mokume.peptide_normalization")
 
 
+def _ensure_qvalue_columns(dataset_df):
+    """Add nullable QPX q-value fields for legacy/custom feature frames."""
+    for column in ("peptide_qvalue", "pg_global_qvalue"):
+        if column not in dataset_df.columns:
+            dataset_df[column] = None
+
+
 @log_execution_time(logger)
 def peptide_normalization(
     parquet: str,
@@ -158,15 +165,16 @@ def peptide_normalization(
 
     # Create filter builder for pre-computations (median maps, peptide frequencies)
     if filter_config is not None and filter_config.enabled:
+        contaminant_patterns = filter_config.protein.active_contaminant_patterns()
+        named_score = filter_config.peptide.score
         filter_builder = SQLFilterBuilder(
-            remove_contaminants=(
-                filter_config.protein.remove_contaminants
-                or filter_config.protein.remove_decoys
-            ),
-            contaminant_patterns=filter_config.protein.contaminant_patterns,
+            remove_contaminants=bool(contaminant_patterns),
+            contaminant_patterns=contaminant_patterns,
             min_intensity=filter_config.intensity.min_intensity,
             min_peptide_length=min_aa,
             require_unique=not keep_shared_peptides,
+            named_score_name=getattr(named_score, "name", None),
+            named_score_threshold=getattr(named_score, "threshold", None),
         )
     else:
         filter_builder = SQLFilterBuilder(
@@ -202,21 +210,21 @@ def peptide_normalization(
     ):
         med_map = feature.get_median_map_to_condition()
 
-    # Incremental CSV writing
-    write_csv = True
-    if write_csv:
-        write_csv_task = WriteCSVTask(output)
-        write_csv_task.start()
-
-    # Incremental Parquet writing
-    if save_parquet:
-        writer_parquet_task = WriteParquetTask(output)
-        writer_parquet_task.start()
-
     # IRS normalization pre-computation
     irs_scale_by_techrep: dict[int, float] = {}
+    irs_requested = irs_channel is not None or irs_autodetect_regex is not None
+    if skip_normalization and irs_requested:
+        raise ValueError("skip_normalization conflicts with IRS options")
+    if irs_requested and label not in (
+        QuantificationCategory.TMT,
+        QuantificationCategory.ITRAQ,
+    ):
+        raise ValueError("IRS normalization requires TMT or ITRAQ input")
     try:
-        if label in (QuantificationCategory.TMT, QuantificationCategory.ITRAQ):
+        if not skip_normalization and label in (
+            QuantificationCategory.TMT,
+            QuantificationCategory.ITRAQ,
+        ):
             if irs_channel is None and irs_autodetect_regex and sdrf:
                 from mokume.core.constants import load_sdrf as _load_sdrf
 
@@ -228,9 +236,8 @@ def peptide_normalization(
                 if not ref_labels.empty:
                     irs_channel = ref_labels.mode().iloc[0]
                 else:
-                    logger.warning(
-                        "IRS autodetect regex '%s' found no pooled sample; skipping IRS.",
-                        irs_autodetect_regex,
+                    raise ValueError(
+                        f"IRS autodetect regex '{irs_autodetect_regex}' found no pooled sample"
                     )
 
             if irs_channel is not None:
@@ -240,12 +247,22 @@ def peptide_normalization(
                     irs_scope=irs_scope,
                 )
                 if not irs_scale_by_techrep:
-                    logger.warning(
-                        "IRS channel '%s' not found in dataset; skipping IRS normalization.",
-                        irs_channel,
+                    raise ValueError(
+                        f"IRS channel '{irs_channel}' produced no scaling factors"
                     )
     except Exception as e:
-        logger.warning("IRS normalization pre-computation failed: %s", e)
+        raise ValueError(f"IRS normalization pre-computation failed: {e}") from e
+
+    # Start writers only after every input-dependent validation/pre-computation
+    # has succeeded, so a rejected IRS request cannot leave an empty output.
+    write_csv = True
+    if write_csv:
+        write_csv_task = WriteCSVTask(output)
+        write_csv_task.start()
+
+    if save_parquet:
+        writer_parquet_task = WriteParquetTask(output)
+        writer_parquet_task.start()
 
     # Initialize filter pipeline if config provided
     filter_pipeline = None
@@ -268,6 +285,7 @@ def peptide_normalization(
 
             if not keep_shared_peptides:
                 dataset_df = dataset_df[dataset_df["unique"] == 1]
+            _ensure_qvalue_columns(dataset_df)
             dataset_df = dataset_df[PARQUET_COLUMNS]
 
             dataset_df = reformat_quantms_feature_table_quant_labels(
@@ -340,10 +358,8 @@ def peptide_normalization(
                         dataset_df[NORM_INTENSITY] * scale_series
                     )
                 else:
-                    logger.warning(
-                        "%s: TECHREPLICATE column not present; cannot apply IRS scaling to sample %s",
-                        str(sample).upper(),
-                        sample,
+                    raise ValueError(
+                        f"TECHREPLICATE is missing; cannot apply IRS scaling to sample {sample}"
                     )
 
             dataset_df = get_peptidoform_normalize_intensities(dataset_df)
@@ -361,7 +377,8 @@ def peptide_normalization(
                 dataset_df = merge_fractions(dataset_df)
                 elapsed = time.time() - start_time
                 logger.info(
-                    "%s: Number of features after merging fractions: %d (completed in %.2f seconds)",
+                    "%s: Number of features after merging fractions: %d "
+                    "(completed in %.2f seconds)",
                     str(sample).upper(),
                     len(dataset_df.index),
                     elapsed,

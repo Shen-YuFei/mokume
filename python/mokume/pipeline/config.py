@@ -79,15 +79,10 @@ class RuntimeConfig:
         connection opened by :class:`mokume.io.feature.Feature`.
     duckdb_threads : Optional[int]
         Number of threads DuckDB may use. Must be >= 1.
-    backend : str
-        Which quantification kernel to route ``run_pipeline`` through:
-        ``"python"`` (default) runs the pure-Python flows; ``"rust"`` delegates
-        the features-to-proteins path to the compiled ``mokume-rs`` kernel.
     """
 
     duckdb_memory: Optional[str] = None
     duckdb_threads: Optional[int] = None
-    backend: str = "python"
 
     def __post_init__(self) -> None:
         if self.duckdb_memory is not None and not _MEMORY_LIMIT_RE.match(
@@ -99,10 +94,6 @@ class RuntimeConfig:
             )
         if self.duckdb_threads is not None and self.duckdb_threads < 1:
             raise ValueError(f"duckdb_threads must be >= 1; got {self.duckdb_threads}")
-        if self.backend not in {"python", "rust"}:
-            raise ValueError(
-                f'backend must be "python" or "rust"; got {self.backend!r}'
-            )
 
     def effective_workers(
         self,
@@ -218,46 +209,68 @@ class QuantificationConfig:
 
     Attributes
     ----------
-    ibaq_enzyme : str
+    pibaq_enzyme : str
         Protease used to digest the FASTA for the piBAQ theoretical-peptide
         denominator. Defaults to ``"Trypsin"``.
-    ibaq_max_aa : int
+    pibaq_max_aa : int
         Maximum peptide length retained from the FASTA digest for piBAQ.
-        Defaults to ``50`` (the historical pipeline value). The minimum
-        length is taken from :attr:`FilterConfig.min_aa`.
-    ibaq_min_shared : int
+        Defaults to ``30``. The minimum length is taken from
+        :attr:`FilterConfig.min_aa`.
+    pibaq_min_shared : int
         Minimum number of distinct peptides two proteins must share to be
         placed in the same automatically discovered piBAQ family. Defaults
-        to ``2`` (matches :func:`mokume.quantification.ibaq.peptides_to_protein`).
-    ibaq_families_yaml : Optional[str]
+        to ``2`` (matches :func:`mokume.quantification.pibaq.peptides_to_protein`).
+    pibaq_families_yaml : Optional[str]
         Path to a YAML file declaring explicit piBAQ family overrides
         (see :func:`mokume.quantification.families.load_families_yaml`).
         When ``None`` (default) family discovery is purely data-driven.
-    ibaq_min_anchors : int
-        Minimum proteotypic ("anchor") peptides a family member needs for
-        the family to stay on the per-protein proportional branch. The
-        family rolls up to a single iBAQ only when *no* member reaches this
-        threshold. Defaults to ``1``.
-    ibaq_high_anchor_threshold : int
+    pibaq_min_anchors : int
+        Unique-anchor threshold. If no family member reaches it, shared signal
+        is split equally and evidence is ``family_only``. Defaults to ``1``.
+    pibaq_high_anchor_threshold : int
         Minimum anchor count (of the weakest member) for a family to be
         labelled ``EvidenceLevel == "high"``. Defaults to ``3``.
+    ratio_fraction_merge : str
+        How the ratio flow merges fractions of the same sample: ``"mean"``
+        (default) or ``"max"``. Case-insensitive; anything else raises.
     """
 
     method: str = "maxlfq"
     ion_alignment: Optional[str] = None
     coverage_threshold: Optional[float] = None
+    sample_correlation_threshold: Optional[float] = None
     ratio_fraction_merge: str = "mean"
     # DirectLFQ-specific
     directlfq_num_cores: Optional[int] = None
     directlfq_min_nonan: int = 1
     directlfq_num_samples_quadratic: int = 50
     # piBAQ-specific (paralog-aware iBAQ family discovery / digestion)
-    ibaq_enzyme: str = "Trypsin"
-    ibaq_max_aa: int = 50
-    ibaq_min_shared: int = 2
-    ibaq_families_yaml: Optional[str] = None
-    ibaq_min_anchors: int = 1
-    ibaq_high_anchor_threshold: int = 3
+    pibaq_enzyme: str = "Trypsin"
+    pibaq_max_aa: int = 30
+    pibaq_min_shared: int = 2
+    pibaq_families_yaml: Optional[str] = None
+    pibaq_min_anchors: int = 1
+    pibaq_high_anchor_threshold: int = 3
+
+    def __post_init__(self) -> None:
+        if self.sample_correlation_threshold is not None and not (
+            -1.0 <= self.sample_correlation_threshold <= 1.0
+        ):
+            raise ValueError("sample_correlation_threshold must be between -1 and 1")
+        # The two implementations disagree on case: the Python quantifier tests
+        # ``fraction_merge_method == "max"`` exactly and falls back to mean for
+        # everything else, while the Rust kernel parses the forwarded flag with
+        # ``ignore_case``. A value like ``"Max"`` would therefore mean mean on
+        # Python and max in Rust. Both read this field, so fold the
+        # case here rather than in either reader. Folding also turns a typo
+        # like ``"median"`` into an error instead of a silent mean.
+        merge = self.ratio_fraction_merge.lower()
+        if merge not in {"mean", "max"}:
+            raise ValueError(
+                "ratio_fraction_merge must be 'mean' or 'max'; got "
+                f"{self.ratio_fraction_merge!r}"
+            )
+        self.ratio_fraction_merge = merge
 
 
 @dataclass

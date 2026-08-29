@@ -30,6 +30,7 @@ logger = get_logger("mokume.imputation.qrilc")
 def impute_qrilc(
     data: pd.DataFrame,
     tune_sigma: float = 1.0,
+    random_state: int = 42,
 ) -> pd.DataFrame:
     """Impute left-censored missing values with the simplified QRILC heuristic.
 
@@ -47,6 +48,10 @@ def impute_qrilc(
     tune_sigma : float
         Multiplier applied to the estimated standard deviation before
         drawing (default 1.0).
+    random_state : int
+        Seed for the draws. Without it repeated runs on the same matrix
+        disagree, and a benchmark reads that spread as a difference between
+        imputation methods rather than as noise within one.
 
     Returns
     -------
@@ -54,6 +59,7 @@ def impute_qrilc(
         Filled matrix with the same shape and index.
     """
     result = data.copy()
+    rng = np.random.default_rng(random_state)
     n_imputed = 0
 
     for col in data.columns:
@@ -75,7 +81,7 @@ def impute_qrilc(
         mu_imp = trunc - sd_obs
         sd_imp = sd_obs * tune_sigma
 
-        draws = np.random.normal(mu_imp, sd_imp, size=int(missing.sum()))
+        draws = rng.normal(mu_imp, sd_imp, size=int(missing.sum()))
         # Clamp: imputed values should not exceed the truncation point
         draws = np.minimum(draws, trunc)
 

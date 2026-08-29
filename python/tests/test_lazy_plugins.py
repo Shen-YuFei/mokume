@@ -190,9 +190,10 @@ print(json.dumps({
         "method_module": "mokume.quantification.all_peptides",
         "names": [
             "directlfq",
-            "ibaq",
             "maxlfq",
             "median",
+            "peptide_count",
+            "pibaq",
             "ratio",
             "spectral_count",
             "sum",
