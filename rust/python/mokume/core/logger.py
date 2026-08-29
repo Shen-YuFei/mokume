@@ -104,7 +104,7 @@ def configure_logging(
     formatter = logging.Formatter(log_format, date_format)
 
     # Configure console handler
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
