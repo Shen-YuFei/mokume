@@ -345,7 +345,7 @@ specificity, and find tissue markers.
 
 *All 949 cell lines: PCA and t-SNE by tissue of origin, tissue representation,
 technical-run depth versus protein detection, detection across major tissues,
-and the PCA variance profile. PC1 explains 20.7% and PC2 6.9% of the variance.*
+and the PCA variance profile. PC1 explains 20.6% and PC2 7.3% of the variance.*
 
 <p align="center">
   <img src="docs/assets/pxd030304_rust_biology.png" alt="Six-panel PXD030304 tissue-specificity and marker showcase" width="100%">

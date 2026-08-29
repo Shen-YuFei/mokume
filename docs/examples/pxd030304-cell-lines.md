@@ -62,8 +62,9 @@ cannot drive the biological panels.
 
 The Rust run accepted 163,871,510 feature measurements and wrote an 8,930 × 949
 protein matrix. Treating its zero sentinel as missing gives 49.56% missing
-cells. The visualization filter retains 7,188 proteins; PC1 explains 20.7% and
-PC2 6.9% of the variance.
+cells. The visualization filter retains 7,092 proteins, of which 4,327 meet the
+stricter missingness threshold used for PCA and t-SNE. PC1 explains 20.6% and
+PC2 7.3% of the variance.
 
 ![PXD030304 Rust DirectLFQ overview](../assets/pxd030304_rust_overview.png)
 
@@ -75,8 +76,8 @@ and the PCA variance profile.*
 
 *Wilcoxon marker profiles, the AdaTiSS distribution, tissue-specific protein
 counts, and three marker-expression maps. Across the 30 adequately represented
-tissues, AdaTiSS classifies 60 proteins as tissue-specific, 702 as
-tissue-enriched, 2,577 as housekeeping, and 3,849 as other.*
+tissues, AdaTiSS classifies 59 proteins as tissue-specific, 697 as
+tissue-enriched, 2,556 as housekeeping, and 3,780 as other.*
 
 ## Numerical cross-check against the previous run
 
