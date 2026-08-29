@@ -75,8 +75,8 @@ and the PCA variance profile.*
 
 *Wilcoxon marker profiles, the AdaTiSS distribution, tissue-specific protein
 counts, and three marker-expression maps. Across the 30 adequately represented
-tissues, AdaTiSS classifies 62 proteins as tissue-specific, 712 as
-tissue-enriched, 2,552 as housekeeping, and 3,862 as other.*
+tissues, AdaTiSS classifies 60 proteins as tissue-specific, 702 as
+tissue-enriched, 2,577 as housekeeping, and 3,849 as other.*
 
 ## Numerical cross-check against the previous run
 
