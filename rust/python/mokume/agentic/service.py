@@ -21,7 +21,12 @@ from mokume.agentic.evaluator import (
     method_sensitivity,
 )
 from mokume.agentic.knowledge import KnowledgeGraph, load_knowledge_graph
-from mokume.agentic.profiler import AcquisitionMetadata, DataProfile, profile_data
+from mokume.agentic.profiler import (
+    AcquisitionMetadata,
+    DataProfile,
+    detect_sdrf_batch_fields,
+    profile_data,
+)
 from mokume.agentic.ranking import build_ranking_payload
 from mokume.agentic.rules import rule_propose
 from mokume.agentic.runner import (
@@ -300,12 +305,18 @@ class RecommendationService:
             )
         _validate_contrast_samples(inputs.frame, conditions, contrast)
         frame, conditions = _scope_contrast(inputs.frame, conditions, contrast)
+        sdrf_batch_fields = detect_sdrf_batch_fields(inputs.sdrf, list(conditions))
         profile = profile_data(
             frame,
             conditions,
             inputs.peptide_counts,
             input_scale=inputs.input_scale,
             metadata=inputs.metadata.acquisition,
+        )
+        profile = profile._replace(
+            batch_fields=list(
+                dict.fromkeys([*sdrf_batch_fields, *profile.batch_fields])
+            )
         )
         return profile, conditions, bind_context(profile, self._graph), frame
 

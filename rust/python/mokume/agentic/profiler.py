@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 
+from mokume.core.constants import load_sdrf
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.agentic.profiler")
@@ -226,6 +227,39 @@ def _detect_batch_fields(sample_ids: list[str]) -> list[str]:
     return []
 
 
+def detect_sdrf_batch_fields(sdrf_path: str, sample_ids: list[str]) -> list[str]:
+    """Return varying SDRF columns explicitly identified as batch fields."""
+    sdrf = load_sdrf(sdrf_path)
+    selected = {str(sample) for sample in sample_ids}
+    matched = sdrf["source name"].astype(str).isin(selected)
+    data_file = "comment[data file]"
+    if data_file in sdrf.columns:
+        raw_names = sdrf[data_file].astype(str)
+        stems = raw_names.str.replace(
+            r"\.(raw|mzml|mzxml|mgf|wiff|wiff2|wiff\.scan|baf|yep|fid|d|d\.zip|raw\.zip)$",
+            "",
+            regex=True,
+            flags=re.IGNORECASE,
+        )
+        selected_upper = {sample.upper() for sample in selected}
+        matched |= raw_names.isin(selected) | stems.isin(selected)
+        matched |= raw_names.str.upper().isin(selected_upper)
+        matched |= stems.str.upper().isin(selected_upper)
+
+    scoped = sdrf.loc[matched]
+    fields = []
+    for column in scoped.columns:
+        if "batch" not in column.casefold():
+            continue
+        values = scoped[column].dropna().astype(str).str.strip()
+        values = values[
+            ~values.str.casefold().isin({"", "not available", "not applicable"})
+        ]
+        if values.nunique() > 1:
+            fields.append(column)
+    return fields
+
+
 def _condition_counts(
     sample_cols: list[str],
     sample_to_condition: dict[str, str],
@@ -270,7 +304,6 @@ def profile_data(
     sample_cols = [c for c in protein_df.columns if c != protein_col]
     matrix = protein_df.set_index(protein_col)[sample_cols]
 
-    values = matrix.values.astype(float)
     cond_counts = _condition_counts(sample_cols, sample_to_condition)
     missing_rate, missing_per_sample = _missingness(matrix)
     is_log = input_scale == "log2"
@@ -291,7 +324,7 @@ def profile_data(
         has_peptide_counts=peptide_counts is not None,
         data_type=resolved_data_type,
         batch_fields=_detect_batch_fields(sample_cols),
-        intensity_range=_intensity_range(values),
+        intensity_range=_intensity_range(matrix.values.astype(float)),
         is_log_transformed=is_log,
         pca_explained_variance=_compute_pca_evr(matrix),
         per_condition_median_cv=_compute_per_condition_cv(
