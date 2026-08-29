@@ -19,7 +19,13 @@ import argparse
 from pathlib import Path
 
 # Phase modules
-from config import ALL_DATASETS, HELA_DATASETS, TMT_LFQ_COMPARISON
+from config import (
+    ALL_DATASETS,
+    ANALYSIS_DIR,
+    HELA_DATASETS,
+    PLOTS_DIR,
+    TMT_LFQ_COMPARISON,
+)
 
 # Use importlib to handle numbered module names
 import importlib.util
@@ -166,8 +172,8 @@ def main():
     print("BENCHMARK COMPLETE")
     print("=" * 70)
     print("\nResults saved to:")
-    print("  - Analysis: hela/analysis/")
-    print("  - Plots: hela/plots/")
+    print(f"  - Analysis: {ANALYSIS_DIR}")
+    print(f"  - Plots: {PLOTS_DIR}")
 
 
 if __name__ == "__main__":

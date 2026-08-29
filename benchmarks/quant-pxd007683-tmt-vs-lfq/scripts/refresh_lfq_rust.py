@@ -131,9 +131,7 @@ def run_quantification(paths: BenchmarkPaths, threads: int) -> None:
             "run_normalization": "none",
             "sample_normalization": "none",
             "min_aa": 7,
-            "min_unique": 2,
             "threads": threads,
-            "output_format": "python-compatible",
             "output": str(output),
         }
         if method == "pibaq":
@@ -142,8 +140,8 @@ def run_quantification(paths: BenchmarkPaths, threads: int) -> None:
                 pibaq_enzyme="Trypsin",
                 pibaq_max_aa=30,
             )
-        if method == "directlfq":
-            options["directlfq_cores"] = threads
+        else:
+            options["min_unique"] = 2
         mokume.features2proteins(**options)
         if not output.is_file():
             raise RuntimeError(f"Rust kernel did not write {output}")

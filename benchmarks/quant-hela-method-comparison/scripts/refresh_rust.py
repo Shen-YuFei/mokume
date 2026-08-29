@@ -280,10 +280,11 @@ def run_method(
     output = paths.work_dir / "protein-quant" / dataset_id / f"{method}.tsv"
     options = {
         "peptides": str(peptide_path),
-        "method": method,
+        "quant_method": method,
         "output": str(output),
-        "threads": threads,
     }
+    if method in {"directlfq", "maxlfq"}:
+        options["threads"] = threads
     if method == "pibaq":
         options.update(
             fasta=str(paths.fasta),
@@ -292,7 +293,7 @@ def run_method(
             max_aa=PIBAQ_PARAMS["max_aa"],
         )
     elif method == "directlfq":
-        options["min_nonan"] = 1
+        options["directlfq_min_nonan"] = 1
     mokume.peptides2protein(**options)
     return output
 

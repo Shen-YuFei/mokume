@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     ALL_DATASETS,
     ANALYSIS_DIR,
+    INTENSITY_COLUMNS,
     PLOTS_DIR,
     PROTEIN_QUANT_DIR,
     QUANTIFICATION_METHODS,
@@ -257,16 +258,8 @@ def plot_tmt_vs_lfq(results: dict, output_dir: Path):
                 fontsize=10, verticalalignment='top',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
-        # Set axis labels - indicate transformation type
-        # iBAQ (IbaqLog) is already log-transformed by library
-        # All others (including ibaq_raw) are log2-transformed for plotting
-        if method == "ibaq":
-            scale_label = "log"
-        else:
-            scale_label = "log2"
-
-        ax.set_xlabel(f"LFQ ({method.upper()}, {scale_label})")
-        ax.set_ylabel(f"TMT ({method.upper()}, {scale_label})")
+        ax.set_xlabel(f"LFQ ({method.upper()}, log2)")
+        ax.set_ylabel(f"TMT ({method.upper()}, log2)")
         ax.set_title(f"{method.upper()}")
 
     # Remove empty subplots
@@ -561,21 +554,11 @@ def plot_sample_expression_boxplots(output_dir: Path):
     Shows the distribution of protein expression values per sample,
     colored by dataset/project.
     """
-    # Intensity column names for each method
-    intensity_columns = {
-        "ibaq": "IbaqLog",        # Already log-transformed by library
-        "ibaq_raw": "Ibaq",       # Raw iBAQ values
-        "directlfq": "DirectLFQIntensity",
-        "top3": "Top3Intensity",
-        "topn": "Top10Intensity",
-        "sum": "SumIntensity",
-    }
-
     # Collect data for all methods
     method_data = {}
 
     for method in QUANTIFICATION_METHODS:
-        intensity_col = intensity_columns.get(method)
+        intensity_col = INTENSITY_COLUMNS[method]
         if not intensity_col:
             continue
 
@@ -601,12 +584,7 @@ def plot_sample_expression_boxplots(output_dir: Path):
                     values = sample_df[intensity_col].dropna()
 
                     if len(values) > 0:
-                        # Log transform if not already log
-                        # iBAQ (IbaqLog) is already log-transformed by library - use as-is
-                        # All other methods need log10 transformation
-                        if method != "ibaq":
-                            values = np.log10(values + 1)
-                        # else: IbaqLog is already in log scale, use directly
+                        values = np.log10(values + 1)
 
                         all_samples.append({
                             "dataset": dataset_id,

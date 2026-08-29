@@ -310,14 +310,15 @@ def quantify_method(
     """Run one method through the current wheel's Rust kernel."""
     options = {
         "peptides": str(peptides),
-        "method": method,
+        "quant_method": method,
         "output": str(output),
-        "threads": threads,
     }
     if method == "pibaq":
         options.update(fasta=str(fasta), enzyme="Trypsin", min_aa=7, max_aa=30)
-    elif method == "directlfq":
-        options["min_nonan"] = 1
+    if method in {"directlfq", "maxlfq"}:
+        options["threads"] = threads
+    if method == "directlfq":
+        options["directlfq_min_nonan"] = 1
     mokume.peptides2protein(**options)
 
 
@@ -405,7 +406,7 @@ def correct_one_method(
     if output_path.exists():
         output_path.unlink()
     mokume.correct_batches(
-        folder=str(method_dir),
+        input=str(method_dir),
         pattern="input.tsv",
         output=str(output_path),
         sample_id_column="SampleID",

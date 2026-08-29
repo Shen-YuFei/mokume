@@ -20,8 +20,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (
     ALL_DATASETS,
+    INTENSITY_COLUMNS,
     PROTEIN_QUANT_DIR,
     PLOTS_DIR,
+    QUANTIFICATION_METHODS,
 )
 
 
@@ -68,22 +70,7 @@ def load_method_data(dataset_id: str, method: str) -> Optional[pd.DataFrame]:
 
 def get_intensity_column(method: str) -> str:
     """Get the intensity column name for a method."""
-    mapping = {
-        "ibaq": "IbaqLog",
-        "ribaq": "IbaqNorm",
-        "directlfq": "DirectLFQIntensity",
-        "top3": "Top3Intensity",
-        "topn": "Top10Intensity",
-        "top10": "Top10Intensity",
-        "sum": "SumIntensity",
-    }
-    return mapping.get(method, "Intensity")
-
-
-def is_log_transformed(method: str) -> bool:
-    """Check if the method's intensity values are already log-transformed."""
-    # IbaqLog is already log-transformed
-    return method == "ibaq"
+    return INTENSITY_COLUMNS[method]
 
 
 def get_median_expression(df: pd.DataFrame, intensity_col: str) -> pd.Series:
@@ -202,11 +189,8 @@ def compare_methods_all_datasets(
         x = expr1.loc[common].values
         y = expr2.loc[common].values
 
-        # Log transform if needed
-        if not is_log_transformed(method1):
-            x = np.log2(x + 1)
-        if not is_log_transformed(method2):
-            y = np.log2(y + 1)
+        x = np.log2(x + 1)
+        y = np.log2(y + 1)
 
         # Filter valid values
         mask = np.isfinite(x) & np.isfinite(y)
@@ -268,7 +252,7 @@ def create_method_comparison_grid(
     Create a grid of correlation plots comparing all method pairs.
     """
     if methods is None:
-        methods = ["ibaq", "ribaq", "directlfq", "top3", "sum"]
+        methods = list(QUANTIFICATION_METHODS)
     if datasets is None:
         datasets = ALL_DATASETS
     if output_dir is None:
@@ -323,10 +307,8 @@ def create_method_comparison_grid(
                 x = expr1.loc[common].values
                 y = expr2.loc[common].values
 
-                if not is_log_transformed(method1):
-                    x = np.log2(x + 1)
-                if not is_log_transformed(method2):
-                    y = np.log2(y + 1)
+                x = np.log2(x + 1)
+                y = np.log2(y + 1)
 
                 mask = np.isfinite(x) & np.isfinite(y)
                 x = zscore_normalize(x[mask])
@@ -377,12 +359,14 @@ def main():
     parser.add_argument(
         "--method1",
         type=str,
-        default="ibaq",
+        choices=QUANTIFICATION_METHODS,
+        default="pibaq",
         help="First method to compare"
     )
     parser.add_argument(
         "--method2",
         type=str,
+        choices=QUANTIFICATION_METHODS,
         default="directlfq",
         help="Second method to compare"
     )
@@ -410,29 +394,16 @@ def main():
         print("\nGenerating method comparison grid...")
         create_method_comparison_grid(output_dir=output_dir)
     else:
-        # Generate key comparisons
-        comparisons = [
-            ("ibaq", "directlfq"),
-            ("ibaq", "ribaq"),
-            ("ibaq", "top3"),
-            ("ibaq", "sum"),
-            ("directlfq", "ribaq"),
-            ("directlfq", "top3"),
-        ]
-
         print("\nGenerating pairwise correlation plots...")
-        all_results = []
-
-        for m1, m2 in comparisons:
-            print(f"\n  {m1.upper()} vs {m2.upper()}:")
-            results = compare_methods_all_datasets(m1, m2, output_dir=output_dir)
-            if not results.empty:
-                results["comparison"] = f"{m1}_vs_{m2}"
-                all_results.append(results)
-
-        if all_results:
-            combined = pd.concat(all_results, ignore_index=True)
-            combined.to_csv(output_dir / "method_correlations.csv", index=False)
+        print(f"\n  {args.method1.upper()} vs {args.method2.upper()}:")
+        results = compare_methods_all_datasets(
+            args.method1,
+            args.method2,
+            output_dir=output_dir,
+        )
+        if not results.empty:
+            results["comparison"] = f"{args.method1}_vs_{args.method2}"
+            results.to_csv(output_dir / "method_correlations.csv", index=False)
             print("\n  Saved: method_correlations.csv")
 
     print("\n" + "=" * 70)

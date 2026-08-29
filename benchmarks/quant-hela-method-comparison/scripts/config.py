@@ -292,8 +292,10 @@ QUANTIFICATION_METHODS = [
     "sum",
 ]
 
-# Top N configurations
-TOPN_VALUES = [3, 5, 10]
+INTENSITY_COLUMNS = {
+    "pibaq": "PiBAQ",
+    **{method: "Intensity" for method in QUANTIFICATION_METHODS if method != "pibaq"},
+}
 
 # Proteins of interest to track across experiments
 PROTEINS_OF_INTEREST = [
@@ -326,10 +328,6 @@ PIBAQ_PARAMS = {
     "max_aa": 30,
     "missed_cleavages": 0,
 }
-
-# Backward-compatible name for the legacy phase scripts. The current refresh
-# uses PIBAQ_PARAMS directly.
-IBAQ_PARAMS = PIBAQ_PARAMS
 
 # ============================================================================
 # COLUMN MAPPINGS FOR DIFFERENT FILE FORMATS

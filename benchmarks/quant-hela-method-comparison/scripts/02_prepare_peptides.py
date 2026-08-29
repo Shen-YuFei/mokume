@@ -316,7 +316,7 @@ def prepare_peptide_data(
         if col in df.columns:
             result[col] = df[col]
 
-    # Add default Condition if missing (required by iBAQ)
+    # Add default Condition if missing (required by piBAQ)
     if "Condition" not in result.columns:
         result["Condition"] = "default"
 

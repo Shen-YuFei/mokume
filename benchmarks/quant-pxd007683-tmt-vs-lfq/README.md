@@ -27,7 +27,7 @@ or sample-level normalization and no imputation are applied.
 The `pibaq` path uses runtime pyOpenMS digestion rather than a hand-written
 `iBAQ` approximation. FASTA digestion uses the installed pyOpenMS Trypsin rule;
 the Rust kernel performs shared-peptide allocation, the piBAQ denominator, and
-matrix construction. The refresh uses peptide lengths 7–50 amino acids and zero
+matrix construction. The refresh uses peptide lengths 7–30 amino acids and zero
 missed cleavages.
 
 ### Technical reproducibility
@@ -38,7 +38,7 @@ zero.
 
 | Method | Classified proteins observed | Matrix completeness | Median within-condition CV |
 |--------|------------------------------|---------------------|----------------------------|
-| piBAQ | 8,668 | 83.1% | 20.5% |
+| piBAQ | 8,662 | 83.2% | 20.5% |
 | MaxLFQ | 6,179 | 86.3% | 6.8% |
 | DirectLFQ | 6,910 | 92.3% | 6.8% |
 | Sum | 6,629 | 81.6% | 19.6% |
@@ -97,6 +97,37 @@ python benchmarks/quant-pxd007683-tmt-vs-lfq/scripts/refresh_lfq_rust.py \
 The script writes the seven protein matrices to the ignored
 `data/current-rust/lfq/` directory, versioned metric tables to `results/`, and
 the four refreshed LFQ figures shown above to `figures/`.
+
+## Reproduce the iBAQ comparator
+
+`scripts/00_generate_ibaq.py` provides a benchmark-only, proteotypic-only iBAQ
+baseline for comparison with piBAQ. Both its numerator and denominator exclude
+peptides shared across canonical FASTA accessions. This isolates piBAQ's shared-
+peptide allocation; it is not an exact MaxQuant or ibaqpy reproduction.
+
+First create the peptide-level input without discarding shared peptides:
+
+```bash
+mokume quantify features2peptides \
+  --parquet "$MOKUME_BIGBIO_DATA/PXD_spike_in/PXD007683_LFQ/qpx/PXD007683_LFQ.feature.parquet" \
+  --sdrf "$MOKUME_BIGBIO_DATA/PXD_spike_in/PXD007683_LFQ/PXD007683_LFQ.sdrf.tsv" \
+  --output /tmp/PXD007683-LFQ-peptides.parquet \
+  --keep-shared-peptides \
+  --run-normalization none \
+  --sample-normalization none \
+  --save-parquet
+```
+
+Then generate the baseline, its peptide-assignment audit, and a provenance JSON
+containing input/output checksums, digest parameters, row counts, and runtime
+versions:
+
+```bash
+python benchmarks/quant-pxd007683-tmt-vs-lfq/scripts/00_generate_ibaq.py \
+  --lfq-peptides /tmp/PXD007683-LFQ-peptides.parquet \
+  --fasta "$MOKUME_BIGBIO_DATA/fasta/uniprotkb_proteome_HYE_UniversalContaminants.fasta" \
+  --output-dir /tmp/PXD007683-proteotypic-ibaq
+```
 
 ## Scope of files not refreshed
 
