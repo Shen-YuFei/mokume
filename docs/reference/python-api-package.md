@@ -77,7 +77,7 @@ The pure-Python command can stream the normalized ion matrix produced during
 DirectLFQ protein estimation without retaining the full ion result in memory:
 
 ```bash
-mokume quantify features2proteins \
+mokume features2proteins \
     --parquet features.parquet \
     --output proteins.csv \
     --quant-method directlfq \
