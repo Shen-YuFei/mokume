@@ -43,7 +43,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from mokume.commands._de_cli import (
+from ._de_cli import (
     add_de_result_arguments,
     add_protein_matrix_argument,
 )

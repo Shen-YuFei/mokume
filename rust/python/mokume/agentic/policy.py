@@ -5,16 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from mokume.agentic.contract import (
+from .contract import (
     is_supported_quantification,
     requires_peptide_counts,
 )
-from mokume.agentic.knowledge import (
+from .knowledge import (
     EvidenceRecord,
     KnowledgeGraph,
     load_knowledge_graph,
 )
-from mokume.agentic.profiler import DataProfile
+from .profiler import DataProfile
 
 
 Severity = Literal["info", "warning", "error"]

@@ -8,7 +8,7 @@ import click
 
 from mokume.normalization.peptide import peptide_normalization
 from mokume.preprocessing.filters.io import generate_example_config, load_filter_config
-from mokume.model.filters import NamedScoreFilterConfig, PreprocessingFilterConfig
+from ..model.filters import NamedScoreFilterConfig, PreprocessingFilterConfig
 
 
 def _parse_named_score_option(
