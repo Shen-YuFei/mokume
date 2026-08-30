@@ -185,26 +185,18 @@ class TestDEProDA:
         assert len(result) > 0
         assert "adj_pvalue" in result.columns
 
-    def test_run_proda_direct(self):
+    def test_run_proda_direct_uses_moderated_df(self):
+        """Use the per-protein moderated df instead of a constant residual df."""
         mat, sa, sb, _ = _make_protein_matrix()
         result = run_proda(np.log2(mat.clip(lower=1)), sa, sb, "A", "B")
         assert len(result) > 0
-        assert "pvalue" in result.columns
-
-    def test_proda_has_expected_columns(self):
-        mat, sa, sb, _ = _make_protein_matrix()
-        result = run_proda(np.log2(mat.clip(lower=1)), sa, sb, "A", "B")
-        assert len(result) > 0
-        for col in ("ProteinName", "log2FC", "pvalue", "adj_pvalue"):
-            assert col in result.columns
-
-    def test_proda_uses_moderated_df(self):
-        # proDA must test against the per-protein empirical-Bayes-moderated df
-        # (fit["df"]), not the naive constant n_samples - p; the reported df is
-        # therefore per-protein and not all equal to that residual constant.
-        mat, sa, sb, _ = _make_protein_matrix()
-        result = run_proda(np.log2(mat.clip(lower=1)), sa, sb, "A", "B")
-        assert "df" in result.columns
+        assert {
+            "ProteinName",
+            "log2FC",
+            "pvalue",
+            "adj_pvalue",
+            "df",
+        }.issubset(result.columns)
         naive_df = (len(sa) + len(sb)) - 2  # p = intercept + group
         df_values = result["df"].values
         assert np.all(df_values > 0)
