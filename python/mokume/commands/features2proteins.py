@@ -210,7 +210,7 @@ QUANT_METHOD = QuantMethodParamType()
     "pibaq_max_aa",
     help="Maximum peptide length from the FASTA digest for piBAQ",
     type=click.IntRange(min=1),
-    default=50,
+    default=30,
     show_default=True,
 )
 @click.option(

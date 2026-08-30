@@ -14,6 +14,38 @@ def _make_input_files(tmp_path: Path) -> tuple[str, str]:
     return str(parquet), str(sdrf)
 
 
+def test_features2proteins_uses_standard_pibaq_max_aa_default(monkeypatch, tmp_path):
+    """The pure-Python CLI shares the canonical 30-aa piBAQ default."""
+    parquet, sdrf = _make_input_files(tmp_path)
+    fasta = tmp_path / "proteome.fasta"
+    fasta.write_text(">P1\nPEPTIDEK\n", encoding="utf-8")
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(pipeline, "features_to_proteins", fake_run_pipeline)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "features2proteins",
+            "-p",
+            parquet,
+            "-o",
+            "out.csv",
+            "-s",
+            sdrf,
+            "--quant-method",
+            "pibaq",
+            "--fasta",
+            str(fasta),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["pibaq_max_aa"] == 30
+
+
 def test_features2proteins_passes_directlfq_and_batch_options(monkeypatch, tmp_path):
     parquet, sdrf = _make_input_files(tmp_path)
     captured = {}
