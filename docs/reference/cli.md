@@ -1,73 +1,118 @@
 # CLI Reference
 
-The `mokume` binary is the Rust compute kernel's command-line entry point. It exposes exactly four compute subcommands — `features2proteins`, `features2peptides`, `peptides2protein`, and `correct-batches` — and shells out to nothing. Most users start with `features2proteins` for quantification workflows.
-Use `mokume --help` or `mokume <command> --help` for details.
+The `mokume` console command is installed by the Rust-backed wheel. Native
+quantification commands live under `mokume quantify`; optional Python periphery
+workflows provide TissueMap, plots, and interactive reports. Most users start
+with `mokume quantify features2proteins`.
+Use `mokume --help` or `mokume help <COMMAND> [SUBCOMMAND]` for details.
 
-The same `mokume` command is available two ways: as a standalone Rust binary (built with `cargo`, no Python) and from the `pip install mokume-rs` wheel, which runs the identical kernel in-process through the `mokume._mokume` extension. The flag surface below is single-sourced in Rust and is identical for both.
+In generated help, angle brackets name a value that follows an option; they are
+not typed literally. For example, `--output <FILE>` expects one file path, while
+`--de-contrast <GROUP_A> <GROUP_B>` expects two condition labels.
 
-!!! note "Plotting, tissue maps, and reports live in the Python wheel"
-    The visualization periphery — t-SNE, tissue-proteome maps, DE plots, interactive HTML reports, iBAQ QC — is **not** part of this CLI. It ships in the `pip install mokume-rs` wheel as `mokume.tsne_visualization(...)`, `mokume.tissuemap(...)`, `mokume.de_plots([...])`, `mokume.interactive_report([...])`, and `mokume.peptides2protein_qc(...)`. See the [Python API](python-api.md). These commands read the tables the kernel wrote and never recompute the numbers.
+The compute flag surface below is single-sourced in Rust and shared with the
+wheel's thin Python API. Periphery commands dispatch to modules packaged in the
+same wheel and state their required extra in root help.
+
+!!! note "One CLI, two implementation layers"
+    `quantify features2proteins`, `quantify features2peptides`,
+    `quantify peptides2protein`, and `correct-batches` run in the Rust kernel.
+    `tissuemap`, `plot`, and `interactive-report` run in the wheel's Python periphery.
+    Plotting and reporting consume kernel tables; TissueMap performs its
+    documented downstream analysis from QPX data.
 
 ## features2proteins
 
 The unified pipeline: features to protein quantification in one step.
 
 ```bash
-mokume features2proteins [OPTIONS]
+mokume quantify features2proteins [OPTIONS]
 ```
 
-### Required Options
+### Input & Output
 
-| Option | Description |
-|--------|-------------|
-| `-p/--parquet` | Input parquet file (quantms.io/qpx format) |
-| `-o/--output` | Output protein intensities CSV |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-p/--parquet` | none | Input quantms.io/QPX feature parquet; pair it with `--psm` for `spectral-count` |
+| `--msstats` | none | Input MSstats CSV; mutually exclusive with QPX inputs and requires `--sdrf` |
+| `--psm` | none | PSM-level QPX parquet for `spectral-count`; requires matching `--parquet` and `--sdrf` |
+| `-o/--output` | required | Output protein intensities CSV |
 
-### Input & Filtering
+The output schema is fixed: the protein identifier column is `ProteinName`.
+There is no alternate output-format switch.
+
+Provide `--parquet`, `--msstats`, or the paired `--psm` and `--parquet` inputs.
+The paired QPX inputs are used only by true `spectral-count` and require SDRF.
+MSstats input requires
+`ProteinName`, `PeptideSequence`, `Intensity`, `Charge` or `PrecursorCharge`,
+and `Run` or `Reference`; isobaric data also requires `Channel`. Ratio
+quantification requires PSM-level QPX evidence and does not accept MSstats
+feature tables.
+
+### Metadata & Filtering
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-s/--sdrf` | none | SDRF file for sample metadata |
 | `--min-aa` | 7 | Minimum amino acid length |
-| `--min-unique` | 2 | Minimum unique peptides per protein |
-| `--remove-contaminants` | on | Remove contaminants and decoys |
-| `--keep-contaminants` | off | Keep contaminants and decoys |
+| `--min-unique` | 2 | Minimum unique peptides per protein/sample; piBAQ uses its method-specific value 0 and rejects this option |
+| `--keep-contaminants` | off | Keep contaminants; rows marked `is_decoy=true` are always removed |
 
 ### Quantification
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, ibaq, topn, top3, sum, median, ratio, abd (TMT abundance), intensity (TMT reporter), spectral_count |
-| `--fasta` | none | FASTA file (required for iBAQ) |
-| `--topn` | 3 | N for TopN quantification |
-| `--ion-alignment` | none | Ion alignment: none or hierarchical |
-| `--directlfq-cores` | auto | CPU cores for DirectLFQ |
+| `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, pibaq, `top<N>`, sum, median, ratio, abd, intensity, peptide-count, spectral-count |
+| `-f/--fasta` | none | FASTA file (required for piBAQ) |
+| `-t/--threads` | auto | Shared Rust worker count for all methods, including DirectLFQ |
 | `--directlfq-min-nonan` | 1 | Min non-NaN values for DirectLFQ |
+| `--directlfq-num-samples-quadratic` | 50 | Maximum samples in DirectLFQ's quadratic global-alignment subset |
+| `--pibaq-enzyme` | `Trypsin` | Protease name from the installed pyOpenMS catalog |
+| `--pibaq-max-aa` | 30 | Maximum theoretical peptide length |
+| `--pibaq-min-shared` | 2 | Minimum shared peptides for automatic family discovery |
+| `--pibaq-families` | none | YAML file with explicit family overrides |
+| `--pibaq-min-anchors` | 1 | Minimum unique-peptide anchors required before proportional family allocation |
+
+!!! note "Write the N in the method name: `--quant-method top<N>`"
+    TopN quantification takes its N from the method name — `--quant-method top3`,
+    `top5`, `top10`, and so on for any N ≥ 1.
 
 ### Normalization
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--run-normalization` | `median` | Run-level: median, mean, max, global, max_min, iqr, none |
-| `--sample-normalization` | `globalMedian` | Sample-level: globalMedian, conditionMedian, hierarchical, quantile, mediancenter, meancenter, rlr, loess, none |
-| `--normalization-proteins` | none | File with protein IDs for normalization |
+| `--run-normalization` | method-dependent | Run-level: median, mean, max, global, max-min, iqr, none |
+| `--sample-normalization` | method-dependent | Sample-level: global-median, condition-median, hierarchical, quantile, median-center, mean-center, rlr, loess, tmm, none |
+| `--normalization-proteins` | none | Protein-ID file for applicable intensity normalizers; unavailable for directlfq, ratio, peptide-count, and spectral-count |
+
+DirectLFQ and Ratio manage normalization internally. `peptide-count` and
+`spectral-count` count evidence identities and do not use intensity
+normalization. All four therefore default both normalization layers to `none`;
+passing a non-`none` value is rejected. Other methods default to `median` /
+`global-median`.
 
 ### IRS (Multi-Plex TMT)
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--irs` | off | Enable IRS normalization |
-| `--irs-reference-samples` | auto | Comma-separated reference sample names |
+| `--irs-reference-sample` | auto | Reference sample name; repeat for multiple samples |
 | `--irs-sdrf-column` | auto | SDRF column for reference detection |
-| `--irs-sdrf-values` | auto | Values indicating reference samples |
+| `--irs-sdrf-value` | auto | Value indicating a reference sample; repeat for multiple values |
 | `--irs-reference-regex` | `pool\|powder\|ref\|reference\|bridge` | Regex for reference auto-detection |
 | `--irs-stat` | `median` | Plex reference statistic: median or mean |
 | `--irs-remove-reference` | off | Remove reference samples from output |
 
-### Coverage Filter
+IRS options require `--irs` and an SDRF. Reference detection must find usable
+reference samples and plex assignments; otherwise the command fails. IRS is
+rejected for `peptide-count` and `spectral-count` because scaling count evidence
+would no longer represent an integer evidence count.
+
+### Matrix QC and Coverage Filter
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--min-sample-correlation` | none | Drop samples whose mean pairwise Pearson correlation to same-condition peers is below the threshold; uses pairwise-complete log2 protein intensities and requires SDRF metadata |
 | `--coverage-threshold` | none | Min fraction of non-missing values per condition |
 
 ### Ratio Quantification
@@ -81,97 +126,119 @@ mokume features2proteins [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--batch-correction` | off | Enable ComBat batch correction |
-| `--batch-method` | `sample_prefix` | Detection method: sample_prefix, run, column |
+| `--batch-method` | `sample-prefix` | Detection method: sample-prefix or column |
 | `--batch-column` | none | SDRF column used when `--batch-method=column` |
-| `--batch-covariates` | none | Comma-separated SDRF columns to preserve |
-| `--batch-parametric` / `--batch-nonparametric` | parametric | ComBat estimation mode |
+| `--batch-covariate` | none | SDRF column to preserve; repeat for multiple columns |
+| `--batch-nonparametric` | off | Use non-parametric ComBat instead of the parametric default |
 | `--batch-mean-only` | off | Only adjust batch means |
-| `--batch-ref` | none | Reference batch ID |
+| `--batch-ref` | none | Original sample-prefix or SDRF-column batch label |
 
-ComBat is a native Rust implementation, oracle-verified against inmoose (parametric ~1e-6, covariate / non-parametric / `ref_batch` / `mean_only` paths included). It runs on the proteins with no missing cells; the rest are kept uncorrected.
-
-!!! warning "`--batch-method run` is unsupported in the protein-matrix flow"
-    The protein-matrix flow has no run-level mapping, so `--batch-method run` errors at runtime (the same gate Python's `_detect_batch_indices` enforces). Use `sample_prefix` (default) or `column` (with `--batch-column`). The PCA + HDBSCAN outlier-removal pass is not ported.
+ComBat is a native Rust implementation, oracle-verified against inmoose
+(parametric ~1e-6, covariate / non-parametric / `ref_batch` / `mean_only`
+paths included). Numeric covariates keep their values, while nominal covariates
+use k-1 one-hot indicators. It runs on proteins with no missing cells; the rest
+are kept uncorrected. Invalid batch layouts and an empty complete-protein subset
+are errors rather than successful uncorrected outputs.
 
 ### Imputation
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--impute` | off | Enable missing-value imputation on the protein matrix |
-| `--impute-method` | `none` | Method: none, knn, minprob, mindet, qrilc, missforest, seqknn, impseq, gms, bpca, impseqrob |
-| `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet/QRILC low-tail draw |
+| `--impute-method` | none | Select a method and enable imputation; use `zero` for zero filling |
+| `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet |
 | `--impute-shift` | 1.6 | MinProb shift in standard deviations |
 | `--impute-scale` | 0.3 | MinProb scale factor for the imputation distribution sigma |
 | `--impute-n-neighbors` | 5 | Number of neighbours for KNN/SeqKNN |
 
 Imputation runs in log2 space (the matrix is transformed before imputation and back to linear afterwards) so that censored-aware methods like MinProb/MinDet/QRILC behave correctly. The imputation step is applied after coverage filtering and before batch correction in the pipeline.
 
-!!! note "`missforest` is wheel-only"
-    Every method above runs in the native Rust kernel except `missforest`, which wraps scikit-learn's `IterativeImputer` (`RandomForestRegressor`) and cannot be reproduced bit-for-bit cross-language. The kernel accepts it but returns a clear error pointing to the wheel's `mokume.impute(matrix, method="missforest")` (the `analysis` extra), which runs the pure-Python imputer.
+`missforest` is intentionally absent from this Rust compute command because it
+wraps scikit-learn. Install `mokume[analysis]` and call the wheel's Python
+`mokume.impute` API when that method is required.
 
 ### Differential Expression
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--de` | off | Enable differential expression analysis |
-| `--de-contrasts` | — | Comma-separated contrasts (e.g., `"A vs B,A vs C"`) |
-| `--de-contrasts-file` | — | TSV file with columns `group1`, `group2` |
+| `--de-contrast` | — | Two condition labels; repeat for multiple contrasts |
+| `--de-contrast-file` | — | TSV file with columns `group1`, `group2` |
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
-| `--de-ensemble-methods` | `limrots,deqms,proda` | Comma-separated DE methods used when `--de-method=ensemble` |
+| `--de-ensemble-method` | `limrots`, `deqms`, `proda` | Ensemble member; repeat to override the defaults |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
-| `--de-log2fc` | 0.5 | Minimum absolute log2 fold change |
+| `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
+| `--de-effect-size-gate` | none | Explicit data-driven gate: mixture or null-quantile; a numeric log2FC value is its fallback |
 | `--de-fdr` | 0.05 | Maximum FDR threshold |
-| `--de-fdr-method` | `bh` | FDR correction: bh or ihw |
-| `--de-output` | none | DE results file; with multiple contrasts each is written as `<stem>_<A-B>.<ext>` |
+| `--de-fdr-method` | `bh` | FDR correction: bh, ihw, bky, or storey |
+| `--de-output` | required for DE | DE results file; with multiple contrasts each is written as `<stem>_<A-B>.<ext>` |
 
-Contrasts must be explicitly provided via `--de-contrasts` and/or `--de-contrasts-file`. Both can be combined.
+Any DE option enables differential expression. At least one contrast and an
+output path must be supplied, so a completed calculation cannot be discarded.
+Inline and file contrasts can be combined.
 
-`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots` for other quantification methods. All methods run in the native Rust kernel — no R or rpy2 required. Deterministic methods (limma / deqms) are cell-exact against the Python reference; RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change cell-exactly and p-values at rank level.
+`--de-method auto` selects `deqms` for `directlfq` quantification and `limrots`
+for other quantification methods. All methods run in the native Rust kernel —
+no R or rpy2 required. ROTS and LimROTS retain permutation FDR and therefore
+reject alternative `--de-fdr-method` values. Deterministic methods (limma /
+deqms) are cell-exact against frozen Python-generated compatibility output;
+RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change
+cell-exactly and p-values at rank level.
 
-`--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold.
+`--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold. Eligible non-ROTS members use the requested correction; ROTS and LimROTS retain their native permutation FDR. The Fisher-combined p-values use BH by default, with BKY or Storey applied when requested and reliable; IHW remains a member-level correction because the combined rows have no IHW covariate.
 
 ### Plots & Reports
 
 `features2proteins` is pure compute and writes no figures. The kernel emits the protein-matrix CSV and (with `--de-output`) one DE result CSV per contrast; render plots and HTML reports from those CSVs with the wheel periphery:
 
-```python
-import mokume
+```bash
+# PCA from the protein matrix (plotting extra)
+mokume plot pca --protein-matrix proteins.csv \
+    --sdrf experiment.sdrf.tsv --output pca.pdf
 
-# DE volcano / heatmap / PCA from the kernel CSVs (plotting extra):
-mokume.de_plots(["--protein-matrix", "proteins.csv", "--plot-dir", "plots",
-                 "--volcano", "--heatmap", "--pca",
-                 "--contrast", "c1", "A", "B", "de.csv"])
+# DE volcano / heatmap from the kernel CSVs (plotting extra)
+mokume plot de --protein-matrix proteins.csv --outdir plots \
+    --sdrf experiment.sdrf.tsv --volcano --heatmap \
+    --contrast c1 A B de.csv
 
-# interactive HTML report (reports extra):
-mokume.interactive_report(["--protein-matrix", "proteins.csv", "--report-output", "report.html"])
+# Interactive HTML report (reports extra)
+mokume interactive-report --protein-matrix proteins.csv \
+    --sdrf experiment.sdrf.tsv --output report.html \
+    --contrast c1 A B de.csv
 ```
 
-Pass `--help` to either (`python -m mokume.commands.de_plots --help`) for the full flag set.
+Pass `--help` to either command for the full flag set.
 
 ### Export
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--export-peptides` | none | Export normalized peptides to file |
+| `--export-peptides` | none | Export normalized peptides (not supported with DirectLFQ) |
 | `--export-ions` | none | Export normalized ions (DirectLFQ only) |
 
-### DuckDB Resource Limits
+`--export-peptides` also rejects dataset-level sample normalization for
+non-cell-based aggregation methods, because those peptide values would not
+represent the normalized protein matrix.
+
+### Runtime Resource Controls
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--duckdb-memory` | DuckDB autoconfig (~80% of total RAM) | DuckDB memory limit (e.g. `80GB`, `16384MB`). See note below. |
-| `--duckdb-threads` | all cores | Number of threads DuckDB may use |
+| `-t/--threads` | Rayon default | Size the Rayon thread pool used by parallel Rust sections |
+| `--memory` | none | Cross-platform soft process resident-memory budget, such as `512MB` or `1GB`; reduces QPX batch size/read-ahead and fails when a checkpoint observes usage above the budget |
 
-!!! warning "`--duckdb-memory` is not a hard process cap"
-    The flag only sizes DuckDB's internal buffer pool. PyArrow, polars, and pandas each
-    have their own independent allocators, so the surrounding Python process can grow to
-    **2-3x** the DuckDB limit on wide pivots (e.g. PXD030304 at 5798 samples peaks
-    ~94 GB of process RSS with `--duckdb-memory 40GB`). For production environments
-    that require a hard ceiling, layer one of these on top of mokume:
+`--memory` is a planner and runtime guard, not an operating-system hard limit.
+The Rust pipeline checks resident memory at startup, after decoded input
+batches, and between major phases. It reads RSS on Unix-like systems and the
+process Working Set on Windows. A batch may transiently cross the requested
+value, and dataset-sized aggregation state is not spilled to disk; if that
+state no longer fits, the command exits with an explicit error instead of
+continuing to grow unchecked. The smaller synchronous batches may reduce
+throughput. Use systemd/cgroup, SLURM, Windows Job Objects, or container limits
+when the process must never exceed a hard ceiling.
 
-    - **systemd / cgroup**: `systemd-run --scope -p MemoryMax=80G -- mokume features2proteins ...`
-    - **SLURM**: `sbatch --mem=80G ...`
-    - **Docker / k8s**: `resources.limits.memory: 80Gi`
+The Rust path does not expose DuckDB-specific resource options because it does
+not use DuckDB.
+For piBAQ, runtime pyOpenMS FASTA digestion happens before dispatch to the Rust
+pipeline and therefore lies outside this soft budget.
 
 ---
 
@@ -180,7 +247,7 @@ Pass `--help` to either (`python -m mokume.commands.de_plots --help`) for the fu
 Feature-level to peptide-level normalization.
 
 ```bash
-mokume features2peptides [OPTIONS]
+mokume quantify features2peptides [OPTIONS]
 ```
 
 ### Core Options
@@ -190,38 +257,43 @@ mokume features2peptides [OPTIONS]
 | `-p/--parquet` | required | Input parquet file |
 | `-s/--sdrf` | none | SDRF file for metadata |
 | `-o/--output` | required | Output peptide intensity file |
-| `--min_aa` | 7 | Minimum amino acid length |
-| `--min_unique` | 2 | Minimum unique peptides per protein |
+| `--min-aa` | 7 | Minimum amino acid length |
+| `--min-unique` | 2 | Minimum unique peptides per protein |
 | `--keep-shared-peptides` | off | Keep shared/non-unique peptides and skip the unique-peptide gate |
-| `--remove_ids` | none | File with protein IDs to exclude |
-| `--remove_decoy_contaminants` | off | Remove decoys and contaminants |
-| `--remove_low_frequency_peptides` | off | Remove peptides in <20% of samples |
+| `--remove-ids` | none | File with protein IDs to exclude |
+| `--remove-decoy-contaminants` | off | Remove decoys and contaminants |
+| `--remove-low-frequency-peptides` | off | Remove peptides in <20% of samples |
 
 ### Normalization
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--run-normalization` | `median` | Feature normalization: median, mean, max, global, max_min, iqr, none |
-| `--sample-normalization` | `globalMedian` | Sample normalization: globalMedian, conditionMedian, hierarchical, none |
-| `--skip_normalization` | off | Skip all normalization |
+| `--run-normalization` | `median` | Feature normalization: median, mean, max, global, max-min, iqr, none |
+| `--sample-normalization` | `global-median` | Sample normalization: global-median, condition-median, none |
+| `--skip-normalization` | off | Skip all normalization |
 | `--log2` | off | Log2 transform output |
-| `--save_parquet` | off | Save output as parquet |
+| `--save-parquet` | off | Save output as parquet |
 
-!!! note "Only factor-based sample normalization changes the peptide output"
-    In `features2peptides`, only the scalar-per-sample methods (`globalMedian` / `conditionMedian`) are applied; the cross-sample distribution-alignment methods (`quantile`, `rlr`, `loess`, `hierarchical`, `mediancenter`, `meancenter`) are accepted but are a deterministic no-op here (same as `none`), because the streaming peptide loop cannot see the full matrix and Python's per-sample loop also leaves them unchanged. All are implemented and oracle-verified in `features2proteins`, where the full matrix exists.
+Dataset-level sample normalizers are not accepted by `features2peptides`; run
+them through `features2proteins`, where the full matrix exists.
 
 ### TMT / ITRAQ
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--irs_channel` | none | Explicit pooled/reference channel label |
-| `--irs_autodetect_regex` | none | Regex to detect pooled samples from SDRF |
-| `--irs_stat` | `median` | IRS per-run statistic |
-| `--irs_scope` | `global` | IRS scaling scope: global, by_mixture, or two_stage |
-| `--aggregation_level` | `sample` | Aggregate at sample or run level |
+| `--irs-channel` | none | Explicit pooled/reference channel label |
+| `--irs-autodetect-regex` | none | Regex to detect pooled samples from SDRF |
+| `--irs-stat` | `median` | IRS per-run statistic |
+| `--irs-scope` | `global` | IRS scaling scope: global, by-mixture, or two-stage |
+| `--aggregation-level` | `sample` | Aggregate at sample or run level |
 
 !!! note "Channel-based IRS in `features2peptides`"
-    The `--irs_channel` / `--irs_autodetect_regex` channel path scales on the TMT `mixture` / `channel` columns and is implemented for all three `--irs_scope` values (`global` / `by_mixture` / `two_stage`); the reference channel is taken from `--irs_channel` or auto-detected from the SDRF via `--irs_autodetect_regex`. SDRF-driven multi-plex IRS is also available in `features2proteins` (`--irs` with `--irs-reference-samples` / `--irs-sdrf-column`).
+    Choose exactly one of `--irs-channel` and `--irs-autodetect-regex`.
+    Autodetection requires an SDRF and must match a reference channel; a
+    requested channel must produce scaling factors. `--skip-normalization`
+    conflicts with IRS. SDRF-driven multi-plex IRS is also available in
+    `features2proteins` (`--irs` with repeated `--irs-reference-sample` /
+    `--irs-sdrf-column`).
 
 ### Filter Configuration
 
@@ -231,15 +303,24 @@ mokume features2peptides [OPTIONS]
 | `--generate-filter-config` | none | Generate example config and exit |
 | `--filter-min-intensity` | none | Min intensity threshold (override) |
 | `--filter-cv-threshold` | none | Max CV across replicates (override) |
-| `--filter-charge-states` | none | Comma-separated charge states (override) |
+| `--filter-charge-state` | none | Charge state override; repeat for multiple states |
 | `--filter-max-missed-cleavages` | none | Max missed cleavages (override) |
-| `--filter-exclude-modifications` | none | Comma-separated modifications (override) |
-| `--filter-min-unique-peptides` | none | Min unique peptides (override) |
+| `--filter-peptide-fdr` | none | Max QPX peptide q-value (override) |
+| `--filter-score NAME=THRESHOLD` | none | Named QPX score threshold; direction comes from `higher_better` |
+| `--filter-exclude-modification` | none | Modification override; repeat for multiple names |
+| `--filter-protein-fdr` | none | Max QPX protein-group q-value (override) |
 | `--filter-min-features` | none | Min features per run (override) |
-| `--filter-max-missing-rate` | none | Max missing rate (override) |
+| `--filter-max-missing-rate` | none | Max missing feature fraction per technical run (override) |
 
-!!! note "Group-level filters: what runs and what is a no-op"
-    The per-row filters (min-intensity floor, peptide length, charge states, excluded modifications, missed cleavages) and the per-`(protein, sample)` unique-peptide gate run natively and are oracle-locked vs Python. Among the **group-level** filters, CV threshold, quantile outlier removal, and the run-QC checks `--filter-min-features` / min-total-intensity / min-proteins are implemented via a pre-pass; replicate agreement reproduces Python's degenerate per-sample behaviour (a `>= 2` threshold empties the output); and `--filter-max-missing-rate`, sample-correlation, min-search-score, and min-coverage are no-ops that warn and pass rows through (matching Python's per-sample / column-absent skip). Only an unknown `razor-peptide-handling` value returns `NotImplemented`.
+Only implemented filters appear in the generated example. FDR filtering is
+disabled by default and requires populated `peptide_qvalue` or
+`pg_global_qvalue` input. Missing rate uses the complete distinct
+`(protein, peptide)` universe among the surviving technical runs in each sample.
+Named-score filtering is applied before normalization and aggregation, matches
+`additional_scores.score_name` exactly, and fails if the requested score is
+missing or has inconsistent `higher_better` values.
+Active unsupported filter-config values are rejected instead of being logged and
+ignored.
 
 ---
 
@@ -248,41 +329,44 @@ mokume features2peptides [OPTIONS]
 Protein quantification from normalized peptide data.
 
 ```bash
-mokume peptides2protein [OPTIONS]
+mokume quantify peptides2protein [OPTIONS]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-p/--peptides` | required | Input peptide intensity file |
-| `-f/--fasta` | none | FASTA file (required for iBAQ) |
-| `--method` | `ibaq` | Method: ibaq, top3, topn, maxlfq, sum, directlfq |
-| `-e/--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
-| `-n/--normalize` | off | Normalize quantification values |
-| `--min_aa` | 7 | Min amino acid length |
-| `--max_aa` | 30 | Max amino acid length |
-| `-t/--tpa` | off | Calculate TPA (iBAQ only) |
-| `-r/--ruler` | off | ProteomicRuler (iBAQ only) |
-| `-i/--ploidy` | 2 | Ploidy number |
-| `-m/--organism` | `human` | Organism for histone data |
-| `-c/--cpc` | 200 | Cellular protein concentration (g/L) |
-| `--topn_n` | 3 | N for TopN quantification |
-| `--threads` | -1 | Threads for MaxLFQ (-1 = all cores) |
-| `--min_nonan` | 1 | Min non-NaN for DirectLFQ |
-| `--families` | none | YAML file with explicit family overrides (iBAQ only; see [user guide](../user-guide/peptides2protein.md#family-discovery-tuning)) |
-| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (iBAQ only) |
-| `--min-anchors` | 1 | Minimum anchor peptides per family member (iBAQ only) |
-| `--high-anchor-threshold` | 3 | Anchors required for an `EvidenceLevel` of `high` (iBAQ only) |
+| `-f/--fasta` | none | FASTA file (required for piBAQ) |
+| `--quant-method` | `pibaq` | Method: pibaq, `top<N>` (top3, top5, top10, ...), maxlfq, sum, directlfq |
+| `--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
+| `--normalize` | off | Normalize quantification values |
+| `--min-aa` | 7 | Min amino acid length |
+| `--max-aa` | 30 | Max amino acid length |
+| `--tpa` | off | Calculate TPA (piBAQ only) |
+| `--ruler` | off | ProteomicRuler (piBAQ only) |
+| `--ploidy` | 2 with `--ruler` | Positive ploidy number (ruler only) |
+| `--organism` | `human` with `--ruler` | Organism for histone data (ruler only) |
+| `--cpc` | 200 with `--ruler` | Positive cellular protein concentration in g/L (ruler only) |
+| `-t/--threads` | auto | Positive worker count for MaxLFQ and DirectLFQ |
+| `--directlfq-min-nonan` | 1 | Min non-NaN for DirectLFQ |
+| `--families` | none | YAML file with explicit family overrides (piBAQ only; see [user guide](../user-guide/peptides2protein.md#family-discovery-tuning)) |
+| `--min-shared` | 2 | Minimum shared peptides for auto-family discovery (piBAQ only) |
+| `--min-anchors` | 1 | Anchor threshold; if no member reaches it, shared signal is split equally and evidence is `family_only` (piBAQ only) |
+| `--high-anchor-threshold` | 3 | Anchors every member must reach for `EvidenceLevel=high` (piBAQ only) |
 | `-o/--output` | required | Output file path |
-| `--verbose` | off | Print a pointer to the wheel QC report command |
-| `--qc_report` | QCprofile.pdf | QC report path echoed by `--verbose` |
+| `--qc-report` | none | Generate the piBAQ QC PDF at this path after native quantification |
 
-Use `--method topn --topn_n 5` or `--method topn --topn_n 10` for Top5 or Top10-style quantification. `--output` is required for every method.
+Use `--quant-method top5` or `--quant-method top10` for Top5 or Top10-style quantification; `top3` is the named method from [Silva et al. 2006](https://doi.org/10.1074/mcp.M500230-MCP200). `--output` is required for every method.
 
-!!! note "iBAQ for unported enzymes lives in the wheel"
-    The native iBAQ path digests proteins for the ported pyOpenMS enzymes (Trypsin[/P], Lys-C[/P], Arg-C[/P], Chymotrypsin[/P], Glu-C, Asp-N, Lys-N, PepsinA, ...), oracle-locked against pyOpenMS. For any other enzyme pyOpenMS knows (CNBr, V8-DE, unspecific cleavage, ...) the kernel has no cleavage rule and fails with an error pointing to the wheel: `mokume.peptides2protein_ibaq(peptides=..., fasta=..., enzyme="CNBr", output=...)` (the `ibaq` extra), which computes the whole iBAQ table in pure Python.
+!!! note "piBAQ uses the installed pyOpenMS catalog"
+    Both piBAQ commands query the installed pyOpenMS `ProteaseDB` at runtime and
+    support its complete catalog. Python digests the FASTA and passes the full
+    protein-to-theoretical-peptide map into Rust. At `debug` or `info` log level,
+    the run log records the pyOpenMS version, canonical enzyme, catalog SHA-256,
+    peptide-length bounds, and missed-cleavage count.
 
-!!! note "`--verbose` no longer draws a QC PDF"
-    QC plotting moved to the wheel. On the iBAQ path `--verbose` prints a one-line pointer to `mokume.peptides2protein_qc(protein_table=..., qc_report=...)` (the `plotting` extra), which draws the same density / box plots from the kernel's output table; it writes no PDF itself.
+!!! note "`--qc-report` plots the native result table"
+    Rust writes the piBAQ table first, then the wheel renders the density and box
+    plots from those exact values. Install `mokume[plotting]` to use this option.
 
 ---
 
@@ -296,30 +380,40 @@ mokume correct-batches [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-f/--folder` | required | Folder with TSV files |
-| `-p/--pattern` | `*ibaq.tsv` | File matching pattern |
+| `-i/--input` | required | Directory with TSV files |
+| `-p/--pattern` | `*pibaq.tsv` | File matching pattern |
 | `-o/--output` | required | Output file path |
-| `--sample_id_column` / `--sid` | `SampleID` | Sample ID column |
-| `--protein_id_column` / `--pid` | `ProteinName` | Protein ID column |
-| `--ibaq_raw_column` / `--ibaq` | `Ibaq` | Raw intensity column |
-| `--ibaq_corrected_column` | `IbaqBec` | Corrected intensity column |
+| `--sample-id-column` | `SampleID` | Sample ID column |
+| `--protein-id-column` | `ProteinName` | Protein ID column |
+| `--pibaq-raw-column` | `PiBAQ` | Raw intensity column |
+| `--pibaq-corrected-column` | `PiBAQBec` | Corrected intensity column |
 | `--comment` | `#` | Comment character |
 | `--sep` | `\t` | Field separator |
-| `--export_anndata` | off | Export to AnnData h5ad |
+| `--export-anndata` | off | Export to AnnData h5ad |
 
-ComBat here is the native Rust implementation, oracle-verified against inmoose. The `.h5ad` written by `--export_anndata` is Rust-native and verified to round-trip through `anndata.read_h5ad`. This command does not expose batch-method or covariate options; for those, use `features2proteins --batch-correction`.
+ComBat here is the native Rust implementation, oracle-verified against inmoose.
+The combined protein × sample matrix must be complete and finite; structural
+gaps, blanks, `NaN`, and infinities fail instead of being silently filled with
+zero. Explicit numeric zero remains a valid observation. The `.h5ad` written by
+`--export-anndata` is Rust-native and verified to round-trip through
+`anndata.read_h5ad`. This command does not expose batch-method or covariate
+options; for those, use `features2proteins --batch-correction`.
 
 ---
 
-## Periphery (tissue maps, t-SNE)
+## Periphery commands
 
-Tissue-proteome maps and t-SNE visualization are **not** CLI subcommands — they ship in the `pip install mokume-rs` wheel and read the kernel's output tables:
+These commands ship in the `pip install mokume` wheel but remain implemented in
+Python rather than the Rust compute kernel:
 
-```python
-import mokume
+```bash
+pip install "mokume[plotting]"
+mokume plot tsne --input ./proteins --pattern proteins.tsv --output tsne.pdf
 
-mokume.tissuemap(scan_dir="./data", output_dir="./out")     # tissuemap extra
-mokume.tsne_visualization(folder="./proteins", pattern="proteins.tsv")  # plotting extra
+pip install "mokume[tissuemap]"
+mokume tissuemap --input ./data --outdir ./out --threads 24
 ```
 
-Each is also runnable as `python -m mokume.commands.tissuemap --help` / `python -m mokume.commands.visualize --help`. See the [Python API](python-api.md) for the full periphery surface and the matching extras.
+t-SNE visualization reads protein tables, while TissueMap derives a downstream
+atlas from QPX data. See the [Python API](python-api.md) for the corresponding
+in-process functions and the full periphery surface.

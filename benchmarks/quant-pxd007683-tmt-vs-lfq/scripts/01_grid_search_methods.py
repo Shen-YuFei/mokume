@@ -21,7 +21,7 @@ import mokume
 from config import (
     DATA_DIR, RESULTS_DIR,
     QUANTIFICATION_METHODS, NORMALIZATION_METHODS, IMPUTATION_METHODS,
-    SAMPLE_CONDITIONS, MIN_PEPTIDES,
+    SAMPLE_CONDITIONS,
 )
 from benchmark_utils import (
     quantile_normalize, median_center, total_intensity_normalize,

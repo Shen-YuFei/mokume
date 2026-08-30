@@ -170,6 +170,10 @@ class TestQuantificationMethodEnum:
     def test_from_str(self, name, expected):
         assert QuantificationMethod.from_str(name) == expected
 
+    def test_removed_ibaq_name_is_rejected(self):
+        with pytest.raises(KeyError):
+            QuantificationMethod.from_str("ibaq")
+
     def test_description_mentions_algorithm(self):
         assert "log2" in QuantificationMethod.TMT_ABUNDANCE.description
         assert (

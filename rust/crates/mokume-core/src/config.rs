@@ -13,11 +13,15 @@ pub struct FeatureToProteinsConfig {
     pub quantification: QuantMethod,
     pub topn_peptides: usize,
     pub maxlfq: MaxLfqConfig,
-    pub ibaq: IbaqConfig,
+    pub pibaq: PibaqConfig,
     pub directlfq: DirectLfqConfig,
     pub batch: BatchCorrectionConfig,
     pub irs: IrsConfig,
     pub coverage_threshold: Option<f64>,
+    /// Minimum mean pairwise Pearson correlation to same-condition peers,
+    /// computed on pairwise-complete log2 protein intensities.
+    #[serde(default)]
+    pub sample_correlation_threshold: Option<f64>,
     pub ratio: RatioConfig,
     pub imputation: ImputationConfig,
     pub differential_expression: DifferentialExpressionConfig,
@@ -44,9 +48,7 @@ pub struct FeatureToPeptidesConfig {
     /// Destination path for the peptide intensity CSV.
     pub output: PathBuf,
     pub filtering: FilterConfig,
-    /// Optional file of protein IDs (one per line) to drop from the analysis;
-    /// a row is removed when its `ProteinName` contains any listed ID as a
-    /// literal substring (Python `--remove_ids` / `remove_protein_by_ids`).
+    /// Optional file of exact protein accessions (one per line) to drop.
     pub remove_ids: Option<PathBuf>,
     /// Remove peptides present in fewer than 20% of samples (Python
     /// `--remove_low_frequency_peptides`).
@@ -150,6 +152,7 @@ impl AggregationLevel {
 pub struct InputConfig {
     pub parquet: Option<PathBuf>,
     pub msstats: Option<PathBuf>,
+    pub psm: Option<PathBuf>,
     pub sdrf: Option<PathBuf>,
     pub fasta: Option<PathBuf>,
 }
@@ -201,9 +204,10 @@ impl Default for FilterConfig {
 /// the Python dataclasses so a partial YAML/JSON file (or no file at all, just
 /// CLI overrides) fills the rest exactly as `from_dict` does. `#[serde(default)]`
 /// makes every missing key fall back to the corresponding `Default`, matching
-/// Python's `data.get(block, {})` + dataclass defaults; unknown keys are ignored.
+/// Python's `data.get(block, {})` + dataclass defaults. Unknown keys are rejected
+/// so a misspelled filter never degrades to a silent no-op.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PreprocessingFilterConfig {
     pub name: String,
     pub enabled: bool,
@@ -231,7 +235,7 @@ impl Default for PreprocessingFilterConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct IntensityFilterConfig {
     pub min_intensity: f64,
     pub cv_threshold: Option<f64>,
@@ -255,13 +259,13 @@ impl Default for IntensityFilterConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PeptideFilterConfig {
-    pub min_search_score: Option<f64>,
+    pub score: Option<NamedScoreFilterConfig>,
     pub allowed_charge_states: Option<Vec<i32>>,
     pub exclude_modifications: Vec<String>,
     pub max_missed_cleavages: Option<usize>,
-    pub fdr_threshold: f64,
+    pub fdr_threshold: Option<f64>,
     pub min_peptide_length: usize,
     pub max_peptide_length: usize,
     pub exclude_sequence_patterns: Vec<String>,
@@ -271,11 +275,11 @@ pub struct PeptideFilterConfig {
 impl Default for PeptideFilterConfig {
     fn default() -> Self {
         Self {
-            min_search_score: None,
+            score: None,
             allowed_charge_states: None,
             exclude_modifications: Vec::new(),
             max_missed_cleavages: None,
-            fdr_threshold: 0.01,
+            fdr_threshold: None,
             min_peptide_length: 7,
             max_peptide_length: 50,
             exclude_sequence_patterns: Vec::new(),
@@ -284,10 +288,22 @@ impl Default for PeptideFilterConfig {
     }
 }
 
+/// Threshold for one explicitly named QPX `additional_scores` entry.
+///
+/// The comparison direction is read from that entry's `higher_better` flag:
+/// higher-better scores must be greater than or equal to `threshold`, while
+/// lower-better scores must be less than or equal to it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
+pub struct NamedScoreFilterConfig {
+    pub name: String,
+    pub threshold: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProteinFilterConfig {
-    pub fdr_threshold: f64,
+    pub fdr_threshold: Option<f64>,
     pub min_coverage: f64,
     pub min_peptides: usize,
     pub min_unique_peptides: usize,
@@ -301,7 +317,7 @@ pub struct ProteinFilterConfig {
 impl Default for ProteinFilterConfig {
     fn default() -> Self {
         Self {
-            fdr_threshold: 0.01,
+            fdr_threshold: None,
             min_coverage: 0.0,
             min_peptides: 1,
             min_unique_peptides: 2,
@@ -311,6 +327,7 @@ impl Default for ProteinFilterConfig {
             remove_decoys: true,
             contaminant_patterns: vec![
                 "CONTAMINANT".to_string(),
+                "CONTAM_".to_string(),
                 "ENTRAP".to_string(),
                 "DECOY".to_string(),
             ],
@@ -319,12 +336,11 @@ impl Default for ProteinFilterConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RunQcFilterConfig {
     pub min_total_intensity: f64,
     pub min_identified_features: usize,
     pub min_identified_proteins: usize,
-    pub min_sample_correlation: Option<f64>,
     pub max_missing_rate: f64,
 }
 
@@ -334,7 +350,6 @@ impl Default for RunQcFilterConfig {
             min_total_intensity: 0.0,
             min_identified_features: 0,
             min_identified_proteins: 0,
-            min_sample_correlation: None,
             max_missing_rate: 1.0,
         }
     }
@@ -371,7 +386,7 @@ pub struct MaxLfqConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IbaqConfig {
+pub struct PibaqConfig {
     pub enzyme: String,
     pub max_aa: usize,
     pub min_shared: usize,
@@ -380,11 +395,11 @@ pub struct IbaqConfig {
     pub high_anchor_threshold: usize,
 }
 
-impl Default for IbaqConfig {
+impl Default for PibaqConfig {
     fn default() -> Self {
         Self {
             enzyme: "Trypsin".to_string(),
-            max_aa: 50,
+            max_aa: 30,
             min_shared: 2,
             families_yaml: None,
             min_anchors: 1,
@@ -418,7 +433,9 @@ pub struct BatchCorrectionConfig {
     pub covariates: Option<Vec<String>>,
     pub parametric: bool,
     pub mean_only: bool,
-    pub ref_batch: Option<i32>,
+    /// Original SDRF/sample-prefix batch label. Numeric strings remain accepted
+    /// as a compatibility spelling for the historical encoded batch ID.
+    pub ref_batch: Option<String>,
 }
 
 impl Default for BatchCorrectionConfig {
@@ -505,6 +522,10 @@ pub struct DifferentialExpressionConfig {
     pub ensemble_methods: Option<Vec<String>>,
     pub ensemble_min_k: usize,
     pub log2fc_threshold: f64,
+    /// Optional data-driven gate method. `None` applies `log2fc_threshold`
+    /// directly; a method uses that value only as its fallback.
+    #[serde(default)]
+    pub effect_size_gate: Option<String>,
     pub fdr_threshold: f64,
     pub fdr_method: String,
     pub output: Option<PathBuf>,
@@ -520,6 +541,7 @@ impl Default for DifferentialExpressionConfig {
             ensemble_methods: None,
             ensemble_min_k: 2,
             log2fc_threshold: 0.5,
+            effect_size_gate: None,
             fdr_threshold: 0.05,
             fdr_method: "bh".to_string(),
             output: None,
@@ -529,6 +551,7 @@ impl Default for DifferentialExpressionConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
+    /// Optional cross-platform soft resident-memory budget (for example `512MB` or `1GB`).
     pub memory: Option<String>,
     pub threads: Option<usize>,
 }

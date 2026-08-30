@@ -7,7 +7,12 @@ import pandas as pd
 import pytest
 
 from mokume.io.feature import Feature
-from mokume.pipeline.config import InputConfig, PipelineConfig, QuantificationConfig
+from mokume.pipeline.config import (
+    InputConfig,
+    NormalizationConfig,
+    PipelineConfig,
+    QuantificationConfig,
+)
 from mokume.pipeline.features_to_proteins import features_to_proteins
 from mokume.pipeline.runner import run_pipeline
 
@@ -234,6 +239,7 @@ def test_ratio_rejects_feature_level_msstats_input():
     """Ratio quantification rejects MSstats without PSM evidence."""
     config = PipelineConfig(
         input=InputConfig(msstats="input.csv", sdrf="input.sdrf.tsv"),
+        normalization=NormalizationConfig(run_method="none", sample_method="none"),
         quantification=QuantificationConfig(method="ratio"),
     )
 

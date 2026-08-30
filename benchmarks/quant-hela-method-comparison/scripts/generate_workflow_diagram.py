@@ -148,7 +148,7 @@ def create_workflow_diagram():
            ha='center', va='center', fontsize=12, fontweight='bold',
            color=colors['quant_border'])
 
-    methods = ['iBAQ', 'DirectLFQ', 'MaxLFQ', 'Top3', 'TopN', 'Sum']
+    methods = ['piBAQ', 'DirectLFQ', 'MaxLFQ', 'Top3', 'TopN', 'Sum']
     method_h = 0.6
     method_start = quant_y + quant_h - 1.1
 
@@ -197,7 +197,7 @@ def create_workflow_diagram():
     draw_arrow(1.9, 1.75, 3.2, 1.75)
     draw_arrow(5.4, 1.75, 12.5, 4.8, style='--', color='#1976D2')
 
-    ax.text(8.8, 2.0, 'Required for iBAQ', ha='center', va='center',
+    ax.text(8.8, 2.0, 'Required for piBAQ', ha='center', va='center',
            fontsize=8, fontstyle='italic', color='#1976D2')
 
     # ==================== OUTPUT ====================

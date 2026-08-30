@@ -5,7 +5,7 @@ Provides functions for converting DataFrames and QpxDatasets to AnnData
 objects. AnnData is an export-only format — used for downstream analysis
 with scanpy, scvi-tools, etc.
 
-Requires: pip install mokume[anndata]
+Requires: pip install mokume-py[h5ad]
 """
 
 from typing import TYPE_CHECKING, List, Optional

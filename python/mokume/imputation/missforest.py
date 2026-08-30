@@ -49,7 +49,7 @@ def impute_missforest(
     except ImportError as exc:
         raise ImportError(
             "scikit-learn is required for missForest imputation. "
-            "Install it with: pip install mokume[imputation]"
+            "Install it with: pip install mokume-py[imputation]"
         ) from exc
     estimator = RandomForestRegressor(
         n_estimators=n_estimators,

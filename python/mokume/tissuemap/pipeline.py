@@ -15,7 +15,7 @@ import pandas as pd
 from mokume.tissuemap.batch_correction import batch_correct
 from mokume.tissuemap.config import TissueMapConfig
 from mokume.tissuemap.embedding import embed
-from mokume.tissuemap.loader import load_dataset
+from mokume.tissuemap.loader import TissueLoadOptions, load_dataset
 from mokume.tissuemap.plotting.atlas import plot_slide_atlas_dendrogram
 from mokume.tissuemap.plotting.embedding import plot_pca_scree
 from mokume.tissuemap.plotting.markers import (
@@ -139,8 +139,11 @@ class TissueMapPipeline:
             ds_id,
             is_tmt=is_tmt if self.config.input.tmt_datasets else None,
             feature_prefix=self.config.input.feature_prefix,
-            min_tissue_samples=self.config.input.min_tissue_samples,
-            low_sample_warning_threshold=self.config.input.low_sample_warning_threshold,
+            options=TissueLoadOptions(
+                min_samples=self.config.input.min_tissue_samples,
+                warning_threshold=self.config.input.low_sample_warning_threshold,
+                n_jobs=self._embed_n_jobs,
+            ),
         )
 
         logger.info("Log2 + median normalization")

@@ -84,7 +84,7 @@ def impute_missing_values(
         except ImportError as exc:
             raise ImportError(
                 "scikit-learn is required for KNN/mean/median imputation. "
-                "Install it with: pip install mokume[imputation]"
+                "Install it with: pip install mokume-py[imputation]"
             ) from exc
 
         if method == "knn":

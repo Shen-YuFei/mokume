@@ -62,6 +62,8 @@ def validate_de_ensemble(
         return resolve_ensemble_methods(ensemble_methods, ensemble_min_k)
     if ensemble_methods is not None:
         raise ValueError("ensemble methods only apply when DE method is 'ensemble'")
+    if ensemble_min_k != 2:
+        raise ValueError("ensemble min_k only applies when DE method is 'ensemble'")
     return None
 
 

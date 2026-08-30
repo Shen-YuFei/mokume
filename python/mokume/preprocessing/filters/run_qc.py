@@ -12,13 +12,42 @@ from mokume.core.constants import (
     NORM_INTENSITY,
     SAMPLE_ID,
     RUN,
+    TECHREPLICATE,
     PROTEIN_NAME,
+    PEPTIDE_CANONICAL,
 )
 from mokume.preprocessing.filters.base import BaseFilter, FilterResult
 from mokume.preprocessing.filters.enums import FilterLevel
 
 
 logger = get_logger("mokume.preprocessing.filters.run_qc")
+
+
+def _resolve_run_column(df: pd.DataFrame, preferred: str) -> str:
+    """Resolve a run identifier available in the per-sample filter frame."""
+    for candidate in (preferred, TECHREPLICATE, RUN, SAMPLE_ID):
+        if candidate in df.columns:
+            return candidate
+    return preferred
+
+
+def _missing_rates(
+    df: pd.DataFrame,
+    intensity_column: str,
+    run_column: str,
+) -> pd.Series | None:
+    feature_columns = [PROTEIN_NAME, PEPTIDE_CANONICAL]
+    if any(column not in df.columns for column in feature_columns):
+        return None
+    feature_universe = df[feature_columns].drop_duplicates()
+    if feature_universe.empty:
+        return None
+    detected = df[df[intensity_column].notna() & (df[intensity_column] > 0)][
+        [run_column, *feature_columns]
+    ].drop_duplicates()
+    runs = pd.Index(df[run_column].dropna().unique())
+    detected_counts = detected.groupby(run_column).size().reindex(runs, fill_value=0)
+    return 1.0 - (detected_counts / len(feature_universe))
 
 
 class RunIntensityFilter(BaseFilter):
@@ -28,7 +57,7 @@ class RunIntensityFilter(BaseFilter):
         self,
         min_intensity: float,
         intensity_column: str = NORM_INTENSITY,
-        run_column: str = SAMPLE_ID,
+        run_column: str = TECHREPLICATE,
     ):
         """
         Initialize the filter.
@@ -63,11 +92,7 @@ class RunIntensityFilter(BaseFilter):
         elif col not in df.columns and INTENSITY in df.columns:
             col = INTENSITY
 
-        run_col = self.run_column
-        if run_col not in df.columns and SAMPLE_ID in df.columns:
-            run_col = SAMPLE_ID
-        elif run_col not in df.columns and RUN in df.columns:
-            run_col = RUN
+        run_col = _resolve_run_column(df, self.run_column)
 
         if col not in df.columns or run_col not in df.columns:
             logger.warning("%s: Required columns not found, skipping filter", self.name)
@@ -104,7 +129,7 @@ class MinFeaturesFilter(BaseFilter):
         self,
         min_features: int = 0,
         min_proteins: int = 0,
-        run_column: str = SAMPLE_ID,
+        run_column: str = TECHREPLICATE,
         protein_column: str = PROTEIN_NAME,
     ):
         """
@@ -137,18 +162,23 @@ class MinFeaturesFilter(BaseFilter):
     def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
         input_count = len(df)
 
-        run_col = self.run_column
-        if run_col not in df.columns and SAMPLE_ID in df.columns:
-            run_col = SAMPLE_ID
-        elif run_col not in df.columns and RUN in df.columns:
-            run_col = RUN
+        run_col = _resolve_run_column(df, self.run_column)
 
         if run_col not in df.columns:
             logger.warning("%s: Run column not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
-        # Count features per run
-        feature_counts = df.groupby(run_col).size()
+        # Count distinct peptide features per run instead of duplicate rows.
+        feature_columns = [
+            column
+            for column in (PROTEIN_NAME, PEPTIDE_CANONICAL)
+            if column in df.columns
+        ]
+        feature_counts = (
+            df[[run_col, *feature_columns]].drop_duplicates().groupby(run_col).size()
+            if feature_columns
+            else df.groupby(run_col).size()
+        )
         passing_runs_features = feature_counts[
             feature_counts >= self.min_features
         ].index
@@ -195,7 +225,7 @@ class MissingRateFilter(BaseFilter):
         self,
         max_missing_rate: float = 1.0,
         intensity_column: str = NORM_INTENSITY,
-        run_column: str = SAMPLE_ID,
+        run_column: str = TECHREPLICATE,
     ):
         """
         Initialize the filter.
@@ -228,19 +258,16 @@ class MissingRateFilter(BaseFilter):
         if col not in df.columns and NORM_INTENSITY in df.columns:
             col = NORM_INTENSITY
 
-        run_col = self.run_column
-        if run_col not in df.columns and SAMPLE_ID in df.columns:
-            run_col = SAMPLE_ID
+        run_col = _resolve_run_column(df, self.run_column)
 
         if col not in df.columns or run_col not in df.columns:
             logger.warning("%s: Required columns not found, skipping filter", self.name)
             return df, self._create_result(input_count, input_count)
 
-        # Calculate missing rate per run
-        def missing_rate(group):
-            return (group[col].isna() | (group[col] == 0)).mean()
-
-        run_missing = df.groupby(run_col).apply(missing_rate)
+        run_missing = _missing_rates(df, col, run_col)
+        if run_missing is None:
+            logger.warning("%s: Feature columns not found, skipping filter", self.name)
+            return df, self._create_result(input_count, input_count)
         passing_runs = run_missing[run_missing <= self.max_missing_rate].index
         removed_runs = run_missing[run_missing > self.max_missing_rate].index.tolist()
 
@@ -260,97 +287,4 @@ class MissingRateFilter(BaseFilter):
             input_count,
             output_count,
             {"max_missing_rate": self.max_missing_rate, "removed_runs": removed_runs},
-        )
-
-
-class SampleCorrelationFilter(BaseFilter):
-    """Filter samples by pairwise correlation with other samples in the condition."""
-
-    def __init__(
-        self,
-        min_correlation: float,
-        intensity_column: str = NORM_INTENSITY,
-        sample_column: str = SAMPLE_ID,
-        protein_column: str = PROTEIN_NAME,
-    ):
-        """
-        Initialize the filter.
-
-        Parameters
-        ----------
-        min_correlation : float
-            Minimum pairwise correlation between samples.
-        intensity_column : str, optional
-            Column name containing intensity values.
-        sample_column : str, optional
-            Column name for sample identifiers.
-        protein_column : str, optional
-            Column name containing protein identifiers.
-        """
-        self.min_correlation = min_correlation
-        self.intensity_column = intensity_column
-        self.sample_column = sample_column
-        self.protein_column = protein_column
-
-    @property
-    def name(self) -> str:
-        return "SampleCorrelationFilter"
-
-    @property
-    def level(self) -> FilterLevel:
-        return FilterLevel.SAMPLE
-
-    def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
-        input_count = len(df)
-
-        col = self.intensity_column
-        if col not in df.columns and NORM_INTENSITY in df.columns:
-            col = NORM_INTENSITY
-
-        sample_col = self.sample_column
-        if sample_col not in df.columns and SAMPLE_ID in df.columns:
-            sample_col = SAMPLE_ID
-
-        if (
-            col not in df.columns
-            or sample_col not in df.columns
-            or self.protein_column not in df.columns
-        ):
-            logger.warning("%s: Required columns not found, skipping filter", self.name)
-            return df, self._create_result(input_count, input_count)
-
-        # Pivot to wide format for correlation calculation
-        pivot_df = df.pivot_table(
-            index=self.protein_column,
-            columns=sample_col,
-            values=col,
-            aggfunc="mean",
-        )
-
-        # Calculate pairwise correlations
-        corr_matrix = pivot_df.corr()
-
-        # Find samples with low average correlation
-        avg_corr = corr_matrix.mean()
-        removed_samples = avg_corr[avg_corr < self.min_correlation].index.tolist()
-
-        filtered_df = df[~df[sample_col].isin(removed_samples)].copy()
-
-        output_count = len(filtered_df)
-
-        if removed_samples:
-            logger.info(
-                "%s: Removed samples with avg correlation < %.2f: %s",
-                self.name,
-                self.min_correlation,
-                removed_samples,
-            )
-
-        return filtered_df, self._create_result(
-            input_count,
-            output_count,
-            {
-                "min_correlation": self.min_correlation,
-                "removed_samples": removed_samples,
-            },
         )

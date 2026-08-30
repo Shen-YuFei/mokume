@@ -6,9 +6,6 @@ name: basic_qc
 enabled: true
 log_filtered_counts: true
 
-intensity:
-  remove_zero_intensity: true
-
 peptide:
   min_peptide_length: 7
   max_peptide_length: 50
@@ -19,5 +16,6 @@ protein:
   remove_decoys: true
   contaminant_patterns:
     - CONTAMINANT
+    - CONTAM_
     - ENTRAP
     - DECOY

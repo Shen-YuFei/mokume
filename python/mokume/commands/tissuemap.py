@@ -21,8 +21,7 @@ import click
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
-    default=Path("tissuemap_output"),
-    show_default=True,
+    default=None,
     help="Output directory for results.",
 )
 @click.option(
@@ -48,9 +47,8 @@ import click
 )
 @click.option(
     "--n-jobs",
-    type=int,
-    default=8,
-    show_default=True,
+    type=click.IntRange(min=1),
+    default=None,
     help="Threads for t-SNE and parallel dataset processing.",
 )
 @click.option(
@@ -89,11 +87,11 @@ import click
 )
 def tissuemap_cmd(
     scan_dir: Optional[Path],
-    output_dir: Path,
+    output_dir: Optional[Path],
     config_path: Optional[Path],
     generate_config: Optional[Path],
     tmt_datasets: tuple[str, ...],
-    n_jobs: int,
+    n_jobs: Optional[int],
     dpi: Optional[int],
     imputation_method: Optional[str],
     embedding_method: Optional[str],
@@ -113,14 +111,24 @@ def tissuemap_cmd(
     from mokume.tissuemap.pipeline import TissueMapPipeline
 
     if generate_config is not None:
+        if any(
+            (
+                scan_dir is not None,
+                output_dir is not None,
+                config_path is not None,
+                bool(tmt_datasets),
+                n_jobs is not None,
+                dpi is not None,
+                imputation_method is not None,
+                embedding_method is not None,
+            )
+        ):
+            raise click.UsageError(
+                "--generate-config cannot be combined with run/config overrides"
+            )
         generate_default_yaml(generate_config)
         click.echo(f"Default config written to {generate_config}")
         return
-
-    if scan_dir is None:
-        raise click.UsageError(
-            "--scan-dir is required when not using --generate-config."
-        )
 
     config = _build_config(
         scan_dir,
@@ -132,15 +140,27 @@ def tissuemap_cmd(
         imputation_method,
         embedding_method,
     )
+    if scan_dir is None and config_path is None:
+        raise click.UsageError(
+            "--scan-dir is required unless it is defined by --config"
+        )
+    if not config.input.scan_dir.is_dir():
+        raise click.UsageError(
+            f"TissueMap scan directory does not exist: {config.input.scan_dir}"
+        )
+    if config.n_jobs < 1:
+        raise click.UsageError("n_jobs must be greater than zero")
+    if config.plotting.dpi < 1:
+        raise click.UsageError("plotting.dpi must be greater than zero")
     TissueMapPipeline(config).run()
 
 
 def _build_config(
-    scan_dir: Path,
-    output_dir: Path,
+    scan_dir: Optional[Path],
+    output_dir: Optional[Path],
     config_path: Optional[Path],
     tmt_datasets: tuple[str, ...],
-    n_jobs: int,
+    n_jobs: Optional[int],
     dpi: Optional[int],
     imputation_method: Optional[str],
     embedding_method: Optional[str],
@@ -156,11 +176,13 @@ def _build_config(
     )
 
     if config_path is not None:
-        overrides: dict[str, object] = {
-            "input.scan_dir": str(scan_dir),
-            "output.output_dir": str(output_dir),
-            "n_jobs": n_jobs,
-        }
+        overrides: dict[str, object] = {}
+        if scan_dir is not None:
+            overrides["input.scan_dir"] = str(scan_dir)
+        if output_dir is not None:
+            overrides["output.output_dir"] = str(output_dir)
+        if n_jobs is not None:
+            overrides["n_jobs"] = n_jobs
         if tmt_datasets:
             overrides["input.tmt_datasets"] = list(tmt_datasets)
         if dpi is not None:
@@ -178,9 +200,13 @@ def _build_config(
         embedding_kwargs["embedding_method"] = embedding_method.lower()
 
     return TissueMapConfig(
-        n_jobs=n_jobs,
+        n_jobs=n_jobs if n_jobs is not None else 8,
         input=InputConfig(scan_dir=scan_dir, tmt_datasets=list(tmt_datasets)),
         plotting=PlottingConfig(dpi=dpi if dpi is not None else 250),
-        output=OutputConfig(output_dir=output_dir),
+        output=OutputConfig(
+            output_dir=output_dir
+            if output_dir is not None
+            else Path("tissuemap_output")
+        ),
         embedding=EmbeddingConfig(**embedding_kwargs),
     )

@@ -1,9 +1,10 @@
 """
 Plotting utilities for the mokume package.
 
-This module provides optional plotting functionality for QC reports
-and visualizations. The plotting dependencies (matplotlib, seaborn)
-are optional and can be installed with: pip install mokume[plotting]
+This module provides optional plotting functionality for QC reports and
+visualizations. Install the matching distribution extra with
+``pip install mokume-py[plotting]`` (pure Python) or
+``pip install mokume[plotting]`` (Rust wheel).
 """
 
 import importlib.util
@@ -35,7 +36,8 @@ def _require_plotting():
     if not is_plotting_available():
         raise ImportError(
             "Plotting dependencies (matplotlib, seaborn) are not installed. "
-            "Install them with: pip install mokume[plotting]"
+            "Install the matching extra with: pip install mokume-py[plotting] "
+            "(pure Python) or pip install mokume[plotting] (Rust wheel)"
         )
 
 

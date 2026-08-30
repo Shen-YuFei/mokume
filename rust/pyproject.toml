@@ -1,24 +1,23 @@
 # maturin build backend: compiles the `mokume-py` PyO3 crate into the
 # `mokume._mokume` extension and packages it together with the Python source
-# under `python/mokume/` into a `pip install mokume-rs` wheel (import name stays
-# `mokume`, a drop-in for the pure-Python `mokume` package). The standalone Rust
-# CLI binary (`crates/mokume-cli`) is built separately with cargo.
+# under `python/mokume/` into a `pip install mokume` wheel (the separate
+# pure-Python distribution is named `mokume-py`; both import as `mokume`).
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "mokume-rs"
+name = "mokume"
 description = "Proteomics quantification toolkit: a Rust compute kernel with a Python periphery"
 readme = "README.md"
-requires-python = ">=3.9"
-license = { text = "MIT" }
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
 authors = [{ name = "Yufei Shen" }]
 keywords = [
     "proteomics",
     "mass-spectrometry",
     "quantification",
-    "ibaq",
+    "pibaq",
     "differential-expression",
     "bioinformatics",
     "rust",
@@ -31,7 +30,6 @@ classifiers = [
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -40,8 +38,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dynamic = ["version"]
+dependencies = ["pyopenms>=3.4,<4"]
 
-# `pip install mokume` exposes the `mokume` command; it runs the same compute
+# `pip install mokume` exposes the `mokume` command; it runs the compute
 # kernel in-process through the extension (no separate binary needed).
 [project.scripts]
 mokume = "mokume.__main__:main"
@@ -50,9 +49,9 @@ mokume = "mokume.__main__:main"
 Repository = "https://github.com/bigbio/mokume"
 Issues = "https://github.com/bigbio/mokume/issues"
 
-# Third-party stacks the pure-Python periphery commands (mokume.commands.*) need.
-# The compute path (the mokume._mokume extension) needs none of these; install
-# only the extra for the periphery command you run, e.g. pip install mokume[plotting].
+# Third-party stacks the optional Python periphery commands need. pyOpenMS is a
+# base dependency because both Rust-backed piBAQ commands digest their FASTA
+# through the installed runtime catalog.
 [project.optional-dependencies]
 plotting = ["numpy", "pandas", "scipy", "matplotlib", "seaborn", "scikit-learn"]
 reports = ["numpy", "pandas", "plotly"]
@@ -60,6 +59,7 @@ tissuemap = [
     "numpy",
     "pandas",
     "scipy",
+    "duckdb>=0.10.1",
     "scanpy",
     "anndata",
     "umap-learn",
@@ -68,14 +68,23 @@ tissuemap = [
     "seaborn",
     "pyarrow",
 ]
-ibaq = ["numpy", "pandas", "scipy", "pyopenms", "pyarrow", "PyYAML"]
 # QC / workflow-comparison reports + the pure-Python method fallback
 # (missforest imputation) the Rust kernel does not reproduce.
 analysis = ["numpy", "pandas", "scipy", "scikit-learn"]
+agentic = [
+    "mcp>=1.23,<2",
+    "numpy",
+    "pandas",
+    "PyYAML>=6.0",
+    "scipy",
+    "scikit-learn",
+    "statsmodels>=0.13",
+]
 all = [
     "numpy",
     "pandas",
     "scipy",
+    "duckdb>=0.10.1",
     "matplotlib",
     "seaborn",
     "scikit-learn",
@@ -84,9 +93,10 @@ all = [
     "anndata",
     "umap-learn",
     "combat",
-    "pyopenms",
     "pyarrow",
     "PyYAML",
+    "mcp>=1.23,<2",
+    "statsmodels>=0.13",
 ]
 
 [tool.maturin]
@@ -95,6 +105,7 @@ all = [
 manifest-path = "crates/mokume-py/Cargo.toml"
 module-name = "mokume._mokume"
 python-source = "python"
+exclude = ["python/**/__pycache__/**"]
 
 [tool.pylint.design]
 # Scientific code: dataclasses aggregate many fields, helper functions take many

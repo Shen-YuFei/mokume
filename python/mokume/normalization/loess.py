@@ -37,7 +37,7 @@ class LOESSNormalizer:
         except ImportError as exc:
             raise ImportError(
                 "statsmodels is required for LOESS normalization. "
-                "Install it with: pip install mokume[analysis]"
+                "Install it with: pip install mokume-py[analysis]"
             ) from exc
 
         if self.reference == "median":

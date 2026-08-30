@@ -44,6 +44,7 @@
 
 use super::correct::bh_adjust;
 use super::{classify, DeResult};
+use rayon::prelude::*;
 
 /// Default bootstrap iterations, matching `run_rots(n_boot=100)` (rots.py:268).
 const DEFAULT_N_BOOT: usize = 100;
@@ -389,23 +390,36 @@ fn bootstrap_optimize(
     let n_k = n_grid.len();
     let two_b = 2 * n_boot;
 
-    // D/S from bootstraps, pD/pS from permutations, columns 0..2*n_boot.
-    let mut d_boot = vec![Vec::new(); two_b];
-    let mut s_boot = vec![Vec::new(); two_b];
-    let mut d_perm = vec![Vec::new(); two_b];
-    let mut s_perm = vec![Vec::new(); two_b];
-    for i in 0..two_b {
-        let boot_idx = bootstrap_indices(rng, n_a, n_total);
-        let boot_mat = permute_columns(mat, &boot_idx);
-        let (db, sb) = group_stats(&boot_mat, n_a);
-        d_boot[i] = db;
-        s_boot[i] = sb;
-
-        let perm_idx = rng.permutation(n_total);
-        let perm_mat = permute_columns(mat, &perm_idx);
-        let (dp, sp) = group_stats(&perm_mat, n_a);
-        d_perm[i] = dp;
-        s_perm[i] = sp;
+    // Generate random indices serially in the original order, then parallelize
+    // the independent matrix/statistic work. The RNG stream is therefore
+    // bit-for-bit independent of the Rayon thread count.
+    let resamples = (0..two_b)
+        .map(|_| {
+            (
+                bootstrap_indices(rng, n_a, n_total),
+                rng.permutation(n_total),
+            )
+        })
+        .collect::<Vec<_>>();
+    let bootstrap_stats = resamples
+        .into_par_iter()
+        .map(|(boot_idx, perm_idx)| {
+            let boot_mat = permute_columns(mat, &boot_idx);
+            let perm_mat = permute_columns(mat, &perm_idx);
+            let (db, sb) = group_stats(&boot_mat, n_a);
+            let (dp, sp) = group_stats(&perm_mat, n_a);
+            (db, sb, dp, sp)
+        })
+        .collect::<Vec<_>>();
+    let mut d_boot = Vec::with_capacity(two_b);
+    let mut s_boot = Vec::with_capacity(two_b);
+    let mut d_perm = Vec::with_capacity(two_b);
+    let mut s_perm = Vec::with_capacity(two_b);
+    for (db, sb, dp, sp) in bootstrap_stats {
+        d_boot.push(db);
+        s_boot.push(sb);
+        d_perm.push(dp);
+        s_perm.push(sp);
     }
 
     // reprotable / reprotable_p / reprotable_sd over (n_ssq + 1) x n_k.
@@ -413,18 +427,21 @@ fn bootstrap_optimize(
     let mut reprotable_p = vec![vec![0.0; n_k]; n_ssq + 1];
     let mut reprotable_sd = vec![vec![0.0; n_k]; n_ssq + 1];
 
-    for si in 0..n_ssq {
-        // `Some(ssq[si])` for every grid row; rots.py:186-203 makes the LAST row
-        // (index n_ssq) use raw D/pD (no ssq division) via `None`.
-        let row = fill_repro_row(
-            Some(ssq[si]),
-            n_boot,
-            &n_grid,
-            &d_boot,
-            &s_boot,
-            &d_perm,
-            &s_perm,
-        );
+    let rows = ssq
+        .par_iter()
+        .map(|value| {
+            fill_repro_row(
+                Some(*value),
+                n_boot,
+                &n_grid,
+                &d_boot,
+                &s_boot,
+                &d_perm,
+                &s_perm,
+            )
+        })
+        .collect::<Vec<_>>();
+    for (si, row) in rows.into_iter().enumerate() {
         reprotable[si] = row.reprotable;
         reprotable_p[si] = row.reprotable_p;
         reprotable_sd[si] = row.reprotable_sd;
@@ -615,13 +632,17 @@ fn rots_two_group_seeded(
 
     // Final permutation null: 2*n_boot relabelings -> permuted d-statistics.
     let two_b = 2 * n_boot;
-    let mut perm_d = Vec::with_capacity(two_b);
-    for _ in 0..two_b {
-        let perm_idx = rng.permutation(n_total);
-        let perm_mat = permute_columns(&mat, &perm_idx);
-        let (dp, sp) = group_stats(&perm_mat, n_a);
-        perm_d.push(compute_d_stat(&dp, &sp, best_a1, best_a2));
-    }
+    let permutations = (0..two_b)
+        .map(|_| rng.permutation(n_total))
+        .collect::<Vec<_>>();
+    let perm_d = permutations
+        .into_par_iter()
+        .map(|perm_idx| {
+            let perm_mat = permute_columns(&mat, &perm_idx);
+            let (dp, sp) = group_stats(&perm_mat, n_a);
+            compute_d_stat(&dp, &sp, best_a1, best_a2)
+        })
+        .collect::<Vec<_>>();
     let p_values = calculate_p(&d_stat, &perm_d);
     let adjusted = bh_adjust(&p_values);
 
@@ -646,6 +667,7 @@ fn rots_two_group_seeded(
             protein: protein.clone(),
             log2_fold_change,
             p_value,
+            log_p_value: p_value.ln(),
             adj_p_value,
             t_statistic: d_stat[position],
             // ROTS emits no AveExpr/B columns (its extra column is d_stat,

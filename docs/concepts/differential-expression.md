@@ -54,8 +54,11 @@ table = results["Treatment-Control"]
 
 `method` accepts any of `limrots`, `deqms`, `proda`, `limma`, or `rots`
 (the `ensemble` consensus is exposed through the CLI / `run_ensemble`,
-not this class); `fdr_method` is `bh` (default) or `ihw`. LimROTS and ROTS report
-their own permutation-based FDR, which an `ihw` request leaves untouched. The
+not this class); `fdr_method` is `bh` (default), `ihw`, `bky`, or `storey`.
+BKY and Storey fall back to BH when pi0 is not reliable. LimROTS and ROTS report
+their own permutation-based FDR, which another FDR request leaves untouched.
+`log2fc_threshold="auto"` estimates a mixture-model effect-size gate; the Rust
+CLI exposes the same behavior as `--de-log2fc auto`. The
 Rust build runs the same methods through the CLI shown below (and the in-process
 wheel binding).
 
@@ -79,8 +82,8 @@ where $\alpha_1$ and $\alpha_2$ are optimized via bootstrap to maximize reproduc
 - Computationally more expensive due to bootstrap iterations
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method limrots \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -107,8 +110,8 @@ where $d_0$ and $s^2_0$ are prior degrees of freedom and variance estimated via 
 - LOESS variance fitting can be unstable on small datasets, falling back to constant variance
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method deqms \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -137,8 +140,8 @@ where $\rho$ and $\zeta$ are per-sample dropout midpoint and width parameters es
 - Dropout model adds computational overhead and may over-regularize on clean datasets with few missing values
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method proda \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -163,8 +166,8 @@ mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.
 - May be less powerful than DEqMS when peptide counts are available
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method limma \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -185,8 +188,8 @@ mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.
 - May be redundant with LimROTS in most scenarios
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method rots \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -201,7 +204,7 @@ methods agree on direction (UP or DOWN) and the Fisher-combined p-value
 passes the FDR threshold.
 
 **Output columns** include the median log2FC across members, the
-Fisher-combined p-value (BH-adjusted), `n_methods_up`, `n_methods_down`,
+Fisher-combined p-value (adjusted with the requested FDR method), `n_methods_up`, `n_methods_down`,
 and `methods_significant` (comma-separated list of members that called
 the protein).
 
@@ -217,10 +220,12 @@ the protein).
 - May lose sensitivity for proteins that only one method can detect
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
-    --de --de-contrasts "A vs B" \
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "A" "B" \
     --de-method ensemble \
-    --de-ensemble-methods limrots,deqms,proda \
+    --de-ensemble-method limrots \
+    --de-ensemble-method deqms \
+    --de-ensemble-method proda \
     --de-ensemble-min-k 2 \
     --de-fdr-method bh --de-fdr 0.05 --de-log2fc 0.5 \
     --de-output de_results.csv
@@ -228,15 +233,27 @@ mokume features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.
 
 ## FDR Correction
 
-All methods produce raw p-values that are corrected for multiple testing. mokume supports two correction methods:
+Mokume supports four requested FDR corrections. LimROTS and ROTS are the
+exception: they retain their native permutation-based FDR rather than replacing
+it with another requested correction.
 
 | Method | Description | When to Use |
 |--------|-------------|-------------|
 | `bh` | Benjamini-Hochberg | Default; robust and widely accepted |
 | `ihw` | Independent Hypothesis Weighting | When a meaningful covariate exists (e.g., base mean expression) |
+| `bky` | Benjamini-Krieger-Yekutieli | Adaptive two-stage control when the estimated null fraction is reliable |
+| `storey` | Storey's q-value method | Adaptive control when the estimated null fraction is reliable |
 
 !!! info
-    IHW requires a suitable covariate to improve power over BH. If no covariate is available, mokume falls back to BH automatically.
+    IHW requires a suitable covariate to improve power over BH. If no covariate
+    is available, mokume falls back to BH automatically. BKY and Storey also
+    fall back to BH when their null-fraction estimate is not reliable.
+
+For an ensemble, eligible non-ROTS members use the requested correction while
+ROTS and LimROTS keep their native permutation FDR. Fisher-combined p-values use
+BH by default; BKY or Storey replaces that ensemble-level BH adjustment when
+requested and reliable. IHW remains a member-level correction because the
+combined rows have no IHW covariate.
 
 ## Benchmark Reference
 

@@ -5,8 +5,38 @@ This module provides dataclasses for configuring preprocessing filters
 at the intensity, peptide, protein, and sample QC levels.
 """
 
+import math
 from dataclasses import dataclass, field, asdict
 from typing import ClassVar, Optional, List
+
+
+def _optional_override(overrides: dict, key: str, current):
+    """Return a non-null override or preserve the current value."""
+    value = overrides.get(key)
+    return current if value is None else value
+
+
+@dataclass
+class _FdrThresholdConfig:
+    """Shared opt-in q-value threshold for peptide and protein filters."""
+
+    fdr_threshold: Optional[float] = None
+    name: str = "default"
+
+
+@dataclass
+class NamedScoreFilterConfig:
+    """Threshold for one QPX ``additional_scores`` entry."""
+
+    name: str
+    threshold: float
+
+    def __post_init__(self):
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError("score filter name cannot be empty")
+        if not math.isfinite(self.threshold):
+            raise ValueError("score filter threshold must be finite")
 
 
 @dataclass
@@ -26,8 +56,6 @@ class IntensityFilterConfig:
         Lower quantile threshold for filtering (0.0-1.0).
     quantile_upper : float
         Upper quantile threshold for filtering (0.0-1.0).
-    remove_zero_intensity : bool
-        Whether to remove zero intensity values.
     """
 
     registry: ClassVar[dict[str, "IntensityFilterConfig"]] = {}
@@ -38,7 +66,6 @@ class IntensityFilterConfig:
     min_replicate_agreement: int = 1
     quantile_lower: float = 0.0
     quantile_upper: float = 1.0
-    remove_zero_intensity: bool = True
 
     @classmethod
     def get(cls, name: str, default=None) -> "Optional[IntensityFilterConfig]":
@@ -57,44 +84,40 @@ class IntensityFilterConfig:
 
 
 @dataclass
-class PeptideFilterConfig:
+class PeptideFilterConfig(_FdrThresholdConfig):
     """
     Configuration for peptide-level filters.
 
     Attributes
     ----------
-    min_search_score : float, optional
-        Minimum search engine score threshold.
     allowed_charge_states : list[int], optional
         List of allowed charge states (e.g., [2, 3, 4]).
     exclude_modifications : list[str]
         List of modification names to exclude.
     max_missed_cleavages : int, optional
         Maximum number of missed cleavages allowed.
-    fdr_threshold : float
-        Maximum FDR threshold (e.g., 0.01 for 1%).
+    fdr_threshold : float, optional
+        Maximum peptide q-value. ``None`` disables peptide FDR filtering.
+    score : NamedScoreFilterConfig, optional
+        Named QPX score threshold. Comparison direction comes from
+        ``additional_scores.higher_better``.
     min_peptide_length : int
         Minimum peptide length in amino acids.
     max_peptide_length : int
         Maximum peptide length in amino acids.
     exclude_sequence_patterns : list[str]
         Regex patterns for sequences to exclude.
-    require_unique_peptides : bool
-        Whether to require peptides unique to one protein.
     """
 
     registry: ClassVar[dict[str, "PeptideFilterConfig"]] = {}
 
-    name: str = "default"
-    min_search_score: Optional[float] = None
+    score: Optional[NamedScoreFilterConfig] = None
     allowed_charge_states: Optional[List[int]] = None
     exclude_modifications: List[str] = field(default_factory=list)
     max_missed_cleavages: Optional[int] = None
-    fdr_threshold: float = 0.01
     min_peptide_length: int = 7
     max_peptide_length: int = 50
     exclude_sequence_patterns: List[str] = field(default_factory=list)
-    require_unique_peptides: bool = False
 
     @classmethod
     def get(cls, name: str, default=None) -> "Optional[PeptideFilterConfig]":
@@ -113,24 +136,20 @@ class PeptideFilterConfig:
 
 
 @dataclass
-class ProteinFilterConfig:
+class ProteinFilterConfig(_FdrThresholdConfig):
     """
     Configuration for protein-level filters.
 
     Attributes
     ----------
-    fdr_threshold : float
-        Maximum protein-level FDR threshold.
-    min_coverage : float
-        Minimum sequence coverage (0.0-1.0).
     min_peptides : int
         Minimum number of peptides per protein.
+    fdr_threshold : float, optional
+        Maximum protein-group q-value. ``None`` disables protein FDR filtering.
     min_unique_peptides : int
         Minimum number of unique peptides per protein.
     razor_peptide_handling : str
         How to handle razor peptides: 'keep', 'remove', 'assign_to_top'.
-    protein_grouping : str
-        Protein grouping strategy: 'none', 'subsumption', 'parsimony'.
     remove_contaminants : bool
         Whether to remove contaminant proteins.
     remove_decoys : bool
@@ -141,17 +160,13 @@ class ProteinFilterConfig:
 
     registry: ClassVar[dict[str, "ProteinFilterConfig"]] = {}
 
-    name: str = "default"
-    fdr_threshold: float = 0.01
-    min_coverage: float = 0.0
     min_peptides: int = 1
     min_unique_peptides: int = 2
     razor_peptide_handling: str = "keep"
-    protein_grouping: str = "none"
     remove_contaminants: bool = True
     remove_decoys: bool = True
     contaminant_patterns: List[str] = field(
-        default_factory=lambda: ["CONTAMINANT", "ENTRAP", "DECOY"]
+        default_factory=lambda: ["CONTAMINANT", "CONTAM_", "ENTRAP", "DECOY"]
     )
 
     @classmethod
@@ -169,6 +184,18 @@ class ProteinFilterConfig:
         d = asdict(self)
         return d
 
+    def active_contaminant_patterns(self) -> List[str]:
+        """Return only the contaminant/decoy patterns enabled by this config."""
+        return [
+            pattern
+            for pattern in self.contaminant_patterns
+            if (
+                self.remove_decoys
+                if pattern.upper() == "DECOY"
+                else self.remove_contaminants
+            )
+        ]
+
 
 @dataclass
 class RunQCFilterConfig:
@@ -183,8 +210,6 @@ class RunQCFilterConfig:
         Minimum number of identified features per run.
     min_identified_proteins : int
         Minimum number of identified proteins per run.
-    min_sample_correlation : float, optional
-        Minimum pairwise correlation between replicates.
     max_missing_rate : float
         Maximum fraction of missing values allowed per run.
     """
@@ -195,7 +220,6 @@ class RunQCFilterConfig:
     min_total_intensity: float = 0.0
     min_identified_features: int = 0
     min_identified_proteins: int = 0
-    min_sample_correlation: Optional[float] = None
     max_missing_rate: float = 1.0
 
     @classmethod
@@ -233,7 +257,6 @@ class PreprocessingFilterConfig:
 
     # Processing options
     enabled: bool = True
-    strict_mode: bool = False  # If True, fail on any filter error
     log_filtered_counts: bool = True
 
     @classmethod
@@ -244,13 +267,29 @@ class PreprocessingFilterConfig:
     @classmethod
     def from_dict(cls, data: dict) -> "PreprocessingFilterConfig":
         """Create configuration from a dictionary."""
-        intensity_data = data.get("intensity", {})
-        peptide_data = data.get("peptide", {})
-        protein_data = data.get("protein", {})
-        run_qc_data = data.get("run_qc", {})
+        known_keys = {
+            "name",
+            "intensity",
+            "peptide",
+            "protein",
+            "run_qc",
+            "enabled",
+            "log_filtered_counts",
+        }
+        unknown = sorted(set(data) - known_keys)
+        if unknown:
+            raise ValueError(f"Unknown preprocessing filter keys: {unknown}")
+        intensity_data = data.get("intensity") or {}
+        peptide_data = dict(data.get("peptide") or {})
+        protein_data = data.get("protein") or {}
+        run_qc_data = data.get("run_qc") or {}
 
         # Create nested configs with unique names to avoid registry conflicts
         config_name = data.get("name", "custom")
+
+        score_data = peptide_data.get("score")
+        if score_data is not None:
+            peptide_data["score"] = NamedScoreFilterConfig(**score_data)
 
         return cls(
             name=config_name,
@@ -261,7 +300,6 @@ class PreprocessingFilterConfig:
             protein=ProteinFilterConfig(name=f"{config_name}_protein", **protein_data),
             run_qc=RunQCFilterConfig(name=f"{config_name}_run_qc", **run_qc_data),
             enabled=data.get("enabled", True),
-            strict_mode=data.get("strict_mode", False),
             log_filtered_counts=data.get("log_filtered_counts", True),
         )
 
@@ -279,7 +317,6 @@ class PreprocessingFilterConfig:
             "protein": self.protein.to_dict(),
             "run_qc": self.run_qc.to_dict(),
             "enabled": self.enabled,
-            "strict_mode": self.strict_mode,
             "log_filtered_counts": self.log_filtered_counts,
         }
 
@@ -315,6 +352,10 @@ class PreprocessingFilterConfig:
             and overrides["max_missed_cleavages"] is not None
         ):
             self.peptide.max_missed_cleavages = overrides["max_missed_cleavages"]
+        self.peptide.fdr_threshold = _optional_override(
+            overrides, "peptide_fdr", self.peptide.fdr_threshold
+        )
+        self.peptide.score = _optional_override(overrides, "score", self.peptide.score)
         if (
             "min_peptide_length" in overrides
             and overrides["min_peptide_length"] is not None
@@ -327,13 +368,14 @@ class PreprocessingFilterConfig:
             self.peptide.exclude_modifications = overrides["exclude_modifications"]
 
         # Protein overrides
-        if "protein_fdr" in overrides and overrides["protein_fdr"] is not None:
-            self.protein.fdr_threshold = overrides["protein_fdr"]
         if (
             "min_unique_peptides" in overrides
             and overrides["min_unique_peptides"] is not None
         ):
             self.protein.min_unique_peptides = overrides["min_unique_peptides"]
+        self.protein.fdr_threshold = _optional_override(
+            overrides, "protein_fdr", self.protein.fdr_threshold
+        )
         if (
             "remove_contaminants" in overrides
             and overrides["remove_contaminants"] is not None

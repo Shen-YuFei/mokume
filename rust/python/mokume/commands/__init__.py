@@ -1,12 +1,11 @@
 """Pure-Python periphery commands for the mokume wheel.
 
-These modules draw the plots / reports / tissue atlas that are not part of the
-Rust compute kernel. The numbers are produced by the kernel (the ``mokume``
-extension or the ``mokume`` CLI binary); these commands read those tables and
-render the figures, so the compute stays single-sourced in Rust.
+These modules provide plots, reports, and tissue-atlas analysis outside the Rust
+compute kernel. Plotting and reporting consume tables written by the
+``mokume._mokume`` extension; TissueMap derives downstream analysis from QPX
+data, and explicit fallbacks cover operations the kernel does not provide.
 
-Each module exposes ``main(argv)`` and is runnable as
-``python -m mokume.commands.<name>``; the ergonomic wrappers in
-:mod:`mokume` (``mokume.tsne_visualization`` etc.) build the argv from keyword
-arguments.
+Each public module exposes ``main(argv)`` through the wheel's unified
+``mokume`` console command; the ergonomic wrappers in :mod:`mokume`
+(``mokume.tsne_visualization`` etc.) build the argv from keyword arguments.
 """

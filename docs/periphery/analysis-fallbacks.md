@@ -5,7 +5,7 @@ them, so the wheel ships them and the kernel's errors point here. They all live
 in the `analysis` extra:
 
 ```bash
-pip install "mokume-rs[analysis]"   # numpy, pandas, scipy, scikit-learn
+pip install "mokume[analysis]"   # numpy, pandas, scipy, scikit-learn
 ```
 
 This page covers the three `analysis`-extra entry points:
@@ -31,9 +31,9 @@ mokume.impute("proteins.csv", method="missforest", output="imputed.csv")
     `RandomForestRegressor`. Its output is the artifact of sklearn's exact
     tree-building internals **plus** its RNG — the model differs structurally,
     not just in RNG draws, so no cross-language tolerance tier is reachable (a
-    Rust ML crate would not align either). The Rust `features2proteins
-    --impute-method missforest` accepts the flag but returns `NotImplemented`,
-    with the error pointing to `mokume.impute`.
+    Rust ML crate would not align either). The Rust `features2proteins` CLI does
+    not advertise `missforest`; call `mokume.impute(..., method="missforest")`
+    from the Python analysis periphery instead.
 
 ## `mokume.qc_report` — single-matrix QC report
 
@@ -65,7 +65,7 @@ import mokume
 mokume.workflow_comparison(
     workflows=[
         {"name": "maxlfq", "protein_matrix": "maxlfq.csv", "sdrf": "x.sdrf.tsv"},
-        {"name": "ibaq",   "protein_matrix": "ibaq.csv",   "sdrf": "x.sdrf.tsv"},
+        {"name": "pibaq",   "protein_matrix": "pibaq.csv",   "sdrf": "x.sdrf.tsv"},
     ],
     output="comparison.html",
 )

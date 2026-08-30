@@ -1,10 +1,18 @@
 # User Guide
 
-This section covers the practical usage of each mokume command. mokume is a toolkit: a Rust compute kernel with a Python periphery. The kernel ships both as a standalone CLI binary (`mokume`, built with cargo, no Python) and as a PyO3/maturin wheel (`pip install mokume-rs`) that imports the compiled `mokume._mokume` extension and runs the same commands in-process — no subprocess delegation. The numbers are single-sourced in Rust; the Python periphery reads the kernel's TSV/parquet output and never recomputes.
+This section covers the practical usage of each mokume command. The
+`mokume` wheel installs a `mokume` console command backed by the compiled
+`mokume._mokume` extension and the wheel's Python periphery. Compute commands
+run the leading Rust kernel in-process; plotting, reporting, and TissueMap
+commands route to the periphery. The separately maintained pure-Python
+distribution is documented under
+[Python API (package)](../reference/python-api-package.md).
 
-## Compute commands
+## Rust-native compute commands
 
-The CLI binary exposes exactly four compute subcommands. Each can also be driven from the wheel through a thin keyword wrapper (`mokume.<command>(**kwargs)`) or with an explicit argument list (`mokume.run([...])`).
+The console command exposes exactly four compute subcommands. Each can also be
+driven through a thin keyword wrapper (`mokume.<command>(**kwargs)`) or with an
+explicit argument list (`mokume.run([...])`).
 
 ### [features2proteins: Unified Pipeline](features2proteins.md)
 
@@ -16,12 +24,19 @@ Normalizes and filters feature-level data into peptide intensities. Use this whe
 
 ### [peptides2protein: Protein Quantification](peptides2protein.md)
 
-Quantifies proteins from normalized peptide data. Supports iBAQ (with TPA and ProteomicRuler), TopN, MaxLFQ, DirectLFQ, and Sum.
+Quantifies proteins from normalized peptide data. Supports piBAQ (with TPA and ProteomicRuler), TopN, MaxLFQ, DirectLFQ, and Sum.
 
 ### [correct-batches: Batch Correction](batch-correct.md)
 
 Standalone batch correction for already-quantified protein data. Combines multiple files and applies native Rust ComBat (oracle-verified vs inmoose) correction.
 
-## Periphery (wheel-only)
+## Python periphery commands
 
-Plotting, tissue maps, and interactive reports are not CLI subcommands; they live in the Python wheel under `mokume.commands` and are reached through periphery functions such as `mokume.tsne_visualization`, `mokume.tissuemap`, `mokume.de_plots`, and `mokume.interactive_report`. They read the tables the kernel produced. Install the relevant extra (`plotting`, `reports`, `tissuemap`, `ibaq`, `analysis`, or `all`) to pull in the periphery libraries. The agentic workflow search lives in the separate `mokume_py` package and is not part of this toolkit.
+The same `mokume` console command exposes `tsne-visualization`, `tissuemap`,
+`de-plots`, and `interactive-report`. These commands live in the Python
+periphery of the wheel: plotting and reporting consume kernel tables, while
+TissueMap derives its downstream atlas from QPX data. Install the relevant
+extra (`plotting`, `reports`, `tissuemap`, or `all`) to pull in their libraries.
+The top-level Python wrappers remain available for scripts. The agentic workflow
+is provided by the [Mokume Plugin](agentic-plugin.md), whose hidden local MCP
+service uses the default Rust-backed wheel.

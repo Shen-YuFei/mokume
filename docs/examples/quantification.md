@@ -16,13 +16,16 @@ CSV: the first column is `ProteinName`, the remaining columns are one per sample
 |------------------|-------------|
 | `maxlfq` | MaxLFQ pairwise ratio estimation (default) |
 | `directlfq` | DirectLFQ intensity traces (native Rust) |
-| `top3` | Mean of the 3 most intense peptides |
-| `topn` | Mean of the top N peptides (`--topn`, default 3) |
+| `top3` | Mean of the 3 most intense peptides (Silva et al. 2006) |
+| `top<N>` | Mean of the N most intense peptides — `top5`, `top10`, ... |
 | `sum` | Sum of all peptide intensities |
 | `median` | Median peptide intensity |
 
-`ibaq`, `ratio`, `abd`, `intensity`, and `spectral_count` are also valid; iBAQ is
-covered on the [Absolute Expression](absolute-expression.md) page.
+`pibaq`, `ratio`, `abd`, `intensity`, and `peptide-count` are also valid for
+feature input. True `spectral-count` pairs `--psm` with its matching feature QPX
+via `--parquet` and requires SDRF; piBAQ is covered on the
+[Absolute Expression](absolute-expression.md) page. Both count methods use
+`none` for run/sample intensity normalization and reject IRS.
 
 ## Run a quantification
 
@@ -30,35 +33,35 @@ covered on the [Absolute Expression](absolute-expression.md) page.
 
     ```bash
     # MaxLFQ (default) — omit --quant-method to get the same result
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_maxlfq.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method maxlfq
 
     # DirectLFQ (native Rust)
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_directlfq.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method directlfq
 
     # Top3
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_top3.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method top3
 
     # Sum
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_sum.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
         --quant-method sum
 
     # Median
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
         -o proteins_median.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \

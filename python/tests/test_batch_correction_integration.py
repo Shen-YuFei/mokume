@@ -241,6 +241,43 @@ Sample4\tfemale\tbrain
         assert result[1][0] == result[3][0]  # Sample2 and Sample4 both female
         assert result[0][0] != result[1][0]  # male != female
 
+    def test_missing_covariate_is_rejected(self, tmp_path):
+        sdrf_path = tmp_path / "test.sdrf.tsv"
+        sdrf_path.write_text(
+            "source name\tcharacteristics[sex]\nS1\tmale\nS2\tfemale\n"
+        )
+
+        with pytest.raises(ValueError, match="not found"):
+            extract_covariates_from_sdrf(
+                str(sdrf_path),
+                ["S1", "S2"],
+                ["characteristics[tissue]"],
+            )
+
+    def test_constant_covariate_is_rejected(self, tmp_path):
+        sdrf_path = tmp_path / "test.sdrf.tsv"
+        sdrf_path.write_text("source name\tcharacteristics[sex]\nS1\tmale\nS2\tmale\n")
+
+        with pytest.raises(ValueError, match="only one unique value"):
+            extract_covariates_from_sdrf(
+                str(sdrf_path),
+                ["S1", "S2"],
+                ["characteristics[sex]"],
+            )
+
+    def test_unmatched_matrix_sample_is_rejected(self, tmp_path):
+        sdrf_path = tmp_path / "test.sdrf.tsv"
+        sdrf_path.write_text(
+            "source name\tcharacteristics[sex]\nS1\tmale\nS2\tfemale\n"
+        )
+
+        with pytest.raises(ValueError, match="no sample matching"):
+            extract_covariates_from_sdrf(
+                str(sdrf_path),
+                ["S1", "S3"],
+                ["characteristics[sex]"],
+            )
+
 
 # Mark slow tests
 @pytest.mark.slow

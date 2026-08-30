@@ -22,26 +22,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     ALL_DATASETS,
     HELA_DATASETS,
+    INTENSITY_COLUMNS,
     PROTEIN_QUANT_DIR,
     ANALYSIS_DIR,
     QUANTIFICATION_METHODS,
     PROTEINS_OF_INTEREST,
     DatasetInfo,
 )
-
-
-# Intensity column names for each method
-INTENSITY_COLUMNS = {
-    "ibaq": "IbaqLog",      # Log-transformed iBAQ (computed by library)
-    "ibaq_raw": "Ibaq",     # Raw iBAQ values (not log-transformed)
-    "maxlfq": "MaxLFQIntensity",
-    "directlfq": "DirectLFQIntensity",
-    "top3": "Top3Intensity",
-    "topn": "Top10Intensity",
-    "top10": "Top10Intensity",
-    "top5": "Top5Intensity",
-    "sum": "SumIntensity",
-}
 
 
 def load_quantification_result(
@@ -118,14 +105,7 @@ def compute_cv_summary(
 
     intensity_col = INTENSITY_COLUMNS.get(method)
     if intensity_col is None or intensity_col not in df.columns:
-        # Try to find intensity column
-        for col in df.columns:
-            if "intensity" in col.lower() or "ibaq" in col.lower():
-                intensity_col = col
-                break
-
-    if intensity_col not in df.columns:
-        print(f"  WARNING: No intensity column found for {method}")
+        print(f"  WARNING: Expected intensity column not found for {method}")
         return None
 
     cv_df = compute_cv_per_protein(df, intensity_col)
@@ -161,12 +141,6 @@ def compute_cross_experiment_correlation(
             continue
 
         if intensity_col not in df.columns:
-            for col in df.columns:
-                if "intensity" in col.lower() or "ibaq" in col.lower():
-                    intensity_col = col
-                    break
-
-        if intensity_col not in df.columns:
             continue
 
         # Compute median per protein
@@ -186,9 +160,8 @@ def compute_cross_experiment_correlation(
         expr_matrix[dataset_id] = median_expr
 
     # Compute correlation matrix
-    # Use log-transformed values if not already log
-    if "log" not in method.lower() and method != "ibaq":
-        expr_matrix = np.log2(expr_matrix + 1)
+    # Production methods emit positive linear-scale quantities.
+    expr_matrix = np.log2(expr_matrix + 1)
 
     corr_matrix = expr_matrix.corr(method="pearson")
 
@@ -209,14 +182,6 @@ def compute_tmt_lfq_correlation(method: str) -> Optional[Dict]:
 
     intensity_col = INTENSITY_COLUMNS.get(method)
 
-    # Find intensity columns
-    for df_name, df in [("TMT", tmt_df), ("LFQ", lfq_df)]:
-        if intensity_col not in df.columns:
-            for col in df.columns:
-                if "intensity" in col.lower() or "ibaq" in col.lower():
-                    intensity_col = col
-                    break
-
     if intensity_col not in tmt_df.columns or intensity_col not in lfq_df.columns:
         return None
 
@@ -230,17 +195,9 @@ def compute_tmt_lfq_correlation(method: str) -> Optional[Dict]:
     if len(common) < 10:
         return None
 
-    # Check if values should be log-transformed
-    # iBAQ (IbaqLog) is already log-transformed by the library
-    # ibaq_raw, DirectLFQ, Top3, TopN, Sum are raw intensities - need log transformation
-    if method == "ibaq":
-        # IbaqLog is already log-transformed
-        tmt_vals = tmt_median.loc[common].values
-        lfq_vals = lfq_median.loc[common].values
-    else:
-        # All other methods need log transformation
-        tmt_vals = np.log2(tmt_median.loc[common].values + 1)
-        lfq_vals = np.log2(lfq_median.loc[common].values + 1)
+    # Production methods emit positive linear-scale quantities.
+    tmt_vals = np.log2(tmt_median.loc[common].values + 1)
+    lfq_vals = np.log2(lfq_median.loc[common].values + 1)
 
     # Remove NaN
     valid = np.isfinite(tmt_vals) & np.isfinite(lfq_vals)
@@ -281,12 +238,6 @@ def compute_rank_consistency(
         df = load_quantification_result(dataset_id, method)
         if df is None:
             continue
-
-        if intensity_col not in df.columns:
-            for col in df.columns:
-                if "intensity" in col.lower() or "ibaq" in col.lower():
-                    intensity_col = col
-                    break
 
         if intensity_col not in df.columns:
             continue
@@ -346,12 +297,6 @@ def compute_expression_stability(
         df = load_quantification_result(dataset_id, method)
         if df is None:
             continue
-
-        if intensity_col not in df.columns:
-            for col in df.columns:
-                if "intensity" in col.lower() or "ibaq" in col.lower():
-                    intensity_col = col
-                    break
 
         if intensity_col not in df.columns:
             continue

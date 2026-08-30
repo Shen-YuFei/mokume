@@ -1,31 +1,34 @@
 # Absolute Expression
 
 Absolute quantification estimates how much of each protein is present, not just
-relative fold changes. mokume implements iBAQ (Intensity-Based Absolute
-Quantification) with a paralog-aware family model (piBAQ), plus the Total Protein
-Approach (TPA) and the ProteomicRuler for copy numbers and concentrations.
+relative fold changes. Mokume implements piBAQ, a paralog-aware extension of
+the original iBAQ scaling, plus the Total Protein Approach (TPA) and the
+ProteomicRuler for copy numbers and concentrations.
 
 Two entry points:
 
-- **`features2proteins --quant-method ibaq --fasta ...`** — iBAQ inside the
-  unified pipeline (loads features, filters, normalizes, then computes iBAQ).
-- **`peptides2protein --method ibaq ...`** — the standalone step that takes an
+- **`features2proteins --quant-method pibaq --fasta ...`** — piBAQ inside the
+  unified pipeline (loads features, filters, normalizes, then computes piBAQ).
+- **`peptides2protein --quant-method pibaq ...`** — the standalone step that takes an
   already-normalized peptide table and adds all the absolute columns (TPA,
   ProteomicRuler, ...).
 
-Both need a **FASTA** file — iBAQ divides observed intensity by the number of
-theoretically observable tryptic peptides, which comes from digesting the FASTA.
+Both need a **FASTA** file. piBAQ retains iBAQ's theoretical-peptide scaling
+while allocating shared-peptide intensity explicitly and using an owned-peptide
+denominator symmetric with that allocation. Both Rust-backed entry points digest
+through every protease registered in the installed pyOpenMS runtime; Python passes
+the complete theoretical-peptide map to the Rust aggregation kernel.
 
-## iBAQ inside the pipeline
+## piBAQ inside the pipeline
 
 === "CLI"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p python/tests/example/feature_wide.parquet \
-        -o proteins_ibaq.csv \
+        -o proteins_pibaq.csv \
         -s python/tests/example/PXD020192.sdrf.tsv \
-        --quant-method ibaq \
+        --quant-method pibaq \
         --fasta python/tests/example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta
     ```
 
@@ -36,9 +39,9 @@ theoretically observable tryptic peptides, which comes from digesting the FASTA.
 
     mokume.features2proteins(
         parquet="python/tests/example/feature_wide.parquet",
-        output="proteins_ibaq.csv",
+        output="proteins_pibaq.csv",
         sdrf="python/tests/example/PXD020192.sdrf.tsv",
-        quant_method="ibaq",
+        quant_method="pibaq",
         fasta="python/tests/example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta",
     )
     ```
@@ -59,19 +62,19 @@ theoretically observable tryptic peptides, which comes from digesting the FASTA.
             sdrf="python/tests/example/PXD020192.sdrf.tsv",
             fasta_file="python/tests/example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta",
         ),
-        quantification=QuantificationConfig(method="ibaq"),
+        quantification=QuantificationConfig(method="pibaq"),
     )
     proteins = QuantificationPipeline(config).run()
     ```
 
 !!! note "Empty output on the tiny fixture is expected"
 
-    `feature_wide.parquet` is a 500-feature slice, and iBAQ requires enough unique
+    `feature_wide.parquet` is a 500-feature slice, and piBAQ requires enough unique
     anchor peptides per protein. On this slice the anchor filter removes every
     protein, so the run completes cleanly but the matrix has zero rows. Use the
-    richer `peptides2protein` example below to see fully populated iBAQ output.
+    richer `peptides2protein` example below to see fully populated piBAQ output.
 
-## Standalone iBAQ + TPA + ProteomicRuler
+## Standalone piBAQ + TPA + ProteomicRuler
 
 `peptides2protein` takes a normalized peptide table
 (`python/tests/example/PXD017834-peptides.csv`) and the FASTA, and produces a
@@ -82,12 +85,12 @@ the histone reference used by the ruler.
 === "CLI"
 
     ```bash
-    mokume peptides2protein \
-        --method ibaq \
+    mokume quantify peptides2protein \
+        --quant-method pibaq \
         --tpa --ruler --organism human \
         -f python/tests/example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta \
         -p python/tests/example/PXD017834-peptides.csv \
-        -o proteins_ibaq_absolute.tsv
+        -o proteins_pibaq_absolute.tsv
     ```
 
 === "Python (wheel)"
@@ -96,53 +99,53 @@ the histone reference used by the ruler.
     import mokume
 
     mokume.peptides2protein(
-        method="ibaq",
+        quant_method="pibaq",
         tpa=True,
         ruler=True,
         organism="human",
         fasta="python/tests/example/Homo-sapiens-uniprot-reviewed-contaminants-decoy-202210.fasta",
         peptides="python/tests/example/PXD017834-peptides.csv",
-        output="proteins_ibaq_absolute.tsv",
+        output="proteins_pibaq_absolute.tsv",
     )
     ```
 
-This writes a 14-column table (1688 rows on the fixture). The first row looks
+This writes a 14-column table (1670 rows on the fixture). The first row looks
 like:
 
 ```text
-ProteinName  SampleID            Condition     NormIntensity  Ibaq      FamilyId    EvidenceLevel  FamilySize  MolecularWeight  TPA       CopyNumber    Moles[nmol]  Weight[ng]  Concentration[nM]
-A0A075B6I0   PXD017834-Sample-1  Blood Plasma  34.218126      8.554531  A0A075B6I0  medium         1           12806.123706     0.002672  1.063371e+10  0.000018     0.226127    116730.137994
+ProteinName  SampleID            Condition     NormIntensity  PiBAQ    FamilyId  EvidenceLevel  FamilySize  MolecularWeight  TPA       CopyNumber   Moles[nmol]   Weight[ng]  Concentration[nM]
+A4D1B5       PXD017834-Sample-1  Blood Plasma  50.233559      1.357664 A4D1B5    high           1           97738.851166     0.000514  7.049979e+06 1.170677e-08  0.001144    0.266295
 ```
 
-## Normalizing iBAQ in Python
+## Normalizing piBAQ in Python
 
-The package exposes the iBAQ normalization step directly. `normalize_ibaq` takes a
-DataFrame with `ProteinName`, `SampleID`, `Condition`, and `Ibaq` columns and adds
+The package exposes the piBAQ normalization step directly. `normalize_pibaq` takes a
+DataFrame with `ProteinName`, `SampleID`, `Condition`, and `PiBAQ` columns and adds
 the PRIDE/ProteomicsDB-normalized columns.
 
 === "Python (package)"
 
     ```python
     import pandas as pd
-    from mokume.quantification import normalize_ibaq
+    from mokume.quantification import normalize_pibaq
 
     df = pd.DataFrame(
         {
             "ProteinName": ["P1", "P2", "P3"],
             "SampleID": ["s1", "s1", "s1"],
             "Condition": ["ctrl", "ctrl", "ctrl"],
-            "Ibaq": [10.0, 30.0, 60.0],
+            "PiBAQ": [10.0, 30.0, 60.0],
         }
     )
-    result = normalize_ibaq(df)
-    print(result[["ProteinName", "Ibaq", "IbaqNorm", "IbaqLog", "IbaqPpb"]])
+    result = normalize_pibaq(df)
+    print(result[["ProteinName", "PiBAQ", "PiBAQNorm", "PiBAQLog", "PiBAQPpb"]])
     ```
 
-    Output — `IbaqNorm` is the per-sample fraction, `IbaqLog` is
-    `10 + log10(IbaqNorm)`, and `IbaqPpb` is `IbaqNorm * 1e8`:
+    Output — `PiBAQNorm` is the per-sample fraction, `PiBAQLog` is
+    `10 + log10(PiBAQNorm)`, and `PiBAQPpb` is `PiBAQNorm * 1e8`:
 
     ```text
-      ProteinName  Ibaq  IbaqNorm  IbaqLog     IbaqPpb
+      ProteinName  PiBAQ  PiBAQNorm  PiBAQLog     PiBAQPpb
     0          P1  10.0       0.1   9.0000  10000000.0
     1          P2  30.0       0.3   9.4771  30000000.0
     2          P3  60.0       0.6   9.7782  60000000.0
@@ -155,24 +158,24 @@ the PRIDE/ProteomicsDB-normalized columns.
 
 ## Computed columns
 
-`peptides2protein --method ibaq --tpa --ruler` produces these columns. The
-`EvidenceLevel` label tells you how to read `Ibaq`: `high`/`medium` are
-per-protein proportional iBAQ, while `family_only` means the value was rolled up
-across a paralog family.
+`peptides2protein --quant-method pibaq --tpa --ruler` produces these columns. The
+`EvidenceLevel` records the strength of member-resolving anchor evidence.
+`family_only` means that no family member reaches the minimum anchor threshold;
+shared signal is split equally rather than duplicated across the family.
 
 | Column | Meaning |
 |--------|---------|
-| `Ibaq` | Per-protein iBAQ (or family-level, per `EvidenceLevel`) |
-| `IbaqNorm` | `Ibaq / sum(Ibaq)` within each sample |
-| `IbaqLog` | `10 + log10(IbaqNorm)` (ProteomicsDB convention) |
-| `IbaqPpb` | `IbaqNorm * 1e8` (parts per billion, PRIDE convention) |
+| `PiBAQ` | Per-protein piBAQ after exact shared-peptide allocation |
+| `PiBAQNorm` | `PiBAQ / sum(PiBAQ)` within each sample |
+| `PiBAQLog` | `10 + log10(PiBAQNorm)` (ProteomicsDB convention) |
+| `PiBAQPpb` | `PiBAQNorm * 1e8` (parts per billion, PRIDE convention) |
 | `FamilyId` | Canonical accession of the piBAQ protein family |
 | `FamilySize` | Number of members in the family (1 = singleton) |
-| `EvidenceLevel` | `high` (>=3 anchors), `medium` (1-2), or `family_only` (0) |
+| `EvidenceLevel` | `high` (all members meet the high threshold), `medium` (some member meets the minimum), or `family_only` (none does) |
 | `MolecularWeight` | Protein MW used by TPA and the ruler |
 | `TPA` | `NormIntensity / MolecularWeight` (Total Protein Approach) |
 | `CopyNumber` | ProteomicRuler protein copies per cell |
 | `Moles[nmol]` / `Weight[ng]` / `Concentration[nM]` | ProteomicRuler amounts |
 
-The full reference, including the iBAQ-plus-ComBat `IbaqBec` column, lives in
+The full reference, including the piBAQ-plus-ComBat `PiBAQBec` column, lives in
 [Computed Values](../reference/computed-values.md).

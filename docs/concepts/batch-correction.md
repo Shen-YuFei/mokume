@@ -36,17 +36,18 @@ mokume uses the **ComBat algorithm** to remove batch effects while preserving bi
 
 Run ComBat as part of `features2proteins` with `--batch-correction`. Batches are
 detected from the sample-name prefix (or an explicit SDRF column), and
-`--batch-covariates` names the SDRF columns whose biological signal to preserve.
+Repeat `--batch-covariate` for each SDRF column whose biological signal to preserve.
 
 === "CLI"
 
     ```bash
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p data.parquet -o proteins.csv -s experiment.sdrf.tsv \
         --quant-method maxlfq \
         --batch-correction \
-        --batch-method sample_prefix \
-        --batch-covariates "characteristics[sex],characteristics[organism part]"
+        --batch-method sample-prefix \
+        --batch-covariate "characteristics[sex]" \
+        --batch-covariate "characteristics[organism part]"
     ```
 
 === "Python (wheel)"
@@ -60,27 +61,28 @@ detected from the sample-name prefix (or an explicit SDRF column), and
         sdrf="experiment.sdrf.tsv",
         quant_method="maxlfq",
         batch_correction=True,
-        batch_method="sample_prefix",
-        batch_covariates="characteristics[sex],characteristics[organism part]",
+        batch_method="sample-prefix",
+        batch_covariate=["characteristics[sex]", "characteristics[organism part]"],
     )
     ```
 
-The covariate columns are extracted from the SDRF (column match with a
-sample-substring fallback, `pd.factorize` encoding, single-value columns
-dropped) and fed to the covariate ComBat design. ComBat runs on the proteins
-with no missing cells; the rest are kept uncorrected.
+The covariate columns are extracted from the SDRF with a sample-substring
+fallback. Finite numeric columns keep their numeric values; nominal columns
+use k-1 one-hot indicators, so categories are not treated as ordered numbers.
+Constant columns are rejected. Integrated ComBat corrects proteins observed in
+every matrix sample and leaves incomplete protein rows unchanged.
 
-### Standalone iBAQ correction
+### Standalone piBAQ correction
 
-To correct already-written iBAQ tables (e.g. when merging datasets), use the
+To correct already-written piBAQ tables (e.g. when merging datasets), use the
 dedicated `correct-batches` command, which runs the sample-prefix ComBat flow
-over a folder of iBAQ TSVs:
+over a folder of piBAQ TSVs:
 
 === "CLI"
 
     ```bash
     mokume correct-batches \
-        --folder ./ibaq_outputs --pattern "*ibaq.tsv" \
+        --input ./pibaq_outputs --pattern "*pibaq.tsv" \
         --output corrected.tsv
     ```
 
@@ -89,23 +91,25 @@ over a folder of iBAQ TSVs:
     ```python
     import mokume
 
-    mokume.correct_batches(folder="./ibaq_outputs", pattern="*ibaq.tsv",
+    mokume.correct_batches(input="./pibaq_outputs", pattern="*pibaq.tsv",
                            output="corrected.tsv")
     ```
+
+Unlike the integrated path, this standalone long-table command requires the
+entire protein × sample matrix to be complete and finite. It rejects missing
+cells rather than silently filling them with zero.
 
 ## Batch Detection Methods
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `sample_prefix` | Extract from sample name prefix | `PXD001-S1` &rarr; batch `PXD001` |
+| `sample-prefix` | Extract from sample name prefix | `PXD001-S1` &rarr; batch `PXD001` |
 | `column` | Explicit values from SDRF column (`--batch-column`) | User-specified |
-| `run` | Use run/reference file name | Each file is a batch |
 
-!!! warning "`--batch-method run` in the protein-matrix flow"
-    `--batch-method run` has no run-level mapping in the `features2proteins`
-    protein-matrix flow and **errors at runtime** (the same way Python raises
-    `run_info required`). Use `sample_prefix` or `column` here. The PCA + HDBSCAN
-    outlier-removal pass is unported (HDBSCAN is not reproducible cross-language).
+The protein-matrix CLI exposes only methods with available sample-level
+metadata. If the selected data do not contain at least two batches with two
+samples each, or contain no complete protein row for ComBat, the command fails
+instead of returning the uncorrected matrix as a successful result.
 
 ## When to Use Batch Correction
 

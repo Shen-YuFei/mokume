@@ -5,6 +5,7 @@ t-SNE / UMAP.
 
 from __future__ import annotations
 
+import importlib
 import logging
 
 import anndata as ad
@@ -12,11 +13,6 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-
-try:
-    import umap as _umap_module  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - optional dependency
-    _umap_module = None
 
 from mokume.imputation import (
     impute_bpca,
@@ -119,23 +115,27 @@ def _impute_for_pca(
     method: str,
     n_neighbors: int,
 ) -> np.ndarray:
-    """Impute remaining NaN values in the protein-by-sample sub-matrix.
+    """Impute remaining NaN values in the sample-by-protein sub-matrix.
 
-    The matrix is samples × proteins. We delegate to ``mokume.imputation`` so
-    every CLI / config that already supports those methods stays consistent
-    with the tissuemap embedding step.
+    Mokume imputers accept proteins × samples and apply sample-wise operations
+    down columns, so the embedding matrix is transposed into that contract and
+    restored before PCA.
     """
     if not np.isnan(x_sub).any():
         return x_sub.astype(np.float32)
 
     method = method.lower()
-    df = pd.DataFrame(x_sub)
+    protein_by_sample = pd.DataFrame(x_sub.T)
 
     try:
         if method in _DIRECT_IMPUTERS:
-            imputed = _DIRECT_IMPUTERS[method](df)
+            imputed = _DIRECT_IMPUTERS[method](protein_by_sample)
         else:
-            imputed = impute_missing_values(df, method=method, n_neighbors=n_neighbors)
+            imputed = impute_missing_values(
+                protein_by_sample,
+                method=method,
+                n_neighbors=n_neighbors,
+            )
     except (
         ValueError,
         RuntimeError,
@@ -149,18 +149,21 @@ def _impute_for_pca(
         # (Arithmetic/Runtime). AttributeError / TypeError are programmer bugs
         # and must NOT be swallowed here.
         logger.warning(
-            "Imputation '%s' failed (%s); falling back to column median",
+            "Imputation '%s' failed (%s); falling back to sample median",
             method,
             exc,
         )
-        col_medians = np.nanmedian(x_sub, axis=0, keepdims=True)
-        col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
-        return np.where(np.isnan(x_sub), col_medians, x_sub).astype(np.float32)
+        sample_medians = np.nanmedian(x_sub, axis=1, keepdims=True)
+        sample_medians = np.where(np.isnan(sample_medians), 0.0, sample_medians)
+        return np.where(np.isnan(x_sub), sample_medians, x_sub).astype(np.float32)
 
-    out = np.asarray(imputed, dtype=np.float32)
+    out = np.asarray(imputed.T, dtype=np.float32)
     if np.isnan(out).any():
-        # Some methods leave residual NaNs (e.g. all-NaN columns); patch with 0.
-        out = np.where(np.isnan(out), 0.0, out)
+        # Some methods can leave residual NaNs; preserve the sample-wise
+        # contract for the fallback and reserve zero for an all-missing sample.
+        sample_medians = np.nanmedian(out, axis=1, keepdims=True)
+        sample_medians = np.where(np.isnan(sample_medians), 0.0, sample_medians)
+        out = np.where(np.isnan(out), sample_medians, out)
     return out
 
 
@@ -198,15 +201,17 @@ def _run_umap(
     changes). UMAP 1.0+ honours ``n_jobs`` only when ``random_state`` is
     ``None``; otherwise it must stay single-threaded for reproducibility.
     """
-    if _umap_module is None:
+    try:
+        umap_module = importlib.import_module("umap")
+    except ImportError as exc:  # pragma: no cover - optional dependency
         raise ImportError(
             "UMAP requested but 'umap-learn' is not installed. "
             "Install it with `pip install umap-learn`."
-        )
+        ) from exc
 
     n_neighbors = min(config.umap_n_neighbors, max(2, adata.n_obs - 1))
     umap_jobs = 1 if config.random_state is not None else n_jobs
-    reducer = _umap_module.UMAP(
+    reducer = umap_module.UMAP(
         n_components=2,
         n_neighbors=n_neighbors,
         min_dist=config.umap_min_dist,

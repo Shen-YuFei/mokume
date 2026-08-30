@@ -1,15 +1,15 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{create_dir_all, read_to_string, File};
 use std::path::{Path, PathBuf};
 
 use csv::WriterBuilder;
 use mokume_core::{
-    parse_memory_to_bytes, BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-    FeatureToPeptidesConfig, FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig,
-    InputConfig, IntensityFilterConfig, IrsChannelConfig, IrsConfig, IrsScope, IrsStat,
-    MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
-    PreprocessingFilterConfig, ProteinId, QuantMethod, RatioConfig, Result, RunQcFilterConfig,
-    RuntimeConfig, SampleId, StringIdRegistry,
+    BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig, FeatureToPeptidesConfig,
+    FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig, IntensityFilterConfig,
+    IrsChannelConfig, IrsConfig, IrsScope, IrsStat, MaxLfqConfig, MokumeError,
+    NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
+    PibaqConfig, PreprocessingFilterConfig, ProteinId, QuantMethod, RatioConfig, Result,
+    RunQcFilterConfig, RuntimeConfig, SampleId, StringIdRegistry,
 };
 use mokume_imputation::imputed_values;
 use mokume_io::{
@@ -23,18 +23,32 @@ use mokume_normalization::{
     tmm_norm_factors, RunCellKey, RunNormalizationMethod, RunNormalizationTransform,
     SampleNormalizationMethod,
 };
-use mokume_quant::{direct_lfq_aligned, max_lfq_with_samples, DirectLfqIon, PeptideMeasurement};
+use mokume_quant::{
+    direct_lfq_aligned, direct_lfq_aligned_with_ions, max_lfq_with_samples, DirectLfqIon,
+    DirectLfqNormalizedIon, PeptideMeasurement,
+};
 use rayon::prelude::*;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use tracing::{info, warn};
 
 mod de;
 pub mod filters;
+mod matrix;
+mod memory;
+mod spectral_count;
+mod threading;
+
+use memory::MemoryPlan;
+
+pub use de::{differential_expression_matrix, MatrixDifferentialExpressionResults};
+pub use matrix::{impute_matrix, normalize_matrix};
 
 /// `min_nonan` used when `--quant-method maxlfq` delegates to the DirectLFQ-aligned
 /// solver. Matches Python's maxlfq delegation, which uses 2 (the streaming path
 /// hardcodes `min_nonan=2`; the class path passes `min_peptides`, default 2).
 const MAXLFQ_DIRECTLFQ_MIN_NONAN: usize = 2;
+const DEFAULT_REFERENCE_REGEX: &str = "pool|powder|ref|reference|bridge";
+const MIN_SAMPLE_CORRELATION_OVERLAP: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CellKey {
@@ -47,6 +61,12 @@ struct PeptideCellKey {
     protein: ProteinId,
     sample: SampleId,
     peptide: PeptideId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RunQcKey {
+    sample: String,
+    technical_replicate: i64,
 }
 
 /// Key for the DirectLFQ ion table: one entry per (protein, canonical
@@ -64,17 +84,22 @@ struct FeatureToProteinState {
     proteins: StringIdRegistry<ProteinId>,
     peptides: StringIdRegistry<PeptideId>,
     canonical_peptides: StringIdRegistry<PeptideId>,
+    conditions: StringIdRegistry<u32>,
+    loading_contexts: HashMap<(u32, u32), u32>,
+    contextual_peptides: HashMap<(PeptideId, u32), PeptideId>,
+    contextual_canonical_peptides: HashMap<(PeptideId, u32), PeptideId>,
     samples: StringIdRegistry<SampleId>,
     peptide_to_canonical: HashMap<PeptideId, PeptideId>,
+    peptide_to_contextual_canonical: HashMap<PeptideId, PeptideId>,
     unique_peptides: HashMap<CellKey, HashSet<PeptideId>>,
     export_rows: IntermediateExports,
     aggregation: FeatureAggregation,
     accepted_features: usize,
     accepted_measurements: usize,
-    /// Literal protein-ID substrings to drop (Python `--remove_ids`). A feature
-    /// is rejected when its joined `ProteinName` contains any entry. Empty on
+    /// Exact protein accessions to drop (`--remove_ids`). A feature is rejected
+    /// when any parsed accession matches an entry. Empty on
     /// the protein pipeline, which has no `--remove_ids` option.
-    remove_protein_ids: Vec<String>,
+    remove_protein_ids: HashSet<String>,
     /// Per-`(ProteinName, canonical sequence)` distinct-sample tracking for the
     /// `features2peptides` low-frequency filter. `None` disables tracking (the
     /// protein pipeline and `features2peptides` without
@@ -90,14 +115,18 @@ struct FeatureToProteinState {
     /// the per-`(protein, sample)` unique-peptide gate (matching Python's
     /// pipeline chain). Group-level filters are validated as unsupported upstream.
     peptide_filters: Option<PreprocessingFilterConfig>,
-    /// Sample names dropped by the Run-QC group filters (Python `run_qc.py`:
-    /// total-intensity / feature-count / protein-count thresholds). Computed in a
-    /// pre-pass over the same initial-filtered features; ingest skips these
-    /// samples entirely. Empty when no Run-QC threshold is set. The normalization
-    /// median is computed before Run-QC (Python computes it via `SQLFilterBuilder`
-    /// ahead of the per-sample pipeline), so excluded samples still contribute to
-    /// the median, matching Python.
-    run_qc_excluded_samples: HashSet<String>,
+    /// Protein groups that pass an explicitly requested protein-group q-value
+    /// cutoff. `None` means no protein FDR filter was requested; `Some` is
+    /// populated by a source pre-pass so every row of a passing protein group is
+    /// retained, matching the Python group-minimum FDR contract.
+    protein_fdr_allowed: Option<HashSet<String>>,
+    /// `(sample, technical replicate)` runs dropped by the Run-QC group filters
+    /// (Python `run_qc.py`: total intensity, feature/protein counts and missing
+    /// rate). Computed in a pre-pass over the same initial-filtered features;
+    /// ingest skips only the rejected technical run, not its whole sample. Empty
+    /// when no Run-QC threshold is active. The normalization median is computed
+    /// before Run-QC, matching Python's `SQLFilterBuilder` ordering.
+    run_qc_excluded_runs: HashSet<RunQcKey>,
     /// Pre-compiled `exclude_sequence_patterns` regexes (Python
     /// `SequencePatternFilter`, peptide.py:415-418). Empty unless a
     /// `features2peptides` filter pipeline supplies non-empty patterns; compiled
@@ -131,23 +160,34 @@ struct FeatureToProteinState {
 }
 
 impl FeatureToProteinState {
-    fn new(config: &FeatureToProteinsConfig, sdrf: Option<&SdrfTable>) -> Result<Self> {
+    fn new(
+        config: &FeatureToProteinsConfig,
+        sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
+        pibaq_digest: Option<PibaqDigest>,
+    ) -> Result<Self> {
         Ok(Self {
             proteins: StringIdRegistry::new(),
             peptides: StringIdRegistry::new(),
             canonical_peptides: StringIdRegistry::new(),
+            conditions: StringIdRegistry::new(),
+            loading_contexts: HashMap::new(),
+            contextual_peptides: HashMap::new(),
+            contextual_canonical_peptides: HashMap::new(),
             samples: StringIdRegistry::new(),
             peptide_to_canonical: HashMap::new(),
+            peptide_to_contextual_canonical: HashMap::new(),
             unique_peptides: HashMap::new(),
             export_rows: IntermediateExports::new(config),
-            aggregation: FeatureAggregation::from_config(config, sdrf)?,
+            aggregation: FeatureAggregation::from_config(config, sdrf, raw_sdrf, pibaq_digest)?,
             accepted_features: 0,
             accepted_measurements: 0,
-            remove_protein_ids: Vec::new(),
+            remove_protein_ids: HashSet::new(),
             low_frequency: None,
             keep_shared_peptides: false,
             peptide_filters: None,
-            run_qc_excluded_samples: HashSet::new(),
+            protein_fdr_allowed: None,
+            run_qc_excluded_runs: HashSet::new(),
             excluded_sequence_regexes: Vec::new(),
             quantile_bounds: HashMap::new(),
             cv_dropped: HashSet::new(),
@@ -185,19 +225,14 @@ impl FeatureToProteinState {
             .peptide_filters
             .as_ref()
             .map_or(&[], |config| &config.protein.contaminant_patterns);
-        if filtering.remove_contaminants
-            && matches_protein_contaminant(&protein_group, contaminant_patterns)
-        {
+        if self.rejects_protein_group(
+            &protein_group,
+            filtering.remove_contaminants,
+            contaminant_patterns,
+        ) {
             return Ok(());
         }
-        // Python `remove_protein_by_ids` drops rows whose joined `ProteinName`
-        // contains any listed ID (regex-escaped, so a literal substring match),
-        // applied after the contaminant filter (peptide.py:283-287).
-        if self
-            .remove_protein_ids
-            .iter()
-            .any(|id| protein_group.contains(id.as_str()))
-        {
+        if has_removed_accession(&feature.protein_accessions, &self.remove_protein_ids) {
             return Ok(());
         }
         // Opt-in per-row preprocessing filters run after the load-time filters
@@ -209,11 +244,11 @@ impl FeatureToProteinState {
 
         let sdrf_record = sdrf_record(feature, sdrf)?;
         let sample_name = sample_name(feature, sdrf_record);
-        // Run-QC group filters drop whole samples (Python `run_qc.py`). The
-        // decision is precomputed in a pre-pass; skip excluded samples here, the
-        // same way the Python per-sample pipeline removes them before the
-        // peptide/protein stages. The median already accounts for them.
-        if self.run_qc_excluded_samples.contains(&sample_name) {
+        // Python applies Run-QC within a per-sample frame but groups its rows by
+        // `TechReplicate`. The pre-pass therefore rejects individual technical
+        // runs; other runs from the same sample must remain available.
+        let run_qc_key = run_qc_key(feature, sdrf_record, sample_name.clone());
+        if self.run_qc_excluded_runs.contains(&run_qc_key) {
             return Ok(());
         }
         // CVThresholdFilter (Python `intensity.py:127-141`): drop every row of a
@@ -247,15 +282,51 @@ impl FeatureToProteinState {
         }
         let sample = register_id(&mut self.samples, &sample_name, "sample")?;
         let peptide_key = self.aggregation.peptide_key(feature);
-        let peptide = register_id(&mut self.peptides, &peptide_key, "peptide")?;
+        let base_peptide = register_id(&mut self.peptides, &peptide_key, "peptide")?;
         let canonical_peptide = register_id(
             &mut self.canonical_peptides,
             &feature.sequence,
             "canonical peptide",
         )?;
+        let biological_replicate = sdrf_record
+            .and_then(|record| record.biological_replicate)
+            .unwrap_or(1);
+        let condition = sample_condition(&sample_name, sdrf_record);
+        let (peptide, contextual_canonical_peptide) = if self.aggregation.preserves_loading_rows() {
+            let condition_id = self
+                .conditions
+                .get_or_insert(&condition)
+                .ok_or_else(|| invalid_input("condition id registry overflow"))?;
+            let context = register_loading_context(
+                &mut self.loading_contexts,
+                (biological_replicate, condition_id),
+            )?;
+            let peptide = register_contextual_peptide(
+                &mut self.contextual_peptides,
+                (base_peptide, context),
+                "peptide",
+            )?;
+            let contextual_canonical = if self.aggregation.preserves_contextual_canonical_rows() {
+                register_contextual_peptide(
+                    &mut self.contextual_canonical_peptides,
+                    (canonical_peptide, context),
+                    "contextual canonical peptide",
+                )?
+            } else {
+                canonical_peptide
+            };
+            (peptide, contextual_canonical)
+        } else {
+            (base_peptide, canonical_peptide)
+        };
         self.peptide_to_canonical
             .entry(peptide)
             .or_insert(canonical_peptide);
+        if self.aggregation.preserves_contextual_canonical_rows() {
+            self.peptide_to_contextual_canonical
+                .entry(peptide)
+                .or_insert(contextual_canonical_peptide);
+        }
         let protein = register_id(&mut self.proteins, &protein_group, "protein")?;
         let cell = CellKey { protein, sample };
 
@@ -283,8 +354,6 @@ impl FeatureToProteinState {
             peptide,
             canonical: canonical_peptide,
             intensity,
-            protein_name: &protein_group,
-            peptide_name: &peptide_key,
             ion_name: &feature.sequence,
             sample_name: &sample_name,
             charge: feature.charge,
@@ -295,6 +364,19 @@ impl FeatureToProteinState {
         self.accepted_measurements += 1;
         self.accepted_features += 1;
         Ok(())
+    }
+
+    fn rejects_protein_group(
+        &self,
+        protein_group: &str,
+        remove_contaminants: bool,
+        contaminant_patterns: &[String],
+    ) -> bool {
+        (remove_contaminants && matches_protein_contaminant(protein_group, contaminant_patterns))
+            || self
+                .protein_fdr_allowed
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(protein_group))
     }
 
     /// Apply the opt-in `features2peptides` per-row preprocessing filters
@@ -342,6 +424,14 @@ impl FeatureToProteinState {
                 return false;
             }
         }
+        if let Some(threshold) = config.peptide.fdr_threshold {
+            if !feature
+                .peptide_qvalue
+                .is_some_and(|qvalue| qvalue.is_finite() && qvalue <= threshold)
+            {
+                return false;
+            }
+        }
         // SequencePatternFilter (peptide.py:415-418): drop canonical sequences
         // matching any user regex. Patterns are pre-compiled in
         // `excluded_sequence_regexes`; empty unless the pipeline sets them.
@@ -352,7 +442,7 @@ impl FeatureToProteinState {
     }
 
     fn write_intermediate_exports(
-        &self,
+        &mut self,
         config: &FeatureToProteinsConfig,
         min_unique_peptides: usize,
         options: PeptideExportOptions,
@@ -377,8 +467,13 @@ impl FeatureToProteinState {
             options,
             dataset_normalized.as_ref(),
         )?;
-        self.aggregation
-            .write_intermediate_exports(config, &self.samples, &allowed_cells)
+        self.aggregation.write_intermediate_exports(
+            config,
+            &self.proteins,
+            &self.canonical_peptides,
+            &self.samples,
+            &allowed_cells,
+        )
     }
 
     /// Dataset-level-normalized canonical peptide values for `--export-peptides`,
@@ -448,11 +543,23 @@ impl FeatureToProteinState {
                 );
             }
         }
+        let empty_mapping = HashMap::new();
+        // TMM scales contextual peptidoforms in place, so `finalize` must still
+        // collapse them; the other dataset normalizers write canonical cells.
+        let collapse_mapping = if dataset_normalization.is_some()
+            && dataset_normalization != Some(SampleNormalizationMethod::Tmm)
+            && self.aggregation.applies_dataset_normalization()
+        {
+            &empty_mapping
+        } else {
+            &self.peptide_to_contextual_canonical
+        };
         let values = self.aggregation.finalize(
             &allowed_cells,
             &mut self.proteins,
-            &self.peptide_to_canonical,
+            collapse_mapping,
             &self.canonical_peptides,
+            &self.samples,
         );
         let allowed_proteins = values.protein_ids();
         ProteinMatrix {
@@ -604,11 +711,6 @@ struct PeptideExport {
     razor_order: HashMap<(SampleId, String), Vec<String>>,
 }
 
-#[derive(Debug, Default)]
-struct IonExport {
-    rows: HashMap<IonExportKey, HashMap<SampleId, f64>>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PeptideExportKey {
     protein: ProteinId,
@@ -624,13 +726,6 @@ struct PeptideExportKey {
     /// unaffected.
     run: Option<String>,
     tech_replicate: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct IonExportKey {
-    protein: ProteinId,
-    protein_name: String,
-    ion_name: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -738,7 +833,11 @@ impl PeptideExport {
         let (run, tech_replicate) = if self.run_mode {
             (
                 Some(measurement.run_file_name.to_owned()),
-                tech_replicate_of(measurement.run_file_name),
+                measurement
+                    .sdrf_record
+                    .and_then(|record| record.technical_replicate)
+                    .map(i64::from)
+                    .unwrap_or_else(|| tech_replicate_of(measurement.run_file_name)),
             )
         } else {
             (None, 0)
@@ -910,7 +1009,7 @@ impl PeptideExport {
                         normalized.get(&(key.protein, key.sample, key.peptide_canonical.clone()))
                     })
                     .copied()
-                    .unwrap_or_else(|| peptides.values().sum::<f64>());
+                    .unwrap_or_else(|| sum_peptide_values(peptides));
                 let value = if log2 { raw.log2() } else { raw };
                 Some(PeptideParquetRow {
                     protein_name: key.protein_name.clone(),
@@ -982,133 +1081,13 @@ impl PeptideExport {
     }
 }
 
-/// Derive a peptide row's `TechReplicate` from its run name, matching Python's
-/// `apply_initial_filtering` (aggregation.py:211-223): a run name containing an
-/// underscore uses the integer after the last underscore; a plain integer run
-/// name uses that integer; otherwise Python's per-sample run-index fallback
-/// applies, which is `1` whenever each sample maps to a single run (the
-/// non-empty, no-SDRF path this port verifies against — the multi-run-per-sample
-/// case yields an empty matrix in Python because SDRF enrichment remaps the
-/// sample key, a quirk the existing golden tests already document).
-fn tech_replicate_of(run_file_name: &str) -> i64 {
-    if let Some((_, last)) = run_file_name.rsplit_once('_') {
-        if let Ok(value) = last.parse::<i64>() {
-            return value;
-        }
-    }
-    run_file_name.parse::<i64>().unwrap_or(1)
-}
-
-/// IRS-internal technical-replicate derivation used when *collecting* the
-/// reference-channel scale factors. Mirrors Python's
-/// `CASE WHEN position('_' in run) > 0 THEN CAST(split_part(run, '_', 2) AS INTEGER)
-/// ELSE CAST(run AS INTEGER) END` (`feature.py:764-766`): take the **second**
-/// token (the part between the first and second `_`, or the tail after the first
-/// `_`), not the last one. A run with no `_` parses the whole name as an integer.
-/// `None` means the run cannot supply an integer techreplicate (DuckDB's `CAST`
-/// would error / the row would not contribute), so it is dropped, matching the
-/// `irs_value > 0` filter that follows in spirit (the run simply yields no key).
-///
-/// This is deliberately distinct from [`tech_replicate_of`], which keeps the
-/// **last** token (Python's apply-side `run.str.split('_').str.get(-1)`,
-/// `aggregation.py:215`). The two agree for two-token `mixture_techrep` names
-/// (typical quantms TMT) but diverge for names with three or more tokens.
-fn irs_tech_replicate_of(run_file_name: &str) -> Option<i64> {
-    if let Some((_, rest)) = run_file_name.split_once('_') {
-        // `split_part(run, '_', 2)` is the token between the first and second
-        // `_`; if there is no second `_`, it is the remainder after the first.
-        let second = rest.split('_').next().unwrap_or(rest);
-        second.parse::<i64>().ok()
-    } else {
-        run_file_name.parse::<i64>().ok()
-    }
-}
-
-impl IonExport {
-    fn push(&mut self, measurement: AggregationMeasurement<'_>) {
-        let key = IonExportKey {
-            protein: measurement.protein,
-            protein_name: measurement.protein_name.to_owned(),
-            ion_name: measurement.ion_name.to_owned(),
-        };
-        let sample_values = self.rows.entry(key).or_default();
-        *sample_values.entry(measurement.sample).or_insert(0.0) += measurement.intensity;
-    }
-
-    fn write_csv(
-        &self,
-        path: &Path,
-        samples: &StringIdRegistry<SampleId>,
-        allowed_cells: &HashSet<CellKey>,
-    ) -> Result<()> {
-        create_parent_dir(path)?;
-        let file = File::create(path).map_err(|source| MokumeError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let mut writer = WriterBuilder::new().from_writer(file);
-
-        let mut sample_columns = samples.iter().collect::<Vec<_>>();
-        sample_columns.sort_by(|left, right| left.1.cmp(right.1));
-
-        let mut header = Vec::with_capacity(sample_columns.len() + 2);
-        header.push("protein".to_owned());
-        header.push("ion".to_owned());
-        header.extend(
-            sample_columns
-                .iter()
-                .map(|(_, sample)| (*sample).to_owned()),
-        );
-        writer
-            .write_record(header)
-            .map_err(|source| csv_error(path, source))?;
-
-        let mut rows = self.rows.iter().collect::<Vec<_>>();
-        rows.sort_by(|(left, _), (right, _)| {
-            left.protein_name
-                .cmp(&right.protein_name)
-                .then_with(|| left.ion_name.cmp(&right.ion_name))
-        });
-
-        for (key, values) in rows {
-            let mut row = Vec::with_capacity(sample_columns.len() + 2);
-            row.push(key.protein_name.clone());
-            row.push(key.ion_name.clone());
-            let mut has_value = false;
-            for (sample, _) in &sample_columns {
-                if !allowed_cells.contains(&CellKey {
-                    protein: key.protein,
-                    sample: *sample,
-                }) {
-                    row.push(String::new());
-                    continue;
-                }
-                let value = values.get(sample).copied().map(format_float);
-                has_value |= value.as_ref().is_some_and(|value| !value.is_empty());
-                row.push(value.unwrap_or_default());
-            }
-            if has_value {
-                writer
-                    .write_record(row)
-                    .map_err(|source| csv_error(path, source))?;
-            }
-        }
-
-        writer.flush().map_err(|source| MokumeError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 enum FeatureAggregation {
     Sum(HashMap<CellKey, HashMap<PeptideId, f64>>),
     Median(HashMap<CellKey, HashMap<PeptideId, f64>>),
     Abd(HashMap<CellKey, HashMap<PeptideId, f64>>),
-    SpectralCount(HashMap<CellKey, HashMap<PeptideId, f64>>),
-    Ibaq(IbaqAggregation),
+    PeptideCount(HashMap<CellKey, HashMap<PeptideId, f64>>),
+    Pibaq(Box<PibaqFeatureAggregation>),
     Ratio(RatioAggregation),
     TopN {
         topn: usize,
@@ -1122,20 +1101,27 @@ enum FeatureAggregation {
         /// DirectLFQ when the package is installed). When false, the built-in
         /// MaxLFQ solver runs on `traces`.
         route_to_directlfq: bool,
-        min_unique_peptides: usize,
         directlfq_min_nonan: usize,
         directlfq_num_samples_quadratic: usize,
-        /// MaxLFQ input: max intensity per (protein, sample, peptidoform ion).
-        traces: HashMap<PeptideCellKey, f64>,
-        /// DirectLFQ input: summed linear intensity per (protein, canonical
-        /// sequence, sample), matching mokume's group-by-sequence sum.
-        directlfq_sums: HashMap<DirectLfqCellKey, f64>,
-        ion_export: Option<IonExport>,
+        /// MaxLFQ input: max intensity per contextual peptidoform ion, collapsed
+        /// to canonical peptide only after every feature row has been observed.
+        /// DirectLFQ uses the same feature-to-ion contract.
+        traces: MaxLfqFeatureAggregation,
+        /// Populated only when DirectLFQ ion export runs before matrix
+        /// materialization, avoiding a second solver pass.
+        cached_directlfq_values: Option<HashMap<ProteinId, Vec<(SampleId, f64)>>>,
     },
 }
 
+#[derive(Debug, Default)]
+struct MaxLfqFeatureAggregation {
+    ion_cells: HashMap<CellKey, HashMap<PeptideId, f64>>,
+    ion_to_canonical: HashMap<PeptideId, PeptideId>,
+    canonical_traces: HashMap<PeptideCellKey, f64>,
+}
+
 #[derive(Debug)]
-struct IbaqAggregation {
+struct PibaqAggregation {
     accession_peptides: HashMap<String, HashSet<String>>,
     peptide_accessions: HashMap<String, HashSet<String>>,
     families: Vec<ProteinFamily>,
@@ -1144,12 +1130,20 @@ struct IbaqAggregation {
     min_anchors: usize,
     /// piBAQ "high anchor" threshold (Python `--high-anchor-threshold`). Only
     /// affects the `EvidenceLevel` annotation column via [`classify_evidence`],
-    /// never the quantification values (Python `ibaq.py:732`).
+    /// never the quantification values (Python `pibaq.py:732`).
     high_anchor_threshold: usize,
     /// Per-canonical monoisotopic molecular weight, populated only when the
-    /// caller requests TPA (`peptides2protein --tpa`). `None` leaves the iBAQ
+    /// caller requests TPA (`peptides2protein --tpa`). `None` leaves the piBAQ
     /// path untouched for every other consumer.
     mw_map: Option<HashMap<String, f64>>,
+}
+
+#[derive(Debug)]
+struct PibaqFeatureAggregation {
+    core: PibaqAggregation,
+    ion_observations: HashMap<PeptideSampleKey, f64>,
+    ion_to_canonical: HashMap<PeptideId, PeptideId>,
+    canonical_names: HashMap<PeptideId, String>,
 }
 
 #[derive(Debug)]
@@ -1205,6 +1199,48 @@ struct IntensityFactors {
     irs_scale_by_techrep: HashMap<i64, f64>,
 }
 
+/// Derive a peptide row's `TechReplicate` from its run name, matching Python's
+/// `apply_initial_filtering` (aggregation.py:211-223): a run name containing an
+/// underscore uses the integer after the last underscore; a plain integer run
+/// name uses that integer; otherwise Python's per-sample run-index fallback
+/// applies, which is `1` whenever each sample maps to a single run (the
+/// non-empty, no-SDRF path this port verifies against — the multi-run-per-sample
+/// case yields an empty matrix in Python because SDRF enrichment remaps the
+/// sample key, a quirk the existing golden tests already document).
+fn tech_replicate_of(run_file_name: &str) -> i64 {
+    if let Some((_, last)) = run_file_name.rsplit_once('_') {
+        if let Ok(value) = last.parse::<i64>() {
+            return value;
+        }
+    }
+    run_file_name.parse::<i64>().unwrap_or(1)
+}
+
+/// IRS-internal technical-replicate derivation used when *collecting* the
+/// reference-channel scale factors. Mirrors Python's
+/// `CASE WHEN position('_' in run) > 0 THEN CAST(split_part(run, '_', 2) AS INTEGER)
+/// ELSE CAST(run AS INTEGER) END` (`feature.py:764-766`): take the **second**
+/// token (the part between the first and second `_`, or the tail after the first
+/// `_`), not the last one. A run with no `_` parses the whole name as an integer.
+/// `None` means the run cannot supply an integer techreplicate (DuckDB's `CAST`
+/// would error / the row would not contribute), so it is dropped, matching the
+/// `irs_value > 0` filter that follows in spirit (the run simply yields no key).
+///
+/// This is deliberately distinct from [`tech_replicate_of`], which keeps the
+/// **last** token (Python's apply-side `run.str.split('_').str.get(-1)`,
+/// `aggregation.py:215`). The two agree for two-token `mixture_techrep` names
+/// (typical quantms TMT) but diverge for names with three or more tokens.
+fn irs_tech_replicate_of(run_file_name: &str) -> Option<i64> {
+    if let Some((_, rest)) = run_file_name.split_once('_') {
+        // `split_part(run, '_', 2)` is the token between the first and second
+        // `_`; if there is no second `_`, it is the remainder after the first.
+        let second = rest.split('_').next().unwrap_or(rest);
+        second.parse::<i64>().ok()
+    } else {
+        run_file_name.parse::<i64>().ok()
+    }
+}
+
 impl IntensityFactors {
     fn normalize(&self, intensity: f64, sample: &str, run: &str) -> f64 {
         let sample_factor = self.sample.get(sample).copied().unwrap_or(1.0);
@@ -1242,22 +1278,37 @@ struct AggregationMeasurement<'a> {
     peptide: PeptideId,
     canonical: PeptideId,
     intensity: f64,
-    protein_name: &'a str,
-    peptide_name: &'a str,
     ion_name: &'a str,
     sample_name: &'a str,
     charge: i32,
 }
 
 impl FeatureAggregation {
-    fn from_config(config: &FeatureToProteinsConfig, sdrf: Option<&SdrfTable>) -> Result<Self> {
+    fn from_config(
+        config: &FeatureToProteinsConfig,
+        sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
+        pibaq_digest: Option<PibaqDigest>,
+    ) -> Result<Self> {
         match config.quantification {
             QuantMethod::Sum | QuantMethod::Intensity => Ok(Self::Sum(HashMap::new())),
             QuantMethod::Median => Ok(Self::Median(HashMap::new())),
             QuantMethod::Abd => Ok(Self::Abd(HashMap::new())),
-            QuantMethod::SpectralCount => Ok(Self::SpectralCount(HashMap::new())),
-            QuantMethod::Ibaq => Ok(Self::Ibaq(IbaqAggregation::from_config(config)?)),
-            QuantMethod::Ratio => Ok(Self::Ratio(RatioAggregation::from_config(config, sdrf)?)),
+            QuantMethod::PeptideCount => Ok(Self::PeptideCount(HashMap::new())),
+            QuantMethod::SpectralCount => Err(invalid_input(
+                "spectral_count requires the PSM-level aggregation path",
+            )),
+            QuantMethod::Pibaq => Ok(Self::Pibaq(Box::new(PibaqFeatureAggregation::new(
+                PibaqAggregation::from_digest(
+                    config,
+                    pibaq_digest.ok_or_else(|| {
+                        invalid_input("piBAQ requires a runtime pyOpenMS FASTA digest")
+                    })?,
+                )?,
+            )))),
+            QuantMethod::Ratio => Ok(Self::Ratio(RatioAggregation::from_config(
+                config, sdrf, raw_sdrf,
+            )?)),
             QuantMethod::TopN => {
                 if config.topn_peptides == 0 {
                     return Err(invalid_input("topn must be greater than 0"));
@@ -1268,8 +1319,9 @@ impl FeatureAggregation {
                 })
             }
             QuantMethod::MaxLfq | QuantMethod::DirectLfq => {
-                let route_to_directlfq =
-                    config.quantification == QuantMethod::DirectLfq || !config.maxlfq.force_builtin;
+                let route_to_directlfq = config.quantification == QuantMethod::DirectLfq
+                    || (!config.maxlfq.force_builtin
+                        && dataset_sample_normalization_method(config)?.is_none());
                 // Python's maxlfq delegation uses min_nonan=2 (the streaming path
                 // hardcodes it; the class path passes min_peptides, default 2),
                 // whereas the directlfq method keeps its own config default.
@@ -1281,14 +1333,10 @@ impl FeatureAggregation {
                 Ok(Self::Lfq {
                     method: config.quantification,
                     route_to_directlfq,
-                    min_unique_peptides: config.filtering.min_unique_peptides,
                     directlfq_min_nonan,
                     directlfq_num_samples_quadratic: config.directlfq.num_samples_quadratic,
-                    traces: HashMap::new(),
-                    directlfq_sums: HashMap::new(),
-                    ion_export: (config.quantification == QuantMethod::DirectLfq
-                        && config.output.export_ions.is_some())
-                    .then(IonExport::default),
+                    traces: MaxLfqFeatureAggregation::default(),
+                    cached_directlfq_values: None,
                 })
             }
         }
@@ -1303,16 +1351,11 @@ impl FeatureAggregation {
             Self::Sum(cells)
             | Self::Median(cells)
             | Self::Abd(cells)
-            | Self::SpectralCount(cells) => {
+            | Self::PeptideCount(cells) => {
                 push_peptide_max(cells, cell, measurement.peptide, measurement.intensity);
             }
-            Self::Ibaq(ibaq) => {
-                ibaq.push(
-                    measurement.sample,
-                    measurement.peptide,
-                    measurement.peptide_name,
-                    measurement.intensity,
-                );
+            Self::Pibaq(pibaq) => {
+                pibaq.push(measurement);
             }
             Self::Ratio(ratio) => {
                 ratio.push(measurement);
@@ -1320,34 +1363,8 @@ impl FeatureAggregation {
             Self::TopN { cells, .. } => {
                 push_peptide_max(cells, cell, measurement.peptide, measurement.intensity);
             }
-            Self::Lfq {
-                route_to_directlfq,
-                traces,
-                directlfq_sums,
-                ion_export,
-                ..
-            } => {
-                if *route_to_directlfq {
-                    let key = DirectLfqCellKey {
-                        protein: measurement.protein,
-                        canonical: measurement.canonical,
-                        sample: measurement.sample,
-                    };
-                    *directlfq_sums.entry(key).or_insert(0.0) += measurement.intensity;
-                } else {
-                    // Built-in MaxLFQ fallback. Python's built-in pivots the
-                    // (peptide, sample) matrix with aggfunc="sum", so duplicate
-                    // (peptide, sample) rows are summed, not max-collapsed.
-                    let key = PeptideCellKey {
-                        protein: measurement.protein,
-                        sample: measurement.sample,
-                        peptide: measurement.peptide,
-                    };
-                    *traces.entry(key).or_insert(0.0) += measurement.intensity;
-                }
-                if let Some(export) = ion_export {
-                    export.push(measurement);
-                }
+            Self::Lfq { traces, .. } => {
+                traces.push(measurement);
             }
         }
         Ok(())
@@ -1358,9 +1375,9 @@ impl FeatureAggregation {
             Self::Sum(_)
             | Self::Median(_)
             | Self::Abd(_)
-            | Self::SpectralCount(_)
+            | Self::PeptideCount(_)
             | Self::TopN { .. }
-            | Self::Ibaq(_) => true,
+            | Self::Pibaq(_) => true,
             // Built-in MaxLFQ runs dataset normalization on its peptide traces;
             // the DirectLFQ-aligned path (DirectLFQ, or delegated MaxLFQ) does its
             // own internal sample normalization, so mokume must not apply another.
@@ -1373,7 +1390,7 @@ impl FeatureAggregation {
 
     /// Apply a dataset-level sample normalization (one that needs the full
     /// protein x sample matrix, not a per-sample factor). Quantile runs
-    /// on the canonical peptide cells; iBAQ and MaxLFQ support quantile on their
+    /// on the canonical peptide cells; piBAQ and MaxLFQ support quantile on their
     /// own structures. Other dataset methods are gated out before this point.
     fn apply_dataset_normalization(
         &mut self,
@@ -1386,7 +1403,7 @@ impl FeatureAggregation {
             Self::Sum(cells)
             | Self::Median(cells)
             | Self::Abd(cells)
-            | Self::SpectralCount(cells)
+            | Self::PeptideCount(cells)
             | Self::TopN { cells, .. } => {
                 apply_dataset_norm_to_peptide_cells(
                     cells,
@@ -1396,9 +1413,9 @@ impl FeatureAggregation {
                     samples,
                 );
             }
-            Self::Ibaq(ibaq) => {
+            Self::Pibaq(pibaq) => {
                 if method == SampleNormalizationMethod::Quantile {
-                    ibaq.apply_quantile_normalization();
+                    pibaq.apply_quantile_normalization();
                 }
             }
             Self::Lfq {
@@ -1407,7 +1424,7 @@ impl FeatureAggregation {
                 ..
             } => {
                 if method == SampleNormalizationMethod::Quantile {
-                    apply_quantile_to_lfq_traces(traces, allowed_cells);
+                    traces.apply_quantile_normalization(allowed_cells);
                 }
             }
             Self::Ratio(_) | Self::Lfq { .. } => {}
@@ -1415,48 +1432,88 @@ impl FeatureAggregation {
     }
 
     fn write_intermediate_exports(
-        &self,
+        &mut self,
         config: &FeatureToProteinsConfig,
+        proteins: &StringIdRegistry<ProteinId>,
+        canonical_peptides: &StringIdRegistry<PeptideId>,
         samples: &StringIdRegistry<SampleId>,
         allowed_cells: &HashSet<CellKey>,
     ) -> Result<()> {
-        if let Self::Lfq {
+        let Self::Lfq {
             method: QuantMethod::DirectLfq,
-            ion_export: Some(export),
+            directlfq_min_nonan,
+            directlfq_num_samples_quadratic,
+            traces,
+            cached_directlfq_values,
             ..
         } = self
-        {
-            if let Some(path) = config.output.export_ions.as_deref() {
-                export.write_csv(path, samples, allowed_cells)?;
-            }
-        }
+        else {
+            return Ok(());
+        };
+        let Some(path) = config.output.export_ions.as_deref() else {
+            return Ok(());
+        };
+
+        let prepared = prepare_directlfq_ions(
+            traces.directlfq_sums(),
+            allowed_cells,
+            proteins,
+            canonical_peptides,
+            samples,
+        );
+        let result = direct_lfq_aligned_with_ions(
+            &prepared.ions,
+            *directlfq_min_nonan,
+            *directlfq_num_samples_quadratic,
+        );
+        write_directlfq_ions(
+            path,
+            &result.normalized_ions,
+            &prepared,
+            proteins,
+            canonical_peptides,
+            samples,
+        )?;
+        *cached_directlfq_values =
+            Some(remap_directlfq_values(result.protein_quantities, &prepared));
         Ok(())
     }
 
     fn keeps_shared_peptides(&self) -> bool {
-        matches!(self, Self::Ibaq(_))
+        matches!(self, Self::Pibaq(_))
+    }
+
+    fn preserves_loading_rows(&self) -> bool {
+        matches!(
+            self,
+            Self::Sum(_)
+                | Self::Median(_)
+                | Self::Abd(_)
+                | Self::PeptideCount(_)
+                | Self::TopN { .. }
+                | Self::Lfq { .. }
+        )
+    }
+
+    fn preserves_contextual_canonical_rows(&self) -> bool {
+        matches!(
+            self,
+            Self::Median(_) | Self::Abd(_) | Self::PeptideCount(_) | Self::TopN { .. }
+        )
     }
 
     fn peptide_key(&self, feature: &QpxFeatureRecord) -> String {
         match self {
-            Self::Ibaq(_) | Self::Ratio(_) => feature.sequence.clone(),
+            Self::Ratio(_) => feature.sequence.clone(),
             _ => peptide_key(feature),
         }
     }
 
     fn protein_name(&self, feature: &QpxFeatureRecord) -> Option<String> {
         match self {
-            // Ratio and DirectLFQ label proteins by the first `pg_accessions`
-            // entry, matching Python `convert_to_directlfq_format`, which derives
-            // `protein` from `pg_accessions[0]` and groups by it (stages.py:853).
-            // On the data the first-accession partition equals the full-group
-            // partition (no two full-groups share a first accession), so this is
-            // a relabel, not a regrouping. MaxLFQ keeps the full-group join.
-            Self::Ratio(_)
-            | Self::Lfq {
-                method: QuantMethod::DirectLfq,
-                ..
-            } => first_protein_name(&feature.protein_accessions),
+            // Ratio retains its first-accession contract. LFQ methods keep the
+            // complete protein group, matching the peptide intermediate.
+            Self::Ratio(_) => first_protein_name(&feature.protein_accessions),
             _ => protein_group_name(&feature.protein_accessions),
         }
     }
@@ -1467,6 +1524,7 @@ impl FeatureAggregation {
         proteins: &mut StringIdRegistry<ProteinId>,
         peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
         canonical_peptides: &StringIdRegistry<PeptideId>,
+        samples: &StringIdRegistry<SampleId>,
     ) -> ProteinValues {
         match self {
             Self::Sum(cells) => ProteinValues::Cells(
@@ -1475,7 +1533,7 @@ impl FeatureAggregation {
                     .filter_map(|(key, peptides)| {
                         allowed_cells
                             .contains(&key)
-                            .then(|| (key, peptides.into_values().sum()))
+                            .then(|| (key, sum_peptide_values(&peptides)))
                     })
                     .collect(),
             ),
@@ -1509,7 +1567,7 @@ impl FeatureAggregation {
                     })
                     .collect(),
             ),
-            Self::SpectralCount(cells) => ProteinValues::Cells(
+            Self::PeptideCount(cells) => ProteinValues::Cells(
                 cells
                     .into_iter()
                     .filter_map(|(key, peptides)| {
@@ -1521,7 +1579,7 @@ impl FeatureAggregation {
                     })
                     .collect(),
             ),
-            Self::Ibaq(ibaq) => ProteinValues::Cells(ibaq.finalize(proteins)),
+            Self::Pibaq(pibaq) => ProteinValues::Cells(pibaq.finalize(proteins)),
             Self::Ratio(ratio) => ProteinValues::Cells(ratio.finalize()),
             Self::TopN { topn, cells } => ProteinValues::Cells(
                 cells
@@ -1544,86 +1602,34 @@ impl FeatureAggregation {
             ),
             Self::Lfq {
                 route_to_directlfq: true,
-                method,
-                min_unique_peptides,
                 directlfq_min_nonan,
                 directlfq_num_samples_quadratic,
-                directlfq_sums,
-                ..
-            } => {
-                // The `min_unique_peptides` gate is applied at a different
-                // granularity by Python's two DirectLFQ-aligned paths, so the
-                // ion set fed to DirectLFQ must match the requested method:
-                //
-                //   * MaxLFQ (`load_for_maxlfq_directlfq`): a per-(protein,
-                //     sample) gate -- a `(protein, sample)` cell is kept only
-                //     when it carries at least `min_unique_peptides` distinct
-                //     canonical sequences (the SQL `COUNT(DISTINCT ...) OVER
-                //     (PARTITION BY ProteinName, SampleID)` window). Cells below
-                //     the threshold are dropped entirely, so proteins that never
-                //     reach the threshold in any single sample disappear.
-                //   * DirectLFQ (`convert_to_directlfq_format`): a global
-                //     per-protein gate -- a protein is kept when it has at least
-                //     `min_unique_peptides` distinct sequences across all
-                //     samples, and then every one of its cells is retained.
-                // DirectLFQ orders its ion rows by `(protein, sequence)`
-                // lexically and `get_normfacts` breaks variance-merge ties by
-                // row position, so the row order must match Python's. Assign
-                // each distinct canonical sequence a global alphabetical rank
-                // (by its bare-sequence string), which `DirectLfqIon` carries as
-                // `ion_seq_rank` and `IonMatrix::build` uses as the primary
-                // within-protein row-sort key.
-                let seq_rank = canonical_sequence_ranks(&directlfq_sums, canonical_peptides);
-                let to_ion = |entry: (DirectLfqCellKey, f64)| {
-                    let rank = seq_rank
-                        .get(&entry.0.canonical)
-                        .copied()
-                        .unwrap_or(u32::MAX);
-                    directlfq_ion(entry, rank)
-                };
-                let ions = match method {
-                    QuantMethod::MaxLfq => directlfq_sums
-                        .into_iter()
-                        .filter(|(key, _)| {
-                            allowed_cells.contains(&CellKey {
-                                protein: key.protein,
-                                sample: key.sample,
-                            })
-                        })
-                        .map(to_ion)
-                        .collect::<Vec<_>>(),
-                    _ => {
-                        let mut distinct = HashMap::<ProteinId, HashSet<PeptideId>>::new();
-                        for key in directlfq_sums.keys() {
-                            distinct
-                                .entry(key.protein)
-                                .or_default()
-                                .insert(key.canonical);
-                        }
-                        let kept = distinct
-                            .into_iter()
-                            .filter_map(|(protein, sequences)| {
-                                (sequences.len() >= min_unique_peptides).then_some(protein)
-                            })
-                            .collect::<HashSet<_>>();
-                        directlfq_sums
-                            .into_iter()
-                            .filter(|(key, _)| kept.contains(&key.protein))
-                            .map(to_ion)
-                            .collect::<Vec<_>>()
-                    }
-                };
-                ProteinValues::Rows(
-                    direct_lfq_aligned(&ions, directlfq_min_nonan, directlfq_num_samples_quadratic)
-                        .into_iter()
-                        .collect(),
-                )
-            }
-            Self::Lfq {
                 traces,
-                ion_export: _,
+                cached_directlfq_values,
                 ..
             } => {
+                let values = if let Some(values) = cached_directlfq_values {
+                    values
+                } else {
+                    let prepared = prepare_directlfq_ions(
+                        traces.into_directlfq_sums(),
+                        allowed_cells,
+                        proteins,
+                        canonical_peptides,
+                        samples,
+                    );
+                    let values = direct_lfq_aligned(
+                        &prepared.ions,
+                        directlfq_min_nonan,
+                        directlfq_num_samples_quadratic,
+                    );
+                    remap_directlfq_values(values, &prepared)
+                };
+                ProteinValues::Rows(values)
+            }
+            Self::Lfq { traces, .. } => {
+                let traces = traces.into_canonical_traces();
+                let (peptide_to_lexical, _) = lexical_id_remap(canonical_peptides);
                 let mut samples = allowed_cells
                     .iter()
                     .map(|cell| cell.sample)
@@ -1642,7 +1648,10 @@ impl FeatureAggregation {
                             .entry(key.protein)
                             .or_default()
                             .push(PeptideMeasurement {
-                                peptide: key.peptide,
+                                peptide: peptide_to_lexical
+                                    .get(&key.peptide)
+                                    .copied()
+                                    .unwrap_or(key.peptide),
                                 sample: key.sample,
                                 intensity,
                             });
@@ -1664,16 +1673,210 @@ impl FeatureAggregation {
     }
 }
 
-impl IbaqAggregation {
-    fn from_config(config: &FeatureToProteinsConfig) -> Result<Self> {
-        let accession_peptides = load_fasta_peptides(config)?;
+impl MaxLfqFeatureAggregation {
+    fn push(&mut self, measurement: AggregationMeasurement<'_>) {
+        self.ion_to_canonical
+            .entry(measurement.peptide)
+            .or_insert(measurement.canonical);
+        push_peptide_max(
+            &mut self.ion_cells,
+            CellKey {
+                protein: measurement.protein,
+                sample: measurement.sample,
+            },
+            measurement.peptide,
+            measurement.intensity,
+        );
+    }
+
+    fn collapse_ions(&mut self) {
+        let mut cells = std::mem::take(&mut self.ion_cells)
+            .into_iter()
+            .collect::<Vec<_>>();
+        cells.sort_by_key(|(cell, _)| (cell.protein.get(), cell.sample.get()));
+        for (cell, peptides) in cells {
+            for (canonical, intensity) in collapse_to_canonical(peptides, &self.ion_to_canonical) {
+                self.canonical_traces.insert(
+                    PeptideCellKey {
+                        protein: cell.protein,
+                        sample: cell.sample,
+                        peptide: canonical,
+                    },
+                    intensity,
+                );
+            }
+        }
+    }
+
+    fn apply_quantile_normalization(&mut self, allowed_cells: &HashSet<CellKey>) {
+        self.collapse_ions();
+        apply_quantile_to_lfq_traces(&mut self.canonical_traces, allowed_cells);
+    }
+
+    fn into_canonical_traces(mut self) -> HashMap<PeptideCellKey, f64> {
+        self.collapse_ions();
+        self.canonical_traces
+    }
+
+    fn into_directlfq_sums(self) -> HashMap<DirectLfqCellKey, f64> {
+        self.into_canonical_traces()
+            .into_iter()
+            .map(|(key, intensity)| {
+                (
+                    DirectLfqCellKey {
+                        protein: key.protein,
+                        canonical: key.peptide,
+                        sample: key.sample,
+                    },
+                    intensity,
+                )
+            })
+            .collect()
+    }
+
+    fn directlfq_sums(&self) -> HashMap<DirectLfqCellKey, f64> {
+        let mut sums = self
+            .canonical_traces
+            .iter()
+            .map(|(key, intensity)| {
+                (
+                    DirectLfqCellKey {
+                        protein: key.protein,
+                        canonical: key.peptide,
+                        sample: key.sample,
+                    },
+                    *intensity,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let mut cells = self.ion_cells.iter().collect::<Vec<_>>();
+        cells.sort_by_key(|(cell, _)| (cell.protein.get(), cell.sample.get()));
+        for (cell, peptides) in cells {
+            for (canonical, intensity) in
+                collapse_to_canonical(peptides.clone(), &self.ion_to_canonical)
+            {
+                sums.insert(
+                    DirectLfqCellKey {
+                        protein: cell.protein,
+                        canonical,
+                        sample: cell.sample,
+                    },
+                    intensity,
+                );
+            }
+        }
+        sums
+    }
+}
+
+fn lexical_id_remap<I>(registry: &StringIdRegistry<I>) -> (HashMap<I, I>, HashMap<I, I>)
+where
+    I: Copy + Eq + std::hash::Hash + From<u32> + Into<u32>,
+{
+    let numeric_ids = registry.iter().map(|(id, _)| id).collect::<Vec<_>>();
+    let mut by_name = registry.iter().collect::<Vec<_>>();
+    by_name.sort_by(|left, right| left.1.cmp(right.1));
+
+    let mut to_lexical = HashMap::with_capacity(by_name.len());
+    let mut from_lexical = HashMap::with_capacity(by_name.len());
+    for ((original, _), lexical) in by_name.into_iter().zip(numeric_ids) {
+        to_lexical.insert(original, lexical);
+        from_lexical.insert(lexical, original);
+    }
+    (to_lexical, from_lexical)
+}
+
+impl PibaqFeatureAggregation {
+    fn new(core: PibaqAggregation) -> Self {
+        Self {
+            core,
+            ion_observations: HashMap::new(),
+            ion_to_canonical: HashMap::new(),
+            canonical_names: HashMap::new(),
+        }
+    }
+
+    fn push(&mut self, measurement: AggregationMeasurement<'_>) {
+        self.ion_to_canonical
+            .entry(measurement.peptide)
+            .or_insert(measurement.canonical);
+        self.canonical_names
+            .entry(measurement.canonical)
+            .or_insert_with(|| measurement.ion_name.to_owned());
+        let key = PeptideSampleKey {
+            peptide: measurement.peptide,
+            sample: measurement.sample,
+        };
+        self.ion_observations
+            .entry(key)
+            .and_modify(|current| {
+                if measurement.intensity > *current {
+                    *current = measurement.intensity;
+                }
+            })
+            .or_insert(measurement.intensity);
+    }
+
+    fn collapse_ions(&mut self) {
+        let mut canonical_ions = HashMap::<PeptideSampleKey, Vec<(PeptideId, f64)>>::new();
+        for (key, intensity) in std::mem::take(&mut self.ion_observations) {
+            let Some(canonical) = self.ion_to_canonical.get(&key.peptide).copied() else {
+                continue;
+            };
+            canonical_ions
+                .entry(PeptideSampleKey {
+                    peptide: canonical,
+                    sample: key.sample,
+                })
+                .or_default()
+                .push((key.peptide, intensity));
+        }
+        for (key, mut ions) in canonical_ions {
+            let Some(name) = self.canonical_names.get(&key.peptide) else {
+                continue;
+            };
+            ions.sort_by_key(|(ion, _)| *ion);
+            let intensity = ions.into_iter().map(|(_, value)| value).sum();
+            self.core.push(key.sample, key.peptide, name, intensity);
+        }
+    }
+
+    fn apply_quantile_normalization(&mut self) {
+        self.collapse_ions();
+        self.core.apply_quantile_normalization();
+    }
+
+    fn finalize(mut self, proteins: &mut StringIdRegistry<ProteinId>) -> HashMap<CellKey, f64> {
+        self.collapse_ions();
+        self.core.finalize(proteins)
+    }
+}
+
+impl PibaqAggregation {
+    fn from_digest(config: &FeatureToProteinsConfig, digest: PibaqDigest) -> Result<Self> {
+        info!(
+            pyopenms_version = digest.provenance.pyopenms_version,
+            enzyme = digest.provenance.enzyme,
+            catalog_hash = digest.provenance.catalog_hash,
+            min_aa = digest.provenance.min_aa,
+            max_aa = digest.provenance.max_aa,
+            missed_cleavages = digest.provenance.missed_cleavages,
+            "using runtime pyOpenMS FASTA digest"
+        );
+        let mut accession_peptides = digest.accession_peptides;
+        accession_peptides.retain(|_, peptides| !peptides.is_empty());
+        if accession_peptides.is_empty() {
+            return Err(invalid_input(
+                "FASTA did not produce theoretical peptides for piBAQ",
+            ));
+        }
         let peptide_accessions = invert_peptide_index(&accession_peptides);
         let auto_families = discover_families(
             &accession_peptides,
             &peptide_accessions,
-            config.ibaq.min_shared,
+            config.pibaq.min_shared,
         )?;
-        let families = if let Some(path) = config.ibaq.families_yaml.as_deref() {
+        let families = if let Some(path) = config.pibaq.families_yaml.as_deref() {
             merge_family_overrides(auto_families, load_family_overrides(path)?)
         } else {
             auto_families
@@ -1684,8 +1887,8 @@ impl IbaqAggregation {
             families,
             peptide_names: HashMap::new(),
             observations: HashMap::new(),
-            min_anchors: config.ibaq.min_anchors,
-            high_anchor_threshold: config.ibaq.high_anchor_threshold,
+            min_anchors: config.pibaq.min_anchors,
+            high_anchor_threshold: config.pibaq.high_anchor_threshold,
             mw_map: None,
         })
     }
@@ -1721,12 +1924,12 @@ impl IbaqAggregation {
     fn finalize(self, proteins: &mut StringIdRegistry<ProteinId>) -> HashMap<CellKey, f64> {
         self.finalize_detailed(proteins)
             .into_iter()
-            .map(|(key, detail)| (key, detail.cell.ibaq))
+            .map(|(key, detail)| (key, detail.cell.pibaq))
             .collect()
     }
 
     /// Run the full piBAQ allocation and return, per (protein, sample), both the
-    /// iBAQ value and the inputs `peptides2protein` needs to reproduce the
+    /// piBAQ value and the inputs `peptides2protein` needs to reproduce the
     /// Python long-format table (`NormIntensity`, `FamilyId`, `EvidenceLevel`,
     /// `FamilySize`). The allocation math is identical to [`Self::finalize`];
     /// only the captured metadata differs, so there is a single source of truth
@@ -1734,7 +1937,7 @@ impl IbaqAggregation {
     fn finalize_detailed(
         self,
         proteins: &mut StringIdRegistry<ProteinId>,
-    ) -> HashMap<CellKey, IbaqDetailedCell> {
+    ) -> HashMap<CellKey, PibaqDetailedCell> {
         let observations = self
             .observations
             .into_iter()
@@ -1793,66 +1996,38 @@ impl IbaqAggregation {
                 .map(|member| anchor_counts.get(member).copied().unwrap_or(0))
                 .max()
                 .unwrap_or(0);
-            let evidence =
-                classify_evidence(min_anchor, self.min_anchors, self.high_anchor_threshold);
+            let evidence = classify_evidence(
+                min_anchor,
+                max_anchor,
+                self.min_anchors,
+                self.high_anchor_threshold,
+            );
             let family_size = family.members.len();
-            let is_fallback = max_anchor < self.min_anchors;
-            let mut output = HashMap::<CellKey, IbaqCell>::new();
-            if is_fallback {
-                finalize_family_rollup(
-                    &family,
-                    &observations,
-                    &owned_peptides,
-                    proteins,
-                    &mut output,
-                );
-            } else {
-                finalize_family_proportional(
-                    &family,
-                    &observations,
-                    &owned_peptides,
-                    &self.accession_peptides,
-                    &self.peptide_accessions,
-                    proteins,
-                    &mut output,
-                );
-            }
-            // TPA molecular weight per the Python `_attach_tpa` rule. The
-            // fallback branch uses one shared family MW sum (0 -> 1); the
-            // proportional branch uses each member's own MW (0 -> 1). Computed
-            // only when the caller requested TPA (`mw_map` is `Some`).
-            let family_mw = self.mw_map.as_ref().map(|mw_map| {
-                let summed = family
-                    .members
-                    .iter()
-                    .map(|member| mw_map.get(member).copied().unwrap_or(0.0))
-                    .sum::<f64>();
-                if summed <= 0.0 {
-                    1.0
-                } else {
-                    summed
-                }
-            });
+            let output = finalize_family_allocation(
+                &family,
+                &observations,
+                &owned_peptides,
+                &self.accession_peptides,
+                &self.peptide_accessions,
+                evidence == PibaqEvidence::FamilyOnly,
+                proteins,
+            );
             for (key, cell) in output {
                 let molecular_weight = self.mw_map.as_ref().map(|mw_map| {
-                    if is_fallback {
-                        family_mw.unwrap_or(1.0)
+                    let member_mw = proteins
+                        .resolve(key.protein)
+                        .and_then(|member| mw_map.get(member).copied())
+                        .unwrap_or(0.0);
+                    if member_mw == 0.0 {
+                        1.0
                     } else {
-                        let member_mw = proteins
-                            .resolve(key.protein)
-                            .and_then(|member| mw_map.get(member).copied())
-                            .unwrap_or(0.0);
-                        if member_mw == 0.0 {
-                            1.0
-                        } else {
-                            member_mw
-                        }
+                        member_mw
                     }
                 });
                 let tpa = molecular_weight.map(|mw| cell.norm_intensity / mw);
                 detailed.insert(
                     key,
-                    IbaqDetailedCell {
+                    PibaqDetailedCell {
                         cell,
                         family_id: family.family_id.clone(),
                         evidence_level: evidence,
@@ -1869,13 +2044,13 @@ impl IbaqAggregation {
 
 /// Evidence buckets mirroring the Python `_classify_evidence` helper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IbaqEvidence {
+enum PibaqEvidence {
     FamilyOnly,
     Medium,
     High,
 }
 
-impl IbaqEvidence {
+impl PibaqEvidence {
     /// Lowercase label matching the Python `EVIDENCE_*` constants.
     const fn label(self) -> &'static str {
         match self {
@@ -1889,29 +2064,29 @@ impl IbaqEvidence {
 /// Bucket a family's anchor counts, mirroring the Python `_classify_evidence`.
 fn classify_evidence(
     min_anchor: usize,
+    max_anchor: usize,
     min_required: usize,
     high_threshold: usize,
-) -> IbaqEvidence {
-    if min_anchor < min_required {
-        IbaqEvidence::FamilyOnly
+) -> PibaqEvidence {
+    if max_anchor < min_required {
+        PibaqEvidence::FamilyOnly
     } else if min_anchor >= high_threshold {
-        IbaqEvidence::High
+        PibaqEvidence::High
     } else {
-        IbaqEvidence::Medium
+        PibaqEvidence::Medium
     }
 }
 
-/// A fully described iBAQ output cell for `peptides2protein`'s long-format table.
+/// A fully described piBAQ output cell for `peptides2protein`'s long-format table.
 #[derive(Debug, Clone)]
-struct IbaqDetailedCell {
-    cell: IbaqCell,
+struct PibaqDetailedCell {
+    cell: PibaqCell,
     family_id: String,
-    evidence_level: IbaqEvidence,
+    evidence_level: PibaqEvidence,
     family_size: usize,
-    /// Per-protein molecular weight (member MW with 0 -> 1) on the proportional
-    /// branch, or the family MW sum (with 0 -> 1) on the fallback branch.
-    /// Populated only when the caller requested TPA; mirrors the Python
-    /// `_attach_tpa` `MolecularWeight` column.
+    /// Per-protein molecular weight (member MW with 0 -> 1). Populated only
+    /// when the caller requested TPA; mirrors the Python `_attach_tpa`
+    /// `MolecularWeight` column.
     molecular_weight: Option<f64>,
     /// TPA = `NormIntensity / MolecularWeight`, populated alongside
     /// `molecular_weight`.
@@ -1919,14 +2094,21 @@ struct IbaqDetailedCell {
 }
 
 impl RatioAggregation {
-    fn from_config(config: &FeatureToProteinsConfig, sdrf: Option<&SdrfTable>) -> Result<Self> {
+    fn from_config(
+        config: &FeatureToProteinsConfig,
+        sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
+    ) -> Result<Self> {
         let Some(sdrf) = sdrf else {
             return Err(invalid_input("Ratio quantification requires --sdrf option"));
         };
-        let reference_samples = resolve_ratio_reference_samples(sdrf, config);
+        let raw_sdrf = raw_sdrf.ok_or_else(|| {
+            invalid_input("Ratio quantification requires readable raw SDRF metadata")
+        })?;
+        let reference_samples = resolve_ratio_reference_samples(sdrf, raw_sdrf, config)?;
         if reference_samples.is_empty() {
             return Err(invalid_input(
-                "Ratio quantification requires reference samples; provide --irs-reference-samples or mark references in SDRF",
+                "Ratio quantification requires reference samples; repeat --irs-reference-sample or mark references in SDRF",
             ));
         }
         Ok(Self {
@@ -1985,16 +2167,24 @@ fn push_peptide_max(
     }
 }
 
+fn sum_peptide_values(peptides: &HashMap<PeptideId, f64>) -> f64 {
+    let mut values = peptides.iter().collect::<Vec<_>>();
+    values.sort_by_key(|(peptide, _)| **peptide);
+    values.into_iter().map(|(_, value)| *value).sum()
+}
+
 /// Collapse per-(peptidoform, charge) values into one value per canonical
 /// peptide by summing, mirroring the Python loader which keeps the max
 /// intensity per ion across runs and then sums ions into the canonical peptide
 /// (`get_peptidoform_normalize_intensities` then `sum_peptidoform_intensities`).
-/// Median/Abd/TopN/SpectralCount operate on these canonical values.
+/// Median/Abd/TopN/PeptideCount operate on these canonical values.
 fn collapse_to_canonical(
     peptides: HashMap<PeptideId, f64>,
     peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
 ) -> HashMap<PeptideId, f64> {
     let mut canonical = HashMap::with_capacity(peptides.len());
+    let mut peptides = peptides.into_iter().collect::<Vec<_>>();
+    peptides.sort_by_key(|(peptide, _)| *peptide);
     for (peptide, value) in peptides {
         let key = peptide_to_canonical
             .get(&peptide)
@@ -2013,7 +2203,7 @@ struct QuantilePeptideKey {
 
 /// Apply a dataset-level sample normalization to the canonical-peptide x sample
 /// cells in place. Shared by the protein-matrix aggregation (`Self::Sum` /
-/// `Median` / `Abd` / `SpectralCount` / `TopN`) and the `--export-peptides`
+/// `Median` / `Abd` / `PeptideCount` / `TopN`) and the `--export-peptides`
 /// path, so the exported peptides carry the exact same normalization Python
 /// applies in `load_for_mokume` before writing the peptide CSV.
 fn apply_dataset_norm_to_peptide_cells(
@@ -3631,24 +3821,17 @@ fn factorize_batch_labels(values: &[String]) -> Vec<usize> {
     mokume_stats::batch::factorize(values)
 }
 
-/// Resolve the configured batch-detection method name like Python's
-/// `_batch_method` (stages.py:1610): parse it case-insensitively (with `-`/space
-/// normalised to `_`), and degrade an unknown name to `sample_prefix` with a
-/// warning rather than erroring.
-fn resolve_batch_method(name: &str) -> mokume_stats::batch::BatchDetectionMethod {
-    match mokume_stats::batch::BatchDetectionMethod::parse_name(name) {
-        Some(method) => method,
-        None => {
-            tracing::warn!("Unknown batch method '{name}', using sample_prefix");
-            mokume_stats::batch::BatchDetectionMethod::SamplePrefix
-        }
-    }
+/// Resolve a configured batch-detection method name case-insensitively, with
+/// `-`/space normalised to `_`. Unknown names are rejected so a requested
+/// strategy is never silently replaced with `sample_prefix`.
+fn resolve_batch_method(name: &str) -> Result<mokume_stats::batch::BatchDetectionMethod> {
+    mokume_stats::batch::BatchDetectionMethod::parse_name(name)
+        .ok_or_else(|| invalid_input(format!("unknown batch method `{name}`")))
 }
 
-/// Run `mokume-stats`'s `detect_batches` for the protein-matrix flow, where no
-/// `run_info` mapping exists (so `run` errors and `fraction`/`techreplicate` are
-/// resolved to `sample_prefix` by the caller before reaching here). Maps the
-/// detection error to a `MokumeError`, mirroring Python's `ValueError`s.
+/// Run `mokume-stats`'s `detect_batches` for the protein-matrix flow. Methods
+/// that require unavailable run metadata are rejected by the caller.
+#[cfg(test)]
 fn detect_batches_for_method(
     method: mokume_stats::batch::BatchDetectionMethod,
     sample_names: &[&str],
@@ -3673,8 +3856,8 @@ fn detect_batches_for_method(
     })
 }
 
-/// Python `_detect_batch_indices` validation (stages.py:1633): require at least
-/// two distinct batches, each with at least two samples; otherwise skip (`None`).
+/// Batch-layout validation: require at least two distinct batches, each with at
+/// least two samples. The caller turns `None` into an explicit input error.
 fn validate_batch_sizes(batch: Vec<usize>) -> Option<Vec<usize>> {
     let mut counts: HashMap<usize, usize> = HashMap::new();
     for &label in &batch {
@@ -3684,6 +3867,115 @@ fn validate_batch_sizes(batch: Vec<usize>) -> Option<Vec<usize>> {
         return None;
     }
     Some(batch)
+}
+
+fn resolve_reference_batch(
+    requested: &str,
+    original_labels: &[String],
+    encoded_labels: &[usize],
+) -> Result<usize> {
+    if let Some(index) = original_labels.iter().position(|label| label == requested) {
+        return Ok(encoded_labels[index]);
+    }
+    if let Ok(encoded) = requested.parse::<usize>() {
+        if encoded_labels.contains(&encoded) {
+            tracing::warn!(
+                encoded_batch = encoded,
+                "numeric --batch-ref is deprecated; use the original batch label"
+            );
+            return Ok(encoded);
+        }
+    }
+    let mut labels = original_labels.to_vec();
+    labels.sort();
+    labels.dedup();
+    Err(invalid_input(format!(
+        "batch reference `{requested}` is not present; detected labels: {}",
+        labels.join(", ")
+    )))
+}
+
+fn validate_combat_design(
+    batch: &[usize],
+    covariates: &[Vec<f64>],
+    reference: Option<usize>,
+) -> Result<()> {
+    if covariates.len() != batch.len() {
+        return Err(invalid_input(
+            "batch covariate row count must match the matrix sample count",
+        ));
+    }
+    let columns = covariates.first().map_or(0, Vec::len);
+    if columns == 0 || covariates.iter().any(|row| row.len() != columns) {
+        return Err(invalid_input(
+            "batch covariate matrix must be non-empty and rectangular",
+        ));
+    }
+    let mut labels = batch.to_vec();
+    labels.sort_unstable();
+    labels.dedup();
+    let label_index = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| (*label, index))
+        .collect::<HashMap<_, _>>();
+    let mut design = vec![vec![0.0; batch.len()]; labels.len() + columns];
+    for (sample, label) in batch.iter().enumerate() {
+        design[label_index[label]][sample] = 1.0;
+    }
+    if let Some(reference) = reference {
+        let row = label_index[&reference];
+        design[row].fill(1.0);
+    }
+    for column in 0..columns {
+        for (sample, values) in covariates.iter().enumerate() {
+            design[labels.len() + column][sample] = values[column];
+        }
+    }
+    if row_rank(design) < labels.len() + columns {
+        return Err(invalid_input(
+            "batch covariates are confounded with batches or each other; ComBat design is singular",
+        ));
+    }
+    Ok(())
+}
+
+fn row_rank(mut matrix: Vec<Vec<f64>>) -> usize {
+    let rows = matrix.len();
+    let columns = matrix.first().map_or(0, Vec::len);
+    let mut rank = 0;
+    for column in 0..columns {
+        let Some(pivot) = (rank..rows).max_by(|&left, &right| {
+            matrix[left][column]
+                .abs()
+                .total_cmp(&matrix[right][column].abs())
+        }) else {
+            break;
+        };
+        if matrix[pivot][column].abs() <= 1e-12 {
+            continue;
+        }
+        matrix.swap(rank, pivot);
+        let pivot_value = matrix[rank][column];
+        for value in &mut matrix[rank][column..] {
+            *value /= pivot_value;
+        }
+        let pivot_row = matrix[rank][column..].to_vec();
+        for (row_index, row) in matrix.iter_mut().enumerate() {
+            if row_index == rank {
+                continue;
+            }
+            let factor = row[column];
+            for (value, pivot) in row[column..].iter_mut().zip(&pivot_row) {
+                *value -= factor * pivot;
+            }
+        }
+        rank += 1;
+        if rank == rows {
+            break;
+        }
+    }
+    rank
 }
 
 /// SDRF sample-name columns Python searches in priority order
@@ -3705,14 +3997,16 @@ fn match_sdrf_column(headers: &[String], requested: &str) -> Option<usize> {
 
 /// Per-sample values of one covariate column in matrix-sample order, mirroring
 /// `_sample_covariate_values`: an exact `source name` hit first, else the first
-/// SDRF sample that is a substring of (or contains) the matrix sample name, else
-/// `"unknown"`. Duplicate source names keep the last row (pandas `dict(zip(..))`).
+/// SDRF sample that is a substring of (or contains) the matrix sample name.
+/// Duplicate source names keep the last row (pandas `dict(zip(..))`). An
+/// unmatched matrix sample is rejected so a requested covariate never silently
+/// turns into an artificial `unknown` category.
 fn covariate_values_for_samples(
     raw: &SdrfRawTable,
     sample_col: usize,
     value_col: usize,
     sample_names: &[&str],
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let mut sample_to_value: HashMap<&str, &str> = HashMap::new();
     let mut sdrf_samples: Vec<&str> = Vec::with_capacity(raw.row_count());
     for row in 0..raw.row_count() {
@@ -3724,62 +4018,100 @@ fn covariate_values_for_samples(
         .iter()
         .map(|&name| {
             if let Some(value) = sample_to_value.get(name) {
-                return (*value).to_owned();
+                return Ok((*value).to_owned());
             }
             for sdrf_sample in &sdrf_samples {
                 if sdrf_sample.contains(name) || name.contains(*sdrf_sample) {
                     if let Some(value) = sample_to_value.get(*sdrf_sample) {
-                        return (*value).to_owned();
+                        return Ok((*value).to_owned());
                     }
                 }
             }
-            "unknown".to_owned()
+            Err(invalid_input(format!(
+                "batch covariate SDRF has no sample matching matrix column `{name}`"
+            )))
         })
         .collect()
 }
 
-/// Build the sample-major covariate matrix the covariate-ComBat path consumes,
-/// mirroring `extract_covariates_from_sdrf`. Each requested column is matched,
-/// mapped to matrix samples, factorized (`pd.factorize` first-occurrence codes),
-/// and dropped when it carries at most one unique value. Returns `None` when the
-/// SDRF has no sample column or no covariate survives.
+/// Build the sample-major covariate matrix consumed by ComBat. Numeric SDRF
+/// columns remain numeric. Categorical columns use k-1 indicator columns so a
+/// nominal category is never misrepresented as an ordered scalar.
 fn extract_sdrf_covariates(
     raw: &SdrfRawTable,
     sample_names: &[&str],
     covariate_columns: &[String],
-) -> Option<Vec<Vec<f64>>> {
+) -> Result<Option<Vec<Vec<f64>>>> {
     if covariate_columns.is_empty() {
-        return None;
+        return Ok(None);
     }
     let sample_col = SDRF_SAMPLE_COLUMNS
         .iter()
-        .find_map(|name| raw.column_index(name))?;
+        .find_map(|name| raw.column_index(name))
+        .ok_or_else(|| invalid_input("batch covariates require an SDRF sample-name column"))?;
 
     // Covariate-major encoded columns, then transposed to sample-major below.
-    let mut covar_data: Vec<Vec<usize>> = Vec::new();
+    let mut covar_data: Vec<Vec<f64>> = Vec::new();
     for column in covariate_columns {
-        let Some(value_col) = match_sdrf_column(raw.headers(), column) else {
-            continue;
-        };
-        let values = covariate_values_for_samples(raw, sample_col, value_col, sample_names);
+        let value_col = match_sdrf_column(raw.headers(), column).ok_or_else(|| {
+            invalid_input(format!(
+                "batch covariate column `{column}` was not found in SDRF"
+            ))
+        })?;
+        let values = covariate_values_for_samples(raw, sample_col, value_col, sample_names)?;
         if values.iter().collect::<HashSet<_>>().len() <= 1 {
-            continue;
+            return Err(invalid_input(format!(
+                "batch covariate column `{column}` is constant and cannot affect ComBat"
+            )));
         }
-        covar_data.push(factorize_batch_labels(&values));
+        covar_data.extend(encode_covariate(column, &values)?);
     }
-    if covar_data.is_empty() {
-        return None;
-    }
-    Some(
+    Ok(Some(
         (0..sample_names.len())
-            .map(|sample| {
-                covar_data
-                    .iter()
-                    .map(|encoded| encoded[sample] as f64)
-                    .collect()
-            })
+            .map(|sample| covar_data.iter().map(|encoded| encoded[sample]).collect())
             .collect(),
-    )
+    ))
+}
+
+fn encode_covariate(column: &str, values: &[String]) -> Result<Vec<Vec<f64>>> {
+    if values.iter().any(|value| value.trim().is_empty()) {
+        return Err(invalid_input(format!(
+            "batch covariate column `{column}` contains a missing value"
+        )));
+    }
+    let parsed = values
+        .iter()
+        .map(|value| value.parse::<f64>())
+        .collect::<Vec<_>>();
+    let numeric_count = parsed.iter().filter(|value| value.is_ok()).count();
+    if numeric_count == values.len() {
+        let numeric = parsed
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .collect::<Vec<_>>();
+        if numeric.iter().any(|value| !value.is_finite()) {
+            return Err(invalid_input(format!(
+                "batch covariate column `{column}` contains a non-finite value"
+            )));
+        }
+        return Ok(vec![numeric]);
+    }
+    if numeric_count > 0 {
+        return Err(invalid_input(format!(
+            "batch covariate column `{column}` mixes numeric and categorical values"
+        )));
+    }
+
+    let encoded = factorize_batch_labels(values);
+    let category_count = encoded.iter().copied().max().unwrap_or(0) + 1;
+    Ok((1..category_count)
+        .map(|category| {
+            encoded
+                .iter()
+                .map(|value| f64::from(*value == category))
+                .collect()
+        })
+        .collect())
 }
 
 /// Explicit batch-column values per matrix sample, mirroring
@@ -3792,35 +4124,78 @@ fn batch_column_values_for_samples(
     raw: &SdrfRawTable,
     sample_names: &[&str],
     column: &str,
-) -> Option<Vec<String>> {
-    let value_col = raw.column_index(&column.to_ascii_lowercase())?;
-    let sample_col = raw.column_index("source name")?;
+) -> Result<Vec<String>> {
+    let value_col = raw
+        .column_index(&column.to_ascii_lowercase())
+        .ok_or_else(|| invalid_input(format!("Batch column '{column}' not found in SDRF")))?;
+    let sample_col = raw
+        .column_index("source name")
+        .ok_or_else(|| invalid_input("batch column detection requires `source name` in SDRF"))?;
     let mut sample_to_batch: HashMap<&str, &str> = HashMap::new();
     for row in 0..raw.row_count() {
         sample_to_batch.insert(raw.cell(row, sample_col), raw.cell(row, value_col));
     }
-    Some(
-        sample_names
-            .iter()
-            .map(|&name| {
-                sample_to_batch
-                    .get(name)
-                    .copied()
-                    .unwrap_or("unknown")
-                    .to_owned()
-            })
-            .collect(),
-    )
+    sample_names
+        .iter()
+        .map(|&name| {
+            sample_to_batch
+                .get(name)
+                .map(|value| (*value).to_owned())
+                .ok_or_else(|| {
+                    invalid_input(format!(
+                        "batch SDRF column `{column}` has no value for matrix sample `{name}`"
+                    ))
+                })
+        })
+        .collect()
+}
+
+fn pearson_correlation(pairs: &[(f64, f64)]) -> Option<f64> {
+    if pairs.len() < MIN_SAMPLE_CORRELATION_OVERLAP {
+        return None;
+    }
+    let count = pairs.len() as f64;
+    let (sum_left, sum_right) = pairs
+        .iter()
+        .fold((0.0, 0.0), |(left, right), (x, y)| (left + x, right + y));
+    let mean_left = sum_left / count;
+    let mean_right = sum_right / count;
+    let (covariance, variance_left, variance_right) = pairs.iter().fold(
+        (0.0, 0.0, 0.0),
+        |(covariance, variance_left, variance_right), (x, y)| {
+            let centered_left = x - mean_left;
+            let centered_right = y - mean_right;
+            (
+                covariance + centered_left * centered_right,
+                variance_left + centered_left * centered_left,
+                variance_right + centered_right * centered_right,
+            )
+        },
+    );
+    let denominator = (variance_left * variance_right).sqrt();
+    (denominator > 0.0)
+        .then(|| (covariance / denominator).clamp(-1.0, 1.0))
+        .filter(|correlation| correlation.is_finite())
 }
 
 impl ProteinMatrix {
-    fn apply_irs(&mut self, sdrf: Option<&SdrfTable>, config: &IrsConfig) -> Result<()> {
+    fn apply_irs(
+        &mut self,
+        sdrf: Option<&SdrfTable>,
+        raw_sdrf: Option<&SdrfRawTable>,
+        config: &IrsConfig,
+    ) -> Result<()> {
         let Some(sdrf) = sdrf else {
             return Err(invalid_input("IRS normalization requires --sdrf option"));
         };
-        let reference_samples = resolve_irs_reference_samples(sdrf, config);
+        let raw_sdrf = raw_sdrf.ok_or_else(|| {
+            invalid_input("IRS normalization requires readable raw SDRF metadata")
+        })?;
+        let reference_samples = resolve_irs_reference_samples(sdrf, raw_sdrf, config)?;
         if reference_samples.is_empty() {
-            return Ok(());
+            return Err(invalid_input(
+                "IRS normalization found no reference samples in the SDRF",
+            ));
         }
 
         let sample_to_plex = sample_to_plex(sdrf);
@@ -3828,7 +4203,9 @@ impl ProteinMatrix {
         plexes.sort();
         plexes.dedup();
         if plexes.is_empty() {
-            return Ok(());
+            return Err(invalid_input(
+                "IRS normalization found no plex assignments in the SDRF",
+            ));
         }
 
         let sample_by_name = self
@@ -3861,6 +4238,11 @@ impl ProteinMatrix {
             &config.stat,
             |protein, sample| self.value(protein, sample),
         );
+        if factors.is_empty() {
+            return Err(invalid_input(
+                "IRS normalization could not compute any finite scaling factors",
+            ));
+        }
         self.scale_by_irs(&sample_to_plex, &factors);
 
         if config.remove_reference {
@@ -3927,6 +4309,139 @@ impl ProteinMatrix {
         samples
     }
 
+    fn pairwise_sample_correlation(
+        &self,
+        left: SampleId,
+        right: SampleId,
+        values_are_log2: bool,
+    ) -> (Option<f64>, usize) {
+        let pairs = self
+            .allowed_proteins
+            .iter()
+            .filter_map(|protein| {
+                let left = self.value(*protein, left)?;
+                let right = self.value(*protein, right)?;
+                if values_are_log2 {
+                    return (left.is_finite() && right.is_finite()).then_some((left, right));
+                }
+                (left.is_finite() && left > 0.0 && right.is_finite() && right > 0.0)
+                    .then_some((left.log2(), right.log2()))
+            })
+            .collect::<Vec<_>>();
+        (pearson_correlation(&pairs), pairs.len())
+    }
+
+    fn biological_samples_by_condition(
+        &self,
+        sdrf: &SdrfTable,
+        drop_empty_samples: bool,
+    ) -> Result<HashMap<String, Vec<(SampleId, String)>>> {
+        let condition_by_sample = condition_by_sample(sdrf);
+        let samples = self
+            .sample_columns(drop_empty_samples)
+            .into_iter()
+            .map(|(sample, name)| {
+                condition_by_sample
+                    .get(name)
+                    .map(|condition| (sample, name.to_owned(), condition.clone()))
+                    .ok_or_else(|| {
+                        invalid_input(format!(
+                            "sample correlation filtering found no condition metadata for `{name}`"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut grouped = HashMap::<String, Vec<(SampleId, String)>>::new();
+        for (sample, name, condition) in samples {
+            if !is_reference_condition(&condition) {
+                grouped.entry(condition).or_default().push((sample, name));
+            }
+        }
+        if grouped.is_empty() {
+            return Err(invalid_input(
+                "sample correlation filtering found no biological samples with condition metadata",
+            ));
+        }
+        Ok(grouped)
+    }
+
+    fn mean_sample_correlation(
+        &self,
+        sample: SampleId,
+        name: &str,
+        condition: &str,
+        condition_samples: &[(SampleId, String)],
+        values_are_log2: bool,
+    ) -> Result<f64> {
+        let mut correlations = Vec::with_capacity(condition_samples.len() - 1);
+        for (peer, peer_name) in condition_samples {
+            if sample == *peer {
+                continue;
+            }
+            let (correlation, overlap) =
+                self.pairwise_sample_correlation(sample, *peer, values_are_log2);
+            let correlation = correlation.ok_or_else(|| {
+                invalid_input(format!(
+                    "sample correlation between `{name}` and `{peer_name}` in condition `{condition}` is undefined: {overlap} pairwise-complete usable proteins (minimum {MIN_SAMPLE_CORRELATION_OVERLAP})"
+                ))
+            })?;
+            correlations.push(correlation);
+        }
+        Ok(correlations.iter().sum::<f64>() / correlations.len() as f64)
+    }
+
+    fn apply_sample_correlation_filter(
+        &mut self,
+        sdrf: Option<&SdrfTable>,
+        threshold: f64,
+        drop_empty_samples: bool,
+        values_are_log2: bool,
+    ) -> Result<()> {
+        let sdrf = sdrf
+            .ok_or_else(|| invalid_input("sample correlation filtering requires --sdrf option"))?;
+        let samples_by_condition =
+            self.biological_samples_by_condition(sdrf, drop_empty_samples)?;
+
+        let mut excluded = Vec::new();
+        for (condition, condition_samples) in &samples_by_condition {
+            if condition_samples.len() < 2 {
+                return Err(invalid_input(format!(
+                    "sample correlation filtering requires at least two samples in condition `{condition}`"
+                )));
+            }
+            for (sample, name) in condition_samples {
+                let mean_correlation = self.mean_sample_correlation(
+                    *sample,
+                    name,
+                    condition,
+                    condition_samples,
+                    values_are_log2,
+                )?;
+                info!(
+                    sample = name,
+                    condition,
+                    mean_correlation,
+                    peers = condition_samples.len() - 1,
+                    threshold,
+                    "sample correlation QC"
+                );
+                if mean_correlation < threshold {
+                    excluded.push((*sample, name.clone(), mean_correlation));
+                }
+            }
+        }
+        for (sample, _, _) in &excluded {
+            self.excluded_samples.insert(*sample);
+        }
+        info!(
+            evaluated_samples = samples_by_condition.values().map(Vec::len).sum::<usize>(),
+            excluded_samples = excluded.len(),
+            threshold,
+            "sample correlation filtering complete"
+        );
+        Ok(())
+    }
+
     fn value(&self, protein: ProteinId, sample: SampleId) -> Option<f64> {
         match &self.values {
             ProteinValues::Cells(values) => values.get(&CellKey { protein, sample }).copied(),
@@ -3940,13 +4455,12 @@ impl ProteinMatrix {
 
     /// Build the log2-transformed protein x sample matrix over `samples`
     /// (column order preserved) for differential expression. Each cell is
-    /// `log2(value)` when the linear intensity is finite and strictly
-    /// positive, otherwise `NaN` -- reproducing the Python DE step's
-    /// `np.log2(intensity.replace(0, np.nan))` (zero / missing / non-positive
-    /// values become NaN). Rows are emitted for the kept proteins in matrix
-    /// output order (sorted by accession) so protein identity lines up with the
+    /// `log2(value)` when the linear intensity is finite and strictly positive;
+    /// zero, missing, and non-positive values become `NaN`, while infinities
+    /// are rejected. Rows are emitted for the kept proteins in matrix output
+    /// order (sorted by accession) so protein identity lines up with the
     /// returned names.
-    fn log2_rows(&self, samples: &[SampleId]) -> (Vec<String>, Vec<Vec<f64>>) {
+    fn log2_rows(&self, samples: &[SampleId]) -> Result<(Vec<String>, Vec<Vec<f64>>)> {
         let mut proteins = self
             .proteins
             .iter()
@@ -3958,16 +4472,22 @@ impl ProteinMatrix {
         let mut rows = Vec::with_capacity(proteins.len());
         for (protein, accession) in proteins {
             names.push(accession.to_owned());
-            let row = samples
-                .iter()
-                .map(|sample| match self.value(protein, *sample) {
+            let mut row = Vec::with_capacity(samples.len());
+            for sample in samples {
+                let value = match self.value(protein, *sample) {
+                    Some(value) if value.is_infinite() => {
+                        return Err(invalid_input(format!(
+                            "differential-expression matrix contains an infinite intensity for protein `{accession}`"
+                        )));
+                    }
                     Some(value) if value.is_finite() && value > 0.0 => value.log2(),
                     _ => f64::NAN,
-                })
-                .collect::<Vec<_>>();
+                };
+                row.push(value);
+            }
             rows.push(row);
         }
-        (names, rows)
+        Ok((names, rows))
     }
 
     /// Per-protein unique-canonical-peptide counts keyed by the protein NAME
@@ -4012,7 +4532,7 @@ impl ProteinMatrix {
     /// values back in place. Proteins with any missing cell are kept uncorrected
     /// (`_complete_batch_matrix`, stages.py:1666); fewer than two samples, fewer
     /// than two batches, any batch under two samples, or no complete protein each
-    /// short-circuit to a no-op, matching the Python skips. A cell counts as
+    /// are rejected instead of producing a successful no-op. A cell counts as
     /// present only when finite, so directlfq zeros stay (matching `isna`'s
     /// 0-is-present) while NaN/missing rows drop out.
     ///
@@ -4020,7 +4540,7 @@ impl ProteinMatrix {
     /// sample-name prefix, `column` from an explicit SDRF column (`source name ->
     /// column`, missing samples `"unknown"`). `run` has no run-level mapping in
     /// the protein-matrix flow, so it raises like Python's `run_info required`.
-    /// `--batch-covariates` are extracted from the SDRF (`extract_sdrf_covariates`)
+    /// Repeated `--batch-covariate` values are extracted from the SDRF (`extract_sdrf_covariates`)
     /// and fed to the covariate ComBat design to preserve their biological signal.
     fn apply_batch_correction(
         &mut self,
@@ -4030,7 +4550,9 @@ impl ProteinMatrix {
     ) -> Result<()> {
         let samples = self.sample_columns(drop_empty_samples);
         if samples.len() < 2 {
-            return Ok(());
+            return Err(invalid_input(
+                "batch correction requires at least two matrix samples",
+            ));
         }
         let sample_ids = samples
             .iter()
@@ -4040,10 +4562,7 @@ impl ProteinMatrix {
 
         use mokume_stats::batch::BatchDetectionMethod;
 
-        // Resolve the detection method like Python's `_batch_method`
-        // (stages.py:1610): an unknown name degrades to `sample_prefix` with a
-        // warning rather than erroring.
-        let method = resolve_batch_method(&config.method);
+        let method = resolve_batch_method(&config.method)?;
 
         // `column` detection and covariate extraction re-read the raw SDRF columns
         // (Python re-reads via `load_sdrf`); `validate_postprocessing_subset`
@@ -4059,11 +4578,7 @@ impl ProteinMatrix {
             None
         };
 
-        // The protein-matrix flow never builds the `run_info` mapping (Python's
-        // `_detect_batch_indices` calls `detect_batches` without `run_info`), so
-        // `run` errors and `fraction`/`techreplicate` fall back to `sample_prefix`
-        // -- exactly the branches `detect_batches` takes when `run_info is None`.
-        let batch = match method {
+        let original_batch_labels = match method {
             BatchDetectionMethod::ExplicitColumn => {
                 let column = config.column.as_deref().unwrap_or_default();
                 let raw = raw.as_ref().ok_or_else(|| {
@@ -4071,31 +4586,29 @@ impl ProteinMatrix {
                 })?;
                 // Python's `_detect_explicit_batches(None)` raises when the column
                 // is absent; mirror that hard failure rather than silently skipping.
-                let values = batch_column_values_for_samples(raw, &sample_names, column)
-                    .ok_or_else(|| {
-                        invalid_input(format!("Batch column '{column}' not found in SDRF"))
-                    })?;
-                detect_batches_for_method(method, &sample_names, Some(&values))?
+                batch_column_values_for_samples(raw, &sample_names, column)?
             }
-            BatchDetectionMethod::RunName => {
+            BatchDetectionMethod::RunName
+            | BatchDetectionMethod::Fraction
+            | BatchDetectionMethod::TechReplicate => {
                 return Err(invalid_input(
-                    "batch-method 'run' requires run-level information not available in the protein matrix",
+                    format!(
+                        "batch-method '{}' requires run-level information not available in the protein matrix",
+                        method.as_value()
+                    ),
                 ));
             }
-            BatchDetectionMethod::Fraction | BatchDetectionMethod::TechReplicate => {
-                tracing::warn!(
-                    "batch-method '{}' has no run-level information in the protein matrix; falling back to sample_prefix",
-                    method.as_value()
-                );
-                detect_batches_for_method(BatchDetectionMethod::SamplePrefix, &sample_names, None)?
-            }
-            BatchDetectionMethod::SamplePrefix => {
-                detect_batches_for_method(method, &sample_names, None)?
-            }
+            BatchDetectionMethod::SamplePrefix => sample_names
+                .iter()
+                .map(|sample| mokume_stats::batch::sample_prefix(sample).to_owned())
+                .collect(),
         };
-        let Some(batch) = validate_batch_sizes(batch) else {
-            return Ok(());
-        };
+        let batch = factorize_batch_labels(&original_batch_labels);
+        let batch = validate_batch_sizes(batch).ok_or_else(|| {
+            invalid_input(
+                "batch correction requires at least two batches with at least two samples each",
+            )
+        })?;
 
         // Split proteins into complete rows (no missing cell -> corrected) and the
         // rest (kept uncorrected). ComBat's empirical-Bayes priors are pooled over
@@ -4124,15 +4637,26 @@ impl ProteinMatrix {
             }
         }
         if complete.is_empty() {
-            return Ok(());
+            return Err(invalid_input(
+                "batch correction requires at least one protein observed in every sample",
+            ));
         }
 
         // Biological covariates to preserve (independent of the batch method),
         // matching `_batch_covariates` at the combat call site.
         let covariates = match (&config.covariates, raw.as_ref()) {
-            (Some(columns), Some(raw)) => extract_sdrf_covariates(raw, &sample_names, columns),
+            (Some(columns), Some(raw)) => extract_sdrf_covariates(raw, &sample_names, columns)?,
             _ => None,
         };
+
+        let ref_batch = config
+            .ref_batch
+            .as_deref()
+            .map(|requested| resolve_reference_batch(requested, &original_batch_labels, &batch))
+            .transpose()?;
+        if let Some(covariates) = covariates.as_deref() {
+            validate_combat_design(&batch, covariates, ref_batch)?;
+        }
 
         let data = complete
             .iter()
@@ -4141,9 +4665,7 @@ impl ProteinMatrix {
         let params = mokume_stats::batch::ComBatParams {
             par_prior: config.parametric,
             mean_only: config.mean_only,
-            ref_batch: config
-                .ref_batch
-                .and_then(|label| usize::try_from(label).ok()),
+            ref_batch,
         };
         let corrected = mokume_stats::batch::combat(&data, &batch, covariates.as_deref(), params);
 
@@ -4160,9 +4682,9 @@ impl ProteinMatrix {
         sdrf: Option<&SdrfTable>,
         threshold: f64,
         drop_empty_samples: bool,
-    ) {
+    ) -> Result<()> {
         let Some(sdrf) = sdrf else {
-            return;
+            return Err(invalid_input("coverage filtering requires --sdrf option"));
         };
         let condition_by_sample = condition_by_sample(sdrf);
         let mut samples_by_condition = HashMap::<String, Vec<SampleId>>::new();
@@ -4179,7 +4701,9 @@ impl ProteinMatrix {
                 .push(sample);
         }
         if samples_by_condition.is_empty() {
-            return;
+            return Err(invalid_input(
+                "coverage filtering found no non-reference samples with condition metadata",
+            ));
         }
 
         self.allowed_proteins = coverage_filtered_proteins(
@@ -4188,6 +4712,7 @@ impl ProteinMatrix {
             threshold,
             |protein, sample| self.value(protein, sample),
         );
+        Ok(())
     }
 
     fn apply_imputation(
@@ -4196,16 +4721,26 @@ impl ProteinMatrix {
         drop_empty_samples: bool,
     ) -> Result<()> {
         let (proteins, samples) = self.imputation_axes(drop_empty_samples);
+        if proteins.iter().any(|protein| {
+            samples
+                .iter()
+                .any(|sample| self.value(*protein, *sample).is_some_and(f64::is_infinite))
+        }) {
+            return Err(invalid_input(
+                "imputation matrix contains an infinite intensity",
+            ));
+        }
         // Match the Python pipeline, which imputes in log2 space and converts
-        // back to linear: positive finite values are log2-transformed, anything
-        // else is treated as missing, and the returned fills are exponentiated.
+        // back to linear: positive finite values are log2-transformed, missing
+        // and non-positive values stay missing, and infinities are rejected.
         let fills = imputed_values(config, &proteins, &samples, |protein, sample| {
             self.value(protein, sample)
                 .filter(|value| value.is_finite() && *value > 0.0)
                 .map(f64::log2)
         })?;
         for (protein, sample, value) in fills {
-            self.set_value(protein, sample, value.exp2());
+            let intensity = matrix::checked_imputed_intensity(value)?;
+            self.set_value(protein, sample, intensity);
         }
         Ok(())
     }
@@ -4242,11 +4777,12 @@ impl ProteinMatrix {
             .collect::<HashMap<_, _>>();
         // Per-column fill for cells with no observed (positive, finite) value.
         // Mirrors Python's `pivot_table(fill_value=0)` over the observed samples:
-        // the additive methods (sum / intensity / spectral_count / directlfq) write
-        // `0` for a missing cell, the average/ratio methods (median / topn / abd /
-        // maxlfq / ratio) leave it empty (NaN). A sample with no observations at all
-        // stays empty even for the additive methods, because Python's pivot never
-        // densifies it (it is re-added as a NaN column), not 0.
+        // the additive methods (sum / intensity / peptide_count / spectral_count /
+        // directlfq) write `0` for a missing cell, the average/ratio methods
+        // (median / topn / abd / maxlfq / ratio) leave it empty (NaN). A sample
+        // with no observations at all stays empty even for the additive methods,
+        // because Python's pivot never densifies it (it is re-added as a NaN
+        // column), not 0.
         let observed = self.observed_samples();
         let column_missing = samples
             .iter()
@@ -4356,7 +4892,7 @@ impl ProteinMatrix {
 }
 
 /// One observed peptide measurement feeding [`run_lfq_from_peptides`]. Unlike the
-/// iBAQ path the protein comes straight from the input table, not a FASTA digest.
+/// piBAQ path the protein comes straight from the input table, not a FASTA digest.
 #[derive(Debug, Clone)]
 pub struct LfqPeptideObservation {
     /// Protein accession the peptide belongs to.
@@ -4383,14 +4919,32 @@ pub struct LfqProteinIntensity {
     pub intensity: f64,
 }
 
-/// Roll a peptide-level table up to per-protein intensities with the DirectLFQ
-/// estimator (canonical peptides as ions) -- the engine behind
-/// `peptides2protein --method directlfq` and `--method maxlfq`. mokume's
+/// Roll a peptide-level table up to per-protein intensities inside an explicitly
+/// sized Rayon worker pool with the DirectLFQ estimator (canonical peptides as
+/// ions) -- the engine behind
+/// `quantify peptides2protein --quant-method directlfq` and `--quant-method maxlfq`. mokume's
 /// `MaxLFQQuantification` delegates to DirectLFQ when the package is available
 /// (`min_nonan = 2`, its `min_peptides`); the `directlfq` method uses its own
 /// `min_nonan`. `num_samples_quadratic` is DirectLFQ's global-stage knob (the
-/// directlfq default is 50). Only intensities `> 0` are returned, matching
-/// Python's `_parse_wide_output`.
+/// directlfq default is 50). `None` retains the configured global pool. Only
+/// intensities `> 0` are returned, matching Python's `_parse_wide_output`.
+pub fn run_lfq_from_peptides_with_threads(
+    observations: &[LfqPeptideObservation],
+    min_nonan: usize,
+    num_samples_quadratic: usize,
+    threads: Option<usize>,
+) -> Result<Vec<LfqProteinIntensity>> {
+    threading::install(threads, || {
+        Ok(run_lfq_from_peptides(
+            observations,
+            min_nonan,
+            num_samples_quadratic,
+        ))
+    })
+}
+
+/// Run the same DirectLFQ roll-up in the current Rayon worker pool. Call
+/// [`run_lfq_from_peptides_with_threads`] when the pool size must be explicit.
 pub fn run_lfq_from_peptides(
     observations: &[LfqPeptideObservation],
     min_nonan: usize,
@@ -4399,12 +4953,32 @@ pub fn run_lfq_from_peptides(
     let mut proteins = StringIdRegistry::<ProteinId>::new();
     let mut peptides = StringIdRegistry::<PeptideId>::new();
     let mut samples = StringIdRegistry::<SampleId>::new();
+    // Keep the DirectLFQ matrix layout independent of input row order. Peptide
+    // rows receive their separate lexical sequence rank below.
+    let protein_names = observations
+        .iter()
+        .map(|observation| observation.protein.as_str())
+        .collect::<BTreeSet<_>>();
+    for protein in protein_names {
+        if proteins.get_or_insert(protein).is_none() {
+            return Vec::new();
+        }
+    }
+    let sample_names = observations
+        .iter()
+        .map(|observation| observation.sample.as_str())
+        .collect::<BTreeSet<_>>();
+    for sample in sample_names {
+        if samples.get_or_insert(sample).is_none() {
+            return Vec::new();
+        }
+    }
     let mut ions = Vec::with_capacity(observations.len());
     for observation in observations {
         let (Some(protein), Some(ion), Some(sample)) = (
-            proteins.get_or_insert(&observation.protein),
+            proteins.get(&observation.protein),
             peptides.get_or_insert(&observation.peptide),
-            samples.get_or_insert(&observation.sample),
+            samples.get(&observation.sample),
         ) else {
             continue;
         };
@@ -4458,11 +5032,11 @@ pub fn run_lfq_from_peptides(
     result
 }
 
-/// FASTA-digest parameters for [`run_ibaq_from_peptides`], mirroring the iBAQ
+/// FASTA-digest parameters for [`run_pibaq_from_peptides`], mirroring the piBAQ
 /// knobs the `peptides2protein` CLI exposes. The high-anchor threshold is fixed
 /// at 3 by the existing Rust piBAQ core, so it is not configurable here.
 #[derive(Debug, Clone)]
-pub struct IbaqFromPeptidesParams {
+pub struct PibaqFromPeptidesParams {
     /// Protein database used to compute theoretical peptide counts.
     pub fasta: PathBuf,
     /// Minimum peptide length kept during the FASTA digest.
@@ -4471,24 +5045,42 @@ pub struct IbaqFromPeptidesParams {
     pub max_aa: usize,
     /// Minimum distinct shared peptides for two proteins to join a family.
     pub min_shared: usize,
-    /// Minimum proteotypic anchors a member needs for the proportional branch.
+    /// Anchor threshold; if no member reaches it, shared signal is split equally.
     pub min_anchors: usize,
     /// piBAQ "high anchor" threshold (Python `--high-anchor-threshold`). Only
-    /// affects the `EvidenceLevel` annotation, not the iBAQ values.
+    /// affects the `EvidenceLevel` annotation, not the piBAQ values.
     pub high_anchor_threshold: usize,
     /// Optional YAML overrides for protein-family grouping.
     pub families_yaml: Option<PathBuf>,
-    /// Digestion enzyme name (pyOpenMS canonical, e.g. `Trypsin`, `Lys-C`,
-    /// `Chymotrypsin`); resolved through `cleavage_rule`.
+    /// Digestion enzyme name registered in the runtime pyOpenMS catalog.
     pub enzyme: String,
     /// Compute the TPA `MolecularWeight` + `TPA` columns (Python `--tpa`). When
     /// `true`, every returned row carries `Some` molecular-weight and TPA
-    /// values; when `false` those fields are `None` and the iBAQ path is
+    /// values; when `false` those fields are `None` and the piBAQ path is
     /// unchanged.
     pub tpa: bool,
 }
 
-/// One observed peptide measurement feeding [`run_ibaq_from_peptides`].
+/// Runtime pyOpenMS metadata attached to one theoretical FASTA digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PibaqDigestProvenance {
+    pub pyopenms_version: String,
+    pub enzyme: String,
+    pub catalog_hash: String,
+    pub min_aa: usize,
+    pub max_aa: usize,
+    pub missed_cleavages: usize,
+}
+
+/// The complete canonical protein -> theoretical peptide mapping produced by
+/// the pyOpenMS installation that accompanies the wheel.
+#[derive(Debug, Clone)]
+pub struct PibaqDigest {
+    pub accession_peptides: HashMap<String, HashSet<String>>,
+    pub provenance: PibaqDigestProvenance,
+}
+
+/// One observed peptide measurement feeding [`run_pibaq_from_peptides`].
 #[derive(Debug, Clone)]
 pub struct PeptideObservation {
     /// Canonical peptide sequence (matched against the FASTA digest).
@@ -4499,56 +5091,88 @@ pub struct PeptideObservation {
     pub intensity: f64,
 }
 
-/// One row of the iBAQ long-format result, matching the columns the Python
+/// One row of the piBAQ long-format result, matching the columns the Python
 /// `peptides_to_protein` writes (minus the optional TPA/ruler extras).
 #[derive(Debug, Clone)]
-pub struct IbaqProteinRow {
+pub struct PibaqProteinRow {
     /// Protein (family member) accession.
     pub protein: String,
     /// Sample identifier.
     pub sample: String,
     /// Allocated, shared-aware numerator intensity.
     pub norm_intensity: f64,
-    /// iBAQ value (numerator divided by the owned theoretical peptide count).
-    pub ibaq: f64,
+    /// piBAQ value (numerator divided by the owned theoretical peptide count).
+    pub pibaq: f64,
     /// Representative family accession.
     pub family_id: String,
     /// Evidence label: `family_only`, `medium`, or `high`.
     pub evidence_level: &'static str,
     /// Number of members in the protein family.
     pub family_size: usize,
-    /// TPA molecular weight (`Some` only when [`IbaqFromPeptidesParams::tpa`] is
+    /// TPA molecular weight (`Some` only when [`PibaqFromPeptidesParams::tpa`] is
     /// set); the Python `MolecularWeight` column.
     pub molecular_weight: Option<f64>,
     /// TPA value `NormIntensity / MolecularWeight` (`Some` only when
-    /// [`IbaqFromPeptidesParams::tpa`] is set); the Python `TPA` column.
+    /// [`PibaqFromPeptidesParams::tpa`] is set); the Python `TPA` column.
     pub tpa: Option<f64>,
 }
 
-/// Compute per-protein iBAQ from a peptide-level table, reusing the existing
-/// piBAQ core (`IbaqAggregation`). This is the engine behind the
-/// `peptides2protein --method ibaq` CLI command. The returned rows carry the
-/// same `NormIntensity` / `Ibaq` / `FamilyId` / `EvidenceLevel` / `FamilySize`
-/// columns that the Python `peptides_to_protein` emits; the TPA / ProteomicRuler
-/// / normalize-ibaq extras are intentionally not computed here.
-pub fn run_ibaq_from_peptides(
+/// Compute piBAQ from a peptide table using a complete theoretical-peptide map
+/// produced by the wheel's runtime pyOpenMS catalog.
+pub fn run_pibaq_from_peptides(
     observations: &[PeptideObservation],
-    params: &IbaqFromPeptidesParams,
-) -> Result<Vec<IbaqProteinRow>> {
-    // Reuse the exact iBAQ setup `features2proteins` performs by routing through
-    // `IbaqAggregation::from_config`; only the iBAQ-relevant fields matter.
-    let config = ibaq_only_config(params);
-    let mut aggregation = IbaqAggregation::from_config(&config)?;
-    // TPA needs per-canonical molecular weights; load them once, only when
-    // requested, so the iBAQ-only path stays untouched.
+    params: &PibaqFromPeptidesParams,
+    digest: PibaqDigest,
+) -> Result<Vec<PibaqProteinRow>> {
+    let config = pibaq_only_config(params);
+    let mut aggregation = PibaqAggregation::from_digest(&config, digest)?;
     if params.tpa {
         aggregation.mw_map = Some(load_fasta_mw(&params.fasta)?);
     }
 
+    finalize_pibaq_observations(observations, aggregation, true)
+}
+
+/// Compute piBAQ from caller-provided theoretical mappings and protein families.
+///
+/// This is the in-memory counterpart of [`run_pibaq_from_peptides`]. It lets the
+/// Python compatibility API retain its DataFrame/group-column contract while
+/// sharing the same Rust allocation, denominator, evidence, and TPA core used by
+/// the file-oriented command.
+pub fn run_pibaq_from_mapping(
+    observations: &[PeptideObservation],
+    accession_peptides: HashMap<String, HashSet<String>>,
+    peptide_accessions: HashMap<String, HashSet<String>>,
+    families: Vec<(String, Vec<String>)>,
+    min_anchors: usize,
+    high_anchor_threshold: usize,
+    mw_map: Option<HashMap<String, f64>>,
+) -> Result<Vec<PibaqProteinRow>> {
+    let aggregation = PibaqAggregation {
+        accession_peptides,
+        peptide_accessions,
+        families: families
+            .into_iter()
+            .map(|(family_id, members)| ProteinFamily { family_id, members })
+            .collect(),
+        peptide_names: HashMap::new(),
+        observations: HashMap::new(),
+        min_anchors,
+        high_anchor_threshold,
+        mw_map,
+    };
+    finalize_pibaq_observations(observations, aggregation, false)
+}
+
+fn finalize_pibaq_observations(
+    observations: &[PeptideObservation],
+    mut aggregation: PibaqAggregation,
+    positive_only: bool,
+) -> Result<Vec<PibaqProteinRow>> {
     let mut samples = StringIdRegistry::<SampleId>::new();
     let mut peptides = StringIdRegistry::<PeptideId>::new();
     for observation in observations {
-        if !observation.intensity.is_finite() || observation.intensity <= 0.0 {
+        if !observation.intensity.is_finite() || (positive_only && observation.intensity <= 0.0) {
             continue;
         }
         let sample = register_id(&mut samples, &observation.sample, "sample")?;
@@ -4566,11 +5190,11 @@ pub fn run_ibaq_from_peptides(
         else {
             continue;
         };
-        rows.push(IbaqProteinRow {
+        rows.push(PibaqProteinRow {
             protein: protein.to_owned(),
             sample: sample.to_owned(),
             norm_intensity: detail.cell.norm_intensity,
-            ibaq: detail.cell.ibaq,
+            pibaq: detail.cell.pibaq,
             family_id: detail.family_id,
             evidence_level: detail.evidence_level.label(),
             family_size: detail.family_size,
@@ -4581,14 +5205,15 @@ pub fn run_ibaq_from_peptides(
     Ok(rows)
 }
 
-/// Build a `FeatureToProteinsConfig` that exercises only the iBAQ digest path.
-/// The non-iBAQ fields use defaults; they are never consumed by
-/// `IbaqAggregation::from_config`.
-fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig {
+/// Build a `FeatureToProteinsConfig` that exercises only the piBAQ digest path.
+/// The non-piBAQ fields use defaults; they are never consumed by
+/// `PibaqAggregation`.
+fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
             parquet: None,
             msstats: None,
+            psm: None,
             sdrf: None,
             fasta: Some(params.fasta.clone()),
         },
@@ -4604,10 +5229,10 @@ fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig 
             remove_contaminants: false,
         },
         normalization: NormalizationConfig::default(),
-        quantification: QuantMethod::Ibaq,
+        quantification: QuantMethod::Pibaq,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig {
+        pibaq: PibaqConfig {
             enzyme: params.enzyme.clone(),
             max_aa: params.max_aa,
             min_shared: params.min_shared,
@@ -4619,6 +5244,7 @@ fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig 
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -4630,7 +5256,55 @@ fn ibaq_only_config(params: &IbaqFromPeptidesParams) -> FeatureToProteinsConfig 
 }
 
 pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> {
-    // Fold `--de-contrasts-file` into the contrast list up front (mirroring
+    if config.quantification == QuantMethod::Pibaq {
+        validate_features_to_proteins(config)?;
+        return Err(invalid_input(
+            "piBAQ requires the Python wheel's runtime pyOpenMS FASTA digest",
+        ));
+    }
+    let threads = configured_threads(config);
+    threading::install(threads, || run_features_to_proteins_inner(config, None))
+}
+
+/// Run `features2proteins` with a complete runtime pyOpenMS digest for piBAQ.
+pub fn run_features_to_proteins_with_pibaq_digest(
+    config: &FeatureToProteinsConfig,
+    digest: PibaqDigest,
+) -> Result<()> {
+    let threads = configured_threads(config);
+    threading::install(threads, move || {
+        run_features_to_proteins_inner(config, Some(digest))
+    })
+}
+
+fn configured_threads(config: &FeatureToProteinsConfig) -> Option<usize> {
+    config.runtime.threads.or_else(|| {
+        (config.quantification == QuantMethod::DirectLfq)
+            .then_some(config.directlfq.cores)
+            .flatten()
+    })
+}
+
+fn initialize_memory_plan(runtime: &RuntimeConfig) -> Result<MemoryPlan> {
+    let memory = MemoryPlan::from_runtime(runtime)?;
+    memory.check("startup")?;
+    if let Some(limit_bytes) = memory.limit_bytes() {
+        info!(
+            limit_bytes,
+            qpx_batch_size = memory.qpx_batch_size(),
+            qpx_window = memory.qpx_window(),
+            qpx_read_ahead = memory.channel_capacity(),
+            "using soft runtime memory budget"
+        );
+    }
+    Ok(memory)
+}
+
+fn run_features_to_proteins_inner(
+    config: &FeatureToProteinsConfig,
+    pibaq_digest: Option<PibaqDigest>,
+) -> Result<()> {
+    // Fold `--de-contrast-file` into the contrast list up front (mirroring
     // Python's CLI) so validation and the DE stage see one resolved list; the
     // owned, expanded config then shadows the borrowed one for the rest of the run.
     let expanded;
@@ -4644,40 +5318,44 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
     validate_de_ensemble_options(config)?;
     validate_features_to_proteins(config)?;
     validate_implemented_subset(config)?;
-    if let Some(method) = ignored_directlfq_sample_normalization(config) {
-        warn!(
-            sample_normalization = method,
-            quant_method = %config.quantification,
-            "`--sample-normalization {method}` has no effect on the DirectLFQ route \
-             (used by `directlfq` and, unless `maxlfq.force_builtin` is set, `maxlfq`): \
-             DirectLFQ performs its own internal sample normalization, so mokume does \
-             not apply another. The protein matrix is unchanged by this option."
-        );
-    }
-    configure_thread_pool(config.runtime.threads.or(config.directlfq.cores));
-
+    let memory = initialize_memory_plan(&config.runtime)?;
     let sdrf = config
         .input
         .sdrf
         .as_ref()
         .map(SdrfTable::from_path)
         .transpose()?;
+    let raw_sdrf = config
+        .input
+        .sdrf
+        .as_ref()
+        .map(SdrfRawTable::from_path)
+        .transpose()?;
+    if config.quantification == QuantMethod::SpectralCount {
+        let matrix = spectral_count_matrix(config, sdrf.as_ref(), &memory)?;
+        return finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix);
+    }
     // The protein pipeline has no custom contaminant patterns; an empty slice
     // makes the median pre-pass fall back to the default `is_contaminant` path.
-    // The median pre-pass keeps shared peptides only for iBAQ (Python
-    // `stages.py:325`: `keep_shared_peptides = method == "ibaq"`).
+    // The median pre-pass keeps shared peptides only for piBAQ (Python
+    // `stages.py:325`: `keep_shared_peptides = method == "pibaq"`).
     let intensity_factors = collect_intensity_factors(
         config,
         sdrf.as_ref(),
         &[],
-        config.quantification == QuantMethod::Ibaq,
+        config.quantification == QuantMethod::Pibaq,
+        &memory,
+        None,
     )?;
+    memory.check("normalization pre-pass")?;
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let dataset_normalization = dataset_sample_normalization_method(config)?;
-    let mut state = FeatureToProteinState::new(config, sdrf.as_ref())?;
-    stream_input_features(&config.input, sdrf.as_ref(), |feature| {
+    let mut state =
+        FeatureToProteinState::new(config, sdrf.as_ref(), raw_sdrf.as_ref(), pibaq_digest)?;
+    stream_input_features(&config.input, sdrf.as_ref(), &memory, |feature| {
         state.ingest(&feature, sdrf.as_ref(), config.filtering, intensity_factors)
     })?;
+    memory.check("feature aggregation")?;
 
     info!(
         accepted_features = state.accepted_features,
@@ -4689,7 +5367,7 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         "features2proteins aggregation finished"
     );
 
-    let min_unique_peptides = if config.quantification == QuantMethod::Ibaq {
+    let min_unique_peptides = if config.quantification == QuantMethod::Pibaq {
         0
     } else {
         config.filtering.min_unique_peptides
@@ -4702,13 +5380,62 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         PeptideExportOptions::default(),
         dataset_normalization,
     )?;
-    let mut matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
+    let matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
+    memory.check("protein matrix materialization")?;
+    finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix)
+}
+
+fn finish_protein_matrix(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    raw_sdrf: Option<&SdrfRawTable>,
+    memory: &MemoryPlan,
+    mut matrix: ProteinMatrix,
+) -> Result<()> {
     let drop_empty_samples = config.quantification == QuantMethod::Ratio;
+    apply_protein_postprocessing(config, sdrf, raw_sdrf, drop_empty_samples, &mut matrix)?;
+    memory.check("matrix post-processing")?;
+    matrix.write_csv(
+        &config.output.protein_matrix,
+        config.output.format,
+        drop_empty_samples,
+        missing_protein_value(config.quantification),
+    )?;
+    if config.differential_expression.enabled {
+        let mut differential_expression = config.differential_expression.clone();
+        differential_expression.method = resolve_de_method(config);
+        de::run_differential_expression(
+            &matrix,
+            sdrf,
+            &differential_expression,
+            drop_empty_samples,
+        )?;
+    }
+    Ok(())
+}
+
+fn apply_protein_postprocessing(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    raw_sdrf: Option<&SdrfRawTable>,
+    drop_empty_samples: bool,
+    matrix: &mut ProteinMatrix,
+) -> Result<()> {
     if config.irs.enabled {
-        matrix.apply_irs(sdrf.as_ref(), &config.irs)?;
+        matrix.apply_irs(sdrf, raw_sdrf, &config.irs)?;
+    }
+    if let Some(threshold) = config.sample_correlation_threshold {
+        let values_are_log2 =
+            matches!(config.quantification, QuantMethod::Abd | QuantMethod::Ratio);
+        matrix.apply_sample_correlation_filter(
+            sdrf,
+            threshold,
+            drop_empty_samples,
+            values_are_log2,
+        )?;
     }
     if let Some(threshold) = config.coverage_threshold {
-        matrix.apply_coverage_filter(sdrf.as_ref(), threshold, drop_empty_samples);
+        matrix.apply_coverage_filter(sdrf, threshold, drop_empty_samples)?;
     }
     if config.imputation.enabled {
         matrix.apply_imputation(&config.imputation, drop_empty_samples)?;
@@ -4720,11 +5447,16 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
             drop_empty_samples,
         )?;
     }
+    Ok(())
+}
+
+fn missing_protein_value(method: QuantMethod) -> Option<f64> {
     // Missing protein x sample cells follow Python's per-method convention: the
     // additive methods write `0`, the average/ratio methods leave the cell empty.
-    let missing_fill = match config.quantification {
+    match method {
         QuantMethod::Sum
         | QuantMethod::Intensity
+        | QuantMethod::PeptideCount
         | QuantMethod::SpectralCount
         | QuantMethod::DirectLfq => Some(0.0),
         QuantMethod::Median
@@ -4732,25 +5464,82 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
         | QuantMethod::Abd
         | QuantMethod::MaxLfq
         | QuantMethod::Ratio
-        | QuantMethod::Ibaq => None,
-    };
-    matrix.write_csv(
-        &config.output.protein_matrix,
-        config.output.format,
-        drop_empty_samples,
-        missing_fill,
-    )?;
-    if config.differential_expression.enabled {
-        let mut differential_expression = config.differential_expression.clone();
-        differential_expression.method = resolve_de_method(config);
-        de::run_differential_expression(
-            &matrix,
-            sdrf.as_ref(),
-            &differential_expression,
-            drop_empty_samples,
-        )?;
+        | QuantMethod::Pibaq => None,
     }
-    Ok(())
+}
+
+fn spectral_count_matrix(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    memory: &MemoryPlan,
+) -> Result<ProteinMatrix> {
+    let sdrf = sdrf.ok_or_else(|| invalid_input("spectral_count requires --sdrf option"))?;
+    let counted = spectral_count::count(config, sdrf, memory)?;
+    let (proteins, samples) = spectral_registries(&counted.cells)?;
+
+    let mut values = HashMap::new();
+    let mut peptide_sets = HashMap::<ProteinId, HashSet<String>>::new();
+    for cell in counted.cells {
+        let protein_id = proteins
+            .get(&cell.protein_group)
+            .ok_or_else(|| invalid_input("spectral-count protein registry is inconsistent"))?;
+        let sample_id = samples
+            .get(&cell.sample)
+            .ok_or_else(|| invalid_input("spectral-count sample registry is inconsistent"))?;
+        values.insert(
+            CellKey {
+                protein: protein_id,
+                sample: sample_id,
+            },
+            cell.psms as f64,
+        );
+        peptide_sets
+            .entry(protein_id)
+            .or_default()
+            .extend(cell.sequences);
+    }
+    let allowed_proteins = values.keys().map(|cell| cell.protein).collect();
+    let peptide_counts = peptide_sets
+        .into_iter()
+        .map(|(protein, sequences)| (protein, sequences.len()))
+        .collect();
+    info!(
+        target_psms = counted.target_psms,
+        unique_psms = counted.unique_psms,
+        proteins = proteins.len(),
+        samples = samples.len(),
+        "PSM spectral counting finished"
+    );
+    Ok(ProteinMatrix {
+        proteins,
+        samples,
+        allowed_proteins,
+        excluded_samples: HashSet::new(),
+        peptide_counts,
+        values: ProteinValues::Cells(values),
+    })
+}
+
+fn spectral_registries(
+    cells: &[spectral_count::SpectralCountCell],
+) -> Result<(StringIdRegistry<ProteinId>, StringIdRegistry<SampleId>)> {
+    let protein_names = cells
+        .iter()
+        .map(|cell| cell.protein_group.as_str())
+        .collect::<BTreeSet<_>>();
+    let sample_names = cells
+        .iter()
+        .map(|cell| cell.sample.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut proteins = StringIdRegistry::new();
+    let mut samples = StringIdRegistry::new();
+    for protein in protein_names {
+        register_id(&mut proteins, protein, "protein")?;
+    }
+    for sample in sample_names {
+        register_id(&mut samples, sample, "sample")?;
+    }
+    Ok((proteins, samples))
 }
 
 /// Standalone `features2peptides`: load features, filter, aggregate to the
@@ -4767,8 +5556,8 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
 ///   * summed per canonical-peptide cell (Python `sum_peptidoform_intensities`),
 ///   * filtered by the per-(protein, sample) `min_unique` canonical-peptide gate
 ///     (Python's per-sample `groupby(PROTEIN_NAME).filter(... >= min_unique)`),
-///   * `--remove_ids`: rows whose joined `ProteinName` contains a listed ID are
-///     dropped during ingest (Python `remove_protein_by_ids`),
+///   * `--remove_ids`: rows containing a complete parsed accession from the
+///     supplied ID list are dropped during ingest,
 ///   * `--remove_low_frequency_peptides`: `(ProteinName, PeptideCanonical)`
 ///     pairs seen in fewer than 20% of samples are dropped at export
 ///     (Python `get_low_frequency_peptides`),
@@ -4783,11 +5572,8 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
 ///   * `--aggregation_level run`: append `Run` / `TechReplicate` columns and key
 ///     the matrix at run level (Python `sum_peptidoform_intensities` run branch).
 ///
-/// Stages that depend on not-yet-ported pieces are rejected with
-/// `MokumeError::NotImplemented` before any work, never silently skipped:
-/// channel-based IRS (`--irs_channel` / `--irs_autodetect_regex`), the filter
-/// pipeline (`--filter-config` / `--filter-*`), and the dataset-level sample
-/// normalization methods (hierarchical/quantile/rlr/loess).
+/// Requested filter settings that are not implemented are rejected with
+/// `MokumeError::NotImplemented` before any work, never silently skipped.
 /// Up-front validation for `features2peptides`: existence of inputs, supported
 /// normalization methods, and the channel-IRS-adjacent constraints. Kept
 /// separate so the orchestrator stays a linear sequence of stages.
@@ -4798,9 +5584,9 @@ pub fn run_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> 
 /// `run_features_to_peptides`); the group-level filters (CV, quantile, run QC)
 /// are applied via the `collect_intensity_group_filters` and
 /// `collect_run_qc_exclusions` pre-passes (see `validate_filter_pipeline_subset`),
-/// reproducing Python's per-sample chain rather than failing fast. Peptide/protein
-/// FDR thresholds are a no-op without a q-value column (matching Python's
-/// apply-time column check), so they are not rejected.
+/// reproducing Python's per-sample chain rather than failing fast. Explicit
+/// peptide/protein FDR thresholds use the dedicated QPX q-value fields and fail
+/// before output when the requested field is unpopulated.
 /// Compile the `exclude_sequence_patterns` once into regexes, mirroring Python's
 /// per-pattern `re.compile` (peptide.py:390). Patterns are real (un-escaped,
 /// case-sensitive) regexes; an invalid one is surfaced as a configuration error
@@ -4817,6 +5603,9 @@ fn compile_exclude_sequence_patterns(patterns: &[String]) -> Result<Vec<Regex>> 
 }
 
 fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result<()> {
+    if config.strict_mode || !config.log_filtered_counts {
+        return unsupported("features2peptides filter global logging options");
+    }
     let intensity = &config.intensity;
     // `cv_threshold` is applied via the `collect_intensity_group_filters` pre-pass
     // (per-`(sample, protein, canonical)` CV over the `min_unique`-gated raw
@@ -4844,27 +5633,20 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     // the `min_unique`-gated, post-CV intensities) and the per-row drop in
     // `ingest`; nothing to reject here.
     let peptide = &config.peptide;
-    // `min_search_score` is a no-op on QPX inputs: the QPX schema carries no
-    // per-PSM search-engine score column, so the filter matches Python's
-    // `SearchScoreFilter` column-absent skip (which logs a warning and passes
-    // every row through). Warn to mirror that, rather than failing.
-    if peptide.min_search_score.is_some() {
-        warn!(
-            "features2peptides filter min-search-score is a no-op: QPX features carry \
-             no search-engine score column (matches Python's column-absent skip)"
-        );
+    let protein = &config.protein;
+    validate_fdr_thresholds(peptide.fdr_threshold, protein.fdr_threshold)?;
+    validate_named_score_filter(peptide.score.as_ref())?;
+    if peptide.require_unique_peptides {
+        return unsupported("features2peptides peptide unique filter");
     }
     // `exclude_sequence_patterns` is applied per-row during ingest
     // (`passes_peptide_filter_pipeline` -> `filters::sequence_matches_excluded`),
     // compiled once into `excluded_sequence_regexes`; nothing to reject here.
-    let protein = &config.protein;
-    // `min_coverage` is a no-op on QPX inputs: the QPX schema carries no coverage
-    // column, matching Python's `CoverageFilter` column-absent skip.
     if protein.min_coverage > 0.0 {
-        warn!(
-            "features2peptides filter min-coverage is a no-op: QPX features carry no \
-             coverage column (matches Python's column-absent skip)"
-        );
+        return unsupported("features2peptides filter min-coverage");
+    }
+    if protein.min_peptides != 1 || !protein.protein_grouping.eq_ignore_ascii_case("none") {
+        return unsupported("features2peptides protein grouping filters");
     }
     // `keep` (no-op), `remove` (drop all rows of a razor peptide), and
     // `assign_to_top` (keep only the top-protein rows, first-appearance tie-break)
@@ -4879,24 +5661,43 @@ fn validate_filter_pipeline_subset(config: &PreprocessingFilterConfig) -> Result
     // `collect_intensity_factors` / `collect_run_qc_exclusions`) and at ingest via
     // `matches_protein_contaminant` (parsed `protein_group`), so this is accepted.
     let run_qc = &config.run_qc;
-    // min-total-intensity / min-features / min-proteins are implemented via the
-    // Run-QC pre-pass (`collect_run_qc_exclusions`), so they are accepted here.
-    // max-missing-rate and min-sample-correlation are no-ops under Python's
-    // per-sample pipeline application (every kept row has intensity > 0, so the
-    // missing rate is 0; a single-sample frame cannot cross-correlate), so warn
-    // rather than fail -- matching Python's pass-through.
-    if run_qc.max_missing_rate < 1.0 {
-        warn!(
-            "features2peptides filter max-missing-rate is a no-op: the long feature \
-             table keeps only intensity > 0 rows, so the per-sample missing rate is 0 \
-             (matches Python's per-sample pipeline application)"
-        );
+    // Run-QC thresholds, including missing rate, are implemented via the
+    // technical-run pre-pass (`collect_run_qc_exclusions`).
+    if !run_qc.max_missing_rate.is_finite() || !(0.0..=1.0).contains(&run_qc.max_missing_rate) {
+        return Err(invalid_input(
+            "features2peptides max-missing-rate must be between 0 and 1",
+        ));
     }
-    if run_qc.min_sample_correlation.is_some() {
-        warn!(
-            "features2peptides filter min-sample-correlation is a no-op: Python applies \
-             the pipeline per single-sample frame, which cannot cross-correlate samples"
-        );
+    Ok(())
+}
+
+fn validate_named_score_filter(score: Option<&NamedScoreFilterConfig>) -> Result<()> {
+    let Some(score) = score else {
+        return Ok(());
+    };
+    if score.name.trim().is_empty() {
+        return Err(invalid_input(
+            "features2peptides filter score name cannot be empty",
+        ));
+    }
+    if !score.threshold.is_finite() {
+        return Err(invalid_input(
+            "features2peptides filter score threshold must be finite",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_fdr_thresholds(peptide: Option<f64>, protein: Option<f64>) -> Result<()> {
+    if peptide.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+        return Err(invalid_input(
+            "features2peptides peptide FDR threshold must be between 0 and 1",
+        ));
+    }
+    if protein.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+        return Err(invalid_input(
+            "features2peptides protein FDR threshold must be between 0 and 1",
+        ));
     }
     Ok(())
 }
@@ -4937,24 +5738,20 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
             stage: "features2peptides run-normalization-method",
         }
     })?;
-    // Sample normalization must parse to a supported method. Only the
-    // factor-based methods (global/condition median) actually change the
-    // exported peptides: Python's `peptide_normalization` (peptide.py:370)
-    // applies them per sample inside the loop. The dataset-level methods
-    // (quantile/hierarchical/rlr/loess/median-center/mean-center) are
-    // accepted but are a deterministic NO-OP here, exactly as in Python: the
-    // standalone command's per-sample loop calls the placeholder fns
-    // (model/normalization.py:416-453) that return the frame unchanged, and the
-    // command has no post-loop dataset pass (the `_apply_dataset_normalization`
-    // pivot lives in `LoadingStage`, used only by `features2proteins`). So a
-    // dataset-level request produces the same matrix as `--sample-normalization
-    // none` (verified byte-identical on PXD003539).
     let sample_method =
         parse_sample_normalization_method(&config.sample_normalization).map_err(|_| {
             MokumeError::NotImplemented {
                 stage: "features2peptides sample-normalization-method",
             }
         })?;
+    if !matches!(
+        sample_method,
+        None | Some(
+            SampleNormalizationMethod::GlobalMedian | SampleNormalizationMethod::ConditionMedian
+        )
+    ) {
+        return unsupported("features2peptides sample-normalization-method");
+    }
     if sample_method == Some(SampleNormalizationMethod::ConditionMedian)
         && config.input.sdrf.is_none()
     {
@@ -4968,6 +5765,7 @@ fn validate_features_to_peptides_config(config: &FeatureToPeptidesConfig) -> Res
 pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> {
     validate_features_to_peptides_config(config)?;
     let filter_pipeline = active_filter_pipeline(config);
+    let named_score = filter_pipeline.and_then(|pipeline| pipeline.peptide.score.as_ref());
 
     // Route the deterministic peptide export through the protein pipeline's
     // ingest machinery by building a Sum-quantification config whose only
@@ -5007,30 +5805,33 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             sdrf.as_ref(),
             median_contaminant_patterns,
             config.keep_shared_peptides,
+            &MemoryPlan::unlimited(),
+            named_score,
         )?
     };
-    // Channel IRS is computed independently of run/sample normalization: Python
-    // pre-computes `irs_scale_by_techrep` outside the `skip_normalization` guard
-    // (`peptide.py:215-247`) and applies it even when normalization is skipped
-    // (the application at `peptide.py:333` is unconditional). The IRS pre-pass
-    // reuses the median pre-pass's contaminant settings, which already mirror
-    // Python's `SQLFilterBuilder` (`peptide.py:158-177`): `remove_contaminants`
-    // and `contaminant_patterns` come from the (pipeline-overridden) protein
-    // block; `min_intensity` comes from the pipeline's intensity block, else 0.
+    // The IRS pre-pass reuses the median pre-pass's contaminant settings.
     if let Some(irs) = &config.irs {
         let irs_min_intensity =
             filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
-        intensity_factors.irs_scale_by_techrep = collect_irs_scale(
+        let irs_scale_by_techrep = collect_irs_scale(
             parquet,
             irs,
             sdrf.as_ref(),
             proteins_config.filtering.remove_contaminants,
             median_contaminant_patterns,
             irs_min_intensity,
+            named_score,
         )?;
+        if irs_scale_by_techrep.is_empty() {
+            return Err(invalid_input(format!(
+                "features2peptides IRS channel `{}` produced no scaling factors",
+                irs.channel
+            )));
+        }
+        intensity_factors.irs_scale_by_techrep = irs_scale_by_techrep;
     }
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
-    let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref())?;
+    let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref(), None, None)?;
     // `--keep-shared-peptides`: keep non-unique rows during ingest (Python skips
     // the `unique == 1` filter) and skip the per-protein `min_unique` gate at
     // export by forcing the effective threshold to 0 (Python skips the
@@ -5048,27 +5849,31 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     }
     state.peptide_filters = filter_pipeline.cloned();
     if let Some(pipeline) = filter_pipeline {
-        state.excluded_sequence_regexes =
-            compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
+        configure_fdr_and_sequence_filters(&mut state, parquet, pipeline, named_score)?;
         if let Some(peptides) = &mut state.export_rows.peptides {
             peptides.razor_handling =
                 parse_razor_handling(&pipeline.protein.razor_peptide_handling);
         }
     }
-    // Run-QC group filters drop whole samples before the per-sample chain; decide
-    // which samples to drop in a pre-pass (the median is computed independently in
-    // `collect_intensity_factors`, so excluded samples still feed it -- matching
-    // Python, where `get_median_map` runs via `SQLFilterBuilder` ahead of the
-    // per-sample filter pipeline).
+    // Run-QC filters run inside each sample frame and group by technical
+    // replicate. Decide which runs to drop in a pre-pass (the median is computed
+    // independently in `collect_intensity_factors`, so excluded runs still feed
+    // it -- matching Python, where `get_median_map` runs via `SQLFilterBuilder`
+    // ahead of the per-sample filter pipeline).
     if let Some(pipeline) = filter_pipeline {
-        state.run_qc_excluded_samples = collect_run_qc_exclusions(
+        let source = RunQcSource {
+            filtering: proteins_config.filtering,
+            keep_shared_peptides: config.keep_shared_peptides,
+            min_unique_peptides: proteins_config.filtering.min_unique_peptides,
+            contaminant_patterns: &pipeline.protein.contaminant_patterns,
+            remove_protein_ids: &state.remove_protein_ids,
+        };
+        state.run_qc_excluded_runs = collect_run_qc_exclusions(
             parquet,
-            proteins_config.filtering,
             sdrf.as_ref(),
-            config.keep_shared_peptides,
-            proteins_config.filtering.min_unique_peptides,
             &pipeline.run_qc,
-            &pipeline.protein.contaminant_patterns,
+            &source,
+            named_score,
         )?;
     }
     // CVThresholdFilter and QuantileFilter are group-level filters: both need the
@@ -5077,16 +5882,23 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     // Run-QC), over the rows Python's pipeline sees at `intensity.py:293` (post
     // `min_unique` gate, pre feature-normalization). They share the pass so the
     // quantile bounds see the post-CV survivors (Python orders CV before Quantile).
-    // Excluded Run-QC samples are skipped so they do not feed either decision.
+    // Excluded Run-QC technical runs are skipped so they do not feed either
+    // decision.
     if let Some(pipeline) = filter_pipeline {
+        let source = RunQcSource {
+            filtering: proteins_config.filtering,
+            keep_shared_peptides: config.keep_shared_peptides,
+            min_unique_peptides: proteins_config.filtering.min_unique_peptides,
+            contaminant_patterns: &pipeline.protein.contaminant_patterns,
+            remove_protein_ids: &state.remove_protein_ids,
+        };
         let group_filters = collect_intensity_group_filters(
             parquet,
-            proteins_config.filtering,
             sdrf.as_ref(),
-            config.keep_shared_peptides,
-            proteins_config.filtering.min_unique_peptides,
+            &source,
             &pipeline.intensity,
-            &state.run_qc_excluded_samples,
+            &state.run_qc_excluded_runs,
+            named_score,
         )?;
         state.cv_dropped = group_filters.cv_dropped;
         state.quantile_bounds = group_filters.quantile_bounds;
@@ -5097,7 +5909,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         state.replicate_agreement_wipes_all = pipeline.intensity.min_replicate_agreement > 1;
     }
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
         state.ingest(
             &feature,
             sdrf.as_ref(),
@@ -5151,6 +5963,85 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     )
 }
 
+fn configure_fdr_and_sequence_filters(
+    state: &mut FeatureToProteinState,
+    parquet: &Path,
+    pipeline: &PreprocessingFilterConfig,
+    named_score: Option<&NamedScoreFilterConfig>,
+) -> Result<()> {
+    state.excluded_sequence_regexes =
+        compile_exclude_sequence_patterns(&pipeline.peptide.exclude_sequence_patterns)?;
+    state.protein_fdr_allowed = collect_fdr_filter_state(
+        parquet,
+        pipeline.peptide.fdr_threshold,
+        pipeline.protein.fdr_threshold,
+        named_score,
+    )?;
+    Ok(())
+}
+
+/// Validate that explicitly requested QPX q-value fields carry usable values
+/// and collect the protein groups passing the group-minimum protein FDR rule.
+/// The pre-pass happens before output creation, so an unavailable q-value cannot
+/// turn a requested filter into a successful no-op or a misleading empty file.
+fn collect_fdr_filter_state(
+    parquet: &Path,
+    peptide_threshold: Option<f64>,
+    protein_threshold: Option<f64>,
+    named_score: Option<&NamedScoreFilterConfig>,
+) -> Result<Option<HashSet<String>>> {
+    if peptide_threshold.is_none() && protein_threshold.is_none() {
+        return Ok(None);
+    }
+
+    let mut peptide_values = 0_usize;
+    let mut protein_values = 0_usize;
+    let mut protein_min_qvalue: HashMap<String, f64> = HashMap::new();
+    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+        if peptide_threshold.is_some()
+            && feature
+                .peptide_qvalue
+                .is_some_and(|qvalue| qvalue.is_finite())
+        {
+            peptide_values += 1;
+        }
+        if protein_threshold.is_some() {
+            if let (Some(qvalue), Some(protein)) = (
+                feature.pg_global_qvalue.filter(|qvalue| qvalue.is_finite()),
+                protein_group_name(&feature.protein_accessions),
+            ) {
+                protein_values += 1;
+                protein_min_qvalue
+                    .entry(protein)
+                    .and_modify(|known| *known = known.min(qvalue))
+                    .or_insert(qvalue);
+            }
+        }
+        Ok(())
+    })?;
+
+    if peptide_threshold.is_some() && peptide_values == 0 {
+        return Err(invalid_input(
+            "--filter-peptide-fdr requires a populated QPX `peptide_qvalue` column",
+        ));
+    }
+    let Some(threshold) = protein_threshold else {
+        return Ok(None);
+    };
+    if protein_values == 0 {
+        return Err(invalid_input(
+            "--filter-protein-fdr requires a populated QPX `pg_global_qvalue` column",
+        ));
+    }
+    Ok(Some(
+        protein_min_qvalue
+            .into_iter()
+            .filter_map(|(protein, qvalue)| (qvalue <= threshold).then_some(protein))
+            .collect(),
+    ))
+}
+
 /// Build the internal `FeatureToProteinsConfig` that drives the peptide export.
 /// Sum quantification is chosen because the peptide intermediate is emitted
 /// before any protein rollup, so the quantification method never affects the
@@ -5182,11 +6073,12 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
         quantification: QuantMethod::Sum,
         topn_peptides: 3,
         maxlfq: MaxLfqConfig::default(),
-        ibaq: IbaqConfig::default(),
+        pibaq: PibaqConfig::default(),
         directlfq: DirectLfqConfig::default(),
         batch: BatchCorrectionConfig::default(),
         irs: IrsConfig::default(),
         coverage_threshold: None,
+        sample_correlation_threshold: None,
         ratio: RatioConfig::default(),
         imputation: ImputationConfig::default(),
         differential_expression: DifferentialExpressionConfig::default(),
@@ -5197,50 +6089,158 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
     }
 }
 
-fn configure_thread_pool(threads: Option<usize>) {
-    let Some(threads) = threads.filter(|threads| *threads > 0) else {
-        return;
-    };
-    if let Err(error) = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build_global()
-    {
-        warn!(%error, "rayon global thread pool is already configured; reusing existing pool");
-    }
-}
-
 /// Streams QPX features through `consume`, overlapping the parallelizable
 /// decode + flatten work with the serial consumer.
 ///
 /// A background thread reads raw Arrow batches serially (a single Parquet
-/// reader cannot be shared) and flattens each window of batches in parallel
-/// with Rayon. Flattened batches are delivered to `consume` in their original
-/// reader order, and rows within each batch keep their original order, so the
+/// reader cannot be shared) while the calling thread flattens each window with
+/// the invocation-scoped Rayon pool. Batches and rows keep reader order, so the
 /// floating-point accumulation order is identical to a fully serial pass and
-/// the protein matrix stays cell-for-cell identical. The consumer (ID
-/// registration and intensity accumulation) mutates shared state and therefore
-/// stays serial on the calling thread.
+/// the protein matrix stays cell-for-cell identical. The consumer mutates
+/// shared state and therefore stays serial on the calling thread.
 fn stream_qpx_features<F>(mut reader: QpxParquetReader, mut consume: F) -> Result<()>
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
-    // Batches flattened together per window; bounds the Rayon fan-out and the
-    // number of decoded batches held in memory at once. Two batches are enough
-    // to keep the background reader ahead of the serial consumer (the
-    // wall-clock bottleneck); larger windows add little speed but cost
-    // proportionally more transient memory.
-    const WINDOW: usize = 2;
-    // Bounded channel applies backpressure so the background reader stays at
-    // most one window ahead of the consumer, keeping transient memory low.
-    const CHANNEL_CAPACITY: usize = 1;
+    stream_qpx_features_with_optional_score(
+        &mut reader,
+        &MemoryPlan::unlimited(),
+        None,
+        &mut consume,
+    )
+}
 
-    let (tx, rx) =
-        std::sync::mpsc::sync_channel::<Result<Vec<Vec<QpxFeatureRecord>>>>(CHANNEL_CAPACITY);
+fn stream_qpx_features_with_score<F>(
+    mut reader: QpxParquetReader,
+    score: &NamedScoreFilterConfig,
+    mut consume: F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    let mut seen = 0_usize;
+    let mut direction = None;
+    stream_qpx_features_with_optional_score(
+        &mut reader,
+        &MemoryPlan::unlimited(),
+        Some(score.name.as_str()),
+        &mut |feature| {
+            let Some(value) = feature.selected_score else {
+                return Ok(());
+            };
+            seen += 1;
+            if let Some(expected) = direction {
+                if expected != value.higher_better {
+                    return Err(invalid_input(format!(
+                        "QPX score `{}` has inconsistent higher_better values",
+                        score.name
+                    )));
+                }
+            } else {
+                direction = Some(value.higher_better);
+            }
+            let passes = if value.higher_better {
+                value.value >= score.threshold
+            } else {
+                value.value <= score.threshold
+            };
+            if passes {
+                consume(feature)?;
+            }
+            Ok(())
+        },
+    )?;
+    if seen == 0 {
+        return Err(invalid_input(format!(
+            "--filter-score requires QPX `additional_scores` entry `{}`",
+            score.name
+        )));
+    }
+    Ok(())
+}
+
+fn stream_qpx_features_maybe_score<F>(
+    reader: QpxParquetReader,
+    score: Option<&NamedScoreFilterConfig>,
+    consume: F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    match score {
+        Some(score) => stream_qpx_features_with_score(reader, score, consume),
+        None => stream_qpx_features(reader, consume),
+    }
+}
+
+fn stream_qpx_features_with_plan<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    stream_qpx_features_with_optional_score(reader, memory, None, consume)
+}
+
+fn stream_qpx_features_with_optional_score<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    score_name: Option<&str>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    if memory.channel_capacity() == 0 {
+        stream_qpx_features_synchronously(reader, memory, score_name, consume)
+    } else {
+        stream_qpx_features_buffered(reader, memory, score_name, consume)
+    }
+}
+
+fn stream_qpx_features_synchronously<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    score_name: Option<&str>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    while let Some(batch) = reader.next_raw_batch() {
+        let batch = batch?;
+        let features = match score_name {
+            Some(name) => mokume_io::flatten_qpx_batch_with_score(&batch, name)?,
+            None => mokume_io::flatten_qpx_batch(&batch)?,
+        };
+        for feature in features {
+            consume(feature)?;
+        }
+        memory.check("QPX streaming")?;
+    }
+    Ok(())
+}
+
+fn stream_qpx_features_buffered<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    score_name: Option<&str>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    let window_size = memory.qpx_window();
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<mokume_io::RecordBatch>>>(
+        memory.channel_capacity(),
+    );
 
     std::thread::scope(|scope| -> Result<()> {
         scope.spawn(move || loop {
-            let mut window: Vec<mokume_io::RecordBatch> = Vec::with_capacity(WINDOW);
-            for _ in 0..WINDOW {
+            let mut window: Vec<mokume_io::RecordBatch> = Vec::with_capacity(window_size);
+            for _ in 0..window_size {
                 match reader.next_raw_batch() {
                     Some(Ok(batch)) => window.push(batch),
                     Some(Err(error)) => {
@@ -5253,29 +6253,51 @@ where
             if window.is_empty() {
                 return;
             }
-            let flattened: Result<Vec<Vec<QpxFeatureRecord>>> = window
-                .into_par_iter()
-                .map(|batch| mokume_io::flatten_qpx_batch(&batch))
-                .collect();
-            if tx.send(flattened).is_err() {
+            if tx.send(Ok(window)).is_err() {
                 return;
             }
         });
 
-        for message in &rx {
-            for features in message? {
-                for feature in features {
-                    consume(feature)?;
-                }
-            }
-        }
-        Ok(())
+        let result = consume_qpx_windows(&rx, memory, score_name, consume);
+        // A consumer or RSS-budget error must drop the receiver before the
+        // scoped reader thread is joined. This wakes a sender blocked by the
+        // bounded channel instead of deadlocking on scope exit.
+        drop(rx);
+        result
     })
+}
+
+fn consume_qpx_windows<F>(
+    receiver: &std::sync::mpsc::Receiver<Result<Vec<mokume_io::RecordBatch>>>,
+    memory: &MemoryPlan,
+    score_name: Option<&str>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    for message in receiver {
+        let flattened: Result<Vec<Vec<QpxFeatureRecord>>> = message?
+            .into_par_iter()
+            .map(|batch| match score_name {
+                Some(name) => mokume_io::flatten_qpx_batch_with_score(&batch, name),
+                None => mokume_io::flatten_qpx_batch(&batch),
+            })
+            .collect();
+        for features in flattened? {
+            for feature in features {
+                consume(feature)?;
+            }
+            memory.check("QPX streaming")?;
+        }
+    }
+    Ok(())
 }
 
 fn stream_input_features<F>(
     input: &InputConfig,
     sdrf: Option<&SdrfTable>,
+    memory: &MemoryPlan,
     mut consume: F,
 ) -> Result<()>
 where
@@ -5283,13 +6305,16 @@ where
 {
     match (&input.parquet, &input.msstats) {
         (Some(parquet), None) => {
-            let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-            stream_qpx_features(reader, consume)
+            let mut reader = QpxParquetReader::open(parquet, memory.qpx_batch_size())?;
+            stream_qpx_features_with_plan(&mut reader, memory, &mut consume)
         }
         (None, Some(msstats)) => {
             let sdrf = sdrf.ok_or_else(|| invalid_input("MSstats input requires --sdrf option"))?;
-            for feature in MsstatsReader::open(msstats, sdrf)? {
+            for (index, feature) in MsstatsReader::open(msstats, sdrf)?.enumerate() {
                 consume(feature?)?;
+                if index % 4096 == 0 {
+                    memory.check("MSstats streaming")?;
+                }
             }
             Ok(())
         }
@@ -5309,7 +6334,7 @@ fn required_parquet(input: &InputConfig) -> Result<&Path> {
 /// Quant methods whose aggregation collapses to `(protein, sample)` peptide
 /// cells normalized by [`apply_dataset_norm_to_peptide_cells`]. These share the
 /// dataset-level normalization with the `--export-peptides` path, so the
-/// exported peptides match the protein matrix. iBAQ / LFQ / Ratio normalize
+/// exported peptides match the protein matrix. piBAQ / LFQ / Ratio normalize
 /// through aggregation-specific paths not connected to the peptide export.
 fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
     matches!(
@@ -5318,7 +6343,7 @@ fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
             | QuantMethod::Intensity
             | QuantMethod::Median
             | QuantMethod::Abd
-            | QuantMethod::SpectralCount
+            | QuantMethod::PeptideCount
             | QuantMethod::TopN
     )
 }
@@ -5332,40 +6357,15 @@ fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
 /// they center the summed-canonical-peptide matrix in log2 space, NOT the raw
 /// per-feature intensities, so they belong on the cell path rather than the
 /// ingest-time factor path.
-/// Returns the requested `--sample-normalization` method name when it is a
-/// dataset-level method that will be silently ignored because the effective
-/// quantification route is DirectLFQ (which performs its own internal sample
-/// normalization; see `Aggregation::applies_dataset_normalization`). Used to warn
-/// the user rather than dropping the option silently.
-fn ignored_directlfq_sample_normalization(config: &FeatureToProteinsConfig) -> Option<&str> {
-    let routes_to_directlfq = config.quantification == QuantMethod::DirectLfq
-        || (config.quantification == QuantMethod::MaxLfq && !config.maxlfq.force_builtin);
-    if !routes_to_directlfq {
-        return None;
-    }
-    match parse_sample_normalization_method(&config.normalization.sample_method)
-        .ok()
-        .flatten()
-    {
-        Some(
-            SampleNormalizationMethod::Quantile
-            | SampleNormalizationMethod::Rlr
-            | SampleNormalizationMethod::Loess
-            | SampleNormalizationMethod::Hierarchical
-            | SampleNormalizationMethod::MedianCenter
-            | SampleNormalizationMethod::MeanCenter
-            | SampleNormalizationMethod::Tmm,
-        ) => Some(config.normalization.sample_method.as_str()),
-        _ => None,
-    }
-}
-
 fn dataset_sample_normalization_method(
     config: &FeatureToProteinsConfig,
 ) -> Result<Option<SampleNormalizationMethod>> {
     if matches!(
         config.quantification,
-        QuantMethod::DirectLfq | QuantMethod::Ratio
+        QuantMethod::DirectLfq
+            | QuantMethod::Ratio
+            | QuantMethod::PeptideCount
+            | QuantMethod::SpectralCount
     ) {
         return Ok(None);
     }
@@ -5392,6 +6392,26 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
         }
     }
+    if config.directlfq.cores.is_some() && config.quantification != QuantMethod::DirectLfq {
+        return Err(invalid_input(
+            "DirectLfqConfig.cores only applies to --quant-method directlfq; use RuntimeConfig.threads for other methods",
+        ));
+    }
+    if config.directlfq.min_nonan != 1 && config.quantification != QuantMethod::DirectLfq {
+        return Err(invalid_input(
+            "--directlfq-min-nonan only applies to --quant-method directlfq",
+        ));
+    }
+    if config.directlfq.num_samples_quadratic != 50
+        && !matches!(
+            config.quantification,
+            QuantMethod::DirectLfq | QuantMethod::MaxLfq
+        )
+    {
+        return Err(invalid_input(
+            "--directlfq-num-samples-quadratic only applies to DirectLFQ/MaxLFQ",
+        ));
+    }
     if let Some(fasta) = &config.input.fasta {
         if !fasta.exists() {
             return Err(MokumeError::MissingInput {
@@ -5403,12 +6423,74 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
         if !path.exists() {
             return Err(MokumeError::MissingInput { path: path.clone() });
         }
+        if !matches!(
+            config
+                .normalization
+                .sample_method
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "globalmedian" | "conditionmedian"
+        ) {
+            return Err(invalid_input(
+                "--normalization-proteins requires globalmedian or conditionmedian sample normalization",
+            ));
+        }
     }
-    if config.quantification == QuantMethod::Ibaq && config.input.fasta.is_none() {
-        return Err(invalid_input("iBAQ quantification requires --fasta option"));
+    if config.quantification == QuantMethod::Pibaq && config.input.fasta.is_none() {
+        return Err(invalid_input(
+            "piBAQ quantification requires --fasta option",
+        ));
+    }
+    if config.quantification != QuantMethod::Pibaq
+        && (config.input.fasta.is_some()
+            || !config.pibaq.enzyme.eq_ignore_ascii_case("Trypsin")
+            || config.pibaq.max_aa != 30
+            || config.pibaq.min_shared != 2
+            || config.pibaq.families_yaml.is_some()
+            || config.pibaq.min_anchors != 1
+            || config.pibaq.high_anchor_threshold != 3)
+    {
+        return Err(invalid_input(
+            "piBAQ FASTA/digestion options require --quant-method pibaq",
+        ));
     }
     if config.quantification == QuantMethod::Ratio && config.input.sdrf.is_none() {
         return Err(invalid_input("Ratio quantification requires --sdrf option"));
+    }
+    if !config.ratio.fraction_merge.eq_ignore_ascii_case("mean")
+        && config.quantification != QuantMethod::Ratio
+    {
+        return Err(invalid_input(
+            "--ratio-fraction-merge only applies to --quant-method ratio",
+        ));
+    }
+    if matches!(
+        config.quantification,
+        QuantMethod::DirectLfq
+            | QuantMethod::Ratio
+            | QuantMethod::PeptideCount
+            | QuantMethod::SpectralCount
+    ) && (!config.normalization.run_method.eq_ignore_ascii_case("none")
+        || !config
+            .normalization
+            .sample_method
+            .eq_ignore_ascii_case("none")
+        || config.normalization.normalization_proteins.is_some())
+    {
+        let reason = if matches!(
+            config.quantification,
+            QuantMethod::PeptideCount | QuantMethod::SpectralCount
+        ) {
+            "does not use intensity normalization"
+        } else {
+            "manages normalization internally"
+        };
+        return Err(invalid_input(format!(
+            "{} {reason}; use --run-normalization none and --sample-normalization \
+             none, and do not pass --normalization-proteins",
+            config.quantification
+        )));
     }
     if config.batch.enabled
         && config.batch.method.eq_ignore_ascii_case("column")
@@ -5419,55 +6501,135 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
         ));
     }
     if config.batch.enabled
+        && !matches!(
+            config.batch.method.trim().to_ascii_lowercase().as_str(),
+            "sample_prefix" | "column"
+        )
+    {
+        return Err(invalid_input(
+            "batch-method must be `sample_prefix` or `column` for protein matrices",
+        ));
+    }
+    if !config.batch.enabled
+        && (!config.batch.method.eq_ignore_ascii_case("sample_prefix")
+            || config.batch.column.is_some()
+            || config.batch.covariates.is_some()
+            || !config.batch.parametric
+            || config.batch.mean_only
+            || config.batch.ref_batch.is_some())
+    {
+        return Err(invalid_input("batch options require --batch-correction"));
+    }
+    if config.batch.enabled
+        && !config.batch.method.eq_ignore_ascii_case("column")
+        && config.batch.column.is_some()
+    {
+        return Err(invalid_input(
+            "--batch-column requires --batch-method column",
+        ));
+    }
+    if config.batch.enabled
         && config.input.sdrf.is_none()
         && (config.batch.column.is_some() || config.batch.covariates.is_some())
     {
         return Err(invalid_input(
-            "Batch correction with --batch-column or --batch-covariates requires --sdrf option",
+            "Batch correction with --batch-column or --batch-covariate requires --sdrf option",
         ));
     }
     Ok(())
 }
 
 fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
-    match (&config.input.parquet, &config.input.msstats) {
-        (Some(parquet), None) => {
-            if !parquet.exists() {
-                return Err(MokumeError::MissingInput {
-                    path: parquet.clone(),
-                });
-            }
-        }
-        (None, Some(msstats)) => {
-            if !msstats.exists() {
-                return Err(MokumeError::MissingInput {
-                    path: msstats.clone(),
-                });
-            }
-            if config.input.sdrf.is_none() {
-                return Err(invalid_input("MSstats input requires --sdrf option"));
-            }
-            if config.quantification == QuantMethod::Ratio {
-                return Err(invalid_input(
-                    "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
-                ));
-            }
-        }
-        _ => {
-            return Err(invalid_input(
-                "provide exactly one feature input: --parquet or --msstats",
-            ));
-        }
+    match (
+        &config.input.parquet,
+        &config.input.msstats,
+        &config.input.psm,
+    ) {
+        (Some(parquet), None, None) => validate_feature_qpx_input(parquet, config.quantification),
+        (None, Some(msstats), None) => validate_msstats_input(msstats, config),
+        (Some(parquet), None, Some(psm)) => validate_spectral_count_inputs(parquet, psm, config),
+        (None, None, Some(_)) => Err(invalid_input(
+            "spectral_count requires matching QPX inputs via --psm and --parquet",
+        )),
+        _ => Err(invalid_input(
+            "provide --parquet, --msstats, or matching --psm and --parquet inputs",
+        )),
+    }
+}
+
+fn validate_feature_qpx_input(parquet: &Path, method: QuantMethod) -> Result<()> {
+    require_existing_input(parquet)?;
+    if method == QuantMethod::SpectralCount {
+        return Err(invalid_input(
+            "spectral_count requires matching QPX inputs via --psm and --parquet",
+        ));
     }
     Ok(())
 }
 
-fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
-    if let Some(memory) = &config.runtime.memory {
-        parse_memory_to_bytes(memory)?;
+fn validate_msstats_input(path: &Path, config: &FeatureToProteinsConfig) -> Result<()> {
+    require_existing_input(path)?;
+    if config.input.sdrf.is_none() {
+        return Err(invalid_input("MSstats input requires --sdrf option"));
     }
-    if config.output.export_peptides.is_some() && config.quantification == QuantMethod::DirectLfq {
-        return unsupported("directlfq-export-peptides");
+    match config.quantification {
+        QuantMethod::Ratio => Err(invalid_input(
+            "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
+        )),
+        QuantMethod::SpectralCount => Err(invalid_input(
+            "spectral_count requires matching QPX inputs via --psm and --parquet",
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn validate_spectral_count_inputs(
+    parquet: &Path,
+    psm: &Path,
+    config: &FeatureToProteinsConfig,
+) -> Result<()> {
+    require_existing_input(parquet)?;
+    require_existing_input(psm)?;
+    if config.quantification != QuantMethod::SpectralCount {
+        return Err(invalid_input(
+            "--psm with --parquet only applies to spectral_count quantification",
+        ));
+    }
+    if config.input.sdrf.is_none() {
+        return Err(invalid_input("spectral_count requires --sdrf option"));
+    }
+    Ok(())
+}
+
+fn require_existing_input(path: &Path) -> Result<()> {
+    if path.exists() {
+        Ok(())
+    } else {
+        Err(MokumeError::MissingInput {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
+    if config.runtime.threads == Some(0) || config.directlfq.cores == Some(0) {
+        return Err(invalid_input("thread counts must be greater than zero"));
+    }
+    if config.runtime.threads.is_some() && config.directlfq.cores.is_some() {
+        return Err(invalid_input(
+            "choose either runtime threads or directlfq cores, not both",
+        ));
+    }
+    if config.output.export_peptides.is_some()
+        && matches!(
+            config.quantification,
+            QuantMethod::DirectLfq | QuantMethod::Ratio | QuantMethod::SpectralCount
+        )
+    {
+        return Err(invalid_input(format!(
+            "export-peptides is not supported by {} quantification",
+            config.quantification
+        )));
     }
     // Dataset-level sample normalization is carried into the exported peptides
     // only for the cell-based linear methods (their aggregation and export share
@@ -5487,10 +6649,6 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
             return unsupported("ion-alignment");
         }
     }
-    if config.quantification == QuantMethod::Ibaq && !supports_ibaq_enzyme(&config.ibaq.enzyme) {
-        return unsupported("ibaq-enzyme");
-    }
-
     match config.quantification {
         QuantMethod::Sum
         | QuantMethod::Median
@@ -5499,20 +6657,35 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         | QuantMethod::DirectLfq
         | QuantMethod::Abd
         | QuantMethod::Intensity
+        | QuantMethod::PeptideCount
         | QuantMethod::SpectralCount
-        | QuantMethod::Ibaq
+        | QuantMethod::Pibaq
         | QuantMethod::Ratio => {}
     }
 
     if !matches!(
         config.quantification,
-        QuantMethod::DirectLfq | QuantMethod::Ratio
+        QuantMethod::DirectLfq
+            | QuantMethod::Ratio
+            | QuantMethod::PeptideCount
+            | QuantMethod::SpectralCount
     ) {
         if !supports_run_normalization(&config.normalization.run_method) {
             return unsupported("run-normalization-method");
         }
         if !supports_sample_normalization(&config.normalization.sample_method) {
             return unsupported("sample-normalization-method");
+        }
+        if matches!(
+            config.quantification,
+            QuantMethod::Pibaq | QuantMethod::MaxLfq
+        ) && dataset_sample_normalization_method(config)?
+            .is_some_and(|method| method != SampleNormalizationMethod::Quantile)
+        {
+            return Err(invalid_input(format!(
+                "{} supports quantile as its only dataset-level sample normalization",
+                config.quantification
+            )));
         }
     }
 
@@ -5525,37 +6698,92 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
     // `column` detection plus SDRF covariate extraction. `run` detection has no
     // run-level mapping in the protein-matrix flow and errors at runtime, the
     // same way Python's `_detect_batch_indices` raises `run_info required`.
-    let uses_irs_options = config.irs.enabled
-        || config.irs.reference_samples.is_some()
-        || config.irs.sdrf_column.is_some()
-        || config.irs.sdrf_values.is_some()
-        || config.irs.stat != "median"
-        || config.irs.remove_reference
-        || config.irs.reference_regex != "pool|powder|ref|reference|bridge";
-    if uses_irs_options {
+    if matches!(
+        config.quantification,
+        QuantMethod::PeptideCount | QuantMethod::SpectralCount
+    ) && config.irs.enabled
+    {
+        return Err(invalid_input(format!(
+            "{} quantification cannot apply IRS",
+            config.quantification
+        )));
+    }
+    if config
+        .irs
+        .reference_samples
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+    {
+        return Err(invalid_input("IRS reference sample list must not be empty"));
+    }
+    if config.irs.sdrf_column.is_some() != config.irs.sdrf_values.is_some() {
+        return Err(invalid_input(
+            "--irs-sdrf-column and --irs-sdrf-value must be provided together",
+        ));
+    }
+    let custom_regex = config.irs.reference_regex != DEFAULT_REFERENCE_REGEX;
+    let selector_count = usize::from(config.irs.reference_samples.is_some())
+        + usize::from(config.irs.sdrf_column.is_some())
+        + usize::from(custom_regex);
+    if selector_count > 1 {
+        return Err(invalid_input(
+            "choose one reference selector: samples, SDRF column+values, or regex",
+        ));
+    }
+    if config.quantification == QuantMethod::Ratio {
+        if config.irs.enabled {
+            return Err(invalid_input("Ratio quantification cannot also apply IRS"));
+        }
+        if config.irs.sdrf_column.is_some()
+            || !config.irs.stat.eq_ignore_ascii_case("median")
+            || config.irs.remove_reference
+        {
+            return Err(invalid_input(
+                "Ratio accepts IRS reference samples/regex only; IRS normalization options require --irs",
+            ));
+        }
         if config.input.sdrf.is_none() {
-            return Err(invalid_input("IRS options require --sdrf option"));
-        }
-        if !matches!(
-            config.irs.stat.trim().to_ascii_lowercase().as_str(),
-            "median" | "mean"
-        ) {
-            return unsupported("irs-stat");
-        }
-        if config.irs.sdrf_column.is_some() && config.irs.sdrf_values.is_none() {
             return Err(invalid_input(
-                "--irs-sdrf-column requires --irs-sdrf-values option",
+                "Ratio reference detection requires --sdrf option",
             ));
         }
-        if config.irs.sdrf_values.is_some() && config.irs.sdrf_column.is_none() {
-            return Err(invalid_input(
-                "--irs-sdrf-values requires --irs-sdrf-column option",
-            ));
+    } else {
+        let uses_irs_parameters = selector_count > 0
+            || !config.irs.stat.eq_ignore_ascii_case("median")
+            || config.irs.remove_reference;
+        if uses_irs_parameters && !config.irs.enabled {
+            return Err(invalid_input("IRS options require --irs"));
+        }
+        if config.irs.enabled {
+            if config.input.sdrf.is_none() {
+                return Err(invalid_input("IRS options require --sdrf option"));
+            }
+            if !matches!(
+                config.irs.stat.trim().to_ascii_lowercase().as_str(),
+                "median" | "mean"
+            ) {
+                return unsupported("irs-stat");
+            }
         }
     }
     if let Some(threshold) = config.coverage_threshold {
         if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
             return Err(invalid_input("coverage-threshold must be between 0 and 1"));
+        }
+        if config.input.sdrf.is_none() {
+            return Err(invalid_input("coverage-threshold requires --sdrf option"));
+        }
+    }
+    if let Some(threshold) = config.sample_correlation_threshold {
+        if !threshold.is_finite() || !(-1.0..=1.0).contains(&threshold) {
+            return Err(invalid_input(
+                "min-sample-correlation must be between -1 and 1",
+            ));
+        }
+        if config.input.sdrf.is_none() {
+            return Err(invalid_input(
+                "min-sample-correlation requires --sdrf option",
+            ));
         }
     }
     if !matches!(
@@ -5569,48 +6797,74 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
     ) {
         return unsupported("ratio-fraction-merge");
     }
-    if config.imputation.enabled {
-        let method = config.imputation.method.trim().to_ascii_lowercase();
-        match method.as_str() {
-            "" | "none" => {}
-            "mindet" | "minprob" => {
-                if !config.imputation.quantile.is_finite()
-                    || !(0.0..=1.0).contains(&config.imputation.quantile)
-                {
-                    return Err(invalid_input("impute-quantile must be between 0 and 1"));
-                }
-                if method == "minprob"
-                    && (!config.imputation.shift.is_finite()
-                        || !config.imputation.scale.is_finite()
-                        || config.imputation.scale < 0.0)
-                {
-                    return Err(invalid_input(
-                        "minprob imputation requires finite shift and non-negative scale",
-                    ));
-                }
-            }
-            "mean" | "median" | "constant" | "zero" | "knn" | "seqknn" | "impseq" | "gms"
-            | "bpca" | "impseqrob" | "qrilc" => {}
-            // missforest wraps a scikit-learn RandomForest whose tree internals and
-            // RNG cannot be reproduced cross-language; the Rust kernel does not
-            // approximate it and the error points at the pure-Python implementation
-            // shipped in the wheel.
-            "missforest" => {
-                return unsupported(
-                    "missforest imputation is unported (wraps scikit-learn RandomForest, not reproducible cross-language); run it via the mokume Python wheel: pip install mokume[analysis]; mokume.impute(matrix, method='missforest')",
-                )
-            }
-            _ => return unsupported("imputation"),
-        }
-    }
+    validate_imputation_config(&config.imputation)?;
     validate_de_subset(config)?;
+    Ok(())
+}
+
+pub(crate) fn validate_imputation_config(config: &ImputationConfig) -> Result<()> {
+    let method = config.method.trim().to_ascii_lowercase();
+    if !config.enabled {
+        if method != "none"
+            || (config.quantile - 0.01).abs() > f64::EPSILON
+            || (config.shift - 1.6).abs() > f64::EPSILON
+            || (config.scale - 0.3).abs() > f64::EPSILON
+            || config.n_neighbors != 5
+        {
+            return Err(invalid_input("imputation options require --impute-method"));
+        }
+        return Ok(());
+    }
+    if !matches!(method.as_str(), "mindet" | "minprob")
+        && (config.quantile - 0.01).abs() > f64::EPSILON
+    {
+        return Err(invalid_input(
+            "--impute-quantile only applies to mindet/minprob",
+        ));
+    }
+    if method != "minprob"
+        && ((config.shift - 1.6).abs() > f64::EPSILON || (config.scale - 0.3).abs() > f64::EPSILON)
+    {
+        return Err(invalid_input(
+            "--impute-shift/--impute-scale only apply to minprob",
+        ));
+    }
+    if !matches!(method.as_str(), "knn" | "seqknn") && config.n_neighbors != 5 {
+        return Err(invalid_input(
+            "--impute-n-neighbors only applies to knn/seqknn",
+        ));
+    }
+    match method.as_str() {
+        "" | "none" => return Err(invalid_input("--impute-method must name a method")),
+        "mindet" | "minprob" => {
+            if !config.quantile.is_finite() || !(0.0..=1.0).contains(&config.quantile) {
+                return Err(invalid_input("impute-quantile must be between 0 and 1"));
+            }
+            if method == "minprob"
+                && (!config.shift.is_finite() || !config.scale.is_finite() || config.scale < 0.0)
+            {
+                return Err(invalid_input(
+                    "minprob imputation requires finite shift and non-negative scale",
+                ));
+            }
+        }
+        "knn" | "seqknn" if config.n_neighbors == 0 => {
+            return Err(invalid_input(
+                "impute-n-neighbors must be greater than zero",
+            ));
+        }
+        "mean" | "median" | "constant" | "zero" | "most_frequent" | "knn" | "seqknn" | "impseq"
+        | "gms" | "bpca" | "impseqrob" | "qrilc" => {}
+        "missforest" => return unsupported("missforest imputation is unported"),
+        _ => return unsupported("imputation"),
+    }
     Ok(())
 }
 
 /// Validate the differential-expression subset the Rust port implements.
 ///
 /// The limma, deqms, rots, limrots, proda, and ensemble paths with
-/// Benjamini-Hochberg (or IHW) correction are wired (mirroring
+/// BH, IHW, BKY, or Storey correction are wired (mirroring
 /// `mokume.analysis.differential_expression.DifferentialExpression(method=...)`).
 /// `auto` is accepted and resolved to a concrete method just before the DE stage
 /// (Python's `_resolve_de_method`: directlfq -> deqms, otherwise -> limrots).
@@ -5623,8 +6877,21 @@ fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()
 fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
     let de = &config.differential_expression;
     if !de.enabled {
-        // DE is off; the remaining DE options have no effect, so accept any
-        // value (matching the Python CLI, which simply ignores them).
+        if de.contrasts.is_some()
+            || de.contrasts_file.is_some()
+            || de.ensemble_methods.is_some()
+            || de.effect_size_gate.is_some()
+            || de.output.is_some()
+            || !de.method.eq_ignore_ascii_case("auto")
+            || de.ensemble_min_k != 2
+            || (de.log2fc_threshold - 0.5).abs() > f64::EPSILON
+            || (de.fdr_threshold - 0.05).abs() > f64::EPSILON
+            || !de.fdr_method.eq_ignore_ascii_case("bh")
+        {
+            return Err(invalid_input(
+                "differential-expression options require --de",
+            ));
+        }
         return Ok(());
     }
 
@@ -5634,59 +6901,41 @@ fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         ));
     }
 
-    // `auto` mirrors Python's `_resolve_de_method` (stages.py:1784): it selects
-    // `deqms` when quantification is directlfq, otherwise `limrots`. Both targets
-    // are ported, so `auto` validates here and is resolved to the concrete method
-    // just before the DE stage (see `resolve_de_method`). `ensemble` IS supported
-    // (it runs member methods and fuses them with the deterministic top-k
-    // consensus combiner).
-    let is_ensemble = matches!(de.method.trim().to_ascii_lowercase().as_str(), "ensemble");
-    match de.method.trim().to_ascii_lowercase().as_str() {
-        "limma" | "deqms" | "rots" | "limrots" | "proda" | "ensemble" | "auto" => {}
-        _ => return Err(invalid_input(format!("unknown DE method `{}`", de.method))),
-    }
-
-    // Both `bh` (plain Benjamini-Hochberg) and `ihw` (Independent Hypothesis
-    // Weighting, ported in mokume-stats' `ihw_correction` and applied per method
-    // in `de::run_member`) are implemented, mirroring mokume's `fdr_method`
-    // options. Any other value is unsupported.
-    if !matches!(
-        de.fdr_method.trim().to_ascii_lowercase().as_str(),
-        "bh" | "ihw"
-    ) {
-        return Err(MokumeError::NotImplemented {
-            stage: "differential-expression-fdr-method",
-        });
-    }
-    // `--de-ensemble-methods` only has meaning for the ensemble method; reject it
-    // for the single-method paths rather than silently ignoring it. Validate an
-    // ensemble's members and min-k before execution.
-    if de.ensemble_methods.is_some() && !is_ensemble {
+    if de.output.is_none() {
         return Err(invalid_input(
-            "--de-ensemble-methods only applies to --de-method ensemble",
+            "differential expression requires --de-output so results are not discarded",
         ));
     }
-    if is_ensemble {
-        de::validated_ensemble_member_names(de)?;
+
+    de::validate_config(de, true)?;
+    let effective_method = if de.method.eq_ignore_ascii_case("auto") {
+        resolve_de_method(config)
+    } else {
+        de.method.trim().to_ascii_lowercase()
+    };
+    if matches!(effective_method.as_str(), "rots" | "limrots")
+        && !de.fdr_method.eq_ignore_ascii_case("bh")
+    {
+        return Err(invalid_input(format!(
+            "--de-fdr-method {} does not apply to {effective_method}, which retains its permutation FDR",
+            de.fdr_method
+        )));
     }
-    // `--de-contrasts-file` is expanded into `contrasts` before validation runs
+    if !de.method.eq_ignore_ascii_case("ensemble") && de.ensemble_min_k != 2 {
+        return Err(invalid_input(
+            "--de-ensemble-min-k only applies to --de-method ensemble",
+        ));
+    }
+
+    // `--de-contrast-file` is expanded into `contrasts` before validation runs
     // (see `expand_de_contrasts_file`), so by here `contrasts_file` is already
     // folded in and the contrasts list below reflects both sources.
-    if !de.log2fc_threshold.is_finite() || de.log2fc_threshold < 0.0 {
-        return Err(invalid_input(
-            "--de-log2fc must be a finite, non-negative value",
-        ));
-    }
-    if !de.fdr_threshold.is_finite() || !(0.0..=1.0).contains(&de.fdr_threshold) {
-        return Err(invalid_input("--de-fdr must be between 0 and 1"));
-    }
-
     match &de.contrasts {
         Some(contrasts) if !contrasts.is_empty() => {}
         _ => {
             return Err(invalid_input(
-                "differential expression requires explicit contrasts via --de-contrasts \
-                 or --de-contrasts-file (format: 'GroupA vs GroupB' or 'GroupA-GroupB')",
+                "differential expression requires explicit contrasts via --de-contrast \
+                 or --de-contrast-file",
             ));
         }
     }
@@ -5722,9 +6971,9 @@ fn resolve_de_method(config: &FeatureToProteinsConfig) -> String {
     }
 }
 
-/// Fold `--de-contrasts-file` (a TSV with `group1`/`group2` columns) into the
+/// Fold `--de-contrast-file` (a TSV with `group1`/`group2` columns) into the
 /// `contrasts` list, mirroring Python (features2proteins.py:768): each row
-/// appends `"<group1> vs <group2>"` after the inline `--de-contrasts` entries.
+/// appends `"<group1> vs <group2>"` after the repeated `--de-contrast` entries.
 /// The returned config owns the merged list and has `contrasts_file` cleared, so
 /// validation and the DE stage observe a single resolved contrast list. Called
 /// only when `contrasts_file.is_some()`.
@@ -5781,95 +7030,208 @@ fn supports_sample_normalization(method: &str) -> bool {
     parse_sample_normalization_method(method).is_ok()
 }
 
-/// Compute the Run-QC group-filter exclusions for `features2peptides`: stream the
-/// initial-filtered features once, accumulate each sample's total intensity,
-/// feature-row count and distinct-protein count, then drop samples below the
-/// configured thresholds (Python `run_qc.py` RunIntensityFilter / MinFeaturesFilter,
-/// applied first in the per-sample chain). max-missing-rate and sample-correlation
-/// are no-ops on this long feature table (every kept row has intensity > 0; a
-/// single-sample frame cannot cross-correlate), matching Python's per-sample
-/// application. The normalization median is computed separately (before Run-QC),
-/// so excluded samples still contribute to it -- verified bit-exact on PXD003539.
-fn collect_run_qc_exclusions(
-    parquet: &Path,
+#[derive(Debug, Default)]
+struct RunQcProteinStats {
+    canonicals: HashSet<String>,
+    runs: HashMap<i64, RunQcRunProteinStats>,
+}
+
+#[derive(Debug, Default)]
+struct RunQcRunProteinStats {
+    canonicals: HashSet<String>,
+    total_intensity: f64,
+}
+
+#[derive(Debug, Default)]
+struct RunQcRunStats {
+    total_intensity: f64,
+    feature_count: usize,
+    protein_count: usize,
+}
+
+struct RunQcSource<'a> {
     filtering: FilterConfig,
-    sdrf: Option<&SdrfTable>,
     keep_shared_peptides: bool,
     min_unique_peptides: usize,
+    contaminant_patterns: &'a [String],
+    remove_protein_ids: &'a HashSet<String>,
+}
+
+/// Compute the Run-QC exclusions for `features2peptides`. Python applies the
+/// filter pipeline to one sample frame at a time, then groups Run-QC decisions by
+/// `TechReplicate`; the exclusion key is therefore `(sample, technical replicate)`.
+/// The pre-pass mirrors the Python order:
+///
+/// 1. apply the per-`(sample, protein)` distinct-canonical `min_unique` gate;
+/// 2. reject technical runs below total-intensity / distinct-feature / protein
+///    thresholds;
+/// 3. build each remaining sample's complete distinct `(protein, canonical)`
+///    feature universe and reject runs whose absent fraction exceeds
+///    `max_missing_rate`.
+///
+/// The normalization median is computed separately before Run-QC, so rejected
+/// runs still contribute to it, matching Python.
+fn collect_run_qc_exclusions(
+    parquet: &Path,
+    sdrf: Option<&SdrfTable>,
     run_qc: &RunQcFilterConfig,
-    contaminant_patterns: &[String],
-) -> Result<HashSet<String>> {
-    if run_qc.min_total_intensity <= 0.0
-        && run_qc.min_identified_features == 0
-        && run_qc.min_identified_proteins == 0
-    {
+    source: &RunQcSource<'_>,
+    named_score: Option<&NamedScoreFilterConfig>,
+) -> Result<HashSet<RunQcKey>> {
+    if !run_qc_is_active(run_qc) {
         return Ok(HashSet::new());
     }
 
-    // Python applies the per-protein `min_unique` gate (>= N distinct canonical
-    // peptides per sample) BEFORE the Run-QC pipeline, so singleton-protein
-    // features are not counted. Buffer per `(sample, protein)` to reproduce that
-    // gate, then aggregate the surviving proteins into the per-sample stats.
-    let mut stats: HashMap<(String, String), (HashSet<String>, usize, f64)> = HashMap::new();
+    let proteins = collect_run_qc_proteins(parquet, sdrf, source, named_score)?;
+    let min_unique = if source.keep_shared_peptides {
+        0
+    } else {
+        source.min_unique_peptides
+    };
+    let runs = summarize_run_qc_runs(&proteins, min_unique);
+    let mut excluded = primary_run_qc_exclusions(&runs, run_qc);
+    extend_missing_rate_exclusions(&proteins, min_unique, run_qc, &mut excluded);
+    Ok(excluded)
+}
+
+fn run_qc_is_active(run_qc: &RunQcFilterConfig) -> bool {
+    run_qc.min_total_intensity > 0.0
+        || run_qc.min_identified_features > 0
+        || run_qc.min_identified_proteins > 0
+        || run_qc.max_missing_rate < 1.0
+}
+
+/// Buffer per-run feature sets under each `(sample, protein)`: the protein-level
+/// `min_unique` decision needs the whole sample, while Run-QC metrics need the
+/// technical-run subsets.
+fn collect_run_qc_proteins(
+    parquet: &Path,
+    sdrf: Option<&SdrfTable>,
+    source: &RunQcSource<'_>,
+    named_score: Option<&NamedScoreFilterConfig>,
+) -> Result<HashMap<(String, String), RunQcProteinStats>> {
+    let mut proteins: HashMap<(String, String), RunQcProteinStats> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
-        if !passes_feature_filter(&feature, filtering, keep_shared_peptides) {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+        if !passes_feature_filter(&feature, source.filtering, source.keep_shared_peptides) {
             return Ok(());
         }
         // Run-QC shares the median pre-pass contaminant semantics (Python computes
         // both via `SQLFilterBuilder` ahead of the per-sample chain): match the
-        // **raw** `pg_accessions`, case-sensitive substring, DECOY handled by the
-        // `is_decoy` load filter.
-        if filtering.remove_contaminants
-            && matches_sql_contaminant(
-                &feature.protein_accessions,
-                contaminant_patterns,
-                feature.is_decoy.is_some(),
-            )
+        // **raw** `pg_accessions` as a case-sensitive substring; structured
+        // `is_decoy` flags are handled independently by the load filter.
+        if source.filtering.remove_contaminants
+            && matches_sql_contaminant(&feature.protein_accessions, source.contaminant_patterns)
         {
             return Ok(());
         }
         let Some(protein_group) = protein_group_name(&feature.protein_accessions) else {
             return Ok(());
         };
+        if has_removed_accession(&feature.protein_accessions, source.remove_protein_ids) {
+            return Ok(());
+        }
         let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
-        let entry = stats.entry((sample, protein_group)).or_default();
-        entry.0.insert(feature.sequence.clone());
-        entry.1 += 1;
-        entry.2 += feature.intensity;
+        let technical_replicate =
+            run_qc_key(&feature, sdrf_record, sample.clone()).technical_replicate;
+        let protein = proteins.entry((sample, protein_group)).or_default();
+        protein.canonicals.insert(feature.sequence.clone());
+        let run = protein.runs.entry(technical_replicate).or_default();
+        run.canonicals.insert(feature.sequence.clone());
+        run.total_intensity += feature.intensity;
         Ok(())
     })?;
+    Ok(proteins)
+}
 
-    let min_unique = if keep_shared_peptides {
-        0
-    } else {
-        min_unique_peptides
-    };
-    let mut sample_total: HashMap<String, f64> = HashMap::new();
-    let mut sample_features: HashMap<String, usize> = HashMap::new();
-    let mut sample_proteins: HashMap<String, usize> = HashMap::new();
-    for ((sample, _protein), (canonicals, features, intensity)) in &stats {
-        if canonicals.len() < min_unique {
+fn summarize_run_qc_runs(
+    proteins: &HashMap<(String, String), RunQcProteinStats>,
+    min_unique: usize,
+) -> HashMap<RunQcKey, RunQcRunStats> {
+    let mut runs: HashMap<RunQcKey, RunQcRunStats> = HashMap::new();
+    for ((sample, _protein), protein) in proteins {
+        if protein.canonicals.len() < min_unique {
             continue;
         }
-        *sample_total.entry(sample.clone()).or_insert(0.0) += *intensity;
-        *sample_features.entry(sample.clone()).or_insert(0) += *features;
-        *sample_proteins.entry(sample.clone()).or_insert(0) += 1;
-    }
-
-    let mut excluded = HashSet::new();
-    for (sample, total) in &sample_total {
-        let count = sample_features.get(sample).copied().unwrap_or(0);
-        let proteins = sample_proteins.get(sample).copied().unwrap_or(0);
-        let drop = (run_qc.min_total_intensity > 0.0 && *total < run_qc.min_total_intensity)
-            || (run_qc.min_identified_features > 0 && count < run_qc.min_identified_features)
-            || (run_qc.min_identified_proteins > 0 && proteins < run_qc.min_identified_proteins);
-        if drop {
-            excluded.insert(sample.clone());
+        for (technical_replicate, protein_run) in &protein.runs {
+            let run = runs
+                .entry(RunQcKey {
+                    sample: sample.clone(),
+                    technical_replicate: *technical_replicate,
+                })
+                .or_default();
+            run.total_intensity += protein_run.total_intensity;
+            run.feature_count += protein_run.canonicals.len();
+            run.protein_count += 1;
         }
     }
-    Ok(excluded)
+    runs
+}
+
+fn primary_run_qc_exclusions(
+    runs: &HashMap<RunQcKey, RunQcRunStats>,
+    run_qc: &RunQcFilterConfig,
+) -> HashSet<RunQcKey> {
+    let mut excluded = HashSet::new();
+    for (key, run) in runs {
+        let drop = (run_qc.min_total_intensity > 0.0
+            && run.total_intensity < run_qc.min_total_intensity)
+            || (run_qc.min_identified_features > 0
+                && run.feature_count < run_qc.min_identified_features)
+            || (run_qc.min_identified_proteins > 0
+                && run.protein_count < run_qc.min_identified_proteins);
+        if drop {
+            excluded.insert(key.clone());
+        }
+    }
+    excluded
+}
+
+fn extend_missing_rate_exclusions(
+    proteins: &HashMap<(String, String), RunQcProteinStats>,
+    min_unique: usize,
+    run_qc: &RunQcFilterConfig,
+    excluded: &mut HashSet<RunQcKey>,
+) {
+    if run_qc.max_missing_rate >= 1.0 {
+        return;
+    }
+
+    // MissingRateFilter runs after the preceding Run-QC filters. Its universe is
+    // the distinct `(ProteinName, PeptideCanonical)` set still present in the
+    // sample, while the numerator is each surviving run's distinct detected set.
+    let mut sample_universe_size: HashMap<String, usize> = HashMap::new();
+    let mut detected_by_run: HashMap<RunQcKey, usize> = HashMap::new();
+    for ((sample, _protein), protein) in proteins {
+        if protein.canonicals.len() < min_unique {
+            continue;
+        }
+        let mut surviving_canonicals = HashSet::new();
+        for (technical_replicate, protein_run) in &protein.runs {
+            let key = RunQcKey {
+                sample: sample.clone(),
+                technical_replicate: *technical_replicate,
+            };
+            if excluded.contains(&key) {
+                continue;
+            }
+            surviving_canonicals.extend(protein_run.canonicals.iter());
+            *detected_by_run.entry(key).or_insert(0) += protein_run.canonicals.len();
+        }
+        *sample_universe_size.entry(sample.clone()).or_insert(0) += surviving_canonicals.len();
+    }
+
+    for (key, detected) in detected_by_run {
+        let universe = sample_universe_size.get(&key.sample).copied().unwrap_or(0);
+        if universe == 0 {
+            continue;
+        }
+        let missing_rate = 1.0 - (detected as f64 / universe as f64);
+        if missing_rate > run_qc.max_missing_rate {
+            excluded.insert(key);
+        }
+    }
 }
 
 /// The group-level intensity filters that need a per-sample buffering pre-pass
@@ -5906,12 +7268,11 @@ struct IntensityGroupFilters {
 /// bounds use f64, matching pandas upcasting the f32 column for `quantile`.
 fn collect_intensity_group_filters(
     parquet: &Path,
-    filtering: FilterConfig,
     sdrf: Option<&SdrfTable>,
-    keep_shared_peptides: bool,
-    min_unique_peptides: usize,
+    source: &RunQcSource<'_>,
     intensity: &IntensityFilterConfig,
-    run_qc_excluded: &HashSet<String>,
+    run_qc_excluded: &HashSet<RunQcKey>,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<IntensityGroupFilters> {
     let cv_active = intensity.cv_threshold.is_some();
     let quantile_active = intensity.quantile_lower > 0.0 || intensity.quantile_upper < 1.0;
@@ -5940,8 +7301,8 @@ fn collect_intensity_group_filters(
     let mut group_intensities: HashMap<(String, String, String), Vec<f64>> = HashMap::new();
     let mut cell_canonicals: HashMap<(String, String), HashSet<String>> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
-        if !passes_feature_filter(&feature, filtering, keep_shared_peptides) {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+        if !passes_feature_filter(&feature, source.filtering, source.keep_shared_peptides) {
             return Ok(());
         }
         let Some(protein_group) = protein_group_name(&feature.protein_accessions) else {
@@ -5952,7 +7313,8 @@ fn collect_intensity_group_filters(
         }
         let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample = sample_name(&feature, sdrf_record);
-        if run_qc_excluded.contains(&sample) {
+        let run_key = run_qc_key(&feature, sdrf_record, sample.clone());
+        if run_qc_excluded.contains(&run_key) {
             return Ok(());
         }
         cell_canonicals
@@ -5966,10 +7328,10 @@ fn collect_intensity_group_filters(
         Ok(())
     })?;
 
-    let min_unique = if keep_shared_peptides {
+    let min_unique = if source.keep_shared_peptides {
         0
     } else {
-        min_unique_peptides
+        source.min_unique_peptides
     };
 
     // Phase 2: per group, apply the `min_unique` gate (Python applies it before the
@@ -6056,8 +7418,8 @@ fn irs_mixture_first_token(value: &str) -> &str {
 /// IRS-internal `split_part(run, '_', 2)` ([`irs_tech_replicate_of`]); the
 /// **apply** side keys by the last `_` token ([`tech_replicate_of`]) — both are
 /// reproduced exactly because they diverge for runs with three or more tokens.
-/// An empty map (no reference-channel rows, or none with a positive
-/// `irs_value`) means IRS is a no-op, matching Python's "skip IRS" warning path.
+/// An empty map means no valid scale could be computed; the command layer turns
+/// that into an explicit input error.
 fn collect_irs_scale(
     parquet: &Path,
     irs: &IrsChannelConfig,
@@ -6065,6 +7427,7 @@ fn collect_irs_scale(
     remove_contaminants: bool,
     contaminant_patterns: &[String],
     min_intensity: f64,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<HashMap<i64, f64>> {
     // Phase 1: per run, buffer the reference-channel intensities and remember the
     // IRS-internal techreplicate and mixture. A run with no integer techreplicate
@@ -6077,7 +7440,7 @@ fn collect_irs_scale(
     }
     let mut runs: HashMap<String, RunBuffer> = HashMap::new();
     let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features(reader, |feature| {
+    stream_qpx_features_maybe_score(reader, named_score, |feature| {
         // Channel match is on the *raw* feature label (Python filters on
         // `channel = ?` before any reformat). A row with no label never matches.
         if feature.label.as_deref() != Some(irs.channel.as_str()) {
@@ -6093,11 +7456,7 @@ fn collect_irs_scale(
         // pre-pass / Python's `SQLFilterBuilder` (case-sensitive substring; the
         // default pattern list routes through the `is_contaminant` fallback).
         if remove_contaminants
-            && matches_sql_contaminant(
-                &feature.protein_accessions,
-                contaminant_patterns,
-                feature.is_decoy.is_some(),
-            )
+            && matches_sql_contaminant(&feature.protein_accessions, contaminant_patterns)
         {
             return Ok(());
         }
@@ -6370,6 +7729,8 @@ fn collect_intensity_factors(
     sdrf: Option<&SdrfTable>,
     contaminant_patterns: &[String],
     keep_shared_peptides: bool,
+    memory: &MemoryPlan,
+    named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<IntensityFactors> {
     if matches!(
         config.quantification,
@@ -6409,11 +7770,11 @@ fn collect_intensity_factors(
     // peptides are kept, the median pre-pass must include non-unique rows so the
     // per-sample median (and the resulting sample/run factors) matches Python.
     // The caller decides the value: the protein path keeps the legacy
-    // `quantification == Ibaq` rule (`stages.py:325`), while the peptide path
+    // `quantification == Pibaq` rule (`stages.py:325`), while the peptide path
     // forwards the `--keep-shared-peptides` flag from `FeatureToPeptidesConfig`,
     // which `peptide_export_config` cannot represent (it pins quantification to
-    // `Sum`, so the old in-function `== Ibaq` derivation always read `false`).
-    stream_input_features(&config.input, sdrf, |feature| {
+    // `Sum`, so the old in-function `== Pibaq` derivation always read `false`).
+    stream_normalization_features(config, sdrf, memory, named_score, &mut |feature| {
         collector.push(feature, config.filtering, keep_shared_peptides)
     })?;
     if collector.normalization_proteins.is_some()
@@ -6425,6 +7786,25 @@ fn collect_intensity_factors(
         ));
     }
     Ok(collector.into_factors())
+}
+
+fn stream_normalization_features<F>(
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    memory: &MemoryPlan,
+    named_score: Option<&NamedScoreFilterConfig>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    match (&config.input.parquet, named_score) {
+        (Some(parquet), Some(score)) => {
+            let reader = QpxParquetReader::open(parquet, memory.qpx_batch_size())?;
+            stream_qpx_features_with_score(reader, score, consume)
+        }
+        _ => stream_input_features(&config.input, sdrf, memory, consume),
+    }
 }
 
 fn sample_method_uses_factors(method: Option<SampleNormalizationMethod>) -> bool {
@@ -6481,16 +7861,10 @@ impl<'a> NormalizationFactorCollector<'a> {
         }
         // Contaminant removal in the median pre-pass mirrors Python's
         // `SQLFilterBuilder`: match the **raw** `pg_accessions` (not the parsed
-        // group), case-sensitive `%pattern%` substring. The DECOY-via-`is_decoy`
-        // column substitution is already covered by `passes_feature_filter`
-        // dropping `is_decoy` rows, so the matcher skips DECOY when the column is
-        // present (`feature.is_decoy.is_some()`).
+        // group), as a case-sensitive literal substring. Structured `is_decoy`
+        // flags are handled independently by `passes_feature_filter`.
         if filtering.remove_contaminants
-            && matches_sql_contaminant(
-                &feature.protein_accessions,
-                self.contaminant_patterns,
-                feature.is_decoy.is_some(),
-            )
+            && matches_sql_contaminant(&feature.protein_accessions, self.contaminant_patterns)
         {
             return Ok(());
         }
@@ -6583,13 +7957,8 @@ impl<'a> NormalizationFactorCollector<'a> {
     }
 }
 
-/// Read the `--remove_ids` file (one protein ID per line). Mirrors Python's
-/// `remove_protein_by_ids`: the file is split on newlines and blank/whitespace-
-/// only lines are dropped. Each surviving entry is matched as a literal
-/// substring of `ProteinName` during ingest, the same effect as Python's
-/// `re.escape`d regex `contains`. An empty list leaves every row in place
-/// (Python returns the unchanged dataset when no IDs are present).
-fn load_remove_ids(path: &Path) -> Result<Vec<String>> {
+/// Read exact accessions from `--remove_ids`, one per non-empty line.
+fn load_remove_ids(path: &Path) -> Result<HashSet<String>> {
     let contents = read_to_string(path).map_err(|source| MokumeError::Io {
         path: path.to_path_buf(),
         source,
@@ -6598,8 +7967,16 @@ fn load_remove_ids(path: &Path) -> Result<Vec<String>> {
         .split('\n')
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
+        .map(parse_protein_accession)
+        .filter(|accession| !accession.is_empty())
         .collect())
+}
+
+fn has_removed_accession(accessions: &[String], removed: &HashSet<String>) -> bool {
+    accessions
+        .iter()
+        .map(|accession| parse_protein_accession(accession))
+        .any(|accession| removed.contains(&accession))
 }
 
 fn load_normalization_proteins(path: &Path) -> Result<HashSet<String>> {
@@ -6627,13 +8004,6 @@ fn sample_condition(sample: &str, sdrf_record: Option<&SdrfRecord>) -> String {
     sdrf_record
         .and_then(|record| record.condition.clone())
         .unwrap_or_else(|| sample.to_owned())
-}
-
-/// Whether `enzyme` (a pyOpenMS canonical name, case-insensitive) has a ported
-/// cleavage rule for the iBAQ FASTA digest. Shared with the `peptides2protein`
-/// CLI so it can reject unported enzymes with a stable stage before loading.
-pub fn supports_ibaq_enzyme(enzyme: &str) -> bool {
-    cleavage_rule(enzyme).is_some()
 }
 
 fn unsupported(stage: &'static str) -> Result<()> {
@@ -6665,6 +8035,210 @@ fn directlfq_ion((key, intensity): (DirectLfqCellKey, f64), ion_seq_rank: u32) -
         sample: key.sample,
         intensity,
     }
+}
+
+struct PreparedDirectLfq {
+    ions: Vec<DirectLfqIon>,
+    lexical_to_protein: HashMap<ProteinId, ProteinId>,
+    lexical_to_sample: HashMap<SampleId, SampleId>,
+    solver_samples: Vec<SampleId>,
+}
+
+fn remap_directlfq_ion(
+    entry: (DirectLfqCellKey, f64),
+    ion_seq_rank: u32,
+    protein_to_lexical: &HashMap<ProteinId, ProteinId>,
+    sample_to_lexical: &HashMap<SampleId, SampleId>,
+) -> DirectLfqIon {
+    let mut ion = directlfq_ion(entry, ion_seq_rank);
+    ion.protein = protein_to_lexical
+        .get(&ion.protein)
+        .copied()
+        .unwrap_or(ion.protein);
+    ion.sample = sample_to_lexical
+        .get(&ion.sample)
+        .copied()
+        .unwrap_or(ion.sample);
+    ion
+}
+
+/// Build DirectLFQ input with name-sorted ids. Matrix row and column positions
+/// participate in DirectLFQ tie-breaking, so encounter-order registry ids must
+/// not leak into the solver.
+fn prepare_directlfq_ions(
+    directlfq_sums: HashMap<DirectLfqCellKey, f64>,
+    allowed_cells: &HashSet<CellKey>,
+    proteins: &StringIdRegistry<ProteinId>,
+    canonical_peptides: &StringIdRegistry<PeptideId>,
+    samples: &StringIdRegistry<SampleId>,
+) -> PreparedDirectLfq {
+    let (protein_to_lexical, lexical_to_protein) = lexical_id_remap(proteins);
+    let (sample_to_lexical, lexical_to_sample) = lexical_id_remap(samples);
+    let seq_rank = canonical_sequence_ranks(&directlfq_sums, canonical_peptides);
+    let mut ions = directlfq_sums
+        .into_iter()
+        .filter(|(key, _)| {
+            allowed_cells.contains(&CellKey {
+                protein: key.protein,
+                sample: key.sample,
+            })
+        })
+        .map(|entry| {
+            let rank = seq_rank
+                .get(&entry.0.canonical)
+                .copied()
+                .unwrap_or(u32::MAX);
+            remap_directlfq_ion(entry, rank, &protein_to_lexical, &sample_to_lexical)
+        })
+        .collect::<Vec<_>>();
+    ions.sort_by_key(|ion| {
+        (
+            ion.protein.get(),
+            ion.ion_seq_rank,
+            ion.ion.get(),
+            ion.sample.get(),
+        )
+    });
+    let mut solver_samples = ions.iter().map(|ion| ion.sample).collect::<Vec<_>>();
+    solver_samples.sort_by_key(|sample| sample.get());
+    solver_samples.dedup();
+    PreparedDirectLfq {
+        ions,
+        lexical_to_protein,
+        lexical_to_sample,
+        solver_samples,
+    }
+}
+
+fn remap_directlfq_values(
+    values: Vec<(ProteinId, Vec<(SampleId, f64)>)>,
+    prepared: &PreparedDirectLfq,
+) -> HashMap<ProteinId, Vec<(SampleId, f64)>> {
+    values
+        .into_iter()
+        .map(|(protein, per_sample)| {
+            let protein = prepared
+                .lexical_to_protein
+                .get(&protein)
+                .copied()
+                .unwrap_or(protein);
+            let per_sample = per_sample
+                .into_iter()
+                .map(|(sample, intensity)| {
+                    let sample = prepared
+                        .lexical_to_sample
+                        .get(&sample)
+                        .copied()
+                        .unwrap_or(sample);
+                    (sample, intensity)
+                })
+                .collect();
+            (protein, per_sample)
+        })
+        .collect()
+}
+
+fn directlfq_sample_columns<'a>(
+    prepared: &PreparedDirectLfq,
+    samples: &'a StringIdRegistry<SampleId>,
+) -> Result<Vec<(SampleId, &'a str)>> {
+    prepared
+        .solver_samples
+        .iter()
+        .map(|lexical| {
+            let original = prepared
+                .lexical_to_sample
+                .get(lexical)
+                .copied()
+                .unwrap_or(*lexical);
+            let name = samples
+                .resolve(original)
+                .ok_or_else(|| invalid_input("DirectLFQ ion export sample id is not registered"))?;
+            Ok((*lexical, name))
+        })
+        .collect()
+}
+
+fn directlfq_ion_row(
+    normalized: &DirectLfqNormalizedIon,
+    prepared: &PreparedDirectLfq,
+    proteins: &StringIdRegistry<ProteinId>,
+    canonical_peptides: &StringIdRegistry<PeptideId>,
+    sample_columns: &[(SampleId, &str)],
+) -> Result<Vec<String>> {
+    let original_protein = prepared
+        .lexical_to_protein
+        .get(&normalized.protein)
+        .copied()
+        .unwrap_or(normalized.protein);
+    let protein = proteins
+        .resolve(original_protein)
+        .ok_or_else(|| invalid_input("DirectLFQ ion export protein id is not registered"))?;
+    let ion = canonical_peptides
+        .resolve(normalized.ion)
+        .ok_or_else(|| invalid_input("DirectLFQ ion export peptide id is not registered"))?;
+    let quantities = normalized
+        .quantities
+        .iter()
+        .copied()
+        .collect::<HashMap<_, _>>();
+    let mut row = vec![protein.to_owned(), ion.to_owned()];
+    row.extend(
+        sample_columns
+            .iter()
+            .map(|(sample, _)| format_float(quantities.get(sample).copied().unwrap_or(0.0))),
+    );
+    Ok(row)
+}
+
+fn write_directlfq_ions(
+    path: &Path,
+    normalized_ions: &[DirectLfqNormalizedIon],
+    prepared: &PreparedDirectLfq,
+    proteins: &StringIdRegistry<ProteinId>,
+    canonical_peptides: &StringIdRegistry<PeptideId>,
+    samples: &StringIdRegistry<SampleId>,
+) -> Result<()> {
+    create_parent_dir(path)?;
+    let file = File::create(path).map_err(|source| MokumeError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut writer = WriterBuilder::new().from_writer(file);
+
+    let sample_columns = directlfq_sample_columns(prepared, samples)?;
+    let mut header = vec!["protein".to_owned(), "ion".to_owned()];
+    header.extend(sample_columns.iter().map(|(_, name)| (*name).to_owned()));
+    writer
+        .write_record(header)
+        .map_err(|source| csv_error(path, source))?;
+
+    let mut rows = normalized_ions.iter().collect::<Vec<_>>();
+    rows.sort_by_key(|normalized| {
+        (
+            normalized.protein.get(),
+            normalized.ion_seq_rank,
+            normalized.ion.get(),
+        )
+    });
+    for normalized in rows {
+        let row = directlfq_ion_row(
+            normalized,
+            prepared,
+            proteins,
+            canonical_peptides,
+            &sample_columns,
+        )?;
+        writer
+            .write_record(row)
+            .map_err(|source| csv_error(path, source))?;
+    }
+
+    writer.flush().map_err(|source| MokumeError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
 }
 
 /// Assign every distinct canonical id appearing in `directlfq_sums` a rank by
@@ -6751,50 +8325,59 @@ fn sample_name(feature: &QpxFeatureRecord, sdrf_record: Option<&SdrfRecord>) -> 
         .unwrap_or_else(|| feature.run_file_name.clone())
 }
 
+fn run_qc_key(
+    feature: &QpxFeatureRecord,
+    sdrf_record: Option<&SdrfRecord>,
+    sample: String,
+) -> RunQcKey {
+    let technical_replicate = sdrf_record
+        .and_then(|record| record.technical_replicate)
+        .map(i64::from)
+        .unwrap_or_else(|| tech_replicate_of(&feature.run_file_name));
+    RunQcKey {
+        sample,
+        technical_replicate,
+    }
+}
+
 fn peptide_key(feature: &QpxFeatureRecord) -> String {
     format!("{}|z{}", feature.peptidoform, feature.charge)
 }
 
 fn is_contaminant(accession: &str) -> bool {
-    // Mirrors Python's contaminant deletion semantics exactly: both
-    // `SQLFilterBuilder._build_contaminant_filter` (pg_accessions substring
-    // `%pattern%`) and `ContaminantFilter.apply` (uppercased ProteinName
-    // substring) match only the default patterns CONTAMINANT/ENTRAP/DECOY.
-    // No `con__`/`cont_` prefix rule exists upstream, so none is applied here.
+    // Mirrors Python's default contaminant deletion semantics exactly.
     let upper = accession.to_ascii_uppercase();
-    upper.contains("CONTAMINANT") || upper.contains("ENTRAP") || upper.contains("DECOY")
+    upper.contains("CONTAMINANT")
+        || upper.contains("CONTAM_")
+        || upper.contains("ENTRAP")
+        || upper.contains("DECOY")
 }
 
-/// The default contaminant patterns (`["CONTAMINANT", "ENTRAP", "DECOY"]`).
+/// The default contaminant patterns.
 /// When the configured patterns are empty or equal this list, the two custom
-/// matchers below are bypassed in favour of [`is_contaminant`], so the default
-/// path keeps its already-verified cell-lines parity bit-for-bit.
+/// matchers below are bypassed in favour of [`is_contaminant`].
 fn is_default_contaminant_patterns(patterns: &[String]) -> bool {
     patterns.is_empty()
-        || (patterns.len() == 3
+        || (patterns.len() == 4
             && patterns[0] == "CONTAMINANT"
-            && patterns[1] == "ENTRAP"
-            && patterns[2] == "DECOY")
+            && patterns[1] == "CONTAM_"
+            && patterns[2] == "ENTRAP"
+            && patterns[3] == "DECOY")
 }
 
 /// Median / Run-QC pre-pass contaminant match. Replicates Python's
-/// `SQLFilterBuilder._build_contaminant_filter` (`feature.py:98-109`): each
-/// pattern is matched as a **case-sensitive** `%pattern%` substring against the
-/// **raw** `pg_accessions` (Rust's unparsed `feature.protein_accessions`), with
-/// no SQL escaping. A feature is a contaminant when ANY pattern matches ANY
-/// accession. DECOY special case (`feature.py:104`): when a pattern is `DECOY`
-/// (case-insensitive) and the parquet carries an `is_decoy` column, Python uses
-/// `is_decoy = false` instead of a name match; the load-time
-/// `passes_feature_filter` already drops `is_decoy` rows, so the DECOY pattern
-/// contributes no name match here and is skipped.
-fn matches_sql_contaminant(accessions: &[String], patterns: &[String], has_is_decoy: bool) -> bool {
+/// `SQLFilterBuilder._build_contaminant_filter`: each pattern is matched as a
+/// case-sensitive literal substring against the raw `pg_accessions` (Rust's
+/// unparsed `feature.protein_accessions`). A feature is a contaminant when ANY
+/// pattern matches ANY accession. When the parquet carries an `is_decoy`
+/// column, the load-time `passes_feature_filter` independently handles that
+/// structured flag; the accession check remains necessary for incomplete
+/// upstream annotations.
+fn matches_sql_contaminant(accessions: &[String], patterns: &[String]) -> bool {
     if is_default_contaminant_patterns(patterns) {
         return accessions.iter().any(|accession| is_contaminant(accession));
     }
     patterns.iter().any(|pattern| {
-        if has_is_decoy && pattern.eq_ignore_ascii_case("DECOY") {
-            return false;
-        }
         accessions
             .iter()
             .any(|accession| accession.contains(pattern.as_str()))
@@ -6825,7 +8408,36 @@ where
         .ok_or_else(|| invalid_input(format!("{namespace} id registry overflow")))
 }
 
-/// Per-canonical monoisotopic molecular weights for the iBAQ TPA column.
+fn register_loading_context(
+    registry: &mut HashMap<(u32, u32), u32>,
+    key: (u32, u32),
+) -> Result<u32> {
+    if let Some(id) = registry.get(&key) {
+        return Ok(*id);
+    }
+    let id = u32::try_from(registry.len())
+        .map_err(|_| invalid_input("loading context id registry overflow"))?;
+    registry.insert(key, id);
+    Ok(id)
+}
+
+fn register_contextual_peptide(
+    registry: &mut HashMap<(PeptideId, u32), PeptideId>,
+    key: (PeptideId, u32),
+    namespace: &str,
+) -> Result<PeptideId> {
+    if let Some(id) = registry.get(&key) {
+        return Ok(*id);
+    }
+    let id = PeptideId::new(
+        u32::try_from(registry.len())
+            .map_err(|_| invalid_input(format!("{namespace} id registry overflow")))?,
+    );
+    registry.insert(key, id);
+    Ok(id)
+}
+
+/// Per-canonical monoisotopic molecular weights for the piBAQ TPA column.
 ///
 /// Mirrors `mokume.io.fasta.digest_fasta_full(..., compute_mw=True)`: every
 /// FASTA entry's MW is computed from its non-standard-stripped sequence, then
@@ -6844,48 +8456,6 @@ fn load_fasta_mw(fasta: &Path) -> Result<HashMap<String, f64>> {
         mw_map.entry(accession).or_insert(weight);
     }
     Ok(mw_map)
-}
-
-fn load_fasta_peptides(
-    config: &FeatureToProteinsConfig,
-) -> Result<HashMap<String, HashSet<String>>> {
-    let Some(fasta) = &config.input.fasta else {
-        return Err(invalid_input("iBAQ quantification requires --fasta option"));
-    };
-    let contents = read_to_string(fasta).map_err(|source| MokumeError::Io {
-        path: fasta.clone(),
-        source,
-    })?;
-    let rule = cleavage_rule(&config.ibaq.enzyme).ok_or_else(|| {
-        invalid_input(format!(
-            "iBAQ enzyme `{}` is not supported",
-            config.ibaq.enzyme
-        ))
-    })?;
-    let mut accession_peptides = HashMap::<String, HashSet<String>>::new();
-    for (identifier, sequence) in parse_fasta_entries(&contents) {
-        let accession = canonicalize_isoform(&parse_protein_accession(&identifier));
-        let peptides = digest_protein(
-            &strip_nonstandard_amino_acids(&sequence),
-            &rule,
-            config.filtering.min_aa,
-            config.ibaq.max_aa,
-        );
-        if peptides.is_empty() {
-            continue;
-        }
-        accession_peptides
-            .entry(accession)
-            .or_default()
-            .extend(peptides);
-    }
-    if accession_peptides.is_empty() {
-        return Err(invalid_input(format!(
-            "FASTA `{}` did not produce theoretical peptides for iBAQ",
-            fasta.display()
-        )));
-    }
-    Ok(accession_peptides)
 }
 
 fn parse_fasta_entries(contents: &str) -> Vec<(String, String)> {
@@ -6941,124 +8511,13 @@ fn canonicalize_isoform(accession: &str) -> String {
     }
 }
 
-/// Cleavage specificity for FASTA digestion, reproducing the pyOpenMS
-/// `ProteaseDigestion` regexes for the enzymes mokume's iBAQ path supports.
-/// `residues` are the standard amino acids that trigger a cut: the pyOpenMS sets
-/// (e.g. Trypsin `(?<=[KRX])(?!P)`) reduce to these once `_strip_nonstandard_aa`
-/// removes `X`/`B`/`Z`/`J`/`U`/`O` before the digest. `cut_before` cuts on the
-/// N-terminal side of a residue (lookahead `(?=[..])`, e.g. Asp-N); otherwise on
-/// the C-terminal side (lookbehind `(?<=[..])`). `block_before_proline` suppresses
-/// a C-terminal cut that is followed by proline (`(?!P)`).
-struct CleavageRule {
-    residues: &'static [char],
-    cut_before: bool,
-    block_before_proline: bool,
-}
-
-/// Map an enzyme name (the pyOpenMS canonical name, case-insensitive) to its
-/// cleavage rule, or `None` when the enzyme is not ported. Each rule is verified
-/// against the pyOpenMS `ProteaseDigestion` digest in the unit tests.
-fn cleavage_rule(enzyme: &str) -> Option<CleavageRule> {
-    let (residues, cut_before, block_before_proline): (&'static [char], bool, bool) =
-        match enzyme.trim().to_ascii_lowercase().as_str() {
-            "trypsin" => (&['K', 'R'], false, true),
-            "trypsin/p" => (&['K', 'R'], false, false),
-            "lys-c" => (&['K'], false, true),
-            "lys-c/p" => (&['K'], false, false),
-            "arg-c" => (&['R'], false, true),
-            "arg-c/p" => (&['R'], false, false),
-            "chymotrypsin" => (&['F', 'Y', 'W', 'L'], false, true),
-            "chymotrypsin/p" => (&['F', 'Y', 'W', 'L'], false, false),
-            "glutamyl endopeptidase" => (&['D', 'E'], false, false),
-            "asp-n" => (&['D'], true, false),
-            "lys-n" => (&['K'], true, false),
-            "pepsina" => (&['F', 'L'], false, false),
-            // Additional pyOpenMS proteases whose `getRegEx()` reduces (after the
-            // X/B/Z/J/U/O strip) to a single-residue-set rule. Each is oracle-
-            // locked against pyOpenMS `ProteaseDigestion` in the unit tests.
-            "leukocyte elastase" => (&['A', 'L', 'I', 'V'], false, true),
-            "clostripain/p" => (&['R'], false, false),
-            "trypchymo" => (&['F', 'Y', 'W', 'L', 'K', 'R'], false, true),
-            "glu-c+p" => (&['D', 'E'], false, true),
-            "alpha-lytic protease" => (&['T', 'A', 'S', 'V'], false, false),
-            "pepsina + p" => (&['F', 'L'], false, true),
-            "elastase-trypsin-chymotrypsin" => {
-                (&['A', 'L', 'I', 'V', 'K', 'R', 'W', 'F', 'Y'], false, true)
-            }
-            "asp-n_ambic" => (&['D', 'E'], true, false),
-            "proline-endopeptidase/hkr" => (&['P'], false, false),
-            _ => return None,
-        };
-    Some(CleavageRule {
-        residues,
-        cut_before,
-        block_before_proline,
-    })
-}
-
-fn digest_protein(
-    sequence: &str,
-    rule: &CleavageRule,
-    min_aa: usize,
-    max_aa: usize,
-) -> HashSet<String> {
-    let residues = sequence.chars().collect::<Vec<_>>();
-    let mut peptides = HashSet::new();
-    let mut start = 0;
-    for index in 0..residues.len() {
-        if is_cleavage_boundary(rule, &residues, index) {
-            push_digest_peptide(&residues, start, index + 1, min_aa, max_aa, &mut peptides);
-            start = index + 1;
-        }
-    }
-    push_digest_peptide(
-        &residues,
-        start,
-        residues.len(),
-        min_aa,
-        max_aa,
-        &mut peptides,
-    );
-    peptides
-}
-
-/// Whether a cut falls between residue `index` and `index + 1`.
-fn is_cleavage_boundary(rule: &CleavageRule, residues: &[char], index: usize) -> bool {
-    if rule.cut_before {
-        // Cut on the N-terminal side of the next residue (lookahead).
-        residues
-            .get(index + 1)
-            .is_some_and(|next| rule.residues.contains(next))
-    } else {
-        // Cut on the C-terminal side of this residue (lookbehind), unless it is
-        // followed by proline and the enzyme blocks that.
-        rule.residues.contains(&residues[index])
-            && (!rule.block_before_proline
-                || residues.get(index + 1).is_none_or(|next| *next != 'P'))
-    }
-}
-
-fn push_digest_peptide(
-    residues: &[char],
-    start: usize,
-    end: usize,
-    min_aa: usize,
-    max_aa: usize,
-    peptides: &mut HashSet<String>,
-) {
-    let length = end.saturating_sub(start);
-    if length >= min_aa && length <= max_aa {
-        peptides.insert(residues[start..end].iter().collect());
-    }
-}
-
 /// Monoisotopic mass of water (`H2O`), the OpenMS `EmpiricalFormula("H2O")`
 /// mono weight added once per peptide/protein by `AASequence::getMonoWeight`.
 const WATER_MONO_MASS: f64 = 18.0105650638;
 
 /// Per-residue monoisotopic masses (the internal residue masses pyOpenMS
 /// returns from `Residue::getMonoWeight(Internal)`), used to reproduce
-/// `AASequence::getMonoWeight` for the iBAQ TPA `MolecularWeight` column.
+/// `AASequence::getMonoWeight` for the piBAQ TPA `MolecularWeight` column.
 /// The full-protein mono weight is `WATER_MONO_MASS + sum(residue masses)`.
 const fn residue_mono_mass(residue: char) -> Option<f64> {
     let mass = match residue {
@@ -7088,7 +8547,7 @@ const fn residue_mono_mass(residue: char) -> Option<f64> {
 }
 
 /// Monoisotopic molecular weight of a protein sequence, matching the pyOpenMS
-/// `AASequence.fromString(seq).getMonoWeight()` value the Python iBAQ TPA path
+/// `AASequence.fromString(seq).getMonoWeight()` value the Python piBAQ TPA path
 /// reads via `digest_fasta_full(..., compute_mw=True)`. The accumulation order
 /// (water first, then residues left to right) mirrors how OpenMS sums the
 /// empirical formula so the result is bit-for-bit comparable within 1e-9 for
@@ -7126,7 +8585,7 @@ fn discover_families(
     min_shared: usize,
 ) -> Result<Vec<ProteinFamily>> {
     if min_shared == 0 {
-        return Err(invalid_input("ibaq-min-shared must be greater than 0"));
+        return Err(invalid_input("pibaq-min-shared must be greater than 0"));
     }
 
     let mut pair_counts = HashMap::<(String, String), usize>::new();
@@ -7386,55 +8845,28 @@ fn invert_peptide_ownership(
     family_peptides
 }
 
-/// One iBAQ output cell: the allocated numerator (`norm_intensity`, the
-/// per-(protein, sample) shared-aware intensity that the piBAQ branches sum)
-/// and the iBAQ value (numerator divided by the owned theoretical peptide
+/// One piBAQ output cell: the allocated numerator (`norm_intensity`, the
+/// per-(protein, sample) shared-aware intensity that the piBAQ allocator sums)
+/// and the piBAQ value (numerator divided by the owned theoretical peptide
 /// count). Keeping both lets `peptides2protein` reproduce the Python
-/// `peptides_to_protein` long-format `NormIntensity` + `Ibaq` columns while
-/// `features2proteins` projects out only the iBAQ value.
+/// `peptides_to_protein` long-format `NormIntensity` + `PiBAQ` columns while
+/// `features2proteins` projects out only the piBAQ value.
 #[derive(Debug, Clone, Copy)]
-struct IbaqCell {
+struct PibaqCell {
     norm_intensity: f64,
-    ibaq: f64,
+    pibaq: f64,
 }
 
-fn finalize_family_rollup(
-    family: &ProteinFamily,
-    observations: &[(String, SampleId, f64)],
-    owned_peptides: &HashSet<String>,
-    proteins: &mut StringIdRegistry<ProteinId>,
-    output: &mut HashMap<CellKey, IbaqCell>,
-) {
-    let denominator = owned_peptides.len().max(1) as f64;
-    let mut by_sample = HashMap::<SampleId, f64>::new();
-    for (_, sample, intensity) in observations {
-        *by_sample.entry(*sample).or_insert(0.0) += *intensity;
-    }
-    for member in &family.members {
-        for (sample, intensity) in &by_sample {
-            insert_ibaq_value(
-                member,
-                *sample,
-                *intensity,
-                *intensity / denominator,
-                proteins,
-                output,
-            );
-        }
-    }
-}
-
-fn finalize_family_proportional(
+fn finalize_family_allocation(
     family: &ProteinFamily,
     observations: &[(String, SampleId, f64)],
     owned_peptides: &HashSet<String>,
     accession_peptides: &HashMap<String, HashSet<String>>,
     peptide_accessions: &HashMap<String, HashSet<String>>,
+    force_equal_shared: bool,
     proteins: &mut StringIdRegistry<ProteinId>,
-    output: &mut HashMap<CellKey, IbaqCell>,
-) {
-    const WEIGHT_FLOOR: f64 = 1e-9;
-
+) -> HashMap<CellKey, PibaqCell> {
+    let mut output = HashMap::new();
     let member_set = family.members.iter().cloned().collect::<HashSet<_>>();
     let mut peptide_members = HashMap::<String, Vec<String>>::new();
     for (peptide, _, _) in observations {
@@ -7481,16 +8913,16 @@ fn finalize_family_proportional(
                     .get(&(member.clone(), *sample))
                     .copied()
                     .unwrap_or(0.0)
-                    + WEIGHT_FLOOR
             })
             .collect::<Vec<_>>();
         let weight_sum = weights.iter().sum::<f64>();
-        if weight_sum <= 0.0 {
-            continue;
-        }
         for (member, weight) in members.iter().zip(weights) {
-            *combined.entry((member.clone(), *sample)).or_insert(0.0) +=
-                *intensity * weight / weight_sum;
+            let allocated = if weight_sum > 0.0 && !force_equal_shared {
+                *intensity * weight / weight_sum
+            } else {
+                *intensity / members.len() as f64
+            };
+            *combined.entry((member.clone(), *sample)).or_insert(0.0) += allocated;
         }
     }
 
@@ -7508,25 +8940,26 @@ fn finalize_family_proportional(
     for ((member, sample), intensity) in combined {
         let denominator = denominators.get(&member).copied().unwrap_or(0);
         if denominator > 0 {
-            insert_ibaq_value(
+            insert_pibaq_value(
                 &member,
                 sample,
                 intensity,
                 intensity / denominator as f64,
                 proteins,
-                output,
+                &mut output,
             );
         }
     }
+    output
 }
 
-fn insert_ibaq_value(
+fn insert_pibaq_value(
     member: &str,
     sample: SampleId,
     norm_intensity: f64,
     value: f64,
     proteins: &mut StringIdRegistry<ProteinId>,
-    output: &mut HashMap<CellKey, IbaqCell>,
+    output: &mut HashMap<CellKey, PibaqCell>,
 ) {
     if !value.is_finite() || value <= 0.0 {
         return;
@@ -7534,9 +8967,9 @@ fn insert_ibaq_value(
     if let Some(protein) = proteins.get_or_insert(member) {
         output.insert(
             CellKey { protein, sample },
-            IbaqCell {
+            PibaqCell {
                 norm_intensity,
-                ibaq: value,
+                pibaq: value,
             },
         );
     }
@@ -7552,50 +8985,61 @@ fn parse_ratio_fraction_merge(value: &str) -> Result<RatioFractionMerge> {
     }
 }
 
-fn detect_reference_samples(sdrf: &SdrfTable, reference_regex: &str) -> Vec<String> {
-    let tokens = reference_regex
-        .split('|')
-        .map(|token| token.trim().to_ascii_lowercase())
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
-    let mut samples = sdrf
-        .records()
+fn detect_reference_samples(raw: &SdrfRawTable, reference_regex: &str) -> Result<Vec<String>> {
+    let sample_col = raw
+        .column_index("source name")
+        .ok_or_else(|| invalid_input("SDRF reference detection requires a `source name` column"))?;
+    let scan_cols = raw
+        .headers()
         .iter()
-        .filter(|record| {
-            let sample = record.sample_accession.to_ascii_lowercase();
-            let condition = record
-                .condition
-                .as_deref()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            tokens
-                .iter()
-                .any(|token| sample.contains(token) || condition.contains(token))
+        .enumerate()
+        .filter_map(|(index, header)| {
+            (header.starts_with("factor value[") || header.starts_with("characteristics["))
+                .then_some(index)
         })
-        .map(|record| record.sample_accession.clone())
         .collect::<Vec<_>>();
-    samples.sort();
-    samples.dedup();
-    samples
+    let pattern = RegexBuilder::new(reference_regex)
+        .case_insensitive(true)
+        .build()
+        .map_err(|source| {
+            invalid_input(format!(
+                "invalid IRS reference regex `{reference_regex}`: {source}"
+            ))
+        })?;
+    let mut samples = Vec::new();
+    for row in 0..raw.row_count() {
+        if scan_cols
+            .iter()
+            .any(|&column| pattern.is_match(raw.cell(row, column)))
+        {
+            samples.push(raw.cell(row, sample_col));
+        }
+    }
+    Ok(sorted_unique(samples.into_iter()))
 }
 
 /// Detect reference samples for ratio quantification, mirroring Python's
 /// `LoadingStage.load_for_ratio` priority:
-///   1. `characteristics[pooled sample]` column (`detect_pooled_from_sdrf`),
-///   2. explicit `--irs-reference-samples`,
-///   3. regex scan across factor/characteristic values (`detect_reference_by_regex`).
+///   1. repeated `--irs-reference-sample`,
+///   2. an explicitly changed reference regex,
+///   3. `characteristics[pooled sample]` autodetection,
+///   4. the default regex across every factor/characteristic column.
 fn resolve_ratio_reference_samples(
     sdrf: &SdrfTable,
+    raw: &SdrfRawTable,
     config: &FeatureToProteinsConfig,
-) -> Vec<String> {
+) -> Result<Vec<String>> {
+    if let Some(samples) = &config.irs.reference_samples {
+        return Ok(sorted_unique(samples.iter().map(String::as_str)));
+    }
+    if config.irs.reference_regex != DEFAULT_REFERENCE_REGEX {
+        return detect_reference_samples(raw, &config.irs.reference_regex);
+    }
     let pooled = detect_pooled_reference_samples(sdrf);
     if !pooled.is_empty() {
-        return pooled;
+        return Ok(pooled);
     }
-    if let Some(samples) = &config.irs.reference_samples {
-        return sorted_unique(samples.iter().map(String::as_str));
-    }
-    detect_reference_samples(sdrf, &config.irs.reference_regex)
+    detect_reference_samples(raw, DEFAULT_REFERENCE_REGEX)
 }
 
 /// Reproduce Python's `detect_pooled_from_sdrf`: a sample is a reference channel
@@ -7619,92 +9063,55 @@ fn detect_pooled_reference_samples(sdrf: &SdrfTable) -> Vec<String> {
     samples
 }
 
-fn resolve_irs_reference_samples(sdrf: &SdrfTable, config: &IrsConfig) -> Vec<String> {
+fn resolve_irs_reference_samples(
+    sdrf: &SdrfTable,
+    raw: &SdrfRawTable,
+    config: &IrsConfig,
+) -> Result<Vec<String>> {
     if let Some(samples) = &config.reference_samples {
-        return sorted_unique(samples.iter().map(String::as_str));
+        return Ok(sorted_unique(samples.iter().map(String::as_str)));
     }
 
     if let (Some(column), Some(values)) = (&config.sdrf_column, &config.sdrf_values) {
-        let samples = detect_reference_samples_by_sdrf_column(sdrf, column, values);
-        if !samples.is_empty() {
-            return samples;
-        }
+        return detect_reference_samples_by_sdrf_column(raw, column, values);
     }
-
-    detect_reference_samples(sdrf, &config.reference_regex)
+    if config.reference_regex != DEFAULT_REFERENCE_REGEX {
+        return detect_reference_samples(raw, &config.reference_regex);
+    }
+    let pooled = detect_pooled_reference_samples(sdrf);
+    if !pooled.is_empty() {
+        return Ok(pooled);
+    }
+    detect_reference_samples(raw, DEFAULT_REFERENCE_REGEX)
 }
 
 fn detect_reference_samples_by_sdrf_column(
-    sdrf: &SdrfTable,
+    raw: &SdrfRawTable,
     column: &str,
     values: &[String],
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let accepted = values
         .iter()
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .collect::<HashSet<_>>();
     if accepted.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-
-    let mut samples = sdrf
-        .records()
-        .iter()
-        .filter(|record| {
-            sdrf_column_values(record, column)
-                .into_iter()
-                .any(|value| accepted.contains(&value.trim().to_ascii_lowercase()))
-        })
-        .map(|record| record.sample_accession.clone())
-        .collect::<Vec<_>>();
-    samples.sort();
-    samples.dedup();
-    samples
-}
-
-fn sdrf_column_values(record: &SdrfRecord, column: &str) -> Vec<String> {
-    let column = column.trim().to_ascii_lowercase();
-    match column.as_str() {
-        "source name" | "sample" | "sample accession" | "sample_accession" => {
-            vec![record.sample_accession.clone()]
-        }
-        "assay name" | "run accession" | "run_accession" => {
-            record.run_accession.iter().cloned().collect()
-        }
-        "comment[data file]" | "comment[raw file]" | "data file" | "data_file" => {
-            vec![record.data_file.clone()]
-        }
-        "comment[file uri]" | "comment[associated file uri]" | "file uri" | "file_uri" => {
-            record.file_uri.iter().cloned().collect()
-        }
-        "comment[label]" | "label" | "channel" | "comment[channel]" => {
-            record.label.iter().cloned().collect()
-        }
-        "comment[fraction identifier]" | "fraction" | "comment[fraction]" => {
-            record.fraction.iter().cloned().collect()
-        }
-        "characteristics[biological replicate]"
-        | "comment[biological replicate]"
-        | "biological replicate" => record
-            .biological_replicate
-            .map(|value| value.to_string())
-            .into_iter()
-            .collect(),
-        "comment[technical replicate]" | "technical replicate" | "technical_replica" => record
-            .technical_replicate
-            .map(|value| value.to_string())
-            .into_iter()
-            .collect(),
-        value
-            if value.starts_with("factor value[")
-                || value.starts_with("characteristics[")
-                || value == "condition" =>
-        {
-            record.condition.iter().cloned().collect()
-        }
-        _ => Vec::new(),
-    }
+    let requested = column.trim().to_ascii_lowercase();
+    let value_col = raw.column_index(&requested).ok_or_else(|| {
+        invalid_input(format!(
+            "IRS SDRF column `{column}` was not found; available columns: {}",
+            raw.headers().join(", ")
+        ))
+    })?;
+    let sample_col = raw
+        .column_index("source name")
+        .ok_or_else(|| invalid_input("SDRF reference detection requires a `source name` column"))?;
+    let samples = (0..raw.row_count())
+        .filter(|&row| accepted.contains(&raw.cell(row, value_col).trim().to_ascii_lowercase()))
+        .map(|row| raw.cell(row, sample_col));
+    Ok(sorted_unique(samples))
 }
 
 fn sorted_unique<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
@@ -7937,39 +9344,155 @@ fn invalid_input(message: impl Into<String>) -> MokumeError {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, fs, path::PathBuf};
+    use std::{
+        collections::{HashMap, HashSet},
+        fs,
+        path::PathBuf,
+    };
 
     use mokume_core::{
         BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig,
-        FeatureToProteinsConfig, FilterConfig, IbaqConfig, ImputationConfig, InputConfig,
-        IrsConfig, MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat,
-        ProteinId, QuantMethod, RatioConfig, RuntimeConfig, SampleId, StringIdRegistry,
+        FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig, IrsConfig,
+        MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
+        PibaqConfig, ProteinId, QuantMethod, RatioConfig, RuntimeConfig, SampleId,
+        StringIdRegistry,
     };
-    use mokume_io::{QpxFeatureRecord, SdrfRawTable};
+    use mokume_io::{QpxFeatureRecord, SdrfRawTable, SdrfTable};
     use mokume_normalization::SampleNormalizationMethod;
 
     use super::{
-        batch_column_values_for_samples, cleavage_rule, digest_protein, expand_de_contrasts_file,
+        batch_column_values_for_samples, detect_reference_samples, expand_de_contrasts_file,
         extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
         irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
         irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
-        resolve_de_method, resolve_irs_autodetect_channel, run_features_to_proteins,
-        tech_replicate_of, validate_batch_sizes, validate_features_to_proteins,
+        resolve_de_method, resolve_irs_autodetect_channel, resolve_irs_reference_samples,
+        resolve_reference_batch, run_features_to_proteins, sum_peptide_values, tech_replicate_of,
+        validate_batch_sizes, validate_combat_design, validate_features_to_proteins,
         validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
         ProteinValues,
     };
 
     #[test]
-    fn rejects_ibaq_without_fasta_before_loading() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("ibaq_without_fasta")?;
-        let mut config = base_config(parquet);
-        config.quantification = QuantMethod::Ibaq;
+    fn peptide_sums_follow_stable_id_order() {
+        let expected = HashMap::from([
+            (PeptideId::new(0), 1.0),
+            (PeptideId::new(1), 1.0),
+            (PeptideId::new(2), 1.0e16),
+        ]);
+        let reordered = HashMap::from([
+            (PeptideId::new(2), 1.0e16),
+            (PeptideId::new(0), 1.0),
+            (PeptideId::new(1), 1.0),
+        ]);
 
-        let error = validate_features_to_proteins(&config).err();
+        assert_eq!(
+            sum_peptide_values(&expected),
+            sum_peptide_values(&reordered)
+        );
+        assert_eq!(sum_peptide_values(&expected), (1.0 + 1.0) + 1.0e16);
+    }
+
+    #[test]
+    fn pibaq_shared_allocation_is_exact_and_conservative() {
+        let family = super::ProteinFamily {
+            family_id: "A|B".to_owned(),
+            members: vec!["A".to_owned(), "B".to_owned()],
+        };
+        let sample_anchored = SampleId::new(1);
+        let sample_unanchored = SampleId::new(2);
+        let observations = vec![
+            ("unique_a".to_owned(), sample_anchored, 100.0),
+            ("shared".to_owned(), sample_anchored, 300.0),
+            ("shared".to_owned(), sample_unanchored, 200.0),
+        ];
+        let owned_peptides = HashSet::from(["unique_a".to_owned(), "shared".to_owned()]);
+        let accession_peptides = HashMap::from([
+            (
+                "A".to_owned(),
+                HashSet::from(["unique_a".to_owned(), "shared".to_owned()]),
+            ),
+            ("B".to_owned(), HashSet::from(["shared".to_owned()])),
+        ]);
+        let peptide_accessions = HashMap::from([
+            ("unique_a".to_owned(), HashSet::from(["A".to_owned()])),
+            (
+                "shared".to_owned(),
+                HashSet::from(["A".to_owned(), "B".to_owned()]),
+            ),
+        ]);
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let output = super::finalize_family_allocation(
+            &family,
+            &observations,
+            &owned_peptides,
+            &accession_peptides,
+            &peptide_accessions,
+            false,
+            &mut proteins,
+        );
+
+        let Some(a) = proteins.get("A") else {
+            panic!("A output missing");
+        };
+        let Some(b) = proteins.get("B") else {
+            panic!("B output missing");
+        };
+        let cell = |protein, sample| output.get(&super::CellKey { protein, sample });
+
+        assert!(cell(b, sample_anchored).is_none());
+        assert_eq!(
+            cell(a, sample_anchored).map(|value| value.norm_intensity),
+            Some(400.0)
+        );
+        assert_eq!(
+            cell(a, sample_unanchored).map(|value| value.norm_intensity),
+            Some(100.0)
+        );
+        assert_eq!(
+            cell(b, sample_unanchored).map(|value| value.norm_intensity),
+            Some(100.0)
+        );
+        assert_eq!(
+            super::classify_evidence(0, 1, 1, 3),
+            super::PibaqEvidence::Medium
+        );
+
+        let mut equal_proteins = StringIdRegistry::<ProteinId>::new();
+        let equal_output = super::finalize_family_allocation(
+            &family,
+            &observations,
+            &owned_peptides,
+            &accession_peptides,
+            &peptide_accessions,
+            true,
+            &mut equal_proteins,
+        );
+        let Some(a) = equal_proteins.get("A") else {
+            panic!("A equal output missing");
+        };
+        let Some(b) = equal_proteins.get("B") else {
+            panic!("B equal output missing");
+        };
+        let norm_intensity = |protein, sample| {
+            equal_output
+                .get(&super::CellKey { protein, sample })
+                .map(|value| value.norm_intensity)
+        };
+        assert_eq!(norm_intensity(a, sample_anchored), Some(250.0));
+        assert_eq!(norm_intensity(b, sample_anchored), Some(150.0));
+    }
+
+    #[test]
+    fn rejects_pibaq_without_fasta_before_loading() -> Result<(), Box<dyn std::error::Error>> {
+        let parquet = existing_dummy_path("pibaq_without_fasta")?;
+        let mut config = base_config(parquet);
+        config.quantification = QuantMethod::Pibaq;
+
+        let error = run_features_to_proteins(&config).err();
 
         assert_eq!(
             error.map(|error| error.to_string()).as_deref(),
-            Some("invalid input: iBAQ quantification requires --fasta option")
+            Some("invalid input: piBAQ quantification requires --fasta option")
         );
         Ok(())
     }
@@ -8068,7 +9591,9 @@ mod tests {
                 anchor_protein: None,
                 unique: Some(true),
                 is_decoy: Some(false),
+                peptide_qvalue: None,
                 pg_global_qvalue: None,
+                selected_score: None,
                 label: None,
                 intensity: 100.0,
             },
@@ -8088,6 +9613,7 @@ mod tests {
     {
         let parquet = existing_dummy_path("median_center_sample_normalization")?;
         let mut config = base_config(parquet);
+        config.quantification = QuantMethod::Median;
         config.normalization.sample_method = "mediancenter".to_string();
 
         validate_implemented_subset(&config)?;
@@ -8335,6 +9861,52 @@ mod tests {
     }
 
     #[test]
+    fn reference_detection_uses_real_regex_and_explicit_priority(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let text = concat!(
+            "source name\tcomment[data file]\tfactor value[role]\tcharacteristics[pooled sample]\n",
+            "S1\ta.raw\tordinary\tnot pooled\n",
+            "S2\tb.raw\tBridge-42\tpooled\n",
+            "S3\tc.raw\tbridge-X\tnot pooled\n",
+        );
+        let raw = SdrfRawTable::from_reader(text.as_bytes())?;
+        let typed = SdrfTable::from_reader(text.as_bytes())?;
+        assert_eq!(
+            detect_reference_samples(&raw, r"^bridge-\d+$")?,
+            vec!["S2".to_owned()]
+        );
+        assert!(detect_reference_samples(&raw, "[").is_err());
+
+        let explicit = IrsConfig {
+            reference_samples: Some(vec!["S1".to_owned()]),
+            ..IrsConfig::default()
+        };
+        assert_eq!(
+            resolve_irs_reference_samples(&typed, &raw, &explicit)?,
+            vec!["S1".to_owned()]
+        );
+
+        let custom_regex = IrsConfig {
+            reference_regex: "^ordinary$".to_owned(),
+            ..IrsConfig::default()
+        };
+        assert_eq!(
+            resolve_irs_reference_samples(&typed, &raw, &custom_regex)?,
+            vec!["S1".to_owned()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn combat_design_rejects_batch_confounded_covariate() {
+        let batch = [0, 0, 1, 1];
+        let confounded = vec![vec![0.0], vec![0.0], vec![1.0], vec![1.0]];
+        assert!(validate_combat_design(&batch, &confounded, None).is_err());
+        let orthogonal = vec![vec![0.0], vec![1.0], vec![0.0], vec![1.0]];
+        assert!(validate_combat_design(&batch, &orthogonal, None).is_ok());
+    }
+
+    #[test]
     fn accepts_directlfq_option_subset() -> Result<(), Box<dyn std::error::Error>> {
         let parquet = existing_dummy_path("directlfq_options")?;
         let mut config = base_config(parquet);
@@ -8467,6 +10039,7 @@ mod tests {
         config.differential_expression.enabled = true;
         config.differential_expression.method = "auto".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
         config.quantification = QuantMethod::DirectLfq;
         validate_implemented_subset(&config)?;
@@ -8481,7 +10054,7 @@ mod tests {
     #[test]
     fn expands_de_contrasts_file_appending_to_inline() -> Result<(), Box<dyn std::error::Error>> {
         // Mirror Python (features2proteins.py:768): a TSV with group1/group2
-        // columns appends "<g1> vs <g2>" after the inline --de-contrasts entries,
+        // columns appends "<g1> vs <g2>" after the repeated --de-contrast entries,
         // empty rows are skipped, and contrasts_file is cleared so downstream sees
         // one resolved list.
         let parquet = existing_dummy_path("de_contrasts_file")?;
@@ -8554,28 +10127,195 @@ mod tests {
     }
 
     #[test]
+    fn run_lfq_from_peptides_is_invariant_to_observation_order() {
+        let make = |peptide: &str, sample: &str, intensity: f64| super::LfqPeptideObservation {
+            protein: "A5Z2X5".to_owned(),
+            peptide: peptide.to_owned(),
+            sample: sample.to_owned(),
+            intensity,
+        };
+        // Minimal real PXD002099 support pattern that exposed DirectLFQ's
+        // encounter-order sensitivity: reversing these rows used to shift all
+        // three reported cells by about 2% despite identical observations.
+        let observations = vec![
+            make("LRTDETLR", "Sample 1", 1_661_357.0),
+            make("LRTDETLR", "Sample 2", 2_011_746.0),
+            make("LRTDETLR", "Sample 3", 771_094.875),
+            make("LTGNPELSSLDEVLAK", "Sample 1", 3_310_899.0),
+            make("LTGNPELSSLDEVLAK", "Sample 2", 2_914_053.0),
+            make("LTGNPELSSLDEVLAK", "Sample 3", 4_332_763.0),
+            make("LTGNPELSSLDEVLAK", "Sample 4", 5_018_000.0),
+            make("LTGNPELSSLDEVLAK", "Sample 5", 4_421_422.0),
+        ];
+        let forward = super::run_lfq_from_peptides(&observations, 2, 50)
+            .into_iter()
+            .map(|row| ((row.protein, row.sample), row.intensity))
+            .collect::<HashMap<_, _>>();
+        let mut reversed_observations = observations;
+        reversed_observations.reverse();
+        let reversed = super::run_lfq_from_peptides(&reversed_observations, 2, 50)
+            .into_iter()
+            .map(|row| ((row.protein, row.sample), row.intensity))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(forward.len(), 3);
+        assert_eq!(
+            forward.keys().collect::<HashSet<_>>(),
+            reversed.keys().collect()
+        );
+        for (cell, expected) in forward {
+            let actual = reversed.get(&cell).copied().unwrap_or(f64::NAN);
+            let tolerance = expected.abs().max(1.0) * 1e-12;
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "order changed {cell:?}: forward={expected}, reversed={actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn sample_correlation_filter_excludes_only_the_original_matrix_outlier(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut samples = StringIdRegistry::<SampleId>::new();
+        let sample_ids = ["A1", "A2", "A3", "B1", "B2"]
+            .into_iter()
+            .map(|name| samples.get_or_insert(name).ok_or("sample id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let protein_ids = ["P1", "P2", "P3", "P4"]
+            .into_iter()
+            .map(|name| proteins.get_or_insert(name).ok_or("protein id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let columns = [
+            [1.0, 2.0, 4.0, 8.0],
+            [2.0, 4.0, 8.0, 16.0],
+            [8.0, 4.0, 2.0, 1.0],
+            [3.0, 6.0, 12.0, 24.0],
+            [6.0, 12.0, 24.0, 48.0],
+        ];
+        let mut cells = HashMap::new();
+        for (sample, values) in sample_ids.iter().zip(columns) {
+            for (protein, value) in protein_ids.iter().zip(values) {
+                cells.insert(
+                    CellKey {
+                        protein: *protein,
+                        sample: *sample,
+                    },
+                    value,
+                );
+            }
+        }
+        let mut matrix = ProteinMatrix {
+            proteins,
+            samples,
+            allowed_proteins: protein_ids.iter().copied().collect(),
+            excluded_samples: HashSet::new(),
+            peptide_counts: HashMap::new(),
+            values: ProteinValues::Cells(cells),
+        };
+        let sdrf = SdrfTable::from_reader(
+            b"source name\tcomment[data file]\tfactor value[group]\n\
+A1\tA1.raw\tA\nA2\tA2.raw\tA\nA3\tA3.raw\tA\n\
+B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
+                .as_slice(),
+        )?;
+
+        matrix.apply_sample_correlation_filter(Some(&sdrf), -0.5, false, false)?;
+
+        let kept = matrix
+            .sample_columns(false)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>();
+        assert_eq!(kept, vec!["A1", "A2", "B1", "B2"]);
+        assert_eq!(matrix.value(protein_ids[0], sample_ids[0]), Some(1.0));
+        Ok(())
+    }
+
+    #[test]
+    fn sample_correlation_uses_negative_values_for_log2_methods(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut samples = StringIdRegistry::<SampleId>::new();
+        let left = samples.get_or_insert("A1").ok_or("left sample")?;
+        let right = samples.get_or_insert("A2").ok_or("right sample")?;
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let protein_ids = ["P1", "P2", "P3"]
+            .into_iter()
+            .map(|name| proteins.get_or_insert(name).ok_or("protein id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut cells = HashMap::new();
+        for (protein, left_value, right_value) in protein_ids
+            .iter()
+            .zip([-2.0, 0.0, 2.0])
+            .zip([-1.0, 1.0, 3.0])
+            .map(|((protein, left_value), right_value)| (protein, left_value, right_value))
+        {
+            cells.insert(
+                CellKey {
+                    protein: *protein,
+                    sample: left,
+                },
+                left_value,
+            );
+            cells.insert(
+                CellKey {
+                    protein: *protein,
+                    sample: right,
+                },
+                right_value,
+            );
+        }
+        let matrix = ProteinMatrix {
+            proteins,
+            samples,
+            allowed_proteins: protein_ids.iter().copied().collect(),
+            excluded_samples: HashSet::new(),
+            peptide_counts: HashMap::new(),
+            values: ProteinValues::Cells(cells),
+        };
+
+        let (log2_correlation, log2_overlap) =
+            matrix.pairwise_sample_correlation(left, right, true);
+        let (linear_correlation, linear_overlap) =
+            matrix.pairwise_sample_correlation(left, right, false);
+        assert_eq!(log2_overlap, 3);
+        assert!(log2_correlation.is_some_and(|value| (value - 1.0).abs() < 1e-12));
+        assert_eq!((linear_correlation, linear_overlap), (None, 1));
+        Ok(())
+    }
+
+    #[test]
     fn factorize_batch_labels_uses_first_occurrence_order() {
         let values = ["B", "A", "B", "A", "C"].map(String::from);
         assert_eq!(factorize_batch_labels(&values), vec![0, 1, 0, 1, 2]);
     }
 
     #[test]
-    fn resolve_batch_method_degrades_unknown_to_sample_prefix() {
+    fn remove_ids_matches_complete_accessions_not_substrings() {
+        let accessions = ["P1", "sp|P10|protein ten"].map(str::to_owned);
+        assert!(super::has_removed_accession(
+            &accessions,
+            &HashSet::from(["P1".to_owned()])
+        ));
+        assert!(!super::has_removed_accession(
+            &["P10".to_owned()],
+            &HashSet::from(["P1".to_owned()])
+        ));
+    }
+
+    #[test]
+    fn resolve_batch_method_rejects_unknown_values() {
         use mokume_stats::batch::BatchDetectionMethod;
         // Known names parse (case/separator-insensitive).
         assert_eq!(
-            super::resolve_batch_method("Sample-Prefix"),
-            BatchDetectionMethod::SamplePrefix
+            super::resolve_batch_method("Sample-Prefix").ok(),
+            Some(BatchDetectionMethod::SamplePrefix)
         );
         assert_eq!(
-            super::resolve_batch_method("COLUMN"),
-            BatchDetectionMethod::ExplicitColumn
+            super::resolve_batch_method("COLUMN").ok(),
+            Some(BatchDetectionMethod::ExplicitColumn)
         );
-        // Unknown -> sample_prefix fallback (Python `_batch_method`).
-        assert_eq!(
-            super::resolve_batch_method("nonsense"),
-            BatchDetectionMethod::SamplePrefix
-        );
+        assert!(super::resolve_batch_method("nonsense").is_err());
     }
 
     #[test]
@@ -8615,67 +10355,18 @@ mod tests {
     }
 
     #[test]
-    fn digest_protein_matches_pyopenms_oracle_per_enzyme() {
-        // Oracle digests captured from pyOpenMS `ProteaseDigestion` on the
-        // (already nonstandard-stripped) sequence, min_aa=7 max_aa=30
-        // (`/tmp/mokume-enzyme-oracle/gen.py`, run in the Bigbio env).
-        const SEQ: &str =
-            "MKAAAAAAAKPGGGGGGGRSSSSSSSRPTTTTTTTDNNNNNNNEQQQQQQQFHHHHHHHYIIIIIIIWVVVVVVVLCCCCCCCK";
-        let cases: &[(&str, &[&str])] = &[
-            ("Trypsin", &["AAAAAAAKPGGGGGGGR"]),
-            ("Trypsin/P", &["AAAAAAAK", "PGGGGGGGR", "SSSSSSSR"]),
-            ("Lys-C", &[]),
-            ("Lys-C/P", &["AAAAAAAK"]),
-            ("Arg-C", &["MKAAAAAAAKPGGGGGGGR"]),
-            ("Arg-C/P", &["MKAAAAAAAKPGGGGGGGR", "SSSSSSSR"]),
-            (
-                "Chymotrypsin",
-                &["CCCCCCCK", "HHHHHHHY", "IIIIIIIW", "VVVVVVVL"],
-            ),
-            (
-                "Chymotrypsin/P",
-                &["CCCCCCCK", "HHHHHHHY", "IIIIIIIW", "VVVVVVVL"],
-            ),
-            ("glutamyl endopeptidase", &["NNNNNNNE"]),
-            ("Asp-N", &[]),
-            ("Lys-N", &["KAAAAAAA"]),
-            ("PepsinA", &["CCCCCCCK", "HHHHHHHYIIIIIIIWVVVVVVVL"]),
-            ("leukocyte elastase", &["CCCCCCCK"]),
-            ("Clostripain/P", &["MKAAAAAAAKPGGGGGGGR", "SSSSSSSR"]),
-            (
-                "TrypChymo",
-                &[
-                    "AAAAAAAKPGGGGGGGR",
-                    "CCCCCCCK",
-                    "HHHHHHHY",
-                    "IIIIIIIW",
-                    "VVVVVVVL",
-                ],
-            ),
-            ("Glu-C+P", &["NNNNNNNE"]),
-            ("Alpha-lytic protease", &["KPGGGGGGGRS", "LCCCCCCCK"]),
-            ("PepsinA + P", &["CCCCCCCK", "HHHHHHHYIIIIIIIWVVVVVVVL"]),
-            (
-                "elastase-trypsin-chymotrypsin",
-                &["CCCCCCCK", "HHHHHHHY", "KPGGGGGGGR"],
-            ),
-            ("Asp-N_ambic", &["DNNNNNNN"]),
-            (
-                "proline-endopeptidase/HKR",
-                &["GGGGGGGRSSSSSSSRP", "MKAAAAAAAKP"],
-            ),
-        ];
-        for (enzyme, expected) in cases {
-            let Some(rule) = cleavage_rule(enzyme) else {
-                panic!("{enzyme} should have a cleavage rule");
-            };
-            let got = digest_protein(SEQ, &rule, 7, 30);
-            let want: HashSet<String> = expected.iter().map(|pep| (*pep).to_string()).collect();
-            assert_eq!(got, want, "enzyme {enzyme}");
-        }
-        // Case-insensitive names resolve; an unported enzyme has no rule.
-        assert!(cleavage_rule("trypsin").is_some());
-        assert!(cleavage_rule("CNBr").is_none());
+    fn resolves_original_batch_label_before_numeric_compatibility() {
+        let labels = ["0", "0", "batch-b", "batch-b"].map(str::to_owned);
+        let encoded = [0, 0, 1, 1];
+        assert_eq!(
+            resolve_reference_batch("batch-b", &labels, &encoded).ok(),
+            Some(1)
+        );
+        assert_eq!(
+            resolve_reference_batch("0", &labels, &encoded).ok(),
+            Some(0)
+        );
+        assert!(resolve_reference_batch("missing", &labels, &encoded).is_err());
     }
 
     fn covariate_fixture() -> Result<SdrfRawTable, Box<dyn std::error::Error>> {
@@ -8715,7 +10406,7 @@ mod tests {
                 "characteristics[sex]".into(),
                 "characteristics[organism part]".into(),
             ],
-        );
+        )?;
         assert_eq!(
             covs,
             Some(vec![
@@ -8726,8 +10417,8 @@ mod tests {
             ])
         );
 
-        // Case B: substring column match + single-unique column dropped. Oracle: [[0],[1],[0],[1]].
-        let covs_b = extract_sdrf_covariates(&raw, &names, &["sex".into(), "const_col".into()]);
+        // Case B: substring column match. Oracle: [[0],[1],[0],[1]].
+        let covs_b = extract_sdrf_covariates(&raw, &names, &["sex".into()])?;
         assert_eq!(
             covs_b,
             Some(vec![vec![0.0], vec![1.0], vec![0.0], vec![1.0]])
@@ -8735,54 +10426,105 @@ mod tests {
 
         // Case C: matrix sample name is a superstring of the SDRF source name.
         let names_c = ["S1_frac1", "S2_frac1", "S3_frac1", "S4_frac1"];
-        let covs_c = extract_sdrf_covariates(&raw, &names_c, &["characteristics[sex]".into()]);
+        let covs_c = extract_sdrf_covariates(&raw, &names_c, &["characteristics[sex]".into()])?;
         assert_eq!(
             covs_c,
             Some(vec![vec![0.0], vec![1.0], vec![0.0], vec![1.0]])
         );
 
-        // Case D: an unknown sample -> "unknown" gets its own factorize code. Oracle: [[0],[0],[1],[2]].
+        // Explicitly requested covariates reject unmatched samples and constant
+        // columns instead of silently changing or dropping the design.
         let names_d = ["S1", "S2", "ZZZ", "S4"];
-        let covs_d =
-            extract_sdrf_covariates(&raw, &names_d, &["characteristics[organism part]".into()]);
-        assert_eq!(
-            covs_d,
-            Some(vec![vec![0.0], vec![0.0], vec![1.0], vec![2.0]])
-        );
-
-        // No column survives -> None (every requested column is single-unique/missing).
-        assert_eq!(
-            extract_sdrf_covariates(&raw, &names, &["const_col".into()]),
-            None
-        );
-        assert_eq!(extract_sdrf_covariates(&raw, &names, &[]), None);
+        assert!(extract_sdrf_covariates(
+            &raw,
+            &names_d,
+            &["characteristics[organism part]".into()]
+        )
+        .is_err());
+        assert!(extract_sdrf_covariates(&raw, &names, &["const_col".into()]).is_err());
+        assert_eq!(extract_sdrf_covariates(&raw, &names, &[])?, None);
         Ok(())
     }
 
     #[test]
-    fn batch_column_values_map_source_name_with_unknown_default(
+    fn covariates_keep_numeric_values_and_one_hot_nominal_categories(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let input = concat!(
+            "source name\tage\tsite\n",
+            "S1\t20\tnorth\n",
+            "S2\t35\tsouth\n",
+            "S3\t50\twest\n",
+            "S4\t65\twest\n",
+        );
+        let raw = SdrfRawTable::from_reader(input.as_bytes())?;
+        let covariates = extract_sdrf_covariates(
+            &raw,
+            &["S1", "S2", "S3", "S4"],
+            &["age".into(), "site".into()],
+        )?;
+        assert_eq!(
+            covariates,
+            Some(vec![
+                vec![20.0, 0.0, 0.0],
+                vec![35.0, 1.0, 0.0],
+                vec![50.0, 0.0, 1.0],
+                vec![65.0, 0.0, 1.0],
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn covariates_reject_missing_nonfinite_and_mixed_values(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for (header, rows, expected) in [
+            (
+                "missing",
+                ["20", "", "50", "65"],
+                "contains a missing value",
+            ),
+            (
+                "nonfinite",
+                ["20", "NaN", "50", "65"],
+                "contains a non-finite value",
+            ),
+            (
+                "mixed",
+                ["20", "unknown", "50", "65"],
+                "mixes numeric and categorical values",
+            ),
+        ] {
+            let input = format!(
+                "source name\t{header}\nS1\t{}\nS2\t{}\nS3\t{}\nS4\t{}\n",
+                rows[0], rows[1], rows[2], rows[3]
+            );
+            let raw = SdrfRawTable::from_reader(input.as_bytes())?;
+            let Err(error) =
+                extract_sdrf_covariates(&raw, &["S1", "S2", "S3", "S4"], &[header.into()])
+            else {
+                panic!("invalid covariate was accepted");
+            };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn batch_column_values_require_complete_source_name_mapping(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let raw = covariate_fixture()?;
         // Oracle: ['b1','b1','b2','b2'].
         assert_eq!(
-            batch_column_values_for_samples(&raw, &["S1", "S2", "S3", "S4"], "batch"),
-            Some(vec![
+            batch_column_values_for_samples(&raw, &["S1", "S2", "S3", "S4"], "batch")?,
+            vec![
                 "b1".to_owned(),
                 "b1".to_owned(),
                 "b2".to_owned(),
                 "b2".to_owned()
-            ])
+            ]
         );
-        // Exact-only mapping: an unmatched sample defaults to "unknown".
-        assert_eq!(
-            batch_column_values_for_samples(&raw, &["S1", "ZZZ"], "BATCH"),
-            Some(vec!["b1".to_owned(), "unknown".to_owned()])
-        );
-        // Column absent -> None (Python's not-found branch).
-        assert_eq!(
-            batch_column_values_for_samples(&raw, &["S1"], "nonexistent"),
-            None
-        );
+        assert!(batch_column_values_for_samples(&raw, &["S1", "ZZZ"], "BATCH").is_err());
+        assert!(batch_column_values_for_samples(&raw, &["S1"], "nonexistent").is_err());
         Ok(())
     }
 
@@ -8988,13 +10730,8 @@ mod tests {
     }
 
     #[test]
-    fn apply_batch_correction_fraction_techreplicate_and_unknown_fall_back_to_prefix(
+    fn apply_batch_correction_rejects_removed_and_unknown_methods(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Sample names whose prefixes (before '-') form two batches of two, so
-        // sample_prefix detection runs ComBat. The pipeline has no run_info, so
-        // `fraction`, `techreplicate`, and an unknown method must all degrade to
-        // sample_prefix and produce the identical correction (Python
-        // `_fallback_prefix_batches` / `_batch_method`).
         type BuiltMatrix = (ProteinMatrix, Vec<SampleId>, ProteinId, ProteinId);
         let p1_row = [10.0, 12.0, 30.0, 33.0];
         let p2_row = [5.0, 6.0, 20.0, 19.0];
@@ -9049,27 +10786,11 @@ mod tests {
             ..BatchCorrectionConfig::default()
         };
 
-        // Reference correction: explicit sample_prefix over batch [0,0,1,1].
-        let expected = mokume_stats::batch::combat(
-            &[p1_row.to_vec(), p2_row.to_vec()],
-            &[0, 0, 1, 1],
-            None,
-            mokume_stats::batch::ComBatParams::default(),
-        );
-
         for method in ["fraction", "techreplicate", "totally-unknown"] {
-            let (mut matrix, sample_ids, p1, p2) = build()?;
-            matrix.apply_batch_correction(&method_config(method), None, false)?;
-            for (row, protein) in [p1, p2].into_iter().enumerate() {
-                for (col, sample) in sample_ids.iter().enumerate() {
-                    let got = matrix.value(protein, *sample).ok_or("corrected value")?;
-                    assert!(
-                        (got - expected[row][col]).abs() < 1e-9,
-                        "method {method} row {row} col {col}: got {got}, want {}",
-                        expected[row][col]
-                    );
-                }
-            }
+            let (mut matrix, ..) = build()?;
+            assert!(matrix
+                .apply_batch_correction(&method_config(method), None, false)
+                .is_err());
         }
         Ok(())
     }
@@ -9157,7 +10878,7 @@ mod tests {
     fn accepts_ensemble_de_subset() -> Result<(), Box<dyn std::error::Error>> {
         // ensemble runs member methods and fuses them with the deterministic
         // top-k consensus combiner; a well-formed ensemble DE config must validate
-        // (including an explicit member list via --de-ensemble-methods).
+        // (including an explicit member list via repeated --de-ensemble-method).
         let parquet = existing_dummy_path("ensemble_de")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
@@ -9196,6 +10917,7 @@ mod tests {
             config.differential_expression.ensemble_methods = Some(members);
             config.differential_expression.ensemble_min_k = 1;
             config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+            config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
             let Some(error) = validate_implemented_subset(&config).err() else {
                 return Err("invalid ensemble member configuration was accepted".into());
@@ -9222,6 +10944,7 @@ mod tests {
                 Some(vec!["limma".to_string(), "deqms".to_string()]);
             config.differential_expression.ensemble_min_k = min_k;
             config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+            config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
             let Some(error) = validate_implemented_subset(&config).err() else {
                 return Err("invalid ensemble min-k was accepted".into());
@@ -9258,7 +10981,7 @@ mod tests {
 
     #[test]
     fn rejects_ensemble_methods_for_single_method() -> Result<(), Box<dyn std::error::Error>> {
-        // --de-ensemble-methods is meaningless for a single-method run and must be
+        // --de-ensemble-method is meaningless for a single-method run and must be
         // rejected rather than silently ignored.
         let parquet = existing_dummy_path("ensemble_methods_on_limma")?;
         let mut config = base_config(parquet);
@@ -9288,8 +11011,25 @@ mod tests {
         config.differential_expression.method = "limma".to_string();
         config.differential_expression.fdr_method = "ihw".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
         validate_implemented_subset(&config)?;
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_adaptive_fdr_methods() -> Result<(), Box<dyn std::error::Error>> {
+        for method in ["bky", "storey"] {
+            let parquet = existing_dummy_path(&format!("de_{method}"))?;
+            let mut config = base_config(parquet);
+            config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
+            config.differential_expression.enabled = true;
+            config.differential_expression.method = "limma".to_string();
+            config.differential_expression.fdr_method = method.to_string();
+            config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+            config.differential_expression.output = Some(PathBuf::from("de.csv"));
+            validate_implemented_subset(&config)?;
+        }
         Ok(())
     }
 
@@ -9300,13 +11040,13 @@ mod tests {
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
         config.differential_expression.method = "limma".to_string();
-        config.differential_expression.fdr_method = "storey".to_string();
+        config.differential_expression.fdr_method = "unknown".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
+        config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
-        let error = validate_implemented_subset(&config).err();
         assert!(matches!(
-            error,
-            Some(MokumeError::NotImplemented {
+            validate_implemented_subset(&config),
+            Err(MokumeError::NotImplemented {
                 stage: "differential-expression-fdr-method"
             })
         ));
@@ -9314,15 +11054,29 @@ mod tests {
     }
 
     #[test]
-    fn disabled_de_options_are_ignored() -> Result<(), Box<dyn std::error::Error>> {
-        // With DE disabled, non-default DE options must not block the pipeline.
+    fn accepts_most_frequent_imputation() -> Result<(), Box<dyn std::error::Error>> {
+        let parquet = existing_dummy_path("impute_most_frequent")?;
+        let mut config = base_config(parquet);
+        config.imputation.enabled = true;
+        config.imputation.method = "most_frequent".to_string();
+
+        validate_implemented_subset(&config)?;
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_de_options_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        // Non-default DE options must not be accepted when no DE result will run.
         let parquet = existing_dummy_path("de_disabled")?;
         let mut config = base_config(parquet);
         config.differential_expression.method = "deqms".to_string();
         config.differential_expression.fdr_method = "ihw".to_string();
         config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
 
-        validate_implemented_subset(&config)?;
+        assert!(matches!(
+            validate_implemented_subset(&config),
+            Err(MokumeError::InvalidInput { .. })
+        ));
         Ok(())
     }
 
@@ -9351,6 +11105,7 @@ mod tests {
             input: InputConfig {
                 parquet: Some(parquet),
                 msstats: None,
+                psm: None,
                 sdrf: None,
                 fasta: None,
             },
@@ -9365,11 +11120,12 @@ mod tests {
             quantification: QuantMethod::MaxLfq,
             topn_peptides: 3,
             maxlfq: MaxLfqConfig::default(),
-            ibaq: IbaqConfig::default(),
+            pibaq: PibaqConfig::default(),
             directlfq: DirectLfqConfig::default(),
             batch: BatchCorrectionConfig::default(),
             irs: IrsConfig::default(),
             coverage_threshold: None,
+            sample_correlation_threshold: None,
             ratio: RatioConfig::default(),
             imputation: ImputationConfig::default(),
             differential_expression: DifferentialExpressionConfig::default(),
@@ -9380,36 +11136,46 @@ mod tests {
         }
     }
 
-    // The DirectLFQ-aligned `min_unique_peptides` gate is applied at different
-    // granularities by the two methods (mirroring Python's two load paths):
-    //   * MaxLFQ drops a `(protein, sample)` cell that carries fewer than
-    //     `min_unique_peptides` distinct sequences (per-cell gate); a protein
-    //     with no qualifying cell disappears entirely.
-    //   * DirectLFQ keeps a protein with `>= min_unique_peptides` distinct
-    //     sequences across all samples, retaining every one of its cells.
-    // This exercises the divergent `FeatureAggregation::Lfq` finalize arms with
-    // a protein that reaches two distinct peptides only across samples (never
-    // within one), which must survive DirectLFQ but be dropped by MaxLFQ.
+    // Both LFQ methods apply `min_unique_peptides` per `(protein, sample)`.
     fn lfq_aggregation(
         method: super::QuantMethod,
         directlfq_sums: std::collections::HashMap<super::DirectLfqCellKey, f64>,
     ) -> super::FeatureAggregation {
+        let canonical_traces = directlfq_sums
+            .into_iter()
+            .map(|(key, intensity)| {
+                (
+                    super::PeptideCellKey {
+                        protein: key.protein,
+                        sample: key.sample,
+                        peptide: key.canonical,
+                    },
+                    intensity,
+                )
+            })
+            .collect();
         super::FeatureAggregation::Lfq {
             method,
             route_to_directlfq: true,
-            min_unique_peptides: 2,
             directlfq_min_nonan: 1,
             directlfq_num_samples_quadratic: 50,
-            traces: std::collections::HashMap::new(),
-            directlfq_sums,
-            ion_export: None,
+            traces: super::MaxLfqFeatureAggregation {
+                canonical_traces,
+                ..super::MaxLfqFeatureAggregation::default()
+            },
+            cached_directlfq_values: None,
         }
     }
 
-    #[test]
-    fn lfq_min_unique_gate_is_per_cell_for_maxlfq_global_for_directlfq() {
-        use mokume_core::{PeptideId, ProteinId, SampleId};
+    struct LfqMinUniqueFixture {
+        scattered: ProteinId,
+        dense: ProteinId,
+        sums: HashMap<super::DirectLfqCellKey, f64>,
+        allowed_cells: HashSet<super::CellKey>,
+        canonical_peptides: StringIdRegistry<PeptideId>,
+    }
 
+    fn lfq_min_unique_fixture() -> LfqMinUniqueFixture {
         let scattered = ProteinId::new(1);
         let dense = ProteinId::new(2);
         let pep_a = PeptideId::new(10);
@@ -9420,9 +11186,7 @@ mod tests {
         let s4 = SampleId::new(4);
 
         // `scattered`: two distinct peptides, each in two samples, but never
-        // both in the same sample (pep_a in s1/s2, pep_b in s3/s4). Two finite
-        // values per ion keep the DirectLFQ solver from masking them, so its
-        // survival is decided purely by the gate.
+        // both in the same sample (pep_a in s1/s2, pep_b in s3/s4).
         // `dense`: two distinct peptides in every sample.
         let mut sums = std::collections::HashMap::new();
         let cell = |protein, canonical, sample| super::DirectLfqCellKey {
@@ -9448,8 +11212,6 @@ mod tests {
                 sample,
             })
             .collect::<HashSet<_>>();
-        let mut proteins = super::StringIdRegistry::<ProteinId>::new();
-        let peptide_to_canonical = std::collections::HashMap::new();
         // Register canonical sequences so `pep_a` (id 10) and `pep_b` (id 11)
         // resolve; `seq_NN` strings keep alphabetical order aligned with the id
         // order, so the DirectLFQ row order is unchanged by the sequence-rank
@@ -9458,39 +11220,54 @@ mod tests {
         for index in 0..=11 {
             let _ = canonical_peptides.get_or_insert(&format!("seq_{index:02}"));
         }
+        LfqMinUniqueFixture {
+            scattered,
+            dense,
+            sums,
+            allowed_cells,
+            canonical_peptides,
+        }
+    }
 
-        let max_lfq = lfq_aggregation(super::QuantMethod::MaxLfq, sums.clone()).finalize(
-            &allowed_cells,
-            &mut proteins,
-            &peptide_to_canonical,
-            &canonical_peptides,
-        );
-        let direct_lfq = lfq_aggregation(super::QuantMethod::DirectLfq, sums).finalize(
-            &allowed_cells,
-            &mut proteins,
-            &peptide_to_canonical,
-            &canonical_peptides,
-        );
+    fn lfq_fixture_protein_ids(
+        method: super::QuantMethod,
+        fixture: &LfqMinUniqueFixture,
+    ) -> HashSet<ProteinId> {
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        lfq_aggregation(method, fixture.sums.clone())
+            .finalize(
+                &fixture.allowed_cells,
+                &mut proteins,
+                &HashMap::new(),
+                &fixture.canonical_peptides,
+                &StringIdRegistry::<SampleId>::new(),
+            )
+            .protein_ids()
+    }
 
-        let max_proteins = max_lfq.protein_ids();
-        let direct_proteins = direct_lfq.protein_ids();
+    #[test]
+    fn lfq_min_unique_gate_is_per_cell_for_both_methods() {
+        let fixture = lfq_min_unique_fixture();
+        let max_proteins = lfq_fixture_protein_ids(super::QuantMethod::MaxLfq, &fixture);
+        let direct_proteins = lfq_fixture_protein_ids(super::QuantMethod::DirectLfq, &fixture);
 
         assert!(
-            max_proteins.contains(&dense),
+            max_proteins.contains(&fixture.dense),
             "MaxLFQ keeps a protein with a two-peptide cell"
         );
         assert!(
-            !max_proteins.contains(&scattered),
+            !max_proteins.contains(&fixture.scattered),
             "MaxLFQ drops a protein whose cells never reach two distinct peptides"
         );
+        assert!(direct_proteins.contains(&fixture.dense));
         assert!(
-            direct_proteins.contains(&dense) && direct_proteins.contains(&scattered),
-            "DirectLFQ keeps every protein with two distinct peptides across samples"
+            !direct_proteins.contains(&fixture.scattered),
+            "DirectLFQ applies the same per-cell unique-peptide gate"
         );
     }
 
     // Lock the monoisotopic molecular weight against the pyOpenMS
-    // `AASequence.fromString(seq).getMonoWeight()` values that the Python iBAQ
+    // `AASequence.fromString(seq).getMonoWeight()` values that the Python piBAQ
     // TPA path reads via `digest_fasta_full(..., compute_mw=True)`. Captured
     // with `conda run -n Bigbio python -c "from pyopenms import AASequence;
     // print(AASequence.fromString(SEQ).getMonoWeight())"`.

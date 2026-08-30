@@ -4,35 +4,48 @@ Benchmarking studies for mokume protein quantification methods.
 
 ## Available Benchmarks
 
-| Benchmark | Description | Key Finding |
-|-----------|-------------|-------------|
-| [quant-hela-method-comparison](./quant-hela-method-comparison/) | Cross-experiment consistency using HeLa datasets | iBAQ (log) best for cross-experiment (r=0.74) |
-| [batch-quartet-multilab](./batch-quartet-multilab/) | Batch effect correction with Quartet multi-lab data | DirectLFQ + ComBat most reliable |
-| [quant-pxd007683-tmt-vs-lfq](./quant-pxd007683-tmt-vs-lfq/) | TMT vs LFQ comparison from Gygi lab | `median-cov` gives lowest CV |
+- [quant-hela-method-comparison](./quant-hela-method-comparison/) compares six
+  current Rust quantification methods across 20 human datasets and the paired
+  PXD007683 TMT/LFQ inputs. It reports metric-specific behavior without a
+  ground-truth winner.
+- [batch-quartet-multilab](./batch-quartet-multilab/) evaluates four current
+  Rust quantification methods and native Rust ComBat on the 72-sample Quartet
+  design. Batch diagnostics use a matched 53-protein universe; coverage is
+  reported separately.
+- [quant-pxd007683-tmt-vs-lfq](./quant-pxd007683-tmt-vs-lfq/) is the PXD007683
+  spike-in benchmark. Its current refresh covers the LFQ arm: DirectLFQ and
+  MaxLFQ reach about 6.8% median CV on the common universe, while piBAQ has the
+  widest coverage.
 
 ## Quick Summary
 
 ### quant-hela-method-comparison
-Evaluates iBAQ, DirectLFQ, TopN, Sum across 20 HeLa/human datasets.
-- **Winner:** iBAQ (log-transformed) with 0.74 cross-experiment correlation
-- **Use for:** Cross-experiment comparisons, absolute quantification
+
+Evaluates piBAQ, MaxLFQ, DirectLFQ, Top3, Top10, and Sum across 20 public human
+datasets. The paired PXD007683 TMT/LFQ check uses 5,312 common proteins. CV is
+descriptive sample dispersion, not a technical-replicate ranking.
 
 ### batch-quartet-multilab
-Benchmarks batch correction on 6-lab, 72-sample Quartet data.
-- **Winner:** DirectLFQ + ComBat
-- **Note:** ~40% missing values, ~15% lab-specific variance persists
+
+Benchmarks piBAQ, MaxLFQ, DirectLFQ, Top3, and native Rust ComBat across four
+laboratories, six acquisition/lab batches, and 72 samples. ComBat improves all
+four matched-universe diagnostics; no single method is ranked across coverage
+and batch metrics.
 
 ### quant-pxd007683-tmt-vs-lfq
-Compares TMT and LFQ on same samples (PXD007683).
-- **Winner:** `median-cov` normalization (lowest CV)
-- **TMT vs LFQ:** TMT better for small fold-changes; both agree on relative abundances
+
+Recomputes the 11-sample PXD007683 LFQ arm with the current Rust kernel.
+
+- **Methods:** piBAQ, MaxLFQ, DirectLFQ, Sum, Top3, Top5, and Top10
+- **Scope:** LFQ was refreshed; the checked-in TMT and cross-technology assets were not regenerated in that run
+- **Interpretation:** CV, coverage, and spike-in recovery are reported separately; no global winner is inferred from CV alone
 
 ## Running Benchmarks
 
 ```bash
-pip install "mokume[analysis]"   # compute kernel + analysis extras
+pip install "mokume[plotting]"      # Rust kernel + plotting dependencies
 cd benchmarks/<benchmark-name>
-python scripts/run_benchmark.py
+# Follow the input paths and entry point documented in that benchmark's README.
 ```
 
 Quantification calls go through the Rust kernel via `mokume.peptides2protein()` /
@@ -52,6 +65,6 @@ benchmarks/<benchmark-name>/
 ├── README.md           # Overview, results, methodology (expandable)
 ├── scripts/            # Benchmark scripts
 ├── data/               # GIT-IGNORED: large data files
-├── results/            # CSV metrics (baselines from the original mokume_py runs)
+├── results/            # Versioned metric tables; each benchmark documents provenance
 └── figures/            # PNG visualizations
 ```

@@ -14,6 +14,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from mokume.io import feature as qpx_feature
+
 # Arrow type constants for new QPX format
 _NEW_INTENSITIES_TYPE = pa.list_(
     pa.struct([("label", pa.string()), ("intensity", pa.float32())])
@@ -26,6 +28,15 @@ _PG_PROTEIN_TYPE = pa.list_(
             ("end", pa.int32()),
             ("pre", pa.string()),
             ("post", pa.string()),
+        ]
+    )
+)
+_ADDITIONAL_SCORES_TYPE = pa.list_(
+    pa.struct(
+        [
+            ("score_name", pa.string()),
+            ("score_value", pa.float64()),
+            ("higher_better", pa.bool_()),
         ]
     )
 )
@@ -165,6 +176,92 @@ def _make_lfq_qpx_parquet(path: str) -> None:
     pq.write_table(table, path)
 
 
+def _make_scored_qpx_parquet(path: str) -> None:
+    protein = {
+        "accession": "sp|P12345|PROT_HUMAN",
+        "start": 1,
+        "end": 8,
+        "pre": "K",
+        "post": "R",
+    }
+    schema = _NEW_QPX_SCHEMA.append(
+        pa.field("additional_scores", _ADDITIONAL_SCORES_TYPE)
+    )
+    table = pa.table(
+        {
+            "sequence": ["PEPTIDEA", "PEPTIDEB"],
+            "peptidoform": ["PEPTIDEA", "PEPTIDEB"],
+            "pg_accessions": [[protein], [protein]],
+            "anchor_protein": [protein["accession"], protein["accession"]],
+            "charge": [2, 2],
+            "run_file_name": ["run_a", "run_b"],
+            "unique": [True, True],
+            "is_decoy": [False, False],
+            "intensities": [
+                [{"label": "run_a", "intensity": 10.0}],
+                [{"label": "run_b", "intensity": 20.0}],
+            ],
+            "additional_scores": [
+                [
+                    {
+                        "score_name": "quality",
+                        "score_value": 0.9,
+                        "higher_better": True,
+                    },
+                    {
+                        "score_name": "qvalue",
+                        "score_value": 0.01,
+                        "higher_better": False,
+                    },
+                ],
+                [
+                    {
+                        "score_name": "quality",
+                        "score_value": 0.1,
+                        "higher_better": True,
+                    },
+                    {
+                        "score_name": "qvalue",
+                        "score_value": 0.2,
+                        "higher_better": False,
+                    },
+                ],
+            ],
+        },
+        schema=schema,
+    )
+    pq.write_table(table, path)
+
+
+def _make_raw_placeholder_lfq_qpx_parquet(path: str) -> None:
+    """Create the older QPX LFQ dialect whose only intensity label is ``raw``."""
+    protein = {
+        "accession": "sp|P12345|PROT_HUMAN",
+        "start": 10,
+        "end": 18,
+        "pre": "K",
+        "post": "A",
+    }
+    table = pa.table(
+        {
+            "sequence": ["PEPTIDEA", "PEPTIDEB"],
+            "peptidoform": ["PEPTIDEA", "PEPTIDEB"],
+            "pg_accessions": [[protein], [protein]],
+            "anchor_protein": [protein["accession"], protein["accession"]],
+            "charge": [2, 2],
+            "run_file_name": ["Run_A", "Run_B"],
+            "unique": [True, True],
+            "is_decoy": [False, False],
+            "intensities": [
+                [{"label": "raw", "intensity": 10.0}],
+                [{"label": "raw", "intensity": 20.0}],
+            ],
+        },
+        schema=_NEW_QPX_SCHEMA,
+    )
+    pq.write_table(table, path)
+
+
 def _make_zero_anchor_lfq_parquet(path: str) -> None:
     """LFQ where one run's only anchored row has nothing quantifiable.
 
@@ -258,6 +355,40 @@ def _write_sdrf(path, rows) -> None:
     path.write_text("".join(lines), encoding="utf-8")
 
 
+@pytest.mark.parametrize(
+    ("name", "threshold"),
+    [("quality", 0.5), ("qvalue", 0.05)],
+)
+def test_named_score_filter_uses_qpx_direction(tmp_path, name, threshold):
+    parquet_file = tmp_path / f"{name}.feature.parquet"
+    _make_scored_qpx_parquet(str(parquet_file))
+    builder = qpx_feature.SQLFilterBuilder(
+        remove_contaminants=False,
+        require_unique=False,
+        named_score_name=name,
+        named_score_threshold=threshold,
+    )
+    feature = qpx_feature.Feature(str(parquet_file), filter_builder=builder)
+    try:
+        report = feature.get_report_from_database(feature.samples)
+    finally:
+        feature.parquet_db.close()
+
+    assert report["sequence"].tolist() == ["PEPTIDEA"]
+
+
+def test_named_score_filter_rejects_missing_name(tmp_path):
+    parquet_file = tmp_path / "missing-score.feature.parquet"
+    _make_scored_qpx_parquet(str(parquet_file))
+    builder = qpx_feature.SQLFilterBuilder(
+        named_score_name="missing",
+        named_score_threshold=0.5,
+    )
+
+    with pytest.raises(ValueError, match="additional_scores entry `missing`"):
+        qpx_feature.Feature(str(parquet_file), filter_builder=builder)
+
+
 class TestQpxSdrfIdentity:
     """Test that each new-QPX intensity has one SDRF owner."""
 
@@ -331,6 +462,29 @@ class TestQpxSdrfIdentity:
             ("sample-b", "RUN_B.wiff", None, 60.0),
         ]
         assert set(feature.samples) == {"sample-a", "sample-b"}
+
+    def test_raw_placeholder_lfq_label_matches_canonical_sdrf_label(self, tmp_path):
+        """Archived run suffixes and raw LFQ labels map to canonical SDRF rows."""
+        parquet_file = tmp_path / "raw-placeholder.feature.parquet"
+        sdrf_file = tmp_path / "raw-placeholder.sdrf.tsv"
+        _make_raw_placeholder_lfq_qpx_parquet(str(parquet_file))
+        _write_sdrf(
+            sdrf_file,
+            [
+                ("sample-a", "Run_A.d.zip", "Label free sample", "A"),
+                ("sample-b", "Run_B.mzML.gz", "LFQ", "B"),
+            ],
+        )
+        feature = qpx_feature.Feature(str(parquet_file))
+        feature.enrich_with_sdrf(str(sdrf_file))
+
+        assert feature.parquet_db.execute(
+            "SELECT sample_accession, run, sum(intensity) "
+            "FROM parquet_db GROUP BY ALL ORDER BY sample_accession"
+        ).fetchall() == [
+            ("sample-a", "Run_A", 10.0),
+            ("sample-b", "Run_B", 20.0),
+        ]
 
     def test_lfq_run_rejects_reporter_labeled_sdrf(self, tmp_path):
         parquet_file = tmp_path / "lfq.feature.parquet"

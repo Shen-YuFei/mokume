@@ -1,190 +1,85 @@
-# HeLa Protein Quantification Benchmark
+# HeLa and Human Protein Quantification Benchmark
 
-Benchmarking protein quantification methods for cross-experiment consistency using HeLa cell line datasets.
+This benchmark recomputes six protein-quantification methods with the current
+Rust-backed `mokume` distribution. It uses 20 public human QPX datasets for
+cross-experiment comparisons and the paired PXD007683 TMT/LFQ inputs for a
+cross-technology check.
 
-## Summary
+## Scope and interpretation
 
-This benchmark evaluated six protein quantification methods (iBAQ, iBAQ raw, DirectLFQ, Top3, TopN, Sum) across 20 HeLa/human proteomics datasets to determine which method produces the most consistent and reproducible results for cross-experiment comparisons.
-
-**Winner: iBAQ (log-transformed)** with the highest cross-experiment correlation (0.741) and rank correlation (0.742).
-
----
+- Methods: piBAQ, MaxLFQ, DirectLFQ, Top3, Top10, and Sum.
+- piBAQ uses the current Rust core and runtime pyOpenMS digestion. The three
+  Nagaraj inputs use their experimental proteases: Trypsin, Lys-C, and Glu-C.
+- Every within-dataset method comparison uses the same protein universe for
+  that dataset. PXD013658.2 has only one sample and is retained for
+  cross-experiment analysis but excluded from the CV calculation.
+- CV here is descriptive sample dispersion. The datasets are heterogeneous
+  public studies, so this metric must not be presented as a technical-replicate
+  reproducibility ranking.
+- No ground-truth abundance is available across the 20 studies. The benchmark
+  therefore reports metric-specific behavior and does not declare a global
+  winner.
 
 ## Results
 
-### Cross-Experiment Correlation
+### Cross-experiment consistency
 
-| Method | Mean Cross-Corr | Mean Rank-Corr |
-|--------|-----------------|----------------|
-| **iBAQ** | **0.741** | **0.742** |
-| iBAQ raw | 0.656 | 0.652 |
-| DirectLFQ | 0.620 | 0.612 |
-| Sum | 0.594 | 0.578 |
-| Top3 | 0.530 | 0.503 |
-| TopN | 0.511 | 0.470 |
+Mean pairwise Pearson correlations across the 20 datasets were 0.7042 for
+DirectLFQ, 0.6796 for MaxLFQ, 0.6472 for Sum, 0.6253 for Top3, 0.6221 for piBAQ,
+and 0.6192 for Top10. Mean pairwise Spearman correlations were 0.7018, 0.6543,
+0.6246, 0.5918, 0.6172, and 0.5726, respectively.
 
-### Within-Experiment Variability (CV)
+These values measure agreement of median protein profiles after pairwise
+matching. They do not measure absolute accuracy and cannot by themselves select
+an optimal method.
 
-The coefficient of variation (CV) measures technical reproducibility within experiments:
+![Cross-experiment correlation heatmap](figures/correlation_heatmap.png)
 
-- **Lowest CVs:** iBAQ log-transformed showed consistently low CVs (typically 2-7%)
-- **Highest CVs:** iBAQ raw and Sum methods showed higher variability
+### Within-dataset sample dispersion
 
-Best performing datasets (CV < 3%):
-- PXD013658.1 (iBAQ): 1.7%
-- PXD039414 (iBAQ): 1.5%
-- PXD007683-LFQ (iBAQ): 2.4%
+The original boxplot chart type is retained. Across the 21 eligible datasets,
+mean CV was 0.4287 for MaxLFQ, 0.5384 for DirectLFQ, 0.7905 for Top10, 0.8324
+for Top3, 0.8351 for piBAQ, and 0.8920 for Sum.
 
-![CV Distribution](figures/cv_distribution.png)
+![CV distribution](figures/cv_distribution.png)
 
-### Expression Stability (MAD)
+Because study design, sample count, and biological heterogeneity differ among
+datasets, these CVs are descriptive and should be read together with the
+cross-experiment and coverage results.
 
-| Method | Mean MAD |
-|--------|----------|
-| **iBAQ** | **0.033** |
-| iBAQ raw | 2.39 |
-| Top3 | 2.63 |
-| TopN | 2.72 |
-| DirectLFQ | 2.85 |
-| Sum | 2.98 |
+### PXD007683 TMT/LFQ agreement
 
-Log-transformed iBAQ shows dramatically better stability across experiments.
+All six methods were compared on the same 5,312 proteins. Pearson/Spearman
+correlations were 0.8446/0.8524 for piBAQ, 0.7837/0.7823 for MaxLFQ,
+0.8226/0.8235 for DirectLFQ, 0.7717/0.7733 for Top3, 0.7740/0.7654 for Top10,
+and 0.8245/0.8259 for Sum. This is a cross-technology agreement check, not a
+ground-truth recovery score.
 
-### Cross-Experiment Correlation Heatmap
+## Reproduction
 
-![Correlation Heatmap](figures/correlation_heatmap.png)
-
-### TMT vs LFQ Agreement
-
-The benchmark included PXD007683 measured with both TMT and LFQ technologies:
-- Both technologies showed consistent results when compared with the same quantification method
-- iBAQ maintained good correlation between TMT and LFQ measurements
-
----
-
-## Conclusions
-
-### Recommendations by Use Case
-
-1. **Cross-experiment comparisons**: Use **iBAQ (log-transformed)**
-   - Best correlation across experiments
-   - Most stable expression profiles
-   - Good absolute quantification
-
-2. **Within-experiment analysis**: Any method performs reasonably
-   - DirectLFQ for trace alignment
-   - TopN to reduce low-abundance peptide noise
-
-3. **Absolute quantification**: Use **iBAQ**
-   - Normalizes by theoretical peptide count
-   - Comparable across different proteins
-
-### Method Characteristics
-
-| Method | Strengths | Weaknesses |
-|--------|-----------|------------|
-| iBAQ | Best cross-experiment correlation, stable | Requires FASTA file |
-| DirectLFQ | Good within-experiment normalization | Lower cross-experiment correlation |
-| TopN | Reduces noise from low-abundance peptides | Configuration-dependent |
-| Sum | Simple, preserves dynamic range | Higher technical variability |
-
----
-
-## Data Sources
-
-All datasets obtained from PRIDE ibaqpy-research FTP:
-- **URL:** https://ftp.pride.ebi.ac.uk/pub/databases/pride/resources/proteomes/ibaqpy-research/
-- **Total:** 20+ HeLa and human proteomics datasets
-- **Formats:** Parquet (quantms format), MSstats CSV
-
----
-
-<details>
-<summary><strong>Methodology & Reproduction</strong></summary>
-
-### Quantification Methods Tested
-
-| Method | Description | Parameters |
-|--------|-------------|------------|
-| **iBAQ** | Intensity / theoretical peptides | Requires FASTA file |
-| **DirectLFQ** | DirectLFQ-backed trace alignment | min_peptides=2 |
-| **TopN** | Mean of N most intense peptides | N=3, 5, 10 |
-| **Sum** | Sum of all peptide intensities | - |
-
-### Datasets
-
-**HeLa Datasets (Cross-Experiment Analysis):**
-- PXD004452 - Large DDA-LFQ, ~8,500 proteins
-- PXD013658.1 - DIA-LFQ, ~9,000 proteins
-- PXD048325 - DIA, ~7,700 proteins, 192 samples
-- PXD000269 - DDA-LFQ, ~7,900 proteins
-- PXD030406 - DDA-LFQ, ~4,600 proteins
-- PXD010150 - DDA-LFQ, ~5,700 proteins
-
-**TMT vs LFQ Comparison:**
-- PXD007683-LFQ - Same samples measured with LFQ
-- PXD007683-TMT - Same samples measured with TMT
-
-### Evaluation Metrics
-
-1. **Within-Experiment Variability (CV)** - Coefficient of Variation per protein across replicates
-2. **Cross-Experiment Correlation** - Pearson correlation of median protein expression between datasets
-3. **TMT vs LFQ Agreement** - Correlation for same proteins/samples between technologies
-4. **Expression Profile Stability** - Median Absolute Deviation (MAD) of log-expression per protein
-5. **Rank Consistency** - Spearman rank correlation across experiments
-
-### Running the Benchmark
+Download the public inputs described in `scripts/config.py`:
 
 ```bash
-cd benchmarks/quant-hela-method-comparison
-
-# Run complete pipeline
-python scripts/run_benchmark.py
-
-# Or run individual phases
-python scripts/01_download_data.py    # Download data
-python scripts/02_prepare_peptides.py  # Prepare peptides
-python scripts/03_run_quantification.py # Run quantification
-python scripts/04_compute_metrics.py   # Compute metrics
-python scripts/05_generate_plots.py    # Generate plots
+python scripts/01_download_data.py
 ```
 
-**Options:**
-```bash
-python scripts/run_benchmark.py --phase 3      # Start from phase 3
-python scripts/run_benchmark.py --force        # Force recompute
-python scripts/run_benchmark.py --hela-only    # Only HeLa datasets
-python scripts/run_benchmark.py --comparison-only  # Only TMT/LFQ comparison
-```
-
-### Configuration
-
-Edit `scripts/config.py` to modify:
-- FASTA file path for iBAQ
-- Dataset URLs and metadata
-- Proteins of interest for tracking
-- iBAQ parameters (enzyme, peptide length, etc.)
-- TopN values to test
-
-### Output Structure
-
-```
-quant-hela-method-comparison/
-├── README.md
-├── scripts/
-│   ├── config.py
-│   ├── run_benchmark.py
-│   └── 01-07_*.py
-├── data/               # GIT-IGNORED
-├── results/            # CSV metrics
-└── figures/            # PNG plots
-```
-
-### Requirements
+Then run the current Rust refresh. Keep the work directory outside the
+repository if the protein matrices should remain disposable.
 
 ```bash
-pip install mokume[directlfq]
-pip install matplotlib seaborn
+python scripts/refresh_rust.py \
+  --raw-dir data/raw \
+  --fasta /path/to/Homo-sapiens-uniprot-reviewed.fasta \
+  --work-dir /tmp/mokume-hela \
+  --threads 24 \
+  --force
 ```
 
-</details>
+The tracked `results/` directory contains summary metrics rather than the large
+protein matrices. The two existing PNG filenames and chart types are preserved.
+
+## Data sources
+
+The 20 QPX inputs come from the public PRIDE `ibaqpy-research` resource. The
+PXD007683 MSstats inputs come from the public `quantms-benchmark-old` resource;
+their exact URLs and filenames are recorded in `scripts/config.py`.

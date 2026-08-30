@@ -2,24 +2,20 @@
 FASTA file handling utilities.
 """
 
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple, TYPE_CHECKING
+from typing import Dict, List, Set, Tuple
+
+import pyopenms
 
 from mokume.core.constants import build_accession_map, get_accession
 
-if TYPE_CHECKING:
-    from pyopenms import ProteaseDigestion
+AASequence = getattr(pyopenms, "AASequence")
+FASTAFile = getattr(pyopenms, "FASTAFile")
+ProteaseDigestion = getattr(pyopenms, "ProteaseDigestion")
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
-
-_PYOPENMS_INSTALL_HINT = (
-    "pyopenms is required for FASTA loading / enzyme digestion / iBAQ / TPA. "
-    "Install it with: pip install mokume[ibaq]"
-)
 
 
 def load_fasta(fasta_path: str) -> List:
@@ -36,11 +32,6 @@ def load_fasta(fasta_path: str) -> List:
     List
         List of FASTA protein entries.
     """
-    try:
-        from pyopenms import FASTAFile
-    except ImportError as exc:
-        raise ImportError(_PYOPENMS_INSTALL_HINT) from exc
-
     fasta_proteins = []
     FASTAFile().load(fasta_path, fasta_proteins)
     return fasta_proteins
@@ -71,11 +62,6 @@ def digest_protein(
     List[str]
         List of peptide sequences.
     """
-    try:
-        from pyopenms import AASequence, ProteaseDigestion
-    except ImportError as exc:
-        raise ImportError(_PYOPENMS_INSTALL_HINT) from exc
-
     digestor = ProteaseDigestion()
     digestor.setEnzyme(enzyme)
 
@@ -207,8 +193,8 @@ def extract_fasta(
     .. note::
         This proteotypic-only count is the **legacy ibaqpy denominator** and
         is symmetric only with a proteotypic-only numerator. The default
-        mokume iBAQ path is now piBAQ
-        (:func:`mokume.quantification.ibaq.compute_pibaq`), which re-allocates
+        Mokume piBAQ path
+        (:func:`mokume.quantification.pibaq.compute_pibaq`), which re-allocates
         shared-peptide intensity into the numerator and therefore uses a
         *total-potential* denominator (proteotypic + shared) derived from
         :func:`digest_fasta_full` instead of this function. The two
@@ -252,11 +238,6 @@ def extract_fasta(
     ValueError
         If none of the specified proteins are found in the FASTA file.
     """
-    try:
-        from pyopenms import ProteaseDigestion
-    except ImportError as exc:
-        raise ImportError(_PYOPENMS_INSTALL_HINT) from exc
-
     acc_to_originals, protein_accessions = build_accession_map(proteins)
 
     fasta_proteins = load_fasta(fasta)
@@ -322,11 +303,6 @@ def _digest_full_fasta(
     that one bad sequence cannot poison quantification of the rest of the
     proteome.
     """
-    try:
-        from pyopenms import AASequence
-    except ImportError as exc:
-        raise ImportError(_PYOPENMS_INSTALL_HINT) from exc
-
     accession_to_peptides: Dict[str, Set[str]] = {}
     peptide_to_accessions: "defaultdict[str, Set[str]]" = defaultdict(set)
     accession_to_mw: Dict[str, float] = {}
@@ -396,14 +372,10 @@ def digest_fasta_full(
         ``True``. ``accession_to_mw`` is empty when ``compute_mw`` is
         ``False``.
     """
-    try:
-        from pyopenms import AASequence, ProteaseDigestion
-    except ImportError as exc:
-        raise ImportError(_PYOPENMS_INSTALL_HINT) from exc
-
     fasta_proteins = load_fasta(fasta)
     digestor = ProteaseDigestion()
     digestor.setEnzyme(enzyme)
+    digestor.setMissedCleavages(0)
 
     accession_to_peptides: Dict[str, Set[str]] = {}
     accession_to_mw: Dict[str, float] = {}
@@ -510,11 +482,6 @@ def get_protein_molecular_weights(
     Dict[str, float]
         Dictionary mapping protein accessions to molecular weights.
     """
-    try:
-        from pyopenms import AASequence
-    except ImportError as exc:
-        raise ImportError(_PYOPENMS_INSTALL_HINT) from exc
-
     acc_to_originals, protein_accessions = build_accession_map(proteins)
 
     fasta_proteins = load_fasta(fasta)

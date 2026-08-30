@@ -4,7 +4,7 @@
 ``rust/python/mokume`` is a hand-maintained VENDORED COPY of a SUBSET of the
 canonical ``python/mokume`` package: the plotting / QC / analysis / tissue-atlas
 periphery that the Rust compute kernel does not port. ``python/mokume`` is the
-canonical, upstream-facing source; the sidecar rides along inside the ``mokume-rs``
+canonical, upstream-facing source; the sidecar rides along inside the ``mokume``
 wheel so the periphery ships next to the compiled kernel.
 
 Most of that subset is meant to be byte-for-byte identical to its canonical
@@ -49,20 +49,27 @@ allow-list:
   normalization/__init__.py
   quantification/__init__.py
       Trimmed package inits: only the surviving vendored submodules are re-exported
-      (FASTA / IRS / iBAQ respectively), via lazy ``__getattr__``; the Rust-ported
+      (FASTA / IRS / piBAQ respectively), via lazy ``__getattr__``; the Rust-ported
       methods and non-vendored submodules are dropped on purpose.
-  io/fasta.py
+  quantification/pibaq.py
+      Rust-wheel compatibility entrypoints adapt DataFrames and legacy arguments
+      to the native piBAQ core; the pure-Python calculation and file workflow are
+      intentionally not vendored.
+  quantification/_pibaq_allocation.py
+      The pure-Python package retains the allocation implementation, while the
+      Rust-wheel sidecar keeps only DataFrame helpers used around the native core.
   imputation/censored.py
   imputation/methods.py
   imputation/missforest.py
-      Eager top-level ``pyopenms`` / ``scikit-learn`` imports with the optional-
-      dependency ``try/except ImportError`` guards removed (the wheel bundles those
-      deps as hard requirements). Same computation; only the import ceremony
-      differs.
+      Eager top-level scikit-learn imports with the optional-dependency
+      ``try/except ImportError`` guards removed. scikit-learn comes from the
+      periphery extras that expose these imputation modules. Same computation;
+      only the import ceremony differs.
 
 Sidecar-only files (exist ONLY in ``rust/python/mokume`` — no canonical
-counterpart, so never synced): ``__main__.py``, ``commands/de_plots.py``,
-``commands/interactive_report.py``, ``commands/peptides2protein_ibaq.py``,
+counterpart, so never synced): ``__main__.py``, ``_pibaq_digest.py``,
+``commands/de_plots.py``,
+``commands/interactive_report.py``, ``commands/peptides2protein_pibaq.py``,
 ``commands/peptides2protein_qc.py``.
 
 Usage
@@ -104,6 +111,7 @@ SHARED_FILES: tuple[str, ...] = (
     "imputation/impseqrob.py",
     "imputation/qrilc.py",
     "imputation/seqknn.py",
+    "io/fasta.py",
     "model/__init__.py",
     "model/batch_correction.py",
     "model/labeling.py",
@@ -117,7 +125,6 @@ SHARED_FILES: tuple[str, ...] = (
     "plotting/distributions.py",
     "plotting/pca.py",
     "quantification/families.py",
-    "quantification/ibaq.py",
     "reports/__init__.py",
     "reports/interactive.py",
     "reports/qc_report.py",
@@ -152,9 +159,10 @@ INTENTIONALLY_EXCLUDED: tuple[str, ...] = (
     "imputation/methods.py",
     "imputation/missforest.py",
     "io/__init__.py",
-    "io/fasta.py",
     "normalization/__init__.py",
+    "quantification/_pibaq_allocation.py",
     "quantification/__init__.py",
+    "quantification/pibaq.py",
 )
 
 
@@ -254,6 +262,7 @@ def _check() -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Apply or verify the explicit canonical-to-sidecar file mapping."""
     parser = argparse.ArgumentParser(
         prog="vendor_sidecar.py",
         description=(

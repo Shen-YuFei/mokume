@@ -22,23 +22,6 @@ class RazorPeptideHandling(Enum):
         raise KeyError(f"Unknown razor peptide handling: {name}")
 
 
-class ProteinGroupingStrategy(Enum):
-    """Protein grouping strategies."""
-
-    NONE = auto()  # No grouping
-    SUBSUMPTION = auto()  # Group proteins whose peptides are subsets
-    PARSIMONY = auto()  # Minimal set of proteins explaining peptides
-
-    @classmethod
-    def from_str(cls, name: str) -> "ProteinGroupingStrategy":
-        """Convert string to enum value (case-insensitive)."""
-        name_ = name.lower().replace("-", "_").replace(" ", "_")
-        for k, v in cls._member_map_.items():
-            if k.lower() == name_:
-                return v
-        raise KeyError(f"Unknown protein grouping strategy: {name}")
-
-
 class FilterLevel(Enum):
     """Levels at which filtering can be applied."""
 

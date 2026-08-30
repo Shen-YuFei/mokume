@@ -8,7 +8,12 @@ import pandas as pd
 import numpy as np
 
 from mokume.core.logger import get_logger
-from mokume.core.constants import INTENSITY, NORM_INTENSITY, SAMPLE_ID, CONDITION
+from mokume.core.constants import (
+    INTENSITY,
+    NORM_INTENSITY,
+    TECHREPLICATE,
+    CONDITION,
+)
 from mokume.preprocessing.filters.base import BaseFilter, FilterResult
 from mokume.preprocessing.filters.enums import FilterLevel
 
@@ -160,7 +165,7 @@ class ReplicateAgreementFilter(BaseFilter):
     def __init__(
         self,
         min_replicates: int,
-        sample_column: str = SAMPLE_ID,
+        sample_column: str = TECHREPLICATE,
         condition_column: str = CONDITION,
         groupby_columns: Optional[List[str]] = None,
     ):
@@ -172,7 +177,7 @@ class ReplicateAgreementFilter(BaseFilter):
         min_replicates : int
             Minimum number of replicates where a feature must be detected.
         sample_column : str, optional
-            Column name for sample identifiers.
+            Column name for technical-replicate identifiers.
         condition_column : str, optional
             Column name for condition/group identifiers.
         groupby_columns : list[str], optional

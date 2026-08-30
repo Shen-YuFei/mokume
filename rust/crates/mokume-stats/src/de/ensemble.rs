@@ -148,6 +148,9 @@ fn accumulate_protein(protein: &str, members: &[(String, Vec<DeResult>)]) -> Com
         let Some(row) = rows.iter().find(|row| row.protein == protein) else {
             continue;
         };
+        if row.significance == Significance::NotTested || !row.log2_fold_change.is_finite() {
+            continue;
+        }
         fc_values.push(row.log2_fold_change);
         let pval = row.p_value;
         if pval.is_finite() && pval > 0.0 {
@@ -162,12 +165,12 @@ fn accumulate_protein(protein: &str, members: &[(String, Vec<DeResult>)]) -> Com
                 n_down += 1;
                 contributing.push(method.clone());
             }
-            Significance::Unchanged => {}
+            Significance::Unchanged | Significance::NotTested => {}
         }
     }
 
     let median_fc = if fc_values.is_empty() {
-        0.0
+        f64::NAN
     } else {
         median(&mut fc_values)
     };
@@ -223,9 +226,9 @@ struct Thresholds {
 
 /// Consensus direction call (ensemble.py:185-197). UP requires at least `min_k`
 /// members UP AND a significant adjusted p AND a fold change above the positive
-/// threshold; DOWN is the symmetric negative-threshold rule; otherwise
-/// Unchanged. A non-finite adjusted p (NaN) fails the `< fdr_threshold` test, so
-/// it stays Unchanged -- matching pandas' NaN comparison semantics.
+/// threshold; DOWN is the symmetric negative-threshold rule. A row without a
+/// finite fold change and adjusted p-value is NotTested; other rows are
+/// Unchanged when neither direction passes.
 fn consensus(
     n_up: usize,
     n_down: usize,
@@ -238,7 +241,9 @@ fn consensus(
         log2fc_threshold,
         fdr_threshold,
     } = *thresholds;
-    if n_up >= min_k && adj_p_value < fdr_threshold && log2_fold_change > log2fc_threshold {
+    if !adj_p_value.is_finite() || !log2_fold_change.is_finite() {
+        Significance::NotTested
+    } else if n_up >= min_k && adj_p_value < fdr_threshold && log2_fold_change > log2fc_threshold {
         Significance::Up
     } else if n_down >= min_k && adj_p_value < fdr_threshold && log2_fold_change < -log2fc_threshold
     {
@@ -271,6 +276,7 @@ mod tests {
             protein: protein.to_owned(),
             log2_fold_change: log2fc,
             p_value: pvalue,
+            log_p_value: pvalue.ln(),
             adj_p_value: f64::NAN, // unused by the combiner (it reads pvalue).
             t_statistic: f64::NAN,
             ave_expr: f64::NAN,
@@ -288,6 +294,7 @@ mod tests {
             Significance::Up => "UP",
             Significance::Down => "DOWN",
             Significance::Unchanged => "Unchanged",
+            Significance::NotTested => "NotTested",
         }
     }
 
@@ -300,6 +307,21 @@ mod tests {
         assert!((median(&mut even) - (-2.25)).abs() <= 1e-12);
         let mut single = [1.9];
         assert!((median(&mut single) - 1.9).abs() <= 1e-12);
+    }
+
+    #[test]
+    fn ensemble_preserves_not_tested_semantics() {
+        let members = vec![(
+            "limma".to_owned(),
+            vec![de_row("P1", f64::NAN, f64::NAN, Significance::NotTested)],
+        )];
+
+        let result = combine_de_results(&members, 1, 0.5, 0.05);
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].log2_fold_change.is_nan());
+        assert!(result[0].p_value.is_nan());
+        assert_eq!(result[0].significance, Significance::NotTested);
     }
 
     // CELL-EXACT golden test for the deterministic combine_de_results core.
@@ -474,11 +496,11 @@ mod tests {
     }
 
     // A single finite p-value passes through unchanged (no Fisher), and a
-    // protein with no finite/positive p-value gets NaN combined p and stays
-    // Unchanged (ensemble.py:153-156, the len==1 and len==0 branches).
+    // protein with no finite/positive p-value gets NaN combined p and is
+    // NotTested (ensemble.py:198-203, the len==1 and len==0 branches).
     #[test]
     fn single_and_zero_pvalue_branches() -> Result<(), String> {
-        use Significance::{Unchanged, Up};
+        use Significance::{NotTested, Unchanged, Up};
         let m1 = vec![
             de_row("Q1", 2.0, 0.001, Up), // only member reporting Q1
             de_row("Q2", 1.0, 0.0, Up),   // zero p dropped -> no finite p
@@ -501,7 +523,7 @@ mod tests {
             .ok_or("Q2 present")?;
         assert!(q2.p_value.is_nan(), "Q2 combined p should be NaN");
         assert!(q2.adj_p_value.is_nan(), "Q2 adj p should be NaN");
-        assert_eq!(q2.significance, Unchanged);
+        assert_eq!(q2.significance, NotTested);
         Ok(())
     }
 }

@@ -5,13 +5,19 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mokume)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**A proteomics quantification toolkit for the quantms ecosystem: a Rust compute kernel with a Python periphery.**
+**A Rust-first proteomics quantification toolkit for the quantms ecosystem.**
 
 The name comes from [mokume-gane](https://en.wikipedia.org/wiki/Mokume-gane) (木目金), a Japanese metalworking technique that fuses multiple metal layers into distinctive patterns — similar to how this toolkit melds peptide intensities into unified protein expression profiles.
 
-mokume ships as two front-ends over one Rust compute kernel: a standalone CLI binary `mokume` (built with cargo, no Python) and a PyO3/maturin wheel (`pip install mokume-rs`) that runs the same kernel in-process through the compiled `mokume._mokume` extension. The numbers are single-sourced in Rust; the Python periphery (plotting, tissue maps, interactive reports) only reads the kernel's TSV/parquet output and never recomputes them.
+The leading Rust implementation ships as a PyO3/maturin wheel (`pip install
+mokume`). The wheel exposes the compiled `mokume._mokume` extension through
+both a Python API and an installed `mokume` console command. The repository also
+contains the separately maintained pure-Python `mokume-py` distribution, whose
+class-based pipeline uses its own implementation. Select one distribution per
+environment; they share the `mokume` import package and cannot be installed
+together safely.
 
-![The mokume features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage](assets/pipeline.svg){ width="100%" }
+![The mokume quantify features2proteins pipeline: source data through quantify, normalize, impute, batch-correct, and differential expression, with the best-known methods at each stage](assets/pipeline.svg){ width="100%" }
 
 ---
 
@@ -21,7 +27,7 @@ mokume ships as two front-ends over one Rust compute kernel: a standalone CLI bi
 
     ---
 
-    iBAQ (piBAQ: paralog-aware iBAQ with family fallback), TopN, MaxLFQ, DirectLFQ, Sum, Ratio — choose the right method for your experiment.
+    piBAQ (paralog-aware iBAQ with exact shared-peptide allocation), TopN, MaxLFQ, DirectLFQ, Sum, Ratio — choose the right method for your experiment.
 
     [:octicons-arrow-right-24: Quantification methods](concepts/quantification.md)
 
@@ -61,7 +67,7 @@ mokume ships as two front-ends over one Rust compute kernel: a standalone CLI bi
 
     ---
 
-    LimROTS, DEqMS, proDA, limma, and ROTS with BH or IHW FDR correction — choose by discovery vs precision priority.
+    LimROTS, DEqMS, proDA, limma, and ROTS with BH, IHW, BKY, or Storey FDR correction — choose by discovery vs precision priority.
 
     [:octicons-arrow-right-24: Differential Expression](concepts/differential-expression.md)
 
@@ -81,6 +87,15 @@ mokume ships as two front-ends over one Rust compute kernel: a standalone CLI bi
 
     [:octicons-arrow-right-24: Quick start](quickstart.md)
 
+-   :material-robot-outline:{ .lg .middle } **Traceable Method Recommendation**
+
+    ---
+
+    Install the Mokume Plugin to bind benchmark evidence and evaluate bounded
+    candidate settings through the local Rust kernel, with no Mokume-owned API key.
+
+    [:octicons-arrow-right-24: Mokume Plugin](user-guide/agentic-plugin.md)
+
 </div>
 
 ---
@@ -90,6 +105,7 @@ mokume ships as two front-ends over one Rust compute kernel: a standalone CLI bi
 - **Standard LFQ / TMT quantification** — start with [`features2proteins`](user-guide/features2proteins.md)
 - **Need more control before protein summarization** — use the two-step path via [`features2peptides`](user-guide/features2peptides.md) and [`peptides2protein`](user-guide/peptides2protein.md)
 - **Tissue atlas analysis** — use the [`tissuemap`](periphery/tissuemap.md) periphery command (wheel only, `tissuemap` extra)
+- **Evidence-bound method recommendation** — use the [Mokume Plugin](user-guide/agentic-plugin.md)
 
 ## Quick Example
 
@@ -97,7 +113,7 @@ mokume ships as two front-ends over one Rust compute kernel: a standalone CLI bi
 
     ```bash
     # MaxLFQ quantification with normalization
-    mokume features2proteins \
+    mokume quantify features2proteins \
         -p features.parquet \
         -o proteins.csv \
         -s experiment.sdrf.tsv \
@@ -109,8 +125,8 @@ mokume ships as two front-ends over one Rust compute kernel: a standalone CLI bi
     ```python
     import mokume
 
-    # The wheel runs the same Rust kernel in-process (no subprocess); kwargs map
-    # to CLI flags (key=value -> --key value, with _ rewritten to -).
+    # The wheel runs the same Rust kernel in-process (no subprocess) and
+    # validates kwargs against the command's exact CLI schema.
     mokume.features2proteins(
         parquet="features.parquet",
         output="proteins.csv",

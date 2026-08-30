@@ -14,6 +14,7 @@ from mokume.preprocessing.filters.enums import FilterLevel, RazorPeptideHandling
 
 
 logger = get_logger("mokume.preprocessing.filters.protein")
+PROTEIN_QVALUE = "pg_global_qvalue"
 
 
 class ContaminantFilter(BaseFilter):
@@ -60,9 +61,21 @@ class ContaminantFilter(BaseFilter):
             )
             return df, self._create_result(input_count, input_count)
 
+        active_patterns = [
+            pattern
+            for pattern in self.patterns
+            if self.remove_decoys or pattern.upper() != "DECOY"
+        ]
+        if not active_patterns:
+            return df, self._create_result(
+                input_count,
+                input_count,
+                {"patterns": [], "remove_decoys": self.remove_decoys},
+            )
+
         # Vectorized contaminant matching using regex OR pattern
         upper_col = df[self.protein_column].fillna("").astype(str).str.upper()
-        pattern_regex = "|".join(re.escape(p.upper()) for p in self.patterns)
+        pattern_regex = "|".join(re.escape(p.upper()) for p in active_patterns)
         mask = ~upper_col.str.contains(pattern_regex, regex=True)
         filtered_df = df[mask].copy()
 
@@ -77,7 +90,7 @@ class ContaminantFilter(BaseFilter):
         return filtered_df, self._create_result(
             input_count,
             output_count,
-            {"patterns": self.patterns, "remove_decoys": self.remove_decoys},
+            {"patterns": active_patterns, "remove_decoys": self.remove_decoys},
         )
 
 
@@ -138,9 +151,12 @@ class MinPeptideFilter(BaseFilter):
             )
             peptide_counts.columns = [self.protein_column, "unique_peptide_count"]
 
-            # Filter proteins with enough unique peptides
+            # Every retained row is a unique-peptide row in the standard
+            # features2peptides path, so both thresholds apply to the distinct
+            # peptide count and the stricter threshold wins.
+            minimum_count = max(self.min_peptides, self.min_unique_peptides)
             passing_proteins = peptide_counts[
-                peptide_counts["unique_peptide_count"] >= self.min_unique_peptides
+                peptide_counts["unique_peptide_count"] >= minimum_count
             ][self.protein_column]
 
             filtered_df = df[df[self.protein_column].isin(passing_proteins)].copy()
@@ -154,9 +170,10 @@ class MinPeptideFilter(BaseFilter):
         output_count = len(filtered_df)
 
         logger.debug(
-            "%s: Removed %d entries from proteins with < %d unique peptides",
+            "%s: Removed %d entries below peptide thresholds (%d total, %d unique)",
             self.name,
             input_count - output_count,
+            self.min_peptides,
             self.min_unique_peptides,
         )
 
@@ -171,26 +188,14 @@ class MinPeptideFilter(BaseFilter):
 
 
 class ProteinFDRFilter(BaseFilter):
-    """Filter proteins by FDR threshold."""
+    """Keep protein groups whose minimum QPX protein q-value passes."""
 
     def __init__(
         self,
-        fdr_threshold: float = 0.01,
-        fdr_column: str = "protein_q_value",
+        fdr_threshold: float,
+        fdr_column: str = PROTEIN_QVALUE,
         protein_column: str = PROTEIN_NAME,
-    ):
-        """
-        Initialize the filter.
-
-        Parameters
-        ----------
-        fdr_threshold : float, optional
-            Maximum protein-level FDR threshold.
-        fdr_column : str, optional
-            Column name containing protein FDR/q-value.
-        protein_column : str, optional
-            Column name containing protein identifiers.
-        """
+    ) -> None:
         self.fdr_threshold = fdr_threshold
         self.fdr_column = fdr_column
         self.protein_column = protein_column
@@ -205,96 +210,18 @@ class ProteinFDRFilter(BaseFilter):
 
     def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
         input_count = len(df)
-
-        if self.fdr_column not in df.columns:
-            logger.debug(
-                "%s: FDR column '%s' not found, skipping filter",
-                self.name,
-                self.fdr_column,
+        if self.fdr_column not in df.columns or not df[self.fdr_column].notna().any():
+            raise ValueError(
+                "protein FDR filtering requires a populated QPX "
+                f"'{self.fdr_column}' column"
             )
-            return df, self._create_result(input_count, input_count)
-
-        # Get proteins passing FDR threshold
         protein_fdr = df.groupby(self.protein_column)[self.fdr_column].min()
-        passing_proteins = protein_fdr[protein_fdr <= self.fdr_threshold].index
-
-        filtered_df = df[df[self.protein_column].isin(passing_proteins)].copy()
-
-        output_count = len(filtered_df)
-
-        logger.debug(
-            "%s: Removed %d entries from proteins with FDR > %.3f",
-            self.name,
-            input_count - output_count,
-            self.fdr_threshold,
-        )
-
+        passing = protein_fdr[protein_fdr <= self.fdr_threshold].index
+        filtered_df = df[df[self.protein_column].isin(passing)].copy()
         return filtered_df, self._create_result(
-            input_count, output_count, {"fdr_threshold": self.fdr_threshold}
-        )
-
-
-class CoverageFilter(BaseFilter):
-    """Filter proteins by sequence coverage."""
-
-    def __init__(
-        self,
-        min_coverage: float = 0.0,
-        coverage_column: str = "coverage",
-        protein_column: str = PROTEIN_NAME,
-    ):
-        """
-        Initialize the filter.
-
-        Parameters
-        ----------
-        min_coverage : float, optional
-            Minimum sequence coverage (0.0-1.0).
-        coverage_column : str, optional
-            Column name containing coverage values.
-        protein_column : str, optional
-            Column name containing protein identifiers.
-        """
-        self.min_coverage = min_coverage
-        self.coverage_column = coverage_column
-        self.protein_column = protein_column
-
-    @property
-    def name(self) -> str:
-        return "CoverageFilter"
-
-    @property
-    def level(self) -> FilterLevel:
-        return FilterLevel.PROTEIN
-
-    def apply(self, df: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, FilterResult]:
-        input_count = len(df)
-
-        if self.coverage_column not in df.columns:
-            logger.debug(
-                "%s: Coverage column '%s' not found, skipping filter",
-                self.name,
-                self.coverage_column,
-            )
-            return df, self._create_result(input_count, input_count)
-
-        # Get proteins passing coverage threshold
-        protein_cov = df.groupby(self.protein_column)[self.coverage_column].max()
-        passing_proteins = protein_cov[protein_cov >= self.min_coverage].index
-
-        filtered_df = df[df[self.protein_column].isin(passing_proteins)].copy()
-
-        output_count = len(filtered_df)
-
-        logger.debug(
-            "%s: Removed %d entries from proteins with coverage < %.1f%%",
-            self.name,
-            input_count - output_count,
-            self.min_coverage * 100,
-        )
-
-        return filtered_df, self._create_result(
-            input_count, output_count, {"min_coverage": self.min_coverage}
+            input_count,
+            len(filtered_df),
+            {"fdr_threshold": self.fdr_threshold},
         )
 
 

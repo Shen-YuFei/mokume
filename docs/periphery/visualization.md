@@ -9,22 +9,14 @@ plots always match the cells in the kernel output (the periphery never
 recomputes the numbers).
 
 !!! note "Periphery extras"
-    Plotting and reports are **not** part of the Rust CLI. They are wheel-only
-    commands; install the extra you need:
+    Plotting and reports are exposed by the wheel's unified CLI but remain
+    implemented in its Python periphery. Install the extra you need:
     ```bash
-    pip install "mokume-rs[plotting]"   # matplotlib + seaborn (DE plots, t-SNE, iBAQ QC)
-    pip install "mokume-rs[reports]"    # plotly interactive DE report
-    pip install "mokume-rs[analysis]"   # single-matrix QC + workflow-comparison reports
-    pip install "mokume-rs[all]"        # everything
+    pip install "mokume[plotting]"   # matplotlib + seaborn (DE plots, t-SNE, piBAQ QC)
+    pip install "mokume[reports]"    # plotly interactive DE report
+    pip install "mokume[analysis]"   # single-matrix QC + workflow-comparison reports
+    pip install "mokume[all]"        # everything
     ```
-
-!!! warning "The `--plot-*` / `--interactive-report` flags are gone"
-    `features2proteins` no longer accepts `--plot-dir`, `--plot-volcano`,
-    `--plot-heatmap`, `--plot-pca`, `--highlight-genes`, `--interactive-report`,
-    or `--report-output`. The Rust kernel returns `NotImplemented` for plotting
-    and report output. Run the kernel to produce the protein matrix and DE CSVs,
-    then call the wheel periphery (`mokume.de_plots` / `mokume.interactive_report`)
-    on those files.
 
 ## DE Plots from features2proteins Output
 
@@ -32,59 +24,64 @@ First run the kernel to write the protein matrix and one DE result CSV per
 contrast:
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
-    --de --de-contrasts "NASH vs HL,NASH vs Control" \
+    --de-contrast "NASH" "HL" \
+    --de-contrast "NASH" "Control" \
     --de-output de_results
 ```
 
-Then render the plots from those CSVs with the periphery command. `de_plots`
-takes an explicit argument list because the per-contrast `--contrast KEY A B CSV`
-flag repeats (keyword arguments cannot express a repeated 4-tuple):
+Then render the plots from those CSVs with the periphery command. Repeat
+`--contrast KEY A B CSV` for every comparison:
 
-```python
-import mokume
-
-mokume.de_plots([
-    "--protein-matrix", "proteins.csv",
-    "--plot-dir", "plots",
-    "--sdrf", "experiment.sdrf.tsv",
-    "--volcano", "--heatmap", "--pca",
-    "--highlight-genes", "COL10A1,FN1,ALB",
-    "--contrast", "NASH-HL", "NASH", "HL", "de_results_NASH-HL.csv",
-    "--contrast", "NASH-Control", "NASH", "Control", "de_results_NASH-Control.csv",
-])
+```bash
+mokume plot de \
+    --protein-matrix proteins.csv \
+    --outdir plots \
+    --sdrf experiment.sdrf.tsv \
+    --volcano --heatmap \
+    --highlight-protein COL10A1 \
+    --highlight-protein FN1 \
+    --highlight-protein ALB \
+    --contrast NASH-HL NASH HL de_results_NASH-HL.csv \
+    --contrast NASH-Control NASH Control de_results_NASH-Control.csv
 ```
 
 This generates:
 
 - `plots/volcano_NASH-HL.png` -- Volcano plot for each contrast
 - `plots/heatmap_NASH-HL.png` -- Per-contrast heatmap showing top 50 significant proteins (by |log2FC|) and only the two compared conditions. Skipped if no significant proteins exist for that contrast.
-- `plots/pca_conditions.png` -- PCA colored by experimental condition (all samples)
+The `--volcano` / `--heatmap` flags select which plots to render;
+`--log2fc` (default 0.5) and `--fdr` (default 0.05) mirror the
+kernel's `--de-log2fc` / `--de-fdr` so the significance cutoffs match. Volcano
+and heatmap require at least one `--contrast`; heatmap requires `--sdrf`.
+Invalid option scopes are rejected instead of producing an empty plot directory.
 
-The `--volcano` / `--heatmap` / `--pca` flags select which plots to render;
-`--log2fc-threshold` (default 0.5) and `--fdr-threshold` (default 0.05) mirror the
-kernel's `--de-log2fc` / `--de-fdr` so the significance cutoffs match. The same
-command is runnable as `python -m mokume.commands.de_plots ...`.
+Render PCA as a separate command because it produces one output file:
+
+```bash
+mokume plot pca \
+    --protein-matrix proteins.csv \
+    --sdrf experiment.sdrf.tsv \
+    --output pca_conditions.png
+```
 
 ## Interactive HTML Report
 
-Generate a comprehensive interactive QC + DE report from the same kernel CSVs.
-`interactive_report` also takes an explicit argument list for the repeated
-`--contrast` flag:
+Generate a comprehensive interactive QC + DE report from the same kernel CSVs:
 
-```python
-import mokume
-
-mokume.interactive_report([
-    "--protein-matrix", "proteins.csv",
-    "--sdrf", "experiment.sdrf.tsv",
-    "--report-output", "qc_report.html",
-    "--highlight-genes", "COL10A1,FN1",
-    "--contrast", "NASH-HL", "NASH", "HL", "de_results/NASH_vs_HL.csv",
-])
+```bash
+mokume interactive-report \
+    --protein-matrix proteins.csv \
+    --sdrf experiment.sdrf.tsv \
+    --output qc_report.html \
+    --highlight-protein COL10A1 \
+    --highlight-protein FN1 \
+    --contrast NASH-HL NASH HL de_results/NASH_vs_HL.csv
 ```
+
+Omit `--output` to write `report_<contrast>.html` in the current directory.
 
 The interactive report includes:
 
@@ -155,18 +152,18 @@ This generates a report with:
 ## t-SNE Visualization Command
 
 A standalone periphery command for t-SNE visualization from a folder of protein
-files (`plotting` extra). It is **not** a Rust CLI subcommand — it is the wheel
-command `mokume.tsne_visualization(**kwargs)` (or
-`python -m mokume.commands.visualize`):
+files (`plotting` extra). It is exposed by the wheel CLI while remaining outside
+the Rust compute kernel:
 
-```python
-import mokume
-
-mokume.tsne_visualization(
-    folder="protein_folder/",
-    pattern="proteins.tsv",   # default
-)
+```bash
+mokume plot tsne \
+    --input protein_folder/ \
+    --pattern proteins.tsv \
+    --output tsne.pdf
 ```
+
+The equivalent Python APIs remain available as `mokume.de_plots([...])`,
+`mokume.interactive_report([...])`, and `mokume.tsne_visualization(**kwargs)`.
 
 ## Plotting Library API
 

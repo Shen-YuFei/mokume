@@ -23,13 +23,39 @@ from mokume.io.msstats import create_msstats_feature_table
 logger = get_logger("mokume.io.feature")
 
 
+def _first_present(columns: list[str], candidates: tuple[str, ...]) -> Optional[str]:
+    """Return the first candidate present in a parquet schema."""
+    return next((name for name in candidates if name in columns), None)
+
+
+def _optional_qvalue_projection(source: Optional[str], alias: str, indent: int) -> str:
+    """Build a canonical q-value projection, using typed null when absent."""
+    padding = " " * indent
+    expression = f"{source} as {alias}" if source else f"NULL::DOUBLE as {alias}"
+    return f",\n{padding}{expression}"
+
+
+def _optional_passthrough_projection(enabled: bool, column: str, indent: int) -> str:
+    """Project an optional source column without inventing a typed-null field."""
+    return f",\n{' ' * indent}{column}" if enabled else ""
+
+
 def _normalize_run_key(value: object) -> str:
     if pd.isna(value):
         return ""
     key = str(value).strip().replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
-    for extension in (".raw", ".mzml", ".d", ".wiff"):
-        if key.endswith(extension):
-            return key[: -len(extension)]
+    # SDRF data files can name an archived vendor directory/file, for example
+    # ``sample.d.zip`` or ``sample.mzML.gz``, while QPX stores ``sample``.
+    # Peel a chain of known transport and acquisition suffixes.
+    extensions = (".zip", ".gz", ".raw", ".mzml", ".d", ".wiff")
+    stripped = True
+    while stripped:
+        stripped = False
+        for extension in extensions:
+            if key.endswith(extension):
+                key = key[: -len(extension)]
+                stripped = True
+                break
     return key
 
 
@@ -43,7 +69,11 @@ def _normalize_label_key(value: object) -> str:
             label = part[3:].strip()
             break
     key = label.lower()
-    if key in {"lfq", "label-free", "label free sample"}:
+    # Older quantms.io/QPX feature files use ``raw`` as the sole
+    # ``intensities.label`` value for label-free runs. It is a quantification
+    # placeholder, not a reporter channel, and must match the SDRF's canonical
+    # ``label free sample`` term.
+    if key in {"raw", "lfq", "label-free", "label free sample"}:
         return "label free sample"
     return key
 
@@ -144,16 +174,22 @@ class SQLFilterBuilder:
         Whether the parquet has an ``is_decoy`` column. When True, DECOY
         filtering uses ``is_decoy = false`` instead of text pattern matching.
         Automatically set by :class:`Feature` after format detection.
+    named_score_name : str, optional
+        Exact QPX ``additional_scores.score_name`` to filter.
+    named_score_threshold : float, optional
+        Threshold interpreted using the score's ``higher_better`` flag.
     """
 
     remove_contaminants: bool = True
     contaminant_patterns: list[str] = field(
-        default_factory=lambda: ["CONTAMINANT", "ENTRAP", "DECOY"]
+        default_factory=lambda: ["CONTAMINANT", "CONTAM_", "ENTRAP", "DECOY"]
     )
     min_intensity: float = 0.0
     min_peptide_length: int = 7
     require_unique: bool = True
     has_is_decoy: bool = False
+    named_score_name: Optional[str] = None
+    named_score_threshold: Optional[float] = None
 
     def build_where_clause(self) -> tuple[str, list]:
         """Build parameterized SQL WHERE clause for DuckDB queries.
@@ -184,26 +220,47 @@ class SQLFilterBuilder:
         if self.require_unique:
             conditions.append('"unique" = 1')
 
+        score_clause, score_params = self.build_named_score_clause()
+        if score_clause:
+            conditions.append(score_clause)
+            params.extend(score_params)
+
         # Contaminant/decoy filter
         if self.remove_contaminants and self.contaminant_patterns:
-            cont_conds, cont_params = self._build_contaminant_filter()
+            cont_conds, cont_params = self.build_contaminant_filter()
             conditions.append("(" + " AND ".join(cont_conds) + ")")
             params.extend(cont_params)
 
         clause = " AND ".join(conditions) if conditions else "1=1"
         return clause, params
 
-    def _build_contaminant_filter(self) -> tuple[list[str], list]:
+    def build_named_score_clause(self) -> tuple[str, list]:
+        """Return the input-level predicate for the configured named score."""
+        if self.named_score_name is None:
+            return "", []
+        clause = (
+            "EXISTS (SELECT 1 FROM UNNEST(additional_scores) AS score_item(score) "
+            "WHERE score.score_name = ? AND "
+            "((score.higher_better AND score.score_value >= ?) OR "
+            "(NOT score.higher_better AND score.score_value <= ?)))"
+        )
+        return clause, [
+            self.named_score_name,
+            self.named_score_threshold,
+            self.named_score_threshold,
+        ]
+
+    def build_contaminant_filter(self) -> tuple[list[str], list]:
         """Build contaminant/decoy filter conditions and params."""
         conditions: list[str] = []
         params: list = []
         for pattern in self.contaminant_patterns:
-            # Use is_decoy column for DECOY filtering when available (more efficient)
+            # Respect the structured flag when present, while retaining the
+            # accession-name check for imperfect upstream annotations.
             if pattern.upper() == "DECOY" and self.has_is_decoy:
                 conditions.append("is_decoy = false")
-            else:
-                conditions.append("pg_accessions::text NOT LIKE ?")
-                params.append("%" + pattern + "%")
+            conditions.append("strpos(pg_accessions::text, ?) = 0")
+            params.append(pattern)
         return conditions, params
 
 
@@ -320,6 +377,55 @@ class Feature:
         # Propagate is_decoy availability to filter builder for optimized DECOY filtering
         if self.filter_builder is not None and self._has_is_decoy:
             self.filter_builder.has_is_decoy = True
+        if self.filter_builder is not None and self.filter_builder.named_score_name:
+            self._validate_named_score(self.filter_builder.named_score_name)
+
+    def _named_score_clause(self) -> tuple[str, list]:
+        if self.filter_builder is None:
+            return "", []
+        return self.filter_builder.build_named_score_clause()
+
+    def _append_named_score_condition(
+        self, conditions: list[str], params: list
+    ) -> None:
+        score_clause, score_params = self._named_score_clause()
+        if score_clause:
+            conditions.append(score_clause)
+            params.extend(score_params)
+
+    def _validate_named_score(self, name: str) -> None:
+        """Fail before output when a requested score is absent or malformed."""
+        if not self._has_additional_scores:
+            raise ValueError(
+                f"named score filter `{name}` requires a QPX additional_scores column"
+            )
+        row = self.parquet_db.execute(
+            """
+            SELECT
+                COUNT(*) AS score_count,
+                COUNT(DISTINCT score.higher_better) AS direction_count,
+                COUNT(*) FILTER (
+                    WHERE score.score_value IS NULL
+                       OR NOT isfinite(score.score_value)
+                       OR score.higher_better IS NULL
+                ) AS invalid_count
+            FROM parquet_db_raw,
+                 UNNEST(additional_scores) AS score_item(score)
+            WHERE score.score_name = ?
+            """,
+            [name],
+        ).fetchone()
+        score_count, direction_count, invalid_count = row
+        if score_count == 0:
+            raise ValueError(
+                f"--filter-score requires QPX additional_scores entry `{name}`"
+            )
+        if invalid_count:
+            raise ValueError(f"QPX score `{name}` contains null or non-finite values")
+        if direction_count != 1:
+            raise ValueError(
+                f"QPX score `{name}` has inconsistent higher_better values"
+            )
 
     @property
     def samples(self) -> list[str]:
@@ -364,6 +470,13 @@ class Feature:
         # Detect new QPX fields for optimized filtering
         self._has_is_decoy = "is_decoy" in cols
         self._has_anchor_protein = "anchor_protein" in cols
+        self._has_additional_scores = "additional_scores" in cols
+        self._peptide_qvalue_col = _first_present(
+            cols, ("peptide_qvalue", "peptide_q_value")
+        )
+        self._protein_qvalue_col = _first_present(
+            cols, ("pg_global_qvalue", "protein_qvalue")
+        )
 
         # New-QPX LFQ vs TMT discriminator. In LFQ the ``intensities.label`` names
         # the run each (possibly MBR-transferred) intensity belongs to, so it — not
@@ -470,6 +583,15 @@ class Feature:
             extra_cols += ",\n                    is_decoy"
         if self._has_anchor_protein:
             extra_cols += ",\n                    anchor_protein"
+        extra_cols += _optional_passthrough_projection(
+            self._has_additional_scores, "additional_scores", 20
+        )
+        extra_cols += _optional_qvalue_projection(
+            self._peptide_qvalue_col, "peptide_qvalue", 20
+        )
+        extra_cols += _optional_qvalue_projection(
+            self._protein_qvalue_col, "pg_global_qvalue", 20
+        )
 
         self.parquet_db.execute(
             "".join(
@@ -632,6 +754,15 @@ class Feature:
             opt_cols_raw += ",\n                    is_decoy"
         if self._has_anchor_protein:
             opt_cols_raw += ",\n                    anchor_protein"
+        opt_cols_raw += _optional_passthrough_projection(
+            self._has_additional_scores, "additional_scores", 20
+        )
+        opt_cols_raw += _optional_qvalue_projection(
+            self._peptide_qvalue_col, "peptide_qvalue", 20
+        )
+        opt_cols_raw += _optional_qvalue_projection(
+            self._protein_qvalue_col, "pg_global_qvalue", 20
+        )
         if self._is_new_qpx:
             opt_cols_raw += (
                 f",\n                    {mapping_run} as _mapping_run"
@@ -673,6 +804,11 @@ class Feature:
             opt_cols_final += ",\n                p.is_decoy"
         if self._has_anchor_protein:
             opt_cols_final += ",\n                p.anchor_protein"
+        opt_cols_final += _optional_passthrough_projection(
+            self._has_additional_scores, "p.additional_scores", 16
+        )
+        opt_cols_final += ",\n                p.peptide_qvalue"
+        opt_cols_final += ",\n                p.pg_global_qvalue"
 
         # Recreate main view with SDRF data joined
         self.parquet_db.execute("DROP VIEW IF EXISTS parquet_db")
@@ -812,8 +948,14 @@ class Feature:
 
     def get_report_from_database(self, samples: list, columns: list = None):
         """Retrieves a standardized report from the database for specified samples."""
-        cols = self._validate_columns(columns) if columns is not None else "*"
+        if columns is not None:
+            cols = self._validate_columns(columns)
+        else:
+            cols = (
+                "* EXCLUDE (additional_scores)" if self._has_additional_scores else "*"
+            )
         placeholders = ",".join(["?"] * len(samples))
+        score_clause, score_params = self._named_score_clause()
         sql = "".join(
             [
                 "SELECT ",
@@ -821,9 +963,10 @@ class Feature:
                 " FROM parquet_db WHERE sample_accession IN (",
                 placeholders,
                 ")",
+                " AND " + score_clause if score_clause else "",
             ]
         )
-        database = self.parquet_db.execute(sql, samples)
+        database = self.parquet_db.execute(sql, [*samples, *score_params])
         report = database.df()
         return Feature.standardize_df(report)
 
@@ -917,8 +1060,14 @@ class Feature:
         self, cons: list, columns: list = None
     ) -> pd.DataFrame:
         """Retrieves a standardized report from the database for specified conditions."""
-        cols = self._validate_columns(columns) if columns is not None else "*"
+        if columns is not None:
+            cols = self._validate_columns(columns)
+        else:
+            cols = (
+                "* EXCLUDE (additional_scores)" if self._has_additional_scores else "*"
+            )
         placeholders = ",".join(["?"] * len(cons))
+        score_clause, score_params = self._named_score_clause()
         sql = "".join(
             [
                 "SELECT ",
@@ -926,9 +1075,10 @@ class Feature:
                 " FROM parquet_db WHERE condition IN (",
                 placeholders,
                 ")",
+                " AND " + score_clause if score_clause else "",
             ]
         )
-        database = self.parquet_db.execute(sql, cons)
+        database = self.parquet_db.execute(sql, [*cons, *score_params])
         report = database.df()
         return Feature.standardize_df(report)
 
@@ -1024,13 +1174,15 @@ class Feature:
         irs_params: list = []
 
         if self.filter_builder and self.filter_builder.remove_contaminants:
-            for pattern in self.filter_builder.contaminant_patterns:
-                filter_conditions.append("pg_accessions::text NOT LIKE ?")
-                irs_params.append("%" + pattern + "%")
+            contaminant_filter = self.filter_builder.build_contaminant_filter()
+            filter_conditions.extend(contaminant_filter[0])
+            irs_params.extend(contaminant_filter[1])
 
         if self.filter_builder and self.filter_builder.min_intensity > 0:
             filter_conditions.append("intensity >= ?")
             irs_params.append(self.filter_builder.min_intensity)
+
+        self._append_named_score_condition(filter_conditions, irs_params)
 
         # Add channel filter
         filter_conditions.append("channel = ?")

@@ -47,7 +47,10 @@ class RatioQuantification:
     sample_to_plex : dict[str, str]
         Mapping from sample name to plex identifier.
     fraction_merge_method : str
-        How to merge fractions: "mean" (PS protocol) or "max" (mokume default).
+        How to merge fractions: "mean" (the PS protocol behaviour, and the
+        default) or "max". Compared verbatim, so it must be lowercase;
+        QuantificationConfig folds the case for callers coming through the
+        pipeline.
     """
 
     # Data level this method consumes; maps to the ``ratio`` flow in the

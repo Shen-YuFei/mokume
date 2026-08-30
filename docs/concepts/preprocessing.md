@@ -27,7 +27,6 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 | ChargeStateFilter | `allowed_charge_states` | null | Allowed charges (e.g., [2,3,4]) |
 | ModificationFilter | `exclude_modifications` | [] | Remove specific modifications |
 | MissedCleavageFilter | `max_missed_cleavages` | null | Max missed cleavages |
-| SearchScoreFilter | `min_search_score` | null | Min search engine score |
 | SequencePatternFilter | `exclude_sequence_patterns` | [] | Regex patterns to exclude |
 
 ### Protein Filters
@@ -35,9 +34,7 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 | Filter | Parameter | Default | Description |
 |--------|-----------|---------|-------------|
 | ContaminantFilter | `remove_contaminants/decoys` | true | Remove contaminants/decoys |
-| MinPeptideFilter | `min_unique_peptides` | 2 | Min unique peptides per protein |
-| ProteinFDRFilter | `fdr_threshold` | 0.01 | Protein-level FDR |
-| CoverageFilter | `min_coverage` | 0.0 | Min sequence coverage |
+| MinPeptideFilter | `min_unique_peptides` | 2 | Min unique peptides per protein/sample cell |
 | RazorPeptideFilter | `razor_peptide_handling` | "keep" | Handle shared peptides |
 
 ### Run/Sample QC Filters
@@ -47,20 +44,19 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 | RunIntensityFilter | `min_total_intensity` | 0.0 | Min total intensity per run |
 | MinFeaturesFilter | `min_identified_features` | 0 | Min features per run |
 | MissingRateFilter | `max_missing_rate` | 1.0 | Max missing value rate |
-| SampleCorrelationFilter | `min_sample_correlation` | null | Min replicate correlation |
 
-!!! note "Group-level filters: what runs and what is a no-op"
+!!! note "Group-level filter support"
     The per-row filters (min-intensity floor, peptide length, charge states,
     excluded modifications, missed cleavages) and the per-`(protein, sample)`
     unique-peptide gate are wired and oracle-locked in the Rust kernel. Among the
     **group-level** filters, CV threshold, quantile outlier removal, and the
-    run-QC checks (min-features, min-total-intensity, min-proteins) are
-    implemented via a pre-pass that applies them before the normalization median.
-    Replicate agreement reproduces Python's degenerate per-sample behaviour (a
-    `>= 2` threshold empties the output). `max-missing-rate`, `sample-correlation`,
-    `min-search-score`, and `min-coverage` are no-ops on QPX inputs — each warns
-    and passes rows through, matching Python's per-sample / column-absent skip.
-    Only an unknown `razor-peptide-handling` value returns `NotImplemented`.
+    run-QC checks (min-features, min-total-intensity, min-proteins and missing
+    rate) are implemented via a technical-run pre-pass. Missing rate is the absent
+    fraction of the complete distinct `(protein, peptide)` universe among the
+    surviving runs in each sample. Replicate agreement reproduces the Python
+    per-sample behaviour. Settings that cannot be evaluated from QPX streaming
+    input (sample correlation, search score, and coverage) are rejected when active.
+    Unknown YAML/JSON keys and unsupported razor handling are also rejected.
 
 ## Configuration
 
@@ -69,7 +65,7 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 Generate an example configuration:
 
 ```bash
-mokume features2peptides --generate-filter-config filters.yaml
+mokume quantify features2peptides --generate-filter-config filters.yaml
 ```
 
 Example `basic_qc.yaml`:
@@ -79,18 +75,21 @@ name: basic_qc
 enabled: true
 
 intensity:
-  remove_zero_intensity: true
+  min_intensity: 0.0
 
 peptide:
+  fdr_threshold: null
   min_peptide_length: 7
   max_peptide_length: 50
 
 protein:
+  fdr_threshold: null
   min_unique_peptides: 2
   remove_contaminants: true
   remove_decoys: true
   contaminant_patterns:
     - CONTAMINANT
+    - CONTAM_
     - ENTRAP
     - DECOY
 ```
@@ -99,26 +98,32 @@ protein:
 
 ```bash
 # From config file
-mokume features2peptides \
+mokume quantify features2peptides \
     -p features.parquet -s experiment.sdrf.tsv \
     --filter-config filters.yaml \
     --output peptides.csv
 
 # CLI overrides (take precedence over config file)
-mokume features2peptides \
+mokume quantify features2peptides \
     -p features.parquet -s experiment.sdrf.tsv \
     --filter-config filters.yaml \
     --filter-min-intensity 1000 \
     --filter-cv-threshold 0.3 \
+    --filter-protein-fdr 0.01 \
     --output peptides.csv
 
 # CLI-only filtering (no config file)
-mokume features2peptides \
+mokume quantify features2peptides \
     -p features.parquet -s experiment.sdrf.tsv \
     --filter-min-intensity 500 \
-    --filter-min-unique-peptides 2 \
+    --min-unique 2 \
     --output peptides.csv
 ```
+
+Peptide and protein FDR thresholds are explicit opt-ins. They use the dedicated
+QPX `peptide_qvalue` and `pg_global_qvalue` fields; requesting a threshold when
+the corresponding field is absent or entirely null fails before output is
+written.
 
 ### Python (wheel)
 
@@ -137,13 +142,14 @@ mokume.features2peptides(
     sdrf="experiment.sdrf.tsv",
     filter_config="filters.yaml",
     filter_min_intensity=1000,
-    filter_min_unique_peptides=2,
+    min_unique=2,
     output="peptides.csv",
 )
 ```
 
-Charge states and excluded modifications are passed as comma-separated strings
-(`filter_charge_states="2,3,4"`), matching the CLI flags.
+Charge states and excluded modifications are Python sequences, which the wrapper
+translates to repeated `--filter-charge-state` and
+`--filter-exclude-modification` flags.
 
 ## Pre-configured Templates
 

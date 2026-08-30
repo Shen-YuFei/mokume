@@ -23,5 +23,6 @@ exclude_paths:
   - "python/tests/**"
   - "rust/tests/**"
   - "rust/crates/*/tests/**"
+  - "benchmarks/*/scripts/**"
   # A whole crate of golden tests: its only source file is test code.
   - "rust/crates/mokume-golden-tests/**"

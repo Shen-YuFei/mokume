@@ -68,18 +68,6 @@ def download_file(url: str, dest: Path, verbose: bool = True) -> bool:
         return False
 
 
-def check_url_exists(url: str) -> bool:
-    """Check if a URL exists without downloading."""
-    try:
-        if urllib.parse.urlparse(url).scheme not in ("http", "https"):
-            raise ValueError(f"URL scheme not allowed: {url}")
-        request = urllib.request.Request(url, method='HEAD')
-        _opener.open(request, timeout=10)
-        return True
-    except Exception:
-        return False
-
-
 def list_available_files(base_url: str) -> List[str]:
     """
     List files available at a URL (works for directory listings).

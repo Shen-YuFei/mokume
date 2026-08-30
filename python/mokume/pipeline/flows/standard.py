@@ -1,7 +1,7 @@
 """
 Standard quantification flow.
 
-Handles: iBAQ, TopN, sum, median quantification methods.
+Handles: piBAQ, TopN, sum, median quantification methods.
 These all work from peptide-level data (input_level="peptides").
 
 Flow:

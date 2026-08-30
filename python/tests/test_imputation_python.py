@@ -162,3 +162,28 @@ class TestGMS:
         result = impute_gms(matrix_with_missing)
         assert not result.isna().any().any()
         assert result.shape == matrix_with_missing.shape
+
+
+class TestDrawsAreReproducible:
+    """Every imputer must return the same matrix twice for the same input.
+
+    The draw-based ones (minprob, qrilc) used the unseeded global numpy state,
+    so two runs of one method differed as much as two different methods -- and a
+    benchmark comparing methods on one matrix read that noise as signal.
+    """
+
+    @pytest.mark.parametrize(
+        "method", ["minprob", "mindet", "knn", "qrilc", "gms", "impseq", "impseqrob"]
+    )
+    def test_same_input_same_output(self, matrix_with_missing, method):
+        """Two runs of one imputer on one matrix must agree exactly."""
+        first = impute_censored(matrix_with_missing, method=method)
+        second = impute_censored(matrix_with_missing, method=method)
+        pd.testing.assert_frame_equal(first, second)
+
+    @pytest.mark.parametrize("method", ["minprob", "qrilc"])
+    def test_seed_still_selects_a_draw(self, matrix_with_missing, method):
+        """Seeding must fix the draw, not replace it with a constant."""
+        a = impute_censored(matrix_with_missing, method=method, random_state=1)
+        b = impute_censored(matrix_with_missing, method=method, random_state=2)
+        assert not a.equals(b)

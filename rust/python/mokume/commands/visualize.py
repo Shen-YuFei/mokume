@@ -3,39 +3,50 @@
 
 A pure-Python periphery command in the mokume wheel: it re-implements no compute
 kernel; it reads the protein files and draws the t-SNE plot through the mokume
-plotting helpers. Exposed in-process as ``mokume.tsne_visualization`` and
-runnable as ``python -m mokume.commands.visualize``.
+plotting helpers. Exposed as ``mokume plot tsne`` and in-process as
+``mokume.tsne_visualization``.
 
 Run requirements: the ``plotting`` extra (matplotlib + seaborn + scikit-learn):
 ``pip install mokume[plotting]``.
 
 argv contract:
-    --folder/-f   PATH   folder that contains the protein files (required)
-    --pattern/-o  STR    protein file glob pattern (default: proteins.tsv)
+    --input/-i    PATH   folder that contains the protein files (required)
+    --pattern/-p  STR    protein file glob pattern (default: proteins.tsv)
+    --output/-o   PATH   destination PDF (required)
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="tsne_visualization.py",
-        description="t-SNE visualization for protein data (mokume command).",
+        prog="mokume plot tsne",
+        description="Render a t-SNE plot from protein tables.",
     )
     parser.add_argument(
-        "-f",
-        "--folder",
+        "-i",
+        "--input",
+        metavar="<DIR>",
         required=True,
-        help="Folder that contains all the protein files.",
+        help="Protein-table directory.",
+    )
+    parser.add_argument(
+        "-p",
+        "--pattern",
+        metavar="<GLOB>",
+        default="proteins.tsv",
+        help="Default: proteins.tsv.",
     )
     parser.add_argument(
         "-o",
-        "--pattern",
-        default="proteins.tsv",
-        help="Protein file pattern (default: proteins.tsv).",
+        "--output",
+        metavar="<FILE>",
+        required=True,
+        help="PDF output.",
     )
     return parser.parse_args(argv)
 
@@ -79,7 +90,7 @@ def main(argv: list[str]) -> int:
 
         import pandas as pd
 
-        from mokume.core.constants import IBAQ_LOG, PROTEIN_NAME, SAMPLE_ID
+        constants = importlib.import_module("mokume.core.constants")
         from mokume.plotting import is_plotting_available
     except ImportError as exc:  # pragma: no cover - environment dependent
         print(
@@ -101,10 +112,10 @@ def main(argv: list[str]) -> int:
 
     # Reproduce the upstream tsne_visualization body verbatim so the plotting
     # stays single-sourced in the mokume package.
-    files = glob.glob(f"{args.folder}/*{args.pattern}")
+    files = glob.glob(f"{args.input}/*{args.pattern}")
     if not files:
         print(
-            f"error: no files matched '{args.folder}/*{args.pattern}'",
+            f"error: no files matched '{args.input}/*{args.pattern}'",
             file=sys.stderr,
         )
         return 1
@@ -113,18 +124,25 @@ def main(argv: list[str]) -> int:
     for f in files:
         reanalysis = (f.split("/")[-1].split("_")[0]).replace("-proteins.tsv", "")
         dfs += [
-            pd.read_csv(f, usecols=[PROTEIN_NAME, SAMPLE_ID, IBAQ_LOG], sep=",").assign(
-                reanalysis=reanalysis
-            )
+            pd.read_csv(
+                f,
+                usecols=[
+                    constants.PROTEIN_NAME,
+                    constants.SAMPLE_ID,
+                    constants.PIBAQ_LOG,
+                ],
+                sep=None,
+                engine="python",
+            ).assign(reanalysis=reanalysis)
         ]
 
     total_proteins = pd.concat(dfs, ignore_index=True)
 
     normalize_df = pd.pivot_table(
         total_proteins,
-        index=[SAMPLE_ID, "reanalysis"],
-        columns=PROTEIN_NAME,
-        values=IBAQ_LOG,
+        index=[constants.SAMPLE_ID, "reanalysis"],
+        columns=constants.PROTEIN_NAME,
+        values=constants.PIBAQ_LOG,
     )
     normalize_df = normalize_df.fillna(0)
     df_pca = compute_pca_with_plot(normalize_df, n_components=30)
@@ -138,7 +156,7 @@ def main(argv: list[str]) -> int:
         "tSNE1",
         "tSNE2",
         "batch",
-        "5.tsne_plot_with_batch_information.pdf",
+        args.output,
     )
     print(f"t-SNE plot written; input shape {total_proteins.shape}", file=sys.stderr)
     return 0

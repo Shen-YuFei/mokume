@@ -7,12 +7,15 @@ installs them in separate jobs with different dependency sets (the wheel job has
 ``_mokume`` but not ``duckdb``; the pure-Python job has ``duckdb`` but not
 ``_mokume``). Running both live in one process is therefore impossible.
 
-Instead we compare the Rust kernel's output against a *frozen* pure-Python
-reference checked in beside the fixture. The references were produced by
-``QuantificationPipeline(...).run()`` (float64); the Rust kernel computes in
-``f32``, so values agree to ~1e-7 relative and we assert ``rtol=1e-6``.
+Instead we compare the Rust kernel's output against *frozen compatibility
+goldens* checked in beside the fixture. The goldens were produced by the
+pure-Python ``QuantificationPipeline(...).run()`` (float64); they pin accepted
+behavior for these covered paths without making Python authoritative. The Rust
+kernel computes in ``f32``, so values agree to ~1e-7 relative and we assert
+``rtol=1e-6``.
 
-Regenerate the goldens after an intentional pure-Python change::
+Regenerate the goldens only after an intentional shared-contract change that is
+meant to update both implementations, not after an isolated pure-Python change::
 
     cd python && python -c "\
 from mokume.pipeline.config import PipelineConfig, InputConfig, QuantificationConfig; \
@@ -74,6 +77,7 @@ def _rust_features2proteins(
     if not hasattr(mokume, "_mokume"):
         pytest.skip("mokume._mokume (Rust kernel) not available in this interpreter")
     args = [
+        "quantify",
         "features2proteins",
         "--parquet",
         str(parquet),
@@ -81,8 +85,6 @@ def _rust_features2proteins(
         method,
         "--output",
         str(out_path),
-        "--output-format",
-        "python-compatible",
     ]
     if sample_normalization is not None:
         args += ["--sample-normalization", sample_normalization]
@@ -106,7 +108,7 @@ def _canonical(df: pd.DataFrame) -> pd.DataFrame:
 
 @pytest.mark.parametrize("method", ["sum", "median"])
 def test_rust_matches_python_golden(method, tmp_path):
-    """Rust output matches the frozen pure-Python reference within f32 tolerance."""
+    """Rust output matches the frozen compatibility golden within f32 tolerance."""
     golden_path = GOLDEN_DIR / f"feature_wide_{method}_python.csv"
     rust_df = _canonical(
         _rust_features2proteins(method, tmp_path / f"rust_{method}.csv")

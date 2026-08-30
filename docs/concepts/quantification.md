@@ -6,8 +6,8 @@ mokume supports multiple protein quantification methods, each suited to differen
 
 | Method | Description | Requires FASTA | `--quant-method` |
 |--------|-------------|:--------------:|------------------|
-| **iBAQ** | Intensity-Based Absolute Quantification | Yes | `ibaq` |
-| **TopN** | Average of N most intense peptides | No | `topn` / `top3` |
+| **piBAQ** | Paralog-aware iBAQ with explicit shared-peptide allocation | Yes | `pibaq` |
+| **TopN** | Average of N most intense peptides | No | `top<N>` (`top3`, `top5`, ...) |
 | **MaxLFQ** | Delayed normalization with parallelization | No | `maxlfq` |
 | **DirectLFQ** | Intensity traces with hierarchical alignment | No | `directlfq` |
 | **Sum** | Sum of all peptide intensities | No | `sum` |
@@ -15,11 +15,13 @@ mokume supports multiple protein quantification methods, each suited to differen
 | **TMT Abundance** | Median of log2 peptide intensities | No | `abd` |
 | **TMT Reporter Intensity** | Sum of raw reporter intensities | No | `intensity` |
 | **Median** | Median of peptide intensities | No | `median` |
-| **Spectral Count** | Count of distinct peptides per (protein, sample) | No | `spectral_count` |
+| **Peptide Count** | Distinct canonical peptides per (protein, sample) from feature QPX | No | `peptide-count` |
+| **Spectral Count** | Unique spectra per (protein group, sample) from paired PSM/feature QPX | No | `spectral-count` |
 
-All methods are implemented in the native Rust kernel (no third-party Python
-extras). MaxLFQ and DirectLFQ are native Rust ports — DirectLFQ is no longer a
-separate Python dependency.
+All aggregation methods run in the Rust kernel. piBAQ obtains its theoretical
+peptide map from the base pyOpenMS dependency; the other methods need no Python
+compute dependency. MaxLFQ and DirectLFQ are native Rust ports — DirectLFQ is no
+longer a separate Python dependency.
 
 ## Choosing a Method
 
@@ -28,7 +30,7 @@ graph TD
     A[What type of experiment?] --> B{Label-free?}
     A --> C{TMT/iTRAQ?}
     B --> D{Need absolute<br/>quantification?}
-    D -->|Yes| E[iBAQ<br/>requires FASTA]
+    D -->|Yes| E[piBAQ<br/>requires FASTA]
     D -->|No| F{Best accuracy?}
     F -->|Yes| G[MaxLFQ or<br/>DirectLFQ]
     F -->|Simple| H[TopN or Sum]
@@ -37,23 +39,47 @@ graph TD
     I -->|No| K[Median or<br/>Sum + IRS]
 ```
 
-## iBAQ (piBAQ: Paralog-Aware)
+## piBAQ (Paralog-Aware iBAQ)
 
-**Intensity-Based Absolute Quantification** divides summed peptide intensities by the number of theoretically observable peptides per protein, enabling comparison of absolute protein amounts across proteins within a sample.
+The original **iBAQ** definition divides summed peptide intensities by the
+number of theoretically observable peptides per protein:
 
 $$\text{iBAQ} = \frac{\sum \text{peptide intensities}}{\text{theoretical peptide count}}$$
 
-mokume's default iBAQ implementation is **anchor-gated and family-aware**: peptides are assigned to canonical entries only **unless** an alternative isoform has its own uniquely mappable peptide. The proportional shared-peptide allocation is gpGrouper-style ([Saltzman et al. 2018 *MCP* 17:2270](https://www.mcponline.org/content/17/11/2270)), and the underlying iBAQ definition follows the original [Schwanhäusser et al. 2011 *Nature* 473:337](https://doi.org/10.1038/nature10098) (`sum peptide intensities / theoretical peptide count`). Concretely:
+The commonly cited observable window is stated in the Usage Notes of
+[Krey et al. 2018 *Scientific Data*](https://www.nature.com/articles/sdata2018128):
+the denominator counts theoretical tryptic peptides between 6 and 30 amino
+acids. Mokume now uses 30 as the upper-bound default everywhere. Its shared
+feature-filter default remains `--min-aa 7`, so the out-of-the-box Mokume
+window is 7–30; pass `--min-aa 6` when reproducing the cited 6–30 definition.
 
-- **Per-protein proportional allocation** (the main path) when every member of a protein family has at least one detected proteotypic peptide. Shared-peptide intensities are split across members weighted by their unique-anchor counts (gpGrouper-style).
-- **Family-level rollup fallback** when one or more members have zero detected proteotypic peptides (e.g. the actin family, where Actc1 / Actb / Actg1 share >99% identity). The whole family receives a single iBAQ from the union of family peptide intensities divided by the family-restricted proteotypic peptide count.
+Mokume calls its family-aware extension **piBAQ**. It retains that iBAQ
+scaling while assigning shared peptides explicitly. Peptides are assigned to
+canonical entries unless an alternative isoform has its own uniquely mappable
+peptide. Shared-peptide allocation follows the gpGrouper area rule
+([Saltzman et al. 2018 *MCP* 17:2270](https://www.mcponline.org/content/17/11/2270));
+the foundational iBAQ definition comes from
+[Schwanhäusser et al. 2011 *Nature* 473:337](https://doi.org/10.1038/nature10098).
+For each sample independently:
+
+- If at least one mapped member has positive proteotypic-peptide intensity, the shared peptide is allocated in proportion to those member intensities. A zero-signal member receives exactly zero.
+- If every mapped member has zero proteotypic-peptide intensity, the shared peptide is split equally among them.
+
+Each shared peptide is counted once, so its allocated intensities sum to the observed intensity. The resulting per-member numerator is divided by that member's owned theoretical-peptide count.
+
+The default standalone option `--min-anchors 1` (or
+`features2proteins --pibaq-min-anchors 1`) implements this rule directly. If
+the threshold is raised and no family member reaches it, piBAQ marks the family
+`family_only` and forces equal shared-peptide allocation rather than trusting
+sub-threshold anchors.
 
 Family discovery proceeds in two layers:
 
 1. **UniProt isoform collapse** — accessions of the form `P05067-2`, `P70255-3` are folded onto their canonical entry (`P05067`, `P70255`). This matches the UniProt convention and absorbs the bulk of "non-canonical isoform with no unique peptide" cases.
 2. **Shared-peptide connected components** — proteins are grouped into a family when they share at least `min_shared` (default 2) digested peptides. Singleton families are equivalent to the per-protein baseline.
 
-Power users can override either layer via `--families families.yaml`:
+Power users can override either layer via standalone
+`--families families.yaml` or `features2proteins --pibaq-families families.yaml`:
 
 ```yaml
 families:
@@ -63,18 +89,18 @@ families:
     members: [P0C0S5, Q96QV6, P04908]
 ```
 
-iBAQ requires a **FASTA file** to compute theoretical peptide counts via in-silico digestion.
+piBAQ requires a **FASTA file** to compute theoretical peptide counts via in-silico digestion.
 
 === "CLI"
 
     ```bash
-    mokume peptides2protein \
+    mokume quantify peptides2protein \
         --fasta proteome.fasta \
         --peptides peptides.csv \
         --enzyme Trypsin \
         --normalize \
-        --method ibaq \
-        --output proteins-ibaq.tsv
+        --quant-method pibaq \
+        --output proteins-pibaq.tsv
     ```
 
 === "Python (wheel)"
@@ -87,45 +113,57 @@ iBAQ requires a **FASTA file** to compute theoretical peptide counts via in-sili
         peptides="peptides.csv",
         enzyme="Trypsin",
         normalize=True,
-        method="ibaq",
-        output="proteins-ibaq.tsv",
+        quant_method="pibaq",
+        output="proteins-pibaq.tsv",
     )
     ```
 
 !!! note
-    iBAQ enzymes outside the Rust-ported pyOpenMS set (e.g. `CNBr`, or
-    context-dependent rules like `proline endopeptidase`) are computed in pure
-    Python via `mokume.peptides2protein_ibaq` (`pip install mokume-rs[ibaq]`); the
-    kernel errors with a pointer there.
+    piBAQ uses every protease registered by the installed pyOpenMS runtime,
+    including `CNBr` and context-dependent rules such as
+    `proline endopeptidase`. Python supplies the complete theoretical-peptide
+    map and Rust performs the piBAQ aggregation.
 
-The piBAQ output adds three metadata columns to the per-protein long-format table so users can audit which path each protein took:
+The piBAQ output adds three metadata columns to the per-protein long-format table so users can audit protein-family support:
 
 | Column | Type | Meaning |
 |--------|------|---------|
 | `FamilyId` | string | Canonical accession of the family representative (largest digested-peptide set) |
 | `FamilySize` | int | Number of canonical members in the family (1 = singleton, isolated protein) |
-| `EvidenceLevel` | enum | `high` (≥3 unique anchors) / `medium` (1-2 anchors) / `family_only` (zero anchors → fallback aggregation triggered) |
+| `EvidenceLevel` | enum | `high` (every member reaches the high-anchor threshold) / `medium` (at least one member reaches the minimum) / `family_only` (no member reaches the minimum) |
 
-When `EvidenceLevel == "family_only"`, every member of the family carries the same iBAQ value — member-level resolution was not identifiable from the data.
+`family_only` means the data do not provide member-resolving anchor evidence. Shared signal is still conserved and allocated equally among the members it maps to; the final piBAQ values can differ because each member retains its own theoretical-peptide denominator.
 
-Additional iBAQ-derived values:
+Additional piBAQ-derived values:
 
 | Value | Formula | Use Case |
 |-------|---------|----------|
-| IbaqNorm | iBAQ / sum(iBAQ) per sample | Relative comparison |
-| IbaqLog | 10 + log10(IbaqNorm) | Visualization |
+| PiBAQNorm | PiBAQ / sum(PiBAQ) per sample | Relative comparison |
+| PiBAQLog | 10 + log10(PiBAQNorm) | Visualization |
 | TPA | NormIntensity / MW | Total Protein Approach |
 | CopyNumber | From ProteomicRuler | Absolute copy numbers |
 
-For TPA mode the molecular weight follows the same family-aware rule: per-protein MW for the proportional branch, sum of family MWs for the rollup fallback (so the family-level TPA matches the family-level iBAQ semantics).
+TPA always uses each protein member's own molecular weight.
 
 ## TopN
 
-Averages the **N most intense peptides** per protein per sample. Top3 is the most common choice (based on the Top3 method by Silva et al.), but any N is supported via `--topn`.
+Averages the **N most intense peptides** per protein per sample. The N is part
+of the method name, so `--quant-method top3` averages the 3 most intense
+peptides, `top5` the 5 most intense, and so on for any N ≥ 1.
+
+Top3 is the classic choice — it is the named method from
+[Silva et al. 2006 *MCP* 5:144](https://doi.org/10.1074/mcp.M500230-MCP200),
+which showed that the mean intensity of a protein's three most intense
+tryptic peptides scales with protein amount.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
-    --quant-method topn --topn 3
+# Top3 (Silva et al. 2006)
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
+    --quant-method top3
+
+# Any other N — just write it in the method name
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
+    --quant-method top5
 ```
 
 !!! tip
@@ -135,10 +173,10 @@ mokume features2proteins -p features.parquet -o proteins.csv \
 
 The **MaxLFQ algorithm** (Cox et al., 2014) uses delayed normalization with pairwise peptide ratios to estimate protein intensities. It's particularly robust to missing values.
 
-In the native Rust kernel, MaxLFQ rolls the peptide matrix up with the DirectLFQ estimator (delegating with `min_nonan = 2`). It is real-data parity-checked against the Python reference — cell-exact on PXD003539 within the f32 tolerance tier.
+In the native Rust kernel, MaxLFQ rolls the peptide matrix up with the DirectLFQ estimator (delegating with `min_nonan = 2`). It is real-data compatibility-checked against frozen Python-generated output — cell-exact on PXD003539 within the f32 tolerance tier.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method maxlfq
 ```
 
@@ -147,10 +185,12 @@ mokume features2proteins -p features.parquet -o proteins.csv \
 **DirectLFQ** (Ammar et al., 2023) uses hierarchical normalization with variance-guided pairwise alignment. When used as the quantification method, it handles both normalization and quantification. It is a native Rust port of the DirectLFQ estimator — no separate Python dependency is needed.
 
 !!! note
-    When `--quant-method directlfq` is selected, the kernel handles **all processing** through the DirectLFQ estimator. Run and sample normalization settings are ignored.
+    When `--quant-method directlfq` is selected, the kernel handles normalization
+    and quantification through the DirectLFQ estimator. External run/sample
+    normalization defaults to `none`; non-`none` values are rejected.
 
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv \
     --quant-method directlfq
 ```
@@ -170,22 +210,29 @@ PSM intensities → average fractions → divide by reference → log2
 
 This method requires an SDRF file to detect reference samples and plexes.
 
+For replicated conditions, `--min-sample-correlation <r>` can remove samples
+whose normalized log2 protein profile has mean Pearson correlation below `r`
+to its same-condition peers. The filter runs before protein coverage,
+imputation, and batch correction, so neither imputed values nor batch-adjusted
+values can inflate the QC score.
+
 ```bash
-mokume features2proteins \
+mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method ratio \
     --coverage-threshold 0.65
 ```
 
 !!! info
-    Ratio quantification handles cross-plex normalization inherently via per-plex reference division. The `--irs` flag is ignored for ratio mode.
+    Ratio quantification handles cross-plex normalization inherently via
+    per-plex reference division. Combining it with `--irs` is rejected.
 
 ## TMT Abundance
 
 The `abd` method computes protein abundance as the **median of log2-transformed peptide intensities** per (protein, sample). Non-positive intensities are treated as missing.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method abd
 ```
 
@@ -194,32 +241,38 @@ mokume features2proteins -p features.parquet -o proteins.csv \
 The `intensity` method computes protein abundance as the **sum of raw reporter intensities** per (protein, sample) in linear space — no log transform, no aggregation choice.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
     --quant-method intensity
 ```
 
-## Spectral Count
+## Peptide and Spectral Counts
 
-The simplest count-based quantification: protein abundance is the number of
-distinct peptides (modification-stripped sequences) per (protein, sample).
-Useful as a baseline for label-free
-workflows and for sanity-checking peptide identification depth across
-samples.
+`peptide-count` is the feature-level identification-depth metric: it counts
+distinct modification-stripped sequences per protein/sample. It requires
+run/sample normalization `none` and does not accept IRS because intensity
+scaling cannot change peptide membership.
 
 ```bash
-mokume features2proteins -p features.parquet -o proteins.csv \
-    --quant-method spectral_count
+mokume quantify features2proteins -p features.parquet -o proteins.csv \
+    --quant-method peptide-count
 ```
 
-!!! note
-    Because the `features2proteins` pipeline aggregates features to the
-    canonical peptide before quantification, the count returned here is
-    **distinct peptides (modification-stripped sequences) per (protein,
-    sample)**, not a raw PSM count. Two peptidoforms of the same sequence
-    (e.g. with and without a modification) collapse to one, and both the
-    Rust and Python builds produce the same count. Use it as an
-    identification-depth indicator rather than as a strict spectral-count
-    quantification.
+`spectral-count` instead requires matching PSM-level and feature-level QPX
+parquets plus SDRF. A PSM's `feature_id` resolves its protein group from the
+feature table's `pg_accessions` (falling back to `anchor_protein`). Mokume
+removes decoys, maps runs to samples through the SDRF, and counts each unique
+QPX `psm_id` once. Protein ambiguity within one linked feature remains one
+sorted protein-group key, while distinct PSMs sharing a scan remain separate.
+Duplicate `psm_id` values are rejected. PSM rows without a matching feature
+link are not counted. As with `peptide-count`, intensity normalization and IRS
+are rejected.
+
+```bash
+mokume quantify features2proteins --psm identifications.psm.parquet \
+    --parquet quantified.feature.parquet \
+    --sdrf experiment.sdrf.tsv -o spectral_counts.csv \
+    --quant-method spectral-count
+```
 
 ## Standard Output Format
 

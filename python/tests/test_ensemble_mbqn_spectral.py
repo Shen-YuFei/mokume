@@ -1,11 +1,14 @@
-"""Unit tests for ensemble DE and SpectralCount quantification."""
+"""Unit tests for ensemble DE and count-based quantification."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from mokume.analysis.ensemble import combine_de_results
-from mokume.quantification.spectral_count import SpectralCountQuantification
+from mokume.quantification.spectral_count import (
+    PeptideCountQuantification,
+    SpectralCountQuantification,
+)
 
 
 # ---------- Fixtures ----------
@@ -103,3 +106,21 @@ class TestSpectralCount:
 
     def test_name(self):
         assert SpectralCountQuantification().name == "SpectralCount"
+
+
+class TestPeptideCount:
+    def test_counts_distinct_peptides(self, peptide_df):
+        result = PeptideCountQuantification().quantify(
+            peptide_df,
+            protein_column="Protein",
+            peptide_column="Peptide",
+            intensity_column="NormIntensity",
+            sample_column="Sample",
+        )
+        a_s1 = result[(result["Protein"] == "A") & (result["Sample"] == "S1")][
+            "Intensity"
+        ].iloc[0]
+        assert a_s1 == 2
+
+    def test_name(self):
+        assert PeptideCountQuantification().name == "PeptideCount"

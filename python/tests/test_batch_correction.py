@@ -8,7 +8,7 @@ from mokume.commands.batch_correct import (
     get_batch_id_from_sample_names,
     run_batch_correction,
 )
-from mokume.core.constants import SAMPLE_ID, PROTEIN_NAME, IBAQ, IBAQ_BEC
+from mokume.core.constants import PIBAQ_BEC, PROTEIN_NAME, SAMPLE_ID
 
 TESTS_DIR = Path(__file__).parent
 
@@ -28,9 +28,9 @@ def test_get_batch_id_supports_python_and_pandas_sequences(samples):
     assert get_batch_id_from_sample_names(samples).tolist() == [0, 0, 1]
 
 
-def test_correct_batches():
+def test_correct_batches(tmp_path):
     """
-    Test the `run_batch_correction` function to ensure it correctly processes iBAQ values
+    Test the `run_batch_correction` function on historical iBAQ fixtures
     from TSV files, generates the expected output files, and handles various error cases.
 
     This test verifies:
@@ -50,11 +50,11 @@ def test_correct_batches():
         "pattern": "*ibaq.tsv",
         "comment": "#",
         "sep": "\t",
-        "output": TESTS_DIR / "example/ibaq_corrected_combined.tsv",
+        "output": tmp_path / "pibaq_corrected_combined.tsv",
         "sample_id_column": SAMPLE_ID,
         "protein_id_column": PROTEIN_NAME,
-        "ibaq_raw_column": IBAQ,
-        "ibaq_corrected_column": IBAQ_BEC,
+        "pibaq_raw_column": "Ibaq",
+        "pibaq_corrected_column": PIBAQ_BEC,
         "export_anndata": True,
     }
     logging.debug("Arguments for run_batch_correction: %s", args)
@@ -74,7 +74,7 @@ def test_correct_batches():
     adata = anndata.read_h5ad(adata_path)
     logger.info(adata)
     assert adata.shape == (46, 3476)
-    assert adata.layers[IBAQ_BEC].shape == (46, 3476)
+    assert adata.layers[PIBAQ_BEC].shape == (46, 3476)
 
     # Test invalid sample IDs
     with pytest.raises(ValueError):

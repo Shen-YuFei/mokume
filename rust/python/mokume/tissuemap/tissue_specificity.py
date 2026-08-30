@@ -116,23 +116,6 @@ def _fit_population_fallback(
     return PopulationParams(mu=mu, sigma=sigma, pi=pi)
 
 
-def _fit_pure_mad(
-    x: np.ndarray,
-    sigma_floor: float = 0.01,
-) -> PopulationParams:
-    """Pure MAD estimator — most robust across TMT and LFQ datasets.
-
-    Uses median as μ and raw MAD (without 1.4826 scaling) as σ.
-    This avoids DPD's tendency to collapse σ on TMT data while
-    remaining consistent with LFQ data where σ is naturally large.
-    """
-    mu = float(np.median(x))
-    mad = float(np.median(np.abs(x - mu)))
-    sigma = max(mad, sigma_floor)
-    pi = float(np.mean(np.abs(x - mu) <= 2.0 * sigma))
-    return PopulationParams(mu=mu, sigma=sigma, pi=pi)
-
-
 _SIGMA_FLOOR_ABSOLUTE_MIN = 0.01
 _SIGMA_FLOOR_PERCENTILE = 5
 
@@ -348,11 +331,17 @@ def _compute_ts_vectorized_mad(
     mu[too_sparse] = np.nan
     sigma[too_sparse] = np.nan
 
-    # Population proportion: fraction within ±2σ
-    within_2s = np.abs(log2_matrix - mu[np.newaxis, :]) <= 2.0 * sigma[np.newaxis, :]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        pi = np.nanmean(within_2s.astype(np.float32), axis=0)
+    # Population proportion among observed values, matching the loop path.
+    observed = ~np.isnan(log2_matrix)
+    within_2s = observed & (
+        np.abs(log2_matrix - mu[np.newaxis, :]) <= 2.0 * sigma[np.newaxis, :]
+    )
+    pi = np.divide(
+        within_2s.sum(axis=0),
+        n_valid,
+        out=np.zeros(n_proteins, dtype=float),
+        where=n_valid > 0,
+    )
     pi[too_sparse] = 0.0
 
     # Full z-score matrix  (NaN propagates naturally)

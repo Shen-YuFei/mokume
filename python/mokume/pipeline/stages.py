@@ -8,6 +8,7 @@ Each stage handles a distinct phase of the proteomics quantification workflow:
 - PostprocessingStage: Batch correction, DE, plotting, reports
 """
 
+import importlib
 import os
 import re
 from collections import Counter
@@ -28,6 +29,7 @@ from mokume.preprocessing.aggregation import (
     reformat_quantms_feature_table_quant_labels,
 )
 from mokume.normalization.hierarchical import HierarchicalSampleNormalizer
+from mokume.normalization import irs as irs_normalization
 from mokume.model.normalization import (
     FeatureNormalizationMethod,
     PeptideNormalizationMethod,
@@ -42,6 +44,8 @@ from mokume.core.constants import (
     PARQUET_COLUMNS,
     AGGREGATION_LEVEL_SAMPLE,
     CONDITION,
+    PIBAQ,
+    load_sdrf,
 )
 from mokume.core.logger import get_logger
 from mokume.postprocessing.batch_correction import (
@@ -52,8 +56,11 @@ from mokume.postprocessing.batch_correction import (
 )
 from mokume.model.batch_correction import BatchDetectionMethod
 from mokume.pipeline.config import PipelineConfig, validate_de_config
+from mokume.pipeline.sample_qc import filter_samples_by_correlation
 
 logger = get_logger("mokume.pipeline")
+
+_DEFAULT_REFERENCE_REGEX = "pool|powder|ref|reference|bridge"
 
 # Per-(sample, tech_rep) replicate metric expressions for SQL-first run
 # normalization. Each value must produce a scalar metric per group so that the
@@ -106,18 +113,12 @@ _SQLFIRST_LOAD_QUERY_AFTER_WHERE = """)
               AND (condition IS NULL OR condition != 'Empty')
               AND run IS NOT NULL
         ),
-        no_contam AS (
-            SELECT * FROM base
-            WHERE "ProteinName" NOT LIKE '%CONTAMINANT%'
-              AND "ProteinName" NOT LIKE '%ENTRAP%'
-              AND "ProteinName" NOT LIKE '%DECOY%'
-        ),
         with_n_unique AS (
             SELECT *,
                 COUNT(DISTINCT "PeptideCanonical") OVER (
                     PARTITION BY "ProteinName", "SampleID"
                 ) AS _n_unique_pep
-            FROM no_contam
+            FROM base
         ),
         min_unique_kept AS (
             SELECT * FROM with_n_unique WHERE _n_unique_pep >= ?
@@ -153,7 +154,7 @@ _SQLFIRST_LOAD_QUERY_SUFFIX = """
                  "BioReplicate", "Condition"
         """
 
-_MAXLFQ_DIRECTLFQ_QUERY_SUFFIX = """
+_LFQ_DIRECTLFQ_QUERY_SUFFIX = """
             )
             WHERE _rn = 1
         )
@@ -193,18 +194,12 @@ _RUN_SCALE_QUERY_AFTER_WHERE = """)
               AND (condition IS NULL OR condition != 'Empty')
               AND run IS NOT NULL
         ),
-        no_contam AS (
-            SELECT * FROM base
-            WHERE "ProteinName" NOT LIKE '%CONTAMINANT%'
-              AND "ProteinName" NOT LIKE '%ENTRAP%'
-              AND "ProteinName" NOT LIKE '%DECOY%'
-        ),
         with_n_unique AS (
             SELECT *,
                 COUNT(DISTINCT "PeptideCanonical") OVER (
                     PARTITION BY "ProteinName", "SampleID"
                 ) AS _n_unique_pep
-            FROM no_contam
+            FROM base
         ),
         kept AS (
             SELECT "SampleID", "Run", "Intensity"
@@ -341,7 +336,7 @@ class LoadingStage:
         agreeing to relative 1e-7, the precision limit of the float32 intensity
         column stored in parquet).
         """
-        keep_shared_peptides = self.config.quantification.method.lower() == "ibaq"
+        keep_shared_peptides = self.config.quantification.method.lower() == "pibaq"
         filter_builder = SQLFilterBuilder(
             remove_contaminants=self.config.filtering.remove_contaminants,
             min_peptide_length=self.config.filtering.min_aa,
@@ -447,7 +442,7 @@ class LoadingStage:
         min_aa = self.config.filtering.min_aa
         min_unique = (
             0
-            if self.config.quantification.method.lower() == "ibaq"
+            if self.config.quantification.method.lower() == "pibaq"
             else self.config.filtering.min_unique_peptides
         )
 
@@ -473,11 +468,8 @@ class LoadingStage:
             scale_select = f'mu.* REPLACE ({scale_expr} AS "Intensity")'
             scale_orderby = scale_expr
 
-        # NOTE: this UniProt mid-section extraction (`sp|UNIPROT|name` -> `UNIPROT`)
-        # is duplicated in two more places. Keep all three in sync when the
-        # protein-accession parsing rules change:
-        #   - _compute_run_scale_map (SQL, this file)
-        #   - convert_to_directlfq_format (polars, this file)
+        # Protein-accession parsing is shared with _compute_run_scale_map via
+        # the SQL query builders above.
         query = _build_sqlfirst_load_query(
             where_clause,
             scale_select,
@@ -532,7 +524,7 @@ class LoadingStage:
         min_aa = self.config.filtering.min_aa
         min_unique = (
             0
-            if self.config.quantification.method.lower() == "ibaq"
+            if self.config.quantification.method.lower() == "pibaq"
             else self.config.filtering.min_unique_peptides
         )
         metric_expr = _SQL_RUN_METRIC_EXPR[run_norm]
@@ -542,8 +534,8 @@ class LoadingStage:
         # never has to carry the peptidoform/charge/condition columns through
         # the window-function pipeline used to enforce min_unique_peptides.
         #
-        # The UniProt mid-section extraction below mirrors _load_for_mokume_sqlfirst
-        # and convert_to_directlfq_format (polars). Keep all three in sync.
+        # Protein-accession parsing mirrors _load_for_mokume_sqlfirst through
+        # the shared SQL query builders.
         sql = _build_run_scale_query(where_clause, metric_expr)
         sql_params = [*where_params, min_aa, min_unique]
         return feature.parquet_db.execute(sql, sql_params).df()
@@ -571,7 +563,7 @@ class LoadingStage:
 
             for sample in samples:
                 dataset_df = df[df["sample_accession"] == sample].copy()
-                if self.config.quantification.method.lower() != "ibaq":
+                if self.config.quantification.method.lower() != "pibaq":
                     dataset_df = dataset_df[dataset_df["unique"] == 1]
                 dataset_df = dataset_df[PARQUET_COLUMNS]
 
@@ -583,7 +575,7 @@ class LoadingStage:
                 )
 
                 # Filter by min unique peptides
-                if self.config.quantification.method.lower() != "ibaq":
+                if self.config.quantification.method.lower() != "pibaq":
                     dataset_df = dataset_df.groupby(PROTEIN_NAME).filter(
                         lambda x: (
                             len(set(x[PEPTIDE_CANONICAL]))
@@ -714,13 +706,13 @@ class LoadingStage:
                 scale_select,
                 scale_orderby,
                 scale_join_clause,
-                query_suffix=_MAXLFQ_DIRECTLFQ_QUERY_SUFFIX,
+                query_suffix=_LFQ_DIRECTLFQ_QUERY_SUFFIX,
             )
             query_params = [*where_params, min_aa, min_unique]
             try:
                 result = feature.parquet_db.execute(query, query_params)
                 reader = result.to_arrow_reader(batch_size=1_000_000)
-                return pa.Table.from_batches(reader)
+                return pa.Table.from_batches(reader, schema=reader.schema)
             finally:
                 if scale_df is not None:
                     feature.parquet_db.unregister("run_scale_map")
@@ -735,7 +727,7 @@ class LoadingStage:
             raise ImportError(
                 "polars is required for MaxLFQ DirectLFQ-streaming conversion. "
                 "Install it with `pip install polars` or "
-                "`pip install mokume[directlfq]`."
+                "`pip install mokume-py[directlfq]`."
             ) from exc
 
         pdf = pl.from_arrow(table)
@@ -766,24 +758,21 @@ class LoadingStage:
         return wide
 
     def load_for_directlfq(self) -> pa.Table:
-        """Load and filter peptide rows for DirectLFQ as a streaming Arrow Table.
+        """Load canonical-peptide rows for DirectLFQ as a streaming Arrow Table.
 
-        Streams the long-format query result through DuckDB's Arrow reader
-        instead of materialising it as a pandas DataFrame. On large parquets
-        (e.g. PXD030304: 163M peptide rows × 5798 samples) this avoids the
-        ~30+ GB pandas object overhead that previously caused OOM kills, and
-        cuts wall time roughly 30% on medium datasets (validated on
-        PXD017199: 51.5s → 35.4s, 11.8 GB → 7.1 GB peak RSS).
+        Streams the aggregated long-format query result through DuckDB's Arrow
+        reader instead of materialising an additional pandas long table.
 
-        Protein-accession parsing and the ``min_unique_peptides`` filter are
-        deferred to :meth:`convert_to_directlfq_format`, which performs them
-        in-place on the polars frame (zero-copy from this Arrow Table).
+        The shared SQL-first feature aggregation preserves the full protein
+        group, applies ``min_unique_peptides`` per protein/sample, keeps the
+        maximum intensity for each peptidoform/charge ion, and then sums those
+        ions to the canonical-peptide level.
 
         Returns
         -------
         pa.Table
             Long-format Arrow Table with columns
-            ``[pg_accessions, sequence, sample_accession, intensity]``.
+            ``[protein, ion, sample_accession, intensity]``.
         """
         filter_builder = SQLFilterBuilder(
             remove_contaminants=self.config.filtering.remove_contaminants,
@@ -793,110 +782,40 @@ class LoadingStage:
 
         feature = self._open_feature(filter_builder)
 
-        if self.config.input.sdrf:
-            feature.enrich_with_sdrf(self.config.input.sdrf)
-
-        where_clause, where_params = filter_builder.build_where_clause()
-        query = "".join(
-            [
-                "SELECT pg_accessions, sequence, sample_accession, intensity ",
-                "FROM parquet_db WHERE ",
-                where_clause,
-            ]
-        )
-
         try:
-            result = feature.parquet_db.execute(query, where_params)
+            if self.config.input.sdrf:
+                feature.enrich_with_sdrf(self.config.input.sdrf)
+
+            where_clause, where_params = filter_builder.build_where_clause()
+            query = _build_sqlfirst_load_query(
+                where_clause,
+                "mu.*",
+                'mu."Intensity"',
+                "",
+                query_suffix=_LFQ_DIRECTLFQ_QUERY_SUFFIX,
+            )
+            query_params = [
+                *where_params,
+                self.config.filtering.min_aa,
+                self.config.filtering.min_unique_peptides,
+            ]
+            result = feature.parquet_db.execute(query, query_params)
             reader = result.to_arrow_reader(batch_size=1_000_000)
             # ``from_batches`` eagerly consumes the reader, materialising every
             # batch into Arrow buffers that own their memory independently of
             # the DuckDB connection, so it is safe to close the connection in
             # the ``finally`` below even though we return the Table.
-            return pa.Table.from_batches(reader)
+            return pa.Table.from_batches(reader, schema=reader.schema)
         finally:
             feature.parquet_db.close()
 
     def convert_to_directlfq_format(self, table: pa.Table) -> pd.DataFrame:
         """Convert long-format Arrow Table into the DirectLFQ wide log2 frame.
 
-        The pipeline is end-to-end polars (zero-copy from Arrow):
-        protein extraction, ``min_unique_peptides`` filter, sum aggregation,
-        pivot to wide, replace 0 with null, ``log2``. A single
-        :py:meth:`polars.DataFrame.to_pandas` at the end yields the
-        ``MultiIndex(['protein', 'ion'])``-indexed pandas frame DirectLFQ
-        expects.
-
-        Going via polars avoids materialising the long-format pandas
-        DataFrame, which dominated peak RSS on large datasets, and lets the
-        pivot run in parallel (PXD017199 wall: 51.5s → 18.3s, -64%).
+        Feature aggregation is completed by :meth:`load_for_directlfq`; this
+        method only pivots the canonical-ion rows and applies the log2 transform.
         """
-        try:
-            import polars as pl
-        except ImportError as exc:
-            raise ImportError(
-                "polars is required for the DirectLFQ format conversion. "
-                "Install it with `pip install polars` or "
-                "`pip install mokume[directlfq]`."
-            ) from exc
-
-        pdf = pl.from_arrow(table)
-        if isinstance(pdf, pl.Series):
-            pdf = pdf.to_frame()
-
-        # Protein extraction: take pg_accessions[0]; parse UniProt mid-section
-        # ('sp|UNIPROT|name' -> 'UNIPROT') when pipe-separated, else as-is.
-        # The same rule is implemented in SQL inside _load_for_mokume_sqlfirst
-        # and _compute_run_scale_map (this file). Keep all three in sync; do
-        # NOT extract a shared Python helper, because calling it via polars
-        # ``map_elements`` would force a row-wise Python call and erase the
-        # 64% wall-time win that polars's columnar pivot provides.
-        pdf = pdf.with_columns(
-            pl.col("pg_accessions")
-            .list.get(0, null_on_oob=True)
-            .fill_null("")
-            .alias("_first_acc")
-        )
-        pdf = pdf.with_columns(
-            pl.when(pl.col("_first_acc").str.contains("|", literal=True))
-            .then(pl.col("_first_acc").str.split("|").list.get(1, null_on_oob=True))
-            .otherwise(pl.col("_first_acc"))
-            .alias("protein")
-        ).drop(["_first_acc", "pg_accessions"])
-
-        min_pep = self.config.filtering.min_unique_peptides
-        if min_pep > 0:
-            counts = pdf.group_by("protein").agg(
-                pl.col("sequence").n_unique().alias("_n_pep")
-            )
-            valid = counts.filter(pl.col("_n_pep") >= min_pep).get_column("protein")
-            pdf = pdf.filter(pl.col("protein").is_in(valid.implode()))
-
-        summed = pdf.group_by(["protein", "sequence", "sample_accession"]).agg(
-            pl.col("intensity").cast(pl.Float64).sum()
-        )
-
-        wide_pl = summed.pivot(
-            index=["protein", "sequence"],
-            on="sample_accession",
-            values="intensity",
-            aggregate_function=None,
-        ).sort(["protein", "sequence"])
-
-        sample_cols = sorted(
-            c for c in wide_pl.columns if c not in ("protein", "sequence")
-        )
-        wide_pl = wide_pl.select(["protein", "sequence", *sample_cols])
-        wide_pl = wide_pl.with_columns(
-            [
-                pl.when(pl.col(c) == 0).then(None).otherwise(pl.col(c).log(2)).alias(c)
-                for c in sample_cols
-            ]
-        )
-
-        wide = wide_pl.to_pandas()
-        wide = wide.set_index(["protein", "sequence"])
-        wide.index.names = ["protein", "ion"]
-        return wide
+        return self.convert_maxlfq_to_directlfq_format(table)
 
     def load_for_ratio(self) -> tuple:
         """Load PSM data and detect references for ratio quantification.
@@ -919,17 +838,20 @@ class LoadingStage:
                 "sample detection. Use --sdrf to provide one."
             )
 
-        # Detect reference samples (reuse IRS detection logic)
-        ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
-
-        if ref_samples is None and self.config.irs.reference_samples:
-            ref_samples = self.config.irs.reference_samples
+        # Explicit selectors take precedence over metadata autodetection.
+        ref_samples = self.config.irs.reference_samples
+        if ref_samples:
             logger.info("Using explicit reference samples: %s", ref_samples)
-
-        if ref_samples is None:
+        elif self.config.irs.reference_regex != _DEFAULT_REFERENCE_REGEX:
             ref_samples = detect_reference_by_regex(
                 self.config.input.sdrf, self.config.irs.reference_regex
             )
+        else:
+            ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
+            if not ref_samples:
+                ref_samples = detect_reference_by_regex(
+                    self.config.input.sdrf, _DEFAULT_REFERENCE_REGEX
+                )
 
         if not ref_samples:
             raise ValueError(
@@ -1120,41 +1042,34 @@ class NormalizationStage:
         if not self.config.input.sdrf:
             raise ValueError("IRS normalization requires an SDRF file (--sdrf)")
 
-        # Detect reference samples (priority order)
-        ref_samples = None
-
-        # 1. Check for characteristics[pooled sample] column
-        ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
-
-        # 2. Explicit sample names override
-        if ref_samples is None and self.config.irs.reference_samples:
+        # Explicit selectors take precedence over pooled-sample autodetection.
+        if self.config.irs.reference_samples:
             ref_samples = self.config.irs.reference_samples
             logger.info("Using explicit reference samples: %s", ref_samples)
-
-        # 3. Explicit column + values
-        if (
-            ref_samples is None
-            and self.config.irs.sdrf_column
-            and self.config.irs.sdrf_values
-        ):
+        elif self.config.irs.sdrf_column and self.config.irs.sdrf_values:
             ref_samples = detect_reference_by_column(
                 self.config.input.sdrf,
                 self.config.irs.sdrf_column,
                 self.config.irs.sdrf_values,
             )
-
-        # 4. Regex fallback
-        if ref_samples is None:
+        elif self.config.irs.reference_regex != _DEFAULT_REFERENCE_REGEX:
             ref_samples = detect_reference_by_regex(
                 self.config.input.sdrf, self.config.irs.reference_regex
             )
+        else:
+            ref_samples = detect_pooled_from_sdrf(self.config.input.sdrf)
+            if not ref_samples:
+                ref_samples = detect_reference_by_regex(
+                    self.config.input.sdrf, _DEFAULT_REFERENCE_REGEX
+                )
 
         if not ref_samples:
-            logger.warning("No reference samples detected for IRS, skipping")
-            return protein_df
+            raise ValueError("IRS normalization found no reference samples in the SDRF")
 
         # Detect plexes
         sample_to_plex = detect_plexes_from_sdrf(self.config.input.sdrf)
+        if not sample_to_plex:
+            raise ValueError("IRS normalization found no plex assignments in the SDRF")
 
         # Apply IRS
         normalizer = IRSNormalizer(
@@ -1211,11 +1126,33 @@ class NormalizationStage:
             and "powder" not in c.lower()
             and "pool" not in c.lower()
         }
+        if not sample_to_condition:
+            raise ValueError(
+                "Coverage filtering found no non-reference samples with condition metadata"
+            )
 
         return apply_coverage_filter(
             protein_df,
             sample_to_condition,
             self.config.quantification.coverage_threshold,
+        )
+
+    def apply_sample_correlation_filter(self, protein_df: pd.DataFrame) -> pd.DataFrame:
+        """Filter samples by mean within-condition protein correlation."""
+        threshold = self.config.quantification.sample_correlation_threshold
+        if threshold is None:
+            return protein_df
+        if not self.config.input.sdrf:
+            raise ValueError("Sample correlation filtering requires an SDRF file")
+        sample_to_condition = irs_normalization.detect_condition_from_sdrf(
+            self.config.input.sdrf
+        )
+        return filter_samples_by_correlation(
+            protein_df,
+            sample_to_condition,
+            threshold,
+            values_are_log2=self.config.quantification.method.lower()
+            in {"abd", "abundance", "tmtabundance", "ratio"},
         )
 
 
@@ -1231,8 +1168,8 @@ class QuantificationStage:
 
         quant_method = self.config.quantification.method.lower()
 
-        if quant_method == "ibaq":
-            return self._quantify_ibaq(peptide_df)
+        if quant_method == "pibaq":
+            return self._quantify_pibaq(peptide_df)
         if quant_method in (
             "maxlfq",
             "sum",
@@ -1241,9 +1178,8 @@ class QuantificationStage:
             "abundance",
             "intensity",
             "reporter",
-            "spectral_count",
-            "spectralcount",
-            "count",
+            "peptide_count",
+            "peptidecount",
         ):
             # Propagate the global parallelism budget so MaxLFQ -> DirectLFQ
             # does not silently default to cpu_count workers (each forked
@@ -1309,37 +1245,61 @@ class QuantificationStage:
 
         return wide_df.reset_index()
 
-    def _quantify_ibaq(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
+    def _pibaq_references(self):
+        """Digest the configured FASTA and resolve piBAQ families lazily."""
+        fasta_module = importlib.import_module("mokume.io.fasta")
+        family_module = importlib.import_module("mokume.quantification.families")
+        quant_cfg = self.config.quantification
+        accession_to_peptides, peptide_to_accessions, _ = getattr(
+            fasta_module, "digest_fasta_full"
+        )(
+            fasta=self.config.input.fasta_file,
+            enzyme=quant_cfg.pibaq_enzyme,
+            min_aa=self.config.filtering.min_aa,
+            max_aa=quant_cfg.pibaq_max_aa,
+            canonicalize_isoforms=True,
+            compute_mw=False,
+        )
+        families = getattr(family_module, "discover_families")(
+            accession_to_peptides,
+            peptide_to_accessions,
+            min_shared=quant_cfg.pibaq_min_shared,
+        )
+        if quant_cfg.pibaq_families_yaml:
+            overrides = getattr(family_module, "load_families_yaml")(
+                Path(quant_cfg.pibaq_families_yaml)
+            )
+            families = getattr(family_module, "merge_overrides")(families, overrides)
+        return accession_to_peptides, peptide_to_accessions, families
+
+    def _quantify_pibaq(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
         """Quantify using piBAQ (paralog-aware iBAQ).
 
-        Delegates to :func:`mokume.quantification.ibaq.compute_pibaq`, the
+        Delegates to :func:`mokume.quantification.pibaq.compute_pibaq`, the
         same core used by the standalone ``peptides2protein`` CLI. The two
-        entry points share that core, so they agree on iBAQ values **when
+        entry points share that core, so they agree on piBAQ values **when
         configured identically** -- the digestion enzyme, ``min_aa`` /
         ``max_aa``, family ``min_shared`` and any YAML family overrides must
         all match. Those knobs are sourced here from
         :class:`~mokume.pipeline.config.QuantificationConfig`
-        (``ibaq_enzyme`` / ``ibaq_max_aa`` / ``ibaq_min_shared`` /
-        ``ibaq_families_yaml`` / ``ibaq_min_anchors`` /
-        ``ibaq_high_anchor_threshold``) and :attr:`FilterConfig.min_aa`.
+        (``pibaq_enzyme`` / ``pibaq_max_aa`` / ``pibaq_min_shared`` /
+        ``pibaq_families_yaml`` / ``pibaq_min_anchors`` /
+        ``pibaq_high_anchor_threshold``) and :attr:`FilterConfig.min_aa`.
 
         TPA is intentionally **not** emitted on this path: the pipeline
-        contract returns a single wide protein x sample iBAQ matrix, which
+        contract returns a single wide protein x sample piBAQ matrix, which
         has no column for a parallel TPA value. Use the ``peptides2protein``
         CLI with ``--tpa`` when a TPA table is needed. Accordingly
         ``mw_map`` is left ``None`` here.
         """
-        from mokume.io.fasta import digest_fasta_full
-        from mokume.quantification.ibaq import compute_pibaq
-        from mokume.quantification.families import (
-            discover_families,
-            load_families_yaml,
-            merge_overrides,
+        compute_pibaq = getattr(
+            importlib.import_module("mokume.quantification.pibaq"),
+            "compute_pibaq",
         )
 
         if not self.config.input.fasta_file:
             raise ValueError(
-                "iBAQ quantification requires a FASTA file. Use --fasta to provide one."
+                "piBAQ quantification requires a FASTA file. Use --fasta to provide one."
             )
 
         quant_cfg = self.config.quantification
@@ -1347,27 +1307,14 @@ class QuantificationStage:
             "Computing piBAQ for %d proteins using FASTA "
             "(enzyme=%s, max_aa=%d, min_shared=%d)...",
             peptide_df[PROTEIN_NAME].nunique(),
-            quant_cfg.ibaq_enzyme,
-            quant_cfg.ibaq_max_aa,
-            quant_cfg.ibaq_min_shared,
+            quant_cfg.pibaq_enzyme,
+            quant_cfg.pibaq_max_aa,
+            quant_cfg.pibaq_min_shared,
         )
 
-        accession_to_peptides, peptide_to_accessions, _ = digest_fasta_full(
-            fasta=self.config.input.fasta_file,
-            enzyme=quant_cfg.ibaq_enzyme,
-            min_aa=self.config.filtering.min_aa,
-            max_aa=quant_cfg.ibaq_max_aa,
-            canonicalize_isoforms=True,
-            compute_mw=False,
+        accession_to_peptides, peptide_to_accessions, families = (
+            self._pibaq_references()
         )
-        families = discover_families(
-            accession_to_peptides,
-            peptide_to_accessions,
-            min_shared=quant_cfg.ibaq_min_shared,
-        )
-        if quant_cfg.ibaq_families_yaml:
-            overrides = load_families_yaml(Path(quant_cfg.ibaq_families_yaml))
-            families = merge_overrides(families, overrides)
 
         long_df = compute_pibaq(
             peptide_df,
@@ -1375,20 +1322,20 @@ class QuantificationStage:
             peptide_to_accessions,
             families,
             mw_map=None,
-            min_anchors=quant_cfg.ibaq_min_anchors,
-            high_anchor_threshold=quant_cfg.ibaq_high_anchor_threshold,
+            min_anchors=quant_cfg.pibaq_min_anchors,
+            high_anchor_threshold=quant_cfg.pibaq_high_anchor_threshold,
         )
 
         if long_df.empty:
-            logger.info("iBAQ complete: 0 proteins")
+            logger.info("piBAQ complete: 0 proteins")
             return pd.DataFrame(columns=[PROTEIN_NAME])
 
         result_wide = long_df.pivot(
             index=PROTEIN_NAME,
             columns=SAMPLE_ID,
-            values="Ibaq",
+            values=PIBAQ,
         )
-        logger.info("iBAQ complete: %d proteins", len(result_wide))
+        logger.info("piBAQ complete: %d proteins", len(result_wide))
         return result_wide.reset_index()
 
     def _quantify_median(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
@@ -1454,6 +1401,8 @@ class ImputationStage:
 
         sample_cols = [c for c in protein_df.columns if c != protein_col]
         wide = protein_df.set_index(protein_col)[sample_cols]
+        if np.isinf(wide.to_numpy(dtype=float)).any():
+            raise ValueError("Protein matrix contains an infinite intensity")
 
         wide_log2 = np.log2(wide.replace(0, np.nan))
         n_before = int(wide_log2.isna().sum().sum())
@@ -1462,12 +1411,26 @@ class ImputationStage:
             return protein_df
 
         imputed_log2 = self._dispatch(method, wide_log2)
+        imputed_values = imputed_log2.to_numpy(dtype=float)
+        if np.isinf(imputed_values).any():
+            raise ValueError(f"Imputation method '{method}' produced an infinite value")
+        observed = np.isfinite(wide_log2.to_numpy(dtype=float))
+        if not np.isfinite(imputed_values[observed]).all():
+            raise ValueError(
+                f"Imputation method '{method}' replaced an observed value with missing data"
+            )
         n_after = int(imputed_log2.isna().sum().sum())
         logger.info(
             "Imputation (%s): %d -> %d missing values", method, n_before, n_after
         )
 
-        imputed_linear = 2**imputed_log2
+        try:
+            with np.errstate(over="raise", invalid="raise"):
+                imputed_linear = np.exp2(imputed_log2)
+        except FloatingPointError as exc:
+            raise ValueError(
+                f"Imputation method '{method}' overflowed on the linear scale"
+            ) from exc
         return imputed_linear.reset_index()
 
     def _dispatch(self, method: str, wide: pd.DataFrame) -> pd.DataFrame:
@@ -1516,6 +1479,22 @@ class ImputationStage:
         raise ValueError(f"Unknown imputation method: {method}")
 
 
+def _auto_select_de_method(
+    sample_to_condition: dict[str, str],
+    quant: str,
+) -> str:
+    """Pick a DE method from replicate counts and quantification metadata.
+
+    With tiny groups (min < 3), prefer the permutation-based ROTS; otherwise
+    keep the quantification-based default (DEqMS for directLFQ, LimROTS
+    otherwise).
+    """
+    min_grp = min(Counter(sample_to_condition.values()).values(), default=3)
+    if min_grp < 3:
+        return "rots"
+    return "deqms" if quant == "directlfq" else "limrots"
+
+
 class PostprocessingStage:
     """Batch correction, DE, plotting, reports."""
 
@@ -1535,16 +1514,9 @@ class PostprocessingStage:
 
     def _batch_method(self) -> BatchDetectionMethod:
         """Resolve the configured batch-detection method."""
-        try:
-            return BatchDetectionMethod.from_str(self.config.batch.method)
-        except ValueError:
-            logger.warning(
-                "Unknown batch method '%s', using sample_prefix",
-                self.config.batch.method,
-            )
-            return BatchDetectionMethod.SAMPLE_PREFIX
+        return BatchDetectionMethod.from_str(self.config.batch.method)
 
-    def _detect_batch_indices(self, sample_cols: list) -> Optional[list]:
+    def _detect_batch_indices(self, sample_cols: list) -> list:
         """Detect and validate batch assignments for sample columns."""
         batch_indices = detect_batches(
             sample_ids=sample_cols,
@@ -1559,17 +1531,14 @@ class PostprocessingStage:
         unique_batches = len(set(batch_indices))
         logger.info("Detected %d batches for batch correction", unique_batches)
         if unique_batches < 2:
-            logger.warning("Only 1 batch detected, skipping batch correction")
-            return None
+            raise ValueError("Batch correction requires at least two batches")
 
         min_samples = min(Counter(batch_indices).values())
         if min_samples < 2:
-            logger.warning(
-                "Some batches have fewer than 2 samples (min=%d), "
-                "skipping batch correction",
-                min_samples,
+            raise ValueError(
+                "Batch correction requires at least two samples in every batch; "
+                f"minimum observed batch size is {min_samples}"
             )
-            return None
         return batch_indices
 
     def _batch_covariates(self, sample_cols: list) -> Optional[list]:
@@ -1589,18 +1558,55 @@ class PostprocessingStage:
             )
         return covariates
 
+    def _validate_combat_request(
+        self,
+        batch_indices: list[int],
+        covariates: Optional[list],
+    ) -> None:
+        """Reject invalid reference labels and singular ComBat designs."""
+        ref_batch = self.config.batch.ref_batch
+        if ref_batch is not None and (
+            ref_batch < 0 or ref_batch not in set(batch_indices)
+        ):
+            raise ValueError(
+                f"Batch reference '{ref_batch}' is not present; "
+                f"detected labels are {sorted(set(batch_indices))}"
+            )
+        if covariates is None:
+            return
+        covariate_matrix = np.asarray(covariates, dtype=float)
+        if covariate_matrix.ndim != 2 or covariate_matrix.shape[0] != len(
+            batch_indices
+        ):
+            raise ValueError(
+                "Batch covariate row count must match the matrix sample count"
+            )
+        labels = sorted(set(batch_indices))
+        batch_rows = np.vstack(
+            [np.asarray(batch_indices) == label for label in labels]
+        ).astype(float)
+        if ref_batch is not None:
+            batch_rows[labels.index(ref_batch), :] = 1.0
+        design = np.vstack([batch_rows, covariate_matrix.T])
+        if np.linalg.matrix_rank(design) < design.shape[0]:
+            raise ValueError(
+                "Batch covariates are confounded with batches or each other; "
+                "ComBat design is singular"
+            )
+
     def _complete_batch_matrix(
         self,
         intensity_matrix: pd.DataFrame,
-    ) -> Optional[tuple[pd.DataFrame, pd.DataFrame]]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Split complete and incomplete rows before ComBat correction."""
         has_nan = intensity_matrix.isna().any(axis=1)
         complete_matrix = intensity_matrix[~has_nan]
         incomplete_matrix = intensity_matrix[has_nan]
 
         if len(complete_matrix) == 0:
-            logger.warning("No proteins with complete data for ComBat, skipping")
-            return None
+            raise ValueError(
+                "Batch correction requires at least one protein observed in every sample"
+            )
 
         if len(incomplete_matrix) > 0:
             logger.info(
@@ -1638,22 +1644,19 @@ class PostprocessingStage:
         if not is_batch_correction_available():
             raise ImportError(
                 "Batch correction requires inmoose package. "
-                "Install with: pip install mokume[batch-correction]"
+                "Install with: pip install mokume-py[batch-correction]"
             )
 
         protein_col, sample_cols = self._protein_and_sample_columns(protein_df)
         if len(sample_cols) < 2:
-            logger.warning("Not enough samples for batch correction, skipping")
-            return protein_df
+            raise ValueError("Batch correction requires at least two matrix samples")
 
         intensity_matrix = protein_df.set_index(protein_col)[sample_cols]
         batch_indices = self._detect_batch_indices(sample_cols)
-        if batch_indices is None:
-            return protein_df
+        covariates = self._batch_covariates(sample_cols)
+        self._validate_combat_request(batch_indices, covariates)
 
         matrices = self._complete_batch_matrix(intensity_matrix)
-        if matrices is None:
-            return protein_df
         complete_matrix, incomplete_matrix = matrices
 
         logger.info("Applying ComBat batch correction...")
@@ -1661,7 +1664,7 @@ class PostprocessingStage:
             corrected_matrix = apply_batch_correction(
                 df=complete_matrix,
                 batch=batch_indices,
-                covs=self._batch_covariates(sample_cols),
+                covs=covariates,
                 kwargs={
                     "par_prior": self.config.batch.parametric,
                     "mean_only": self.config.batch.mean_only,
@@ -1682,9 +1685,7 @@ class PostprocessingStage:
             return corrected_df
 
         except Exception as e:
-            logger.error("Batch correction failed: %s", e)
-            logger.warning("Returning uncorrected protein intensities")
-            return protein_df
+            raise ValueError(f"Batch correction failed: {e}") from e
 
     def _parse_de_contrasts(self, sample_to_condition: dict) -> list[tuple[str, str]]:
         """Parse configured DE contrasts into condition pairs."""
@@ -1704,23 +1705,47 @@ class PostprocessingStage:
             elif "-" in contrast_text:
                 parts = contrast_text.split("-", 1)
             else:
-                logger.warning(
-                    "Invalid contrast format '%s', expected 'A vs B' or 'A-B'",
-                    contrast_text,
+                raise ValueError(
+                    f"Invalid contrast format '{contrast_text}', expected 'A vs B' or 'A-B'"
                 )
-                continue
             contrasts.append((parts[0].strip(), parts[1].strip()))
         return contrasts
 
-    def _resolve_de_method(self) -> str:
-        """Resolve the configured DE method, including auto selection."""
+    def _resolve_de_method(
+        self,
+        protein_df: Optional[pd.DataFrame] = None,
+        sample_to_condition: Optional[dict] = None,
+    ) -> str:
+        """Resolve the configured DE method, including data-aware auto selection.
+
+        When ``auto`` and sample metadata are available, use replicate counts
+        before falling back to the quantification-based default.
+        """
         de_method = self.config.de.method.strip().lower()
         if de_method != "auto":
             return de_method
 
         quant = self.config.quantification.method.lower()
+        if protein_df is not None and sample_to_condition:
+            active_conditions = {
+                sample: sample_to_condition.get(sample, "unknown")
+                for sample in protein_df.columns[1:]
+            }
+            choice = _auto_select_de_method(active_conditions, quant)
+            min_grp = min(Counter(active_conditions.values()).values(), default=0)
+            logger.info(
+                "Auto-selected DE method: %s (n_proteins=%d, min_group=%d, quant=%s)",
+                choice,
+                len(protein_df),
+                min_grp,
+                quant,
+            )
+            return choice
+
         de_method = "deqms" if quant == "directlfq" else "limrots"
-        logger.info("Auto-selected DE method: %s (quant=%s)", de_method, quant)
+        logger.info(
+            "Auto-selected DE method: %s (quant=%s, no profile)", de_method, quant
+        )
         return de_method
 
     def _load_de_peptide_counts(self, de_method: str) -> Optional[pd.Series]:
@@ -1854,7 +1879,15 @@ class PostprocessingStage:
         if not contrasts:
             return None
 
-        de_method = self._resolve_de_method()
+        de_method = self._resolve_de_method(protein_df, sample_to_condition)
+        if (
+            de_method in {"rots", "limrots"}
+            and self.config.de.fdr_method.lower() != "bh"
+        ):
+            raise ValueError(
+                f"FDR method '{self.config.de.fdr_method}' does not apply to "
+                f"{de_method}, which retains its permutation FDR"
+            )
         peptide_counts = self._load_de_peptide_counts(de_method)
 
         if de_method == "ensemble":
@@ -2012,7 +2045,7 @@ class PostprocessingStage:
         if not is_plotting_available():
             logger.warning(
                 "Plotting dependencies not available. "
-                "Install with: pip install mokume[plotting]"
+                "Install with: pip install mokume-py[plotting]"
             )
             return
 
@@ -2042,7 +2075,7 @@ class PostprocessingStage:
         if not is_interactive_available():
             logger.warning(
                 "Interactive report dependencies (plotly) not available. "
-                "Install with: pip install mokume[reports]"
+                "Install with: pip install mokume-py[reports]"
             )
             return
 
@@ -2084,23 +2117,14 @@ class PostprocessingStage:
         if not self.config.input.sdrf or not self.config.batch.column:
             return None
 
-        try:
-            from mokume.core.constants import load_sdrf as _load_sdrf
-
-            sdrf = _load_sdrf(self.config.input.sdrf)
-
-            batch_col = self.config.batch.column.lower()
-            if batch_col not in sdrf.columns:
-                logger.warning(
-                    "Batch column '%s' not in SDRF",
-                    self.config.batch.column,
-                )
-                return None
-
-            # Map sample IDs to batch values
-            sample_to_batch = dict(zip(sdrf["source name"], sdrf[batch_col]))
-            return [sample_to_batch.get(s, "unknown") for s in sample_ids]
-
-        except Exception as e:
-            logger.warning("Failed to extract batch column: %s", e)
-            return None
+        sdrf = load_sdrf(self.config.input.sdrf)
+        batch_col = self.config.batch.column.lower()
+        if batch_col not in sdrf.columns:
+            raise ValueError(f"Batch column '{self.config.batch.column}' not in SDRF")
+        sample_to_batch = dict(zip(sdrf["source name"], sdrf[batch_col]))
+        missing = [sample for sample in sample_ids if sample not in sample_to_batch]
+        if missing:
+            raise ValueError(
+                f"Batch SDRF column '{self.config.batch.column}' has no values for: {missing}"
+            )
+        return [sample_to_batch[sample] for sample in sample_ids]

@@ -33,7 +33,7 @@ def run_ensemble(
     min_k: int = 2,
     fdr_method: str = "bh",
     fdr_threshold: float = 0.05,
-    log2fc_threshold: float = 0.5,
+    log2fc_threshold: float | str = 0.5,
     peptide_counts: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Run multiple DE methods and combine with top-k consensus.
@@ -52,11 +52,13 @@ def run_ensemble(
         Minimum number of methods that must agree on significance
         for a protein to be called DE (default 2).
     fdr_method : str
-        FDR correction method passed to each sub-method.
+        FDR correction method ("bh", "bky", "storey"). Applied both by each
+        sub-method and by the ensemble combination layer.
     fdr_threshold : float
-        FDR threshold for each sub-method.
-    log2fc_threshold : float
-        Log2 fold-change threshold.
+        FDR threshold for each sub-method and for the combined results.
+    log2fc_threshold : float or "auto"
+        Log2 fold-change threshold. ``"auto"`` estimates the gate from the data
+        (each member from its own fold changes, the ensemble from the median).
     peptide_counts : pd.Series or None
         Peptide counts (passed to DEqMS if included).
 
@@ -100,14 +102,111 @@ def run_ensemble(
         individual_results,
         min_k=min_k,
         log2fc_threshold=log2fc_threshold,
+        fdr_method=fdr_method,
         fdr_threshold=fdr_threshold,
     )
+
+
+def _resolve_log2fc_gate(log2fc: np.ndarray, threshold: float | str) -> float:
+    """Return the ensemble effect-size gate: a fixed float, or "auto" from data.
+
+    Mirrors ``DifferentialExpression._resolve_log2fc_gate``, but estimates the
+    gate from the ensemble's median fold changes so that the combination layer
+    re-classifies on the same scale it filters. A fixed gate calibrated for
+    label-free is too strict for compressed isobaric (TMT) ratios; ``"auto"``
+    lets the gate track the data.
+    """
+    if isinstance(threshold, str) and threshold.lower() == "auto":
+        from mokume.analysis.effect_size_gate import (  # pylint: disable=import-outside-toplevel
+            estimate_effect_size_gate,
+        )
+
+        gate = estimate_effect_size_gate(log2fc)
+        logger.info("Ensemble auto effect-size gate estimated from data: %.3f", gate)
+        return gate
+    return float(threshold)
+
+
+def _combine_member_pvalues(p_values: list[float]) -> float:
+    if len(p_values) >= 2:
+        return float(combine_pvalues(p_values, method="fisher")[1])
+    if p_values:
+        return float(p_values[0])
+    return np.nan
+
+
+def _combined_protein_row(
+    protein: str,
+    results: dict[str, pd.DataFrame],
+) -> dict[str, object]:
+    """Combine member evidence for one protein before global FDR correction."""
+    fc_values: list[float] = []
+    p_values: list[float] = []
+    n_up = 0
+    n_down = 0
+    contributing: list[str] = []
+
+    for method, frame in results.items():
+        match = frame[frame["ProteinName"] == protein]
+        if match.empty:
+            continue
+        row = match.iloc[0]
+        significance = row.get("significance", "Unchanged")
+        fold_change = row["log2FC"]
+        if significance == "NotTested" or not np.isfinite(fold_change):
+            continue
+        fc_values.append(fold_change)
+        pvalue = row["pvalue"]
+        if np.isfinite(pvalue) and pvalue > 0:
+            p_values.append(pvalue)
+        if significance == "UP":
+            n_up += 1
+            contributing.append(method)
+        elif significance == "DOWN":
+            n_down += 1
+            contributing.append(method)
+
+    return {
+        "ProteinName": protein,
+        "log2FC": float(np.median(fc_values)) if fc_values else np.nan,
+        "pvalue": _combine_member_pvalues(p_values),
+        "n_methods_up": n_up,
+        "n_methods_down": n_down,
+        "methods_significant": ",".join(contributing),
+    }
+
+
+def _adjust_ensemble_pvalues(
+    ensemble: pd.DataFrame,
+    fdr_method: str,
+    fdr_threshold: float,
+) -> np.ndarray:
+    """Apply the requested FDR method to finite combined p-values."""
+    valid = np.isfinite(ensemble["pvalue"].values)
+    adjusted_pvalues = np.full(len(ensemble), np.nan)
+    if not valid.any():
+        return adjusted_pvalues
+
+    from mokume.analysis.adaptive_fdr import (  # pylint: disable=import-outside-toplevel
+        adjust_pvalues,
+    )
+
+    adjusted, method_used = adjust_pvalues(
+        ensemble.loc[valid, "pvalue"].values,
+        method=fdr_method,
+        alpha=fdr_threshold,
+    )
+    adjusted_pvalues[valid] = adjusted
+    if method_used != fdr_method:
+        logger.info("Ensemble FDR: requested %s, applied %s", fdr_method, method_used)
+    return adjusted_pvalues
 
 
 def combine_de_results(
     results: dict[str, pd.DataFrame],
     min_k: int = 2,
-    log2fc_threshold: float = 0.5,
+    log2fc_threshold: float | str = 0.5,
+    fdr_method: str = "bh",
     fdr_threshold: float = 0.05,
 ) -> pd.DataFrame:
     """Combine DE results from multiple methods using top-k consensus.
@@ -120,8 +219,12 @@ def combine_de_results(
         significance.
     min_k : int
         Minimum agreement count.
-    log2fc_threshold : float
-        Log2 fold-change threshold for re-classification.
+    log2fc_threshold : float or "auto"
+        Log2 fold-change threshold for re-classification. ``"auto"`` estimates
+        the gate from the ensemble's median fold changes.
+    fdr_method : str
+        FDR correction applied to the Fisher-combined p-values ("bh", "bky",
+        "storey"). Adaptive procedures fall back to BH when pi0 is unreliable.
     fdr_threshold : float
         FDR threshold for re-classification.
 
@@ -140,90 +243,56 @@ def combine_de_results(
     for df in results.values():
         all_proteins.update(df["ProteinName"].tolist())
 
-    rows = []
-    for protein in sorted(all_proteins):
-        fc_values = []
-        p_values = []
-        n_up = 0
-        n_down = 0
-        contributing: list[str] = []
-
-        for method, df in results.items():
-            match = df[df["ProteinName"] == protein]
-            if match.empty:
-                continue
-            row = match.iloc[0]
-            fc_values.append(row["log2FC"])
-            pval = row["pvalue"]
-            if np.isfinite(pval) and pval > 0:
-                p_values.append(pval)
-            sig = row.get("significance", "Unchanged")
-            if sig == "UP":
-                n_up += 1
-                contributing.append(method)
-            elif sig == "DOWN":
-                n_down += 1
-                contributing.append(method)
-
-        median_fc = float(np.median(fc_values)) if fc_values else 0.0
-
-        if len(p_values) >= 2:
-            _, combined_p = combine_pvalues(p_values, method="fisher")
-        elif len(p_values) == 1:
-            combined_p = p_values[0]
-        else:
-            combined_p = np.nan
-
-        rows.append(
-            {
-                "ProteinName": protein,
-                "log2FC": median_fc,
-                "pvalue": combined_p,
-                "n_methods_up": n_up,
-                "n_methods_down": n_down,
-                "methods_significant": ",".join(contributing),
-            }
-        )
+    rows = [_combined_protein_row(protein, results) for protein in sorted(all_proteins)]
 
     ensemble = pd.DataFrame(rows)
     if ensemble.empty:
         return ensemble
 
-    # BH correction on combined p-values
-    valid = np.isfinite(ensemble["pvalue"].values)
-    adj = np.full(len(ensemble), np.nan)
-    if valid.any():
-        from statsmodels.stats.multitest import multipletests
+    # FDR correction on the Fisher-combined p-values. The requested method must
+    # reach the combination layer too: correcting the members adaptively but the
+    # ensemble with BH would silently discard the adaptive-pi0 gain here.
+    ensemble["adj_pvalue"] = _adjust_ensemble_pvalues(
+        ensemble, fdr_method, fdr_threshold
+    )
 
-        adj[valid] = multipletests(
-            ensemble.loc[valid, "pvalue"].values, method="fdr_bh"
-        )[1]
-    ensemble["adj_pvalue"] = adj
+    gate = _resolve_log2fc_gate(
+        ensemble["log2FC"].to_numpy(dtype=float), log2fc_threshold
+    )
+
+    tested = (
+        np.isfinite(ensemble["pvalue"].to_numpy(dtype=float))
+        & np.isfinite(ensemble["adj_pvalue"].to_numpy(dtype=float))
+        & np.isfinite(ensemble["log2FC"].to_numpy(dtype=float))
+    )
 
     # Consensus significance
-    ensemble["significance"] = "Unchanged"
+    ensemble["significance"] = "NotTested"
+    ensemble.loc[tested, "significance"] = "Unchanged"
     ensemble.loc[
-        (ensemble["n_methods_up"] >= min_k)
+        tested
+        & (ensemble["n_methods_up"] >= min_k)
         & (ensemble["adj_pvalue"] < fdr_threshold)
-        & (ensemble["log2FC"] > log2fc_threshold),
+        & (ensemble["log2FC"] > gate),
         "significance",
     ] = "UP"
     ensemble.loc[
-        (ensemble["n_methods_down"] >= min_k)
+        tested
+        & (ensemble["n_methods_down"] >= min_k)
         & (ensemble["adj_pvalue"] < fdr_threshold)
-        & (ensemble["log2FC"] < -log2fc_threshold),
+        & (ensemble["log2FC"] < -gate),
         "significance",
     ] = "DOWN"
 
     ensemble = ensemble.sort_values("adj_pvalue").reset_index(drop=True)
 
-    n_up = (ensemble["significance"] == "UP").sum()
-    n_down = (ensemble["significance"] == "DOWN").sum()
+    significance = ensemble["significance"]
     logger.info(
-        "Ensemble results: %d proteins, %d UP, %d DOWN (k>=%d)",
+        "Ensemble results: %d proteins, %d NotTested, %d UP, %d DOWN (k>=%d)",
         len(ensemble),
-        n_up,
-        n_down,
+        (significance == "NotTested").sum(),
+        (significance == "UP").sum(),
+        (significance == "DOWN").sum(),
         min_k,
     )
     return ensemble

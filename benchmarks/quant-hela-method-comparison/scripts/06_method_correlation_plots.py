@@ -20,8 +20,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (
     ALL_DATASETS,
+    INTENSITY_COLUMNS,
     PROTEIN_QUANT_DIR,
     PLOTS_DIR,
+    QUANTIFICATION_METHODS,
 )
 
 
@@ -68,22 +70,7 @@ def load_method_data(dataset_id: str, method: str) -> Optional[pd.DataFrame]:
 
 def get_intensity_column(method: str) -> str:
     """Get the intensity column name for a method."""
-    mapping = {
-        "ibaq": "IbaqLog",
-        "ribaq": "IbaqNorm",
-        "directlfq": "DirectLFQIntensity",
-        "top3": "Top3Intensity",
-        "topn": "Top10Intensity",
-        "top10": "Top10Intensity",
-        "sum": "SumIntensity",
-    }
-    return mapping.get(method, "Intensity")
-
-
-def is_log_transformed(method: str) -> bool:
-    """Check if the method's intensity values are already log-transformed."""
-    # IbaqLog is already log-transformed
-    return method == "ibaq"
+    return INTENSITY_COLUMNS[method]
 
 
 def get_median_expression(df: pd.DataFrame, intensity_col: str) -> pd.Series:
@@ -159,83 +146,6 @@ def plot_density_scatter(
     return r, ccc
 
 
-def compare_methods_single_dataset(
-    dataset_id: str,
-    method1: str,
-    method2: str,
-    output_dir: Path = None,
-) -> Optional[Dict]:
-    """
-    Compare two quantification methods for a single dataset.
-    """
-    if output_dir is None:
-        output_dir = PLOTS_DIR
-
-    # Load data
-    df1 = load_method_data(dataset_id, method1)
-    df2 = load_method_data(dataset_id, method2)
-
-    if df1 is None or df2 is None:
-        return None
-
-    # Get intensity columns
-    col1 = get_intensity_column(method1)
-    col2 = get_intensity_column(method2)
-
-    if col1 not in df1.columns or col2 not in df2.columns:
-        return None
-
-    # Get median expression per protein
-    expr1 = get_median_expression(df1, col1)
-    expr2 = get_median_expression(df2, col2)
-
-    # Find common proteins
-    common = expr1.index.intersection(expr2.index)
-
-    if len(common) < 100:
-        return None
-
-    # Get values
-    x = expr1.loc[common].values
-    y = expr2.loc[common].values
-
-    # Log transform if not already log-transformed
-    if not is_log_transformed(method1):
-        x = np.log2(x + 1)
-    if not is_log_transformed(method2):
-        y = np.log2(y + 1)
-
-    # Z-score normalize to make scales comparable
-    x = zscore_normalize(x)
-    y = zscore_normalize(y)
-
-    # Create plot
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    xlabel = f"{method1.upper()} (z-score)"
-    ylabel = f"{method2.upper()} (z-score)"
-    title = f"{dataset_id}: {method1.upper()} vs {method2.upper()}"
-
-    r, ccc = plot_density_scatter(x, y, ax, xlabel, ylabel, title)
-
-    plt.tight_layout()
-
-    # Save
-    filename = f"correlation_{dataset_id}_{method1}_vs_{method2}"
-    plt.savefig(output_dir / f"{filename}.png", dpi=150, bbox_inches="tight")
-    plt.savefig(output_dir / f"{filename}.pdf", bbox_inches="tight")
-    plt.close()
-
-    return {
-        "dataset": dataset_id,
-        "method1": method1,
-        "method2": method2,
-        "n_proteins": len(common),
-        "pearson_r": r,
-        "ccc": ccc,
-    }
-
-
 def compare_methods_all_datasets(
     method1: str,
     method2: str,
@@ -279,11 +189,8 @@ def compare_methods_all_datasets(
         x = expr1.loc[common].values
         y = expr2.loc[common].values
 
-        # Log transform if needed
-        if not is_log_transformed(method1):
-            x = np.log2(x + 1)
-        if not is_log_transformed(method2):
-            y = np.log2(y + 1)
+        x = np.log2(x + 1)
+        y = np.log2(y + 1)
 
         # Filter valid values
         mask = np.isfinite(x) & np.isfinite(y)
@@ -345,7 +252,7 @@ def create_method_comparison_grid(
     Create a grid of correlation plots comparing all method pairs.
     """
     if methods is None:
-        methods = ["ibaq", "ribaq", "directlfq", "top3", "sum"]
+        methods = list(QUANTIFICATION_METHODS)
     if datasets is None:
         datasets = ALL_DATASETS
     if output_dir is None:
@@ -400,10 +307,8 @@ def create_method_comparison_grid(
                 x = expr1.loc[common].values
                 y = expr2.loc[common].values
 
-                if not is_log_transformed(method1):
-                    x = np.log2(x + 1)
-                if not is_log_transformed(method2):
-                    y = np.log2(y + 1)
+                x = np.log2(x + 1)
+                y = np.log2(y + 1)
 
                 mask = np.isfinite(x) & np.isfinite(y)
                 x = zscore_normalize(x[mask])
@@ -454,12 +359,14 @@ def main():
     parser.add_argument(
         "--method1",
         type=str,
-        default="ibaq",
+        choices=QUANTIFICATION_METHODS,
+        default="pibaq",
         help="First method to compare"
     )
     parser.add_argument(
         "--method2",
         type=str,
+        choices=QUANTIFICATION_METHODS,
         default="directlfq",
         help="Second method to compare"
     )
@@ -487,29 +394,16 @@ def main():
         print("\nGenerating method comparison grid...")
         create_method_comparison_grid(output_dir=output_dir)
     else:
-        # Generate key comparisons
-        comparisons = [
-            ("ibaq", "directlfq"),
-            ("ibaq", "ribaq"),
-            ("ibaq", "top3"),
-            ("ibaq", "sum"),
-            ("directlfq", "ribaq"),
-            ("directlfq", "top3"),
-        ]
-
         print("\nGenerating pairwise correlation plots...")
-        all_results = []
-
-        for m1, m2 in comparisons:
-            print(f"\n  {m1.upper()} vs {m2.upper()}:")
-            results = compare_methods_all_datasets(m1, m2, output_dir=output_dir)
-            if not results.empty:
-                results["comparison"] = f"{m1}_vs_{m2}"
-                all_results.append(results)
-
-        if all_results:
-            combined = pd.concat(all_results, ignore_index=True)
-            combined.to_csv(output_dir / "method_correlations.csv", index=False)
+        print(f"\n  {args.method1.upper()} vs {args.method2.upper()}:")
+        results = compare_methods_all_datasets(
+            args.method1,
+            args.method2,
+            output_dir=output_dir,
+        )
+        if not results.empty:
+            results["comparison"] = f"{args.method1}_vs_{args.method2}"
+            results.to_csv(output_dir / "method_correlations.csv", index=False)
             print("\n  Saved: method_correlations.csv")
 
     print("\n" + "=" * 70)

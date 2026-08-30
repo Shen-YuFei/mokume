@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""iBAQ QC-report command (density + box plots) for the mokume wheel.
+"""piBAQ QC-report command (density + box plots) for the mokume wheel.
 
-The Rust ``peptides2protein`` iBAQ path computes the protein table itself and
+The Rust ``peptides2protein`` piBAQ path computes the protein table itself and
 writes it as a tab-separated file. This script is the thin "copy-py" glue that
 reproduces the QC report that the Python ``peptides_to_protein(verbose=True)``
-path emits (``mokume/quantification/ibaq.py`` lines 969-1058): density (KDE) and
+path emits (``mokume/quantification/pibaq.py``): density (KDE) and
 box plots, log2-scaled, one pair per quantification column, written into a single
 PDF.
 
 Design (blueprint section 2.5, option ii -- "Rust writes the TSV, Python only
 draws"): the Rust kernel stays the single source of the numbers, so the cells in
 the QC plots are byte-for-byte the cells in the Rust TSV. We do **not** recompute
-iBAQ here; we only read the table Rust produced and call the shared plotting
+piBAQ here; we only read the table Rust produced and call the shared plotting
 helpers ``mokume.plotting.plot_distributions`` / ``plot_box_plot`` (exactly
 the functions the Python verbose block uses). No mokume algorithm code lives in
 Rust -- the first-class ``mokume.plotting`` helpers draw the figures (their
@@ -22,7 +22,7 @@ argv contract (runnable via ``python -m mokume.commands.peptides2protein_qc``):
     python -m mokume.commands.peptides2protein_qc \
         --protein-table <proteins.tsv> \
         --qc-report <QCprofile.pdf> \
-        [--plot-column Ibaq|IbaqPpb] \
+        [--plot-column PiBAQ|PiBAQPpb] \
         [--tpa] [--ruler]
 
 Exit code 0 on success; non-zero (with a message on stderr) otherwise.
@@ -37,47 +37,42 @@ import sys
 # mokume extension just for string constants -- the plotting import below is the
 # only hard mokume need).
 SAMPLE_ID = "SampleID"
-IBAQ = "Ibaq"
-IBAQ_PPB = "IbaqPpb"
+PIBAQ = "PiBAQ"
+PIBAQ_PPB = "PiBAQPpb"
 TPA = "TPA"
 COPYNUMBER = "CopyNumber"
 CONCENTRATION_NM = "Concentration[nM]"
 
 
 def _parse_args(argv):
-    parser = argparse.ArgumentParser(
-        description="Render the peptides2protein iBAQ QC report from a protein table."
-    )
+    parser = argparse.ArgumentParser(description="Render a piBAQ QC report.")
     parser.add_argument(
         "--protein-table",
+        metavar="<FILE>",
         required=True,
-        help="Tab-separated protein table produced by the Rust iBAQ path.",
+        help="piBAQ TSV input.",
     )
     parser.add_argument(
         "--qc-report",
+        metavar="<FILE>",
         required=True,
-        help="Destination PDF for the QC images.",
+        help="PDF output.",
     )
     parser.add_argument(
         "--plot-column",
-        default=IBAQ,
-        help=(
-            "Primary quantification column to plot. The Python verbose path uses "
-            "IbaqPpb when --normalize is set, otherwise Ibaq."
-        ),
+        metavar="<COLUMN>",
+        default=PIBAQ,
+        help="Default: PiBAQ.",
     )
     parser.add_argument(
         "--tpa",
         action="store_true",
-        help="Also plot the TPA distribution (matches the Python verbose block).",
+        help="Include the TPA distribution.",
     )
     parser.add_argument(
         "--ruler",
         action="store_true",
-        help=(
-            "Also plot the CopyNumber and Concentration[nM] distributions "
-            "(matches the Python verbose block)."
-        ),
+        help="Include CopyNumber and Concentration[nM] distributions.",
     )
     return parser.parse_args(argv)
 
@@ -118,12 +113,12 @@ def main(argv=None):
     _require_column(res, args.plot_column, args.protein_table)
 
     # ``plot_width = len(set(SampleID)) * 0.5 + 10`` -- identical to
-    # ``mokume/quantification/ibaq.py`` line 978.
+    # Same sample-count-based plot width as the canonical piBAQ module.
     plot_width = len(set(res[SAMPLE_ID])) * 0.5 + 10
 
     pdf = PdfPages(args.qc_report)
     try:
-        # Primary iBAQ column: density + box, exactly as ibaq.py lines 980-998.
+        # Primary piBAQ column: density + box, matching the canonical module.
         density = plot_distributions(
             res,
             args.plot_column,

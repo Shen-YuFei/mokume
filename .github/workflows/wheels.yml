@@ -1,15 +1,16 @@
-# Build cross-platform abi3 Python wheels (+ sdist) for `pip install mokume-rs`.
+# Build cross-platform abi3 Python wheels (+ sdist) for `pip install mokume`.
 #
 # The Rust kernel is exposed to Python through the `mokume._mokume` PyO3
 # extension that maturin builds from `crates/mokume-py`. Because that crate
-# transitively depends on `mokume-cli` -> `hdf5-metno` (features = ["static"]),
+# transitively depends on the `mokume-command` dispatch library -> `hdf5-metno`
+# (features = ["static"]),
 # every wheel statically compiles libhdf5 from C source at build time, so each
-# runner must provide cmake + a C compiler. The `abi3-py39` pyo3 feature yields a
-# single `cp39-abi3` wheel per platform that runs on CPython 3.9+.
+# runner must provide cmake + a C compiler. The `abi3-py310` pyo3 feature yields a
+# single `cp310-abi3` wheel per platform that runs on CPython 3.10+.
 #
 # This workflow only BUILDS wheels + an sdist and uploads them as artifacts (on
 # push / PR / tag / manual dispatch); it does not publish to PyPI. The
-# pure-Python `mokume` package is released by the separate `python-publish.yml`;
+# pure-Python `mokume-py` package is released by the separate `python-publish.yml`;
 # the Rust wheels here are left as downloadable artifacts for now.
 name: wheels
 
@@ -97,8 +98,18 @@ jobs:
           python -m venv smoke
           if [ -f smoke/bin/activate ]; then . smoke/bin/activate; else . smoke/Scripts/activate; fi
           python -m pip install --upgrade pip
-          pip install --no-index --find-links dist mokume-rs
-          python -c "import mokume._mokume as m; print('mokume', m.version()); assert m.version()"
+          pip install "$(ls dist/*.whl)"
+          python -c "import mokume; print('mokume', mokume.version(), 'proteases', len(mokume.protease_catalog())); assert mokume.version() and mokume.protease_catalog()"
+          mokume --version
+          mokume quantify features2proteins \
+            --parquet tests/example/feature_wide.parquet \
+            --output memory-smoke.tsv \
+            --quant-method sum \
+            --run-normalization none \
+            --sample-normalization none \
+            --min-unique 0 \
+            --threads 24 \
+            --memory 1GB
 
       - uses: actions/upload-artifact@v7
         with:
@@ -125,7 +136,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install "$(ls dist/*.whl)[plotting]" pytest pyarrow
+          pip install "$(ls dist/*.whl)[plotting,agentic]" pytest pyarrow
       - name: Run the Python test suite
         run: pytest rust/tests -q
 

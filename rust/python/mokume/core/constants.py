@@ -26,19 +26,18 @@ NORM_INTENSITY = "NormIntensity"
 REFERENCE = "Reference"
 SAMPLE_ID = "SampleID"
 SAMPLE_ID_REGEX = r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
-SEARCH_ENGINE = "searchScore"
-IBAQ = "Ibaq"
-IBAQ_NORMALIZED = "IbaqNorm"
-IBAQ_LOG = "IbaqLog"
-IBAQ_BEC = "IbaqBec"
-IBAQ_PPB = "IbaqPpb"
+PIBAQ = "PiBAQ"
+PIBAQ_NORMALIZED = "PiBAQNorm"
+PIBAQ_LOG = "PiBAQLog"
+PIBAQ_BEC = "PiBAQBec"
+PIBAQ_PPB = "PiBAQPpb"
 TPA = "TPA"
 MOLECULARWEIGHT = "MolecularWeight"
 # piBAQ family metadata. FamilyId holds the representative
 # canonical accession (the family member with the most digested
-# peptides); EvidenceLevel takes one of 'high' (>=3 unique anchors),
-# 'medium' (1-2 unique anchors), or
-# 'family_only' (zero anchors -> fallback aggregation triggered);
+# peptides); EvidenceLevel takes one of 'high' (every member reaches the
+# high-anchor threshold), 'medium' (at least one member reaches the minimum),
+# or 'family_only' (no member reaches the minimum);
 # FamilySize is the count of canonical members in the family.
 FAMILY_ID = "FamilyId"
 EVIDENCE_LEVEL = "EvidenceLevel"
@@ -72,6 +71,8 @@ PARQUET_COLUMNS = [
     "intensity",
     "run_file_name",
     "sample_accession",
+    "peptide_qvalue",
+    "pg_global_qvalue",
 ]
 
 

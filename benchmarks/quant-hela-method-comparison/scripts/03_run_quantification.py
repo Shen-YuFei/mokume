@@ -3,7 +3,7 @@
 Phase 3: Run Quantification Methods
 
 Run all protein quantification methods on prepared peptide data.
-Methods: iBAQ, rIBAQ, DirectLFQ, Top3, TopN, Sum
+Methods: piBAQ, MaxLFQ, DirectLFQ, Top3, TopN, Sum
 """
 
 import os
@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, List
 
-import mokume
 import pandas as pd
 
 from config import (
@@ -22,10 +21,10 @@ from config import (
     PROTEIN_QUANT_DIR,
     FASTA_FILE,
     QUANTIFICATION_METHODS,
-    TOPN_VALUES,
-    IBAQ_PARAMS,
+    PIBAQ_PARAMS,
     DatasetInfo,
 )
+import mokume
 
 
 def _run_method(
@@ -43,7 +42,7 @@ def _run_method(
 
             mokume.peptides2protein(
                 peptides=input_file,
-                method=method,
+                quant_method=method,
                 output=output_file,
                 **kwargs,
             )
@@ -61,33 +60,30 @@ def _run_method(
         return None
 
 
-def run_ibaq(
+def run_pibaq(
     peptide_df: pd.DataFrame,
     fasta_path: Path,
-    dataset_id: str,
 ) -> Optional[pd.DataFrame]:
-    """Run iBAQ quantification. Requires FASTA file for theoretical peptide calculation."""
+    """Run piBAQ quantification with a FASTA-derived theoretical digest."""
     if not fasta_path.exists():
         print(f"  WARNING: FASTA file not found: {fasta_path}")
         return None
 
     return _run_method(
         peptide_df,
-        method="ibaq",
+        method="pibaq",
         fasta=str(fasta_path),
-        enzyme=IBAQ_PARAMS["enzyme"],
-        normalize=True,
-        min_aa=IBAQ_PARAMS["min_aa"],
-        max_aa=IBAQ_PARAMS["max_aa"],
+        enzyme=PIBAQ_PARAMS["enzyme"],
+        min_aa=PIBAQ_PARAMS["min_aa"],
+        max_aa=PIBAQ_PARAMS["max_aa"],
     )
 
 
 def run_maxlfq(
     peptide_df: pd.DataFrame,
-    min_peptides: int = 2,
 ) -> Optional[pd.DataFrame]:
     """Run MaxLFQ quantification."""
-    return _run_method(peptide_df, method="maxlfq")
+    return _run_method(peptide_df, method="maxlfq", threads=24)
 
 
 def run_top3(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -96,8 +92,8 @@ def run_top3(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 
 def run_topn(peptide_df: pd.DataFrame, n: int = 10) -> Optional[pd.DataFrame]:
-    """Run TopN quantification."""
-    return _run_method(peptide_df, method="topn", topn_n=n)
+    """Run TopN quantification. N is spelled in the method name (``top10``)."""
+    return _run_method(peptide_df, method=f"top{n}")
 
 
 def run_sum(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -107,7 +103,12 @@ def run_sum(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 def run_directlfq(peptide_df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """Run DirectLFQ quantification."""
-    return _run_method(peptide_df, method="directlfq", min_nonan=1)
+    return _run_method(
+        peptide_df,
+        method="directlfq",
+        threads=24,
+        directlfq_min_nonan=1,
+    )
 
 
 def quantify_dataset(
@@ -153,34 +154,16 @@ def quantify_dataset(
         print(f"  {method}: Running...", end=" ", flush=True)
         start_time = time.time()
 
-        if method == "ibaq":
-            result_df = run_ibaq(peptide_df, FASTA_FILE, dataset.project_id)
-        elif method == "ibaq_raw":
-            # ibaq_raw uses the same iBAQ computation - reuse if already computed
-            ibaq_path = output_dir / "ibaq.parquet"
-            if ibaq_path.exists():
-                result_df = pd.read_parquet(ibaq_path)
-            else:
-                result_df = run_ibaq(peptide_df, FASTA_FILE, dataset.project_id)
-                # Also save as ibaq
-                if result_df is not None:
-                    result_df.to_parquet(ibaq_path, index=False)
+        if method == "pibaq":
+            result_df = run_pibaq(peptide_df, FASTA_FILE)
         elif method == "maxlfq":
             result_df = run_maxlfq(peptide_df)
         elif method == "directlfq":
             result_df = run_directlfq(peptide_df)
         elif method == "top3":
             result_df = run_top3(peptide_df)
-        elif method == "topn":
-            # Run multiple TopN values
-            for n in TOPN_VALUES:
-                topn_output = output_dir / f"top{n}.parquet"
-                if topn_output.exists() and not force:
-                    continue
-                topn_result = run_topn(peptide_df, n=n)
-                if topn_result is not None:
-                    topn_result.to_parquet(topn_output, index=False)
-            result_df = run_topn(peptide_df, n=10)  # Default TopN
+        elif method == "top10":
+            result_df = run_topn(peptide_df, n=10)
         elif method == "sum":
             result_df = run_sum(peptide_df)
         else:
@@ -226,8 +209,8 @@ def quantify_all_datasets(
     print(f"FASTA file: {FASTA_FILE}")
 
     # Check FASTA
-    if "ibaq" in methods and not FASTA_FILE.exists():
-        print("\nWARNING: FASTA file not found. iBAQ will be skipped.")
+    if "pibaq" in methods and not FASTA_FILE.exists():
+        print("\nWARNING: FASTA file not found. piBAQ will be skipped.")
 
     all_results = {}
 

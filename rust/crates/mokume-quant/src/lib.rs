@@ -3,7 +3,10 @@ use mokume_core::{PeptideId, QuantMethod, SampleId};
 mod directlfq_aligned;
 mod maxlfq;
 
-pub use directlfq_aligned::{direct_lfq_aligned, DirectLfqIon};
+pub use directlfq_aligned::{
+    direct_lfq_aligned, direct_lfq_aligned_with_ions, DirectLfqIon, DirectLfqNormalizedIon,
+    DirectLfqResult,
+};
 pub use maxlfq::{max_lfq, max_lfq_with_samples};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,7 +19,7 @@ pub struct PeptideMeasurement {
 pub fn supported_methods() -> &'static [QuantMethod] {
     &[
         QuantMethod::DirectLfq,
-        QuantMethod::Ibaq,
+        QuantMethod::Pibaq,
         QuantMethod::MaxLfq,
         QuantMethod::TopN,
         QuantMethod::Sum,
@@ -24,6 +27,7 @@ pub fn supported_methods() -> &'static [QuantMethod] {
         QuantMethod::Ratio,
         QuantMethod::Abd,
         QuantMethod::Intensity,
+        QuantMethod::PeptideCount,
         QuantMethod::SpectralCount,
     ]
 }

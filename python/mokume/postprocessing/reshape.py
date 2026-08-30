@@ -8,10 +8,10 @@ from typing import Union
 import pandas as pd
 
 from mokume.core.constants import (
-    IBAQ,
-    IBAQ_NORMALIZED,
-    IBAQ_PPB,
-    IBAQ_LOG,
+    PIBAQ,
+    PIBAQ_NORMALIZED,
+    PIBAQ_PPB,
+    PIBAQ_LOG,
     TPA,
     COPYNUMBER,
     PROTEIN_NAME,
@@ -23,10 +23,10 @@ logger.addHandler(logging.NullHandler())
 
 
 def remove_samples_low_protein_number(
-    ibaq_df: pd.DataFrame, min_protein_num: int
+    pibaq_df: pd.DataFrame, min_protein_num: int
 ) -> pd.DataFrame:
     """Remove samples with a low number of unique proteins."""
-    protein_num = ibaq_df.groupby(SAMPLE_ID)[PROTEIN_NAME].nunique()
+    protein_num = pibaq_df.groupby(SAMPLE_ID)[PROTEIN_NAME].nunique()
     samples_to_keep = protein_num[protein_num >= min_protein_num].index
     samples_to_remove = protein_num[protein_num < min_protein_num].index
     logger.info(
@@ -34,27 +34,27 @@ def remove_samples_low_protein_number(
         min_protein_num,
         len(samples_to_remove),
     )
-    ibaq_df = ibaq_df[ibaq_df["SampleID"].isin(samples_to_keep)]
-    return ibaq_df
+    pibaq_df = pibaq_df[pibaq_df["SampleID"].isin(samples_to_keep)]
+    return pibaq_df
 
 
 def remove_missing_values(
-    ibaq_df: pd.DataFrame,
+    pibaq_df: pd.DataFrame,
     missingness_percentage: float = 30,
-    expression_column: str = IBAQ,
+    expression_column: str = PIBAQ,
 ) -> pd.DataFrame:
     """Remove samples based on missing values in the expression column."""
-    if not isinstance(ibaq_df, pd.DataFrame):
-        raise ValueError("The input ibaq_df must be a pandas DataFrame.")
-    if expression_column not in ibaq_df.columns:
+    if not isinstance(pibaq_df, pd.DataFrame):
+        raise ValueError("The input pibaq_df must be a pandas DataFrame.")
+    if expression_column not in pibaq_df.columns:
         raise ValueError(
             f"The expression column '{expression_column}' is not in the DataFrame."
         )
 
-    initial_sample_count = ibaq_df["SampleID"].nunique()
+    initial_sample_count = pibaq_df["SampleID"].nunique()
     logger.info("Initial number of samples: %d", initial_sample_count)
 
-    pivot_df = ibaq_df.pivot_table(
+    pivot_df = pibaq_df.pivot_table(
         index=PROTEIN_NAME,
         columns=SAMPLE_ID,
         values=expression_column,
@@ -63,7 +63,7 @@ def remove_missing_values(
     non_missing_samples = pivot_df.columns[pivot_df.notna().any(axis=0)]
     missingness = pivot_df[non_missing_samples].isna().sum() / len(pivot_df) * 100
     valid_samples = missingness[missingness <= missingness_percentage].index
-    filtered_df = ibaq_df[ibaq_df[SAMPLE_ID].isin(valid_samples)]
+    filtered_df = pibaq_df[pibaq_df[SAMPLE_ID].isin(valid_samples)]
 
     final_sample_count = filtered_df[SAMPLE_ID].nunique()
     logger.info("Final number of samples: %d", final_sample_count)
@@ -74,20 +74,20 @@ def remove_missing_values(
     return filtered_df
 
 
-def describe_expression_metrics(ibaq_df: pd.DataFrame) -> pd.DataFrame:
+def describe_expression_metrics(pibaq_df: pd.DataFrame) -> pd.DataFrame:
     """Generate descriptive statistics for expression metrics."""
     possible_expression_values = [
-        IBAQ,
-        IBAQ_NORMALIZED,
-        IBAQ_LOG,
-        IBAQ_PPB,
+        PIBAQ,
+        PIBAQ_NORMALIZED,
+        PIBAQ_LOG,
+        PIBAQ_PPB,
         TPA,
         COPYNUMBER,
     ]
     expression_columns = [
-        col for col in ibaq_df.columns if col in possible_expression_values
+        col for col in pibaq_df.columns if col in possible_expression_values
     ]
-    metrics = ibaq_df.groupby(SAMPLE_ID)[expression_columns].describe()
+    metrics = pibaq_df.groupby(SAMPLE_ID)[expression_columns].describe()
     return metrics
 
 

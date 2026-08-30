@@ -18,7 +18,7 @@ from packaging.requirements import Requirement
 def _requirements_for_extra(extra: str) -> set[str]:
     """Return normalized dependency names selected by an extra."""
     selected = set()
-    for requirement_text in requires("mokume") or []:
+    for requirement_text in requires("mokume-py") or []:
         requirement = Requirement(requirement_text)
         if requirement.marker and requirement.marker.evaluate({"extra": extra}):
             selected.add(requirement.name.lower())

@@ -56,7 +56,12 @@ def plot_volcano(
     df["-log10(adj_pvalue)"] = -np.log10(df["adj_pvalue"].clip(lower=1e-300))
 
     # Color mapping
-    color_map = {"UP": "#E74C3C", "DOWN": "#3498DB", "Unchanged": "#BDC3C7"}
+    color_map = {
+        "UP": "#E74C3C",
+        "DOWN": "#3498DB",
+        "Unchanged": "#BDC3C7",
+        "NotTested": "#666666",
+    }
     colors = df["significance"].map(color_map)
 
     ax.scatter(
@@ -94,11 +99,19 @@ def plot_volcano(
     n_up = (df["significance"] == "UP").sum()
     n_down = (df["significance"] == "DOWN").sum()
     n_ns = (df["significance"] == "Unchanged").sum()
+    n_not_tested = (df["significance"] == "NotTested").sum()
     legend_elements = [
         Patch(facecolor=color_map["UP"], label=f"UP ({n_up})"),
         Patch(facecolor=color_map["DOWN"], label=f"DOWN ({n_down})"),
         Patch(facecolor=color_map["Unchanged"], label=f"Unchanged ({n_ns})"),
     ]
+    if n_not_tested:
+        legend_elements.append(
+            Patch(
+                facecolor=color_map["NotTested"],
+                label=f"NotTested ({n_not_tested})",
+            )
+        )
     ax.legend(handles=legend_elements, loc="upper right")
 
     ax.set_xlabel("log2 Fold Change", fontsize=12)

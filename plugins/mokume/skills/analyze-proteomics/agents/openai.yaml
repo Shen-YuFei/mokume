@@ -1,0 +1,12 @@
+interface:
+  display_name: "Analyze Proteomics"
+  short_description: "Inspect and evaluate Mokume proteomics analyses"
+  default_prompt: "Use $mokume:analyze-proteomics to inspect this dataset and recommend a traceable Mokume analysis."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "mokume"
+      description: "Local Mokume analysis tools"
+      transport: "stdio"
+      command: "mokume"

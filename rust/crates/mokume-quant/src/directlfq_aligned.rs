@@ -50,6 +50,28 @@ pub struct DirectLfqIon {
     pub intensity: f64,
 }
 
+/// One DirectLFQ-normalized ion row in linear intensity space.
+///
+/// Values include global sample normalization and within-protein ion alignment,
+/// but not the final protein-profile rescaling. This matches DirectLFQ's
+/// `shifted_peptides` table and the Python `--export-ions` output. Missing values
+/// are represented as `0.0`, as in Python's `np.nan_to_num` export.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirectLfqNormalizedIon {
+    pub protein: ProteinId,
+    pub ion: PeptideId,
+    pub ion_seq_rank: u32,
+    pub quantities: Vec<(SampleId, f64)>,
+}
+
+/// Protein quantities and, when requested, the aligned ion rows produced by the
+/// same DirectLFQ calculation.
+#[derive(Debug, Default, PartialEq)]
+pub struct DirectLfqResult {
+    pub protein_quantities: Vec<(ProteinId, Vec<(SampleId, f64)>)>,
+    pub normalized_ions: Vec<DirectLfqNormalizedIon>,
+}
+
 /// Estimate DirectLFQ protein intensities for every protein.
 ///
 /// Returns, per protein that has at least one quantified sample, the linear
@@ -64,13 +86,35 @@ pub fn direct_lfq_aligned(
     min_nonan: usize,
     sample_quadratic_limit: usize,
 ) -> Vec<(ProteinId, Vec<(SampleId, f64)>)> {
+    direct_lfq_aligned_impl(ions, min_nonan, sample_quadratic_limit, false).protein_quantities
+}
+
+/// Estimate proteins and retain DirectLFQ's normalized, within-protein-aligned
+/// ion rows in linear intensity space.
+///
+/// Ion rows survive even when `min_nonan` prevents a protein profile from being
+/// reported, matching Python's streamed `shifted_peptides` export.
+pub fn direct_lfq_aligned_with_ions(
+    ions: &[DirectLfqIon],
+    min_nonan: usize,
+    sample_quadratic_limit: usize,
+) -> DirectLfqResult {
+    direct_lfq_aligned_impl(ions, min_nonan, sample_quadratic_limit, true)
+}
+
+fn direct_lfq_aligned_impl(
+    ions: &[DirectLfqIon],
+    min_nonan: usize,
+    sample_quadratic_limit: usize,
+    retain_ions: bool,
+) -> DirectLfqResult {
     let matrix = IonMatrix::build(ions);
     if matrix.samples.is_empty() || matrix.rows.is_empty() {
-        return Vec::new();
+        return DirectLfqResult::default();
     }
     let mut matrix = matrix;
     matrix.normalize_samples(sample_quadratic_limit);
-    matrix.estimate_proteins(min_nonan)
+    matrix.estimate(min_nonan, retain_ions)
 }
 
 /// The log2 ion x sample matrix: `rows[r][c]` is the log2 intensity of ion `r`
@@ -78,8 +122,17 @@ pub fn direct_lfq_aligned(
 /// columns by `SampleId`, matching the layout Python hands to directlfq.
 struct IonMatrix {
     proteins: Vec<ProteinId>,
+    ions: Vec<PeptideId>,
+    ion_seq_ranks: Vec<u32>,
     samples: Vec<SampleId>,
     rows: Vec<Vec<f64>>,
+}
+
+struct IonMatrixRows {
+    proteins: Vec<ProteinId>,
+    ions: Vec<PeptideId>,
+    ion_seq_ranks: Vec<u32>,
+    values: Vec<Vec<f64>>,
 }
 
 impl IonMatrix {
@@ -134,17 +187,14 @@ impl IonMatrix {
                 .then(ion_a.get().cmp(&ion_b.get()))
         });
 
-        let mut proteins = Vec::with_capacity(keyed.len());
-        let mut rows = Vec::with_capacity(keyed.len());
-        for ((protein, _ion), cells) in keyed {
-            proteins.push(protein);
-            rows.push(cells.into_iter().map(linear_to_log2).collect());
-        }
+        let rows = collect_matrix_rows(keyed, &seq_rank);
 
         Self {
-            proteins,
+            proteins: rows.proteins,
+            ions: rows.ions,
+            ion_seq_ranks: rows.ion_seq_ranks,
             samples,
-            rows,
+            rows: rows.values,
         }
     }
 
@@ -162,7 +212,7 @@ impl IonMatrix {
     /// Stage 2: per-protein intensity estimation over contiguous protein blocks.
     /// Each protein is independent after the global sample normalization, so the
     /// blocks are estimated in parallel.
-    fn estimate_proteins(&self, min_nonan: usize) -> Vec<(ProteinId, Vec<(SampleId, f64)>)> {
+    fn estimate(&self, min_nonan: usize, retain_ions: bool) -> DirectLfqResult {
         let mut ranges = Vec::new();
         let mut start = 0;
         while start < self.proteins.len() {
@@ -174,22 +224,119 @@ impl IonMatrix {
             start = end;
         }
 
-        ranges
+        let blocks = ranges
             .into_par_iter()
-            .filter_map(|(protein, start, end)| {
-                let block = &self.rows[start..end];
-                estimate_protein(block, self.samples.len(), min_nonan).map(|profile| {
-                    let quantities = self
+            .map(|(protein, start, end)| {
+                self.estimate_block(protein, start, end, min_nonan, retain_ions)
+            })
+            .collect::<Vec<_>>();
+
+        let mut result = DirectLfqResult::default();
+        for block in blocks {
+            if let Some(quantities) = block.protein_quantities {
+                result.protein_quantities.push(quantities);
+            }
+            result.normalized_ions.extend(block.normalized_ions);
+        }
+        result
+    }
+
+    fn estimate_block(
+        &self,
+        protein: ProteinId,
+        start: usize,
+        end: usize,
+        min_nonan: usize,
+        retain_ions: bool,
+    ) -> ProteinBlockResult {
+        let alignment = align_protein(&self.rows[start..end], self.samples.len(), min_nonan);
+        let protein_quantities = alignment.quantities.as_ref().map(|profile| {
+            let quantities = self
+                .samples
+                .iter()
+                .copied()
+                .zip(profile.iter().copied())
+                .collect();
+            (protein, quantities)
+        });
+        let normalized_ions = if retain_ions {
+            self.normalized_ion_rows(protein, start, &alignment)
+        } else {
+            Vec::new()
+        };
+        ProteinBlockResult {
+            protein_quantities,
+            normalized_ions,
+        }
+    }
+
+    fn normalized_ion_rows(
+        &self,
+        protein: ProteinId,
+        start: usize,
+        alignment: &ProteinAlignment,
+    ) -> Vec<DirectLfqNormalizedIon> {
+        alignment
+            .selected_rows
+            .iter()
+            .copied()
+            .zip(&alignment.shifted)
+            .map(|(block_row, shifted)| {
+                let matrix_row = start + block_row;
+                DirectLfqNormalizedIon {
+                    protein,
+                    ion: self.ions[matrix_row],
+                    ion_seq_rank: self.ion_seq_ranks[matrix_row],
+                    quantities: self
                         .samples
                         .iter()
-                        .zip(profile)
-                        .map(|(sample, value)| (*sample, value))
-                        .collect();
-                    (protein, quantities)
-                })
+                        .copied()
+                        .zip(shifted.iter().map(
+                            |value| {
+                                if value.is_finite() {
+                                    value.exp2()
+                                } else {
+                                    0.0
+                                }
+                            },
+                        ))
+                        .collect(),
+                }
             })
             .collect()
     }
+}
+
+fn collect_matrix_rows(
+    keyed: Vec<((ProteinId, PeptideId), Vec<f64>)>,
+    seq_rank: &HashMap<(ProteinId, PeptideId), u32>,
+) -> IonMatrixRows {
+    let mut rows = IonMatrixRows {
+        proteins: Vec::with_capacity(keyed.len()),
+        ions: Vec::with_capacity(keyed.len()),
+        ion_seq_ranks: Vec::with_capacity(keyed.len()),
+        values: Vec::with_capacity(keyed.len()),
+    };
+    for ((protein, ion), cells) in keyed {
+        rows.proteins.push(protein);
+        rows.ions.push(ion);
+        rows.ion_seq_ranks
+            .push(seq_rank.get(&(protein, ion)).copied().unwrap_or(u32::MAX));
+        rows.values
+            .push(cells.into_iter().map(linear_to_log2).collect());
+    }
+    rows
+}
+
+struct ProteinBlockResult {
+    protein_quantities: Option<(ProteinId, Vec<(SampleId, f64)>)>,
+    normalized_ions: Vec<DirectLfqNormalizedIon>,
+}
+
+struct ProteinAlignment {
+    selected_rows: Vec<usize>,
+    shifted: Vec<Vec<f64>>,
+    quantities: Option<Vec<f64>>,
 }
 
 fn linear_to_log2(value: f64) -> f64 {
@@ -242,11 +389,9 @@ fn sample_shifts(rows: &[Vec<f64>], n_samples: usize, quadratic_limit: usize) ->
     shifts
 }
 
-/// Per-protein estimation. `block` is the protein's (already sample-normalized)
-/// ion x sample log2 matrix; returns the linear per-sample protein profile, or
-/// `None` if the protein has no quantified sample.
-fn estimate_protein(block: &[Vec<f64>], n_samples: usize, min_nonan: usize) -> Option<Vec<f64>> {
-    let trimmed = trim_ions(block);
+/// Align one protein's ions and derive its optional linear protein profile.
+fn align_protein(block: &[Vec<f64>], n_samples: usize, min_nonan: usize) -> ProteinAlignment {
+    let (selected_rows, trimmed) = trim_ions(block);
     let block = trimmed.as_slice();
 
     let summed_pepint: f64 = block
@@ -256,12 +401,26 @@ fn estimate_protein(block: &[Vec<f64>], n_samples: usize, min_nonan: usize) -> O
         .map(|value| value.exp2())
         .sum();
 
-    let shifted = if n_samples < 2 || block.len() < 2 {
+    let shifted = if n_samples < 2 {
         block.to_vec()
     } else {
         normalize_ion_profiles(block)
     };
 
+    let quantities = protein_quantities(&shifted, summed_pepint, min_nonan, n_samples);
+    ProteinAlignment {
+        selected_rows,
+        shifted,
+        quantities,
+    }
+}
+
+fn protein_quantities(
+    shifted: &[Vec<f64>],
+    summed_pepint: f64,
+    min_nonan: usize,
+    n_samples: usize,
+) -> Option<Vec<f64>> {
     let mut intens_vec = vec![f64::NAN; n_samples];
     for (column, slot) in intens_vec.iter_mut().enumerate() {
         let mut finite = shifted
@@ -281,11 +440,8 @@ fn estimate_protein(block: &[Vec<f64>], n_samples: usize, min_nonan: usize) -> O
         .filter(|value| value.is_finite())
         .map(|value| value.exp2())
         .sum();
-    if summed_intensity == 0.0 {
-        return None;
-    }
-    let conversion = (summed_pepint / summed_intensity).log2();
-    Some(
+    (summed_intensity != 0.0).then(|| {
+        let conversion = (summed_pepint / summed_intensity).log2();
         intens_vec
             .into_iter()
             .map(|value| {
@@ -296,8 +452,8 @@ fn estimate_protein(block: &[Vec<f64>], n_samples: usize, min_nonan: usize) -> O
                     0.0
                 }
             })
-            .collect(),
-    )
+            .collect()
+    })
 }
 
 /// `ProtvalCutter`: keep at most 100 ions, ranked by NaN count ascending then
@@ -308,9 +464,9 @@ fn estimate_protein(block: &[Vec<f64>], n_samples: usize, min_nonan: usize) -> O
 /// over the *log2* dataframe — i.e. the sum of the raw log2 values, NOT the sum
 /// of linear intensities. Python's `sorted()` is stable, so ties on both keys
 /// keep their original order; we reproduce that with the trailing index compare.
-fn trim_ions(block: &[Vec<f64>]) -> Vec<Vec<f64>> {
+fn trim_ions(block: &[Vec<f64>]) -> (Vec<usize>, Vec<Vec<f64>>) {
     if block.len() <= MAX_IONS_PER_PROTEIN {
-        return block.to_vec();
+        return ((0..block.len()).collect(), block.to_vec());
     }
     let mut indexed = block.iter().enumerate().collect::<Vec<_>>();
     indexed.sort_by(|(index_a, row_a), (index_b, row_b)| {
@@ -323,11 +479,13 @@ fn trim_ions(block: &[Vec<f64>]) -> Vec<Vec<f64>> {
             .then(sum_b.total_cmp(&sum_a))
             .then(index_a.cmp(index_b))
     });
-    indexed
+    let selected = indexed
         .into_iter()
         .take(MAX_IONS_PER_PROTEIN)
-        .map(|(_, row)| row.clone())
-        .collect()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let rows = selected.iter().map(|&index| block[index].clone()).collect();
+    (selected, rows)
 }
 
 /// `np.nansum(row)` over the log2 row: sum of the finite (non-NaN) log2 values,
@@ -735,7 +893,9 @@ fn nanvar(values: &[f64]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{direct_lfq_aligned, get_normfacts, trim_ions, DirectLfqIon};
+    use super::{
+        direct_lfq_aligned, direct_lfq_aligned_with_ions, get_normfacts, trim_ions, DirectLfqIon,
+    };
     use mokume_core::{PeptideId, ProteinId, SampleId};
 
     // Cross-check the agglomerative shift clustering against directlfq's
@@ -841,6 +1001,61 @@ mod tests {
         assert_rel(value_for(prot_b, 3), 24_134.001_554_791_45);
     }
 
+    #[test]
+    fn exports_aligned_ions_when_min_nonan_drops_the_protein() {
+        let ions = vec![
+            ion(0, 0, 0, 400.0),
+            ion(0, 0, 1, 800.0),
+            ion(0, 1, 0, 150.0),
+            ion(0, 1, 1, 200.0),
+        ];
+
+        let result = direct_lfq_aligned_with_ions(&ions, 3, 50);
+        assert!(result.protein_quantities.is_empty());
+        assert_eq!(result.normalized_ions.len(), 2);
+
+        let first = &result.normalized_ions[0];
+        assert_eq!(first.protein, ProteinId::new(0));
+        assert_eq!(first.ion, PeptideId::new(0));
+        assert_rel(value_for(&first.quantities, 0), 400.0);
+        assert_rel(value_for(&first.quantities, 1), 489.897_948_556_635_7);
+
+        let second = &result.normalized_ions[1];
+        assert_eq!(second.ion, PeptideId::new(1));
+        assert_rel(value_for(&second.quantities, 0), 489.897_948_556_635_7);
+        assert_rel(value_for(&second.quantities, 1), 400.0);
+    }
+
+    #[test]
+    fn single_observation_ion_is_masked_like_directlfq() {
+        let result = direct_lfq_aligned_with_ions(
+            &[
+                ion(0, 0, 0, 100.0),
+                ion(1, 1, 0, 200.0),
+                ion(1, 1, 1, 300.0),
+                ion(1, 2, 0, 400.0),
+                ion(1, 2, 1, 600.0),
+            ],
+            1,
+            50,
+        );
+
+        assert!(result
+            .protein_quantities
+            .iter()
+            .all(|(protein, _)| *protein != ProteinId::new(0)));
+        let exported = match result
+            .normalized_ions
+            .iter()
+            .find(|row| row.protein == ProteinId::new(0))
+        {
+            Some(row) => row,
+            None => panic!("single-observation ion must still be exported"),
+        };
+        assert_eq!(value_for(&exported.quantities, 0), 0.0);
+        assert_eq!(value_for(&exported.quantities, 1), 0.0);
+    }
+
     // A 104-ion log2 block (4 samples) where every ion ties on NaN count (zero
     // NaNs), so the `ProtvalCutter` secondary key alone decides which 100
     // survive. 100 "big" ions are flat at log2 15 (log2-sum 60); 4 "spike" ions
@@ -862,7 +1077,7 @@ mod tests {
 
     #[test]
     fn trim_ions_breaks_ties_on_log2_sum_not_linear() {
-        let kept = trim_ions(&tie_break_block());
+        let (_, kept) = trim_ions(&tie_break_block());
         assert_eq!(kept.len(), 100);
         // Only the flat big ions survive; no spike (which carries a 20.0 and
         // would only rank in under the buggy linear-sum key) gets through.
@@ -888,8 +1103,9 @@ mod tests {
             }
         }
 
-        let result = direct_lfq_aligned(&ions, 1, 50);
+        let result = direct_lfq_aligned_with_ions(&ions, 1, 50);
         let Some((_, profile)) = result
+            .protein_quantities
             .iter()
             .find(|(protein, _)| *protein == ProteinId::new(0))
         else {
@@ -899,5 +1115,14 @@ mod tests {
         for sample in 0..4 {
             assert_rel(value_for(profile, sample), 3_276_800.0);
         }
+        assert_eq!(
+            result
+                .normalized_ions
+                .iter()
+                .map(|row| row.ion.get())
+                .collect::<Vec<_>>(),
+            (0..100).collect::<Vec<_>>(),
+            "ProtvalCutter export must retain the same ordered ions used for estimation"
+        );
     }
 }
