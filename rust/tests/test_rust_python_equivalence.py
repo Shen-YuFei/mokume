@@ -88,22 +88,15 @@ def _rust_features2proteins(
     ]
     if sample_normalization is not None:
         args += ["--sample-normalization", sample_normalization]
-    try:
-        mokume.run(args)
-    except RuntimeError:
-        # The clap/PyO3 FFI wrapper can surface a benign post-run signal; the
-        # CSV is still written. Re-raise only if it genuinely produced nothing.
-        if not out_path.exists():
-            raise
+    mokume.run(args)
     return pd.read_csv(out_path)
 
 
 def _canonical(df: pd.DataFrame) -> pd.DataFrame:
-    """Protein x sample matrix indexed by protein, columns sorted, NaN -> 0."""
+    """Protein x sample matrix indexed by protein with columns sorted."""
     df = df.rename(columns={df.columns[0]: "ProteinName"})
     df = df.set_index("ProteinName").sort_index()
-    df = df.reindex(sorted(df.columns), axis=1)
-    return df.fillna(0.0)
+    return df.reindex(sorted(df.columns), axis=1)
 
 
 @pytest.mark.parametrize("method", ["sum", "median"])
@@ -118,8 +111,12 @@ def test_rust_matches_python_golden(method, tmp_path):
     assert list(rust_df.index) == list(py_df.index), "protein sets differ"
     assert list(rust_df.columns) == list(py_df.columns), "sample columns differ"
 
-    rust_vals = rust_df.to_numpy(dtype=float)
-    py_vals = py_df.to_numpy(dtype=float)
+    rust_missing = rust_df.isna().to_numpy()
+    py_missing = py_df.isna().to_numpy()
+    assert np.array_equal(rust_missing, py_missing), "missing-value masks differ"
+    common = ~rust_missing
+    rust_vals = rust_df.to_numpy(dtype=float)[common]
+    py_vals = py_df.to_numpy(dtype=float)[common]
     assert np.allclose(rust_vals, py_vals, rtol=1e-6, atol=1e-2), (
         f"{method}: Rust output diverges from the pure-Python golden beyond f32 "
         f"tolerance (max abs diff {np.max(np.abs(rust_vals - py_vals)):.4g})"
@@ -157,8 +154,12 @@ def test_rust_tmm_matches_python_golden(
     assert list(rust_df.index) == list(py_df.index), "protein sets differ"
     assert list(rust_df.columns) == list(py_df.columns), "sample columns differ"
 
-    rust_vals = rust_df.to_numpy(dtype=float)
-    py_vals = py_df.to_numpy(dtype=float)
+    rust_missing = rust_df.isna().to_numpy()
+    py_missing = py_df.isna().to_numpy()
+    assert np.array_equal(rust_missing, py_missing), "missing-value masks differ"
+    common = ~rust_missing
+    rust_vals = rust_df.to_numpy(dtype=float)[common]
+    py_vals = py_df.to_numpy(dtype=float)[common]
     assert np.allclose(rust_vals, py_vals, rtol=1e-6, atol=1e-2), (
         f"tmm/{fixture}/{method}: Rust output diverges from the pure-Python TMM "
         f"golden beyond f32 tolerance "
@@ -193,7 +194,13 @@ def test_rust_tmm_is_not_a_noop_on_dense(method, tmp_path):
 
     assert list(none_df.index) == list(tmm_df.index)
     assert list(none_df.columns) == list(tmm_df.columns)
-    max_diff = np.max(np.abs(none_df.to_numpy(float) - tmm_df.to_numpy(float)))
+    none_missing = none_df.isna().to_numpy()
+    tmm_missing = tmm_df.isna().to_numpy()
+    assert np.array_equal(none_missing, tmm_missing), "TMM changed missing-value mask"
+    common = ~none_missing
+    max_diff = np.max(
+        np.abs(none_df.to_numpy(float)[common] - tmm_df.to_numpy(float)[common])
+    )
     assert max_diff > 1.0, (
         f"tmm/{method}: TMM produced output identical to none on the dense "
         f"fixture (max abs diff {max_diff:.4g}) -- TMM is a no-op"
@@ -238,8 +245,12 @@ def test_rust_matches_python_multiform_collapse(quant, norm, tmp_path):
     assert list(rust_df.index) == list(py_df.index), "protein sets differ"
     assert list(rust_df.columns) == list(py_df.columns), "sample columns differ"
 
-    rust_vals = rust_df.to_numpy(dtype=float)
-    py_vals = py_df.to_numpy(dtype=float)
+    rust_missing = rust_df.isna().to_numpy()
+    py_missing = py_df.isna().to_numpy()
+    assert np.array_equal(rust_missing, py_missing), "missing-value masks differ"
+    common = ~rust_missing
+    rust_vals = rust_df.to_numpy(dtype=float)[common]
+    py_vals = py_df.to_numpy(dtype=float)[common]
     assert np.allclose(rust_vals, py_vals, rtol=1e-6, atol=1e-2), (
         f"{norm}/{quant}: Rust diverges from the pure-Python golden on the "
         f"multi-peptidoform collapse path "

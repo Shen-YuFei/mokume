@@ -5395,11 +5395,18 @@ fn finish_protein_matrix(
     let drop_empty_samples = config.quantification == QuantMethod::Ratio;
     apply_protein_postprocessing(config, sdrf, raw_sdrf, drop_empty_samples, &mut matrix)?;
     memory.check("matrix post-processing")?;
+    // Python's dataset-level normalization pivots through sparse long form, so
+    // absent cells remain missing even for additive quantification methods.
+    let missing_fill = if dataset_sample_normalization_method(config)?.is_some() {
+        None
+    } else {
+        missing_protein_value(config.quantification)
+    };
     matrix.write_csv(
         &config.output.protein_matrix,
         config.output.format,
         drop_empty_samples,
-        missing_protein_value(config.quantification),
+        missing_fill,
     )?;
     if config.differential_expression.enabled {
         let mut differential_expression = config.differential_expression.clone();
@@ -9484,7 +9491,7 @@ mod tests {
 
     #[test]
     fn rejects_pibaq_without_fasta_before_loading() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("pibaq_without_fasta")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("pibaq_without_fasta")?;
         let mut config = base_config(parquet);
         config.quantification = QuantMethod::Pibaq;
 
@@ -9499,7 +9506,7 @@ mod tests {
 
     #[test]
     fn rejects_ratio_without_sdrf_before_loading() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("ratio_without_sdrf")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("ratio_without_sdrf")?;
         let mut config = base_config(parquet);
         config.quantification = QuantMethod::Ratio;
 
@@ -9515,8 +9522,8 @@ mod tests {
     #[test]
     fn rejects_batch_column_without_column_name_before_loading(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("batch_column_without_name")?;
-        let sdrf = existing_dummy_path("batch_column_without_name_sdrf")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("batch_column_without_name")?;
+        let (_sdrf_guard, sdrf) = existing_dummy_path("batch_column_without_name_sdrf")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(sdrf);
         config.batch.enabled = true;
@@ -9536,8 +9543,8 @@ mod tests {
     #[test]
     fn accepts_normalization_proteins_file_for_supported_subset(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("normalization_proteins")?;
-        let proteins = existing_dummy_path("normalization_proteins_list")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("normalization_proteins")?;
+        let (_proteins_guard, proteins) = existing_dummy_path("normalization_proteins_list")?;
         fs::write(&proteins, "P1\nP2\n")?;
         let mut config = base_config(parquet);
         config.normalization.normalization_proteins = Some(proteins);
@@ -9551,7 +9558,7 @@ mod tests {
     #[test]
     fn rejects_empty_normalization_proteins_file_before_loading(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let proteins = existing_dummy_path("empty_normalization_proteins_list")?;
+        let (_proteins_guard, proteins) = existing_dummy_path("empty_normalization_proteins_list")?;
         fs::write(&proteins, "\n")?;
 
         let error = load_normalization_proteins(&proteins).err();
@@ -9611,7 +9618,7 @@ mod tests {
     #[test]
     fn accepts_median_center_sample_normalization_subset() -> Result<(), Box<dyn std::error::Error>>
     {
-        let parquet = existing_dummy_path("median_center_sample_normalization")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("median_center_sample_normalization")?;
         let mut config = base_config(parquet);
         config.quantification = QuantMethod::Median;
         config.normalization.sample_method = "mediancenter".to_string();
@@ -9793,25 +9800,27 @@ mod tests {
         assert_eq!(irs_mixture_first_token(""), "");
     }
 
-    fn write_temp_sdrf(name: &str, contents: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let path = tempfile::Builder::new()
+    fn write_temp_sdrf(
+        name: &str,
+        contents: &str,
+    ) -> Result<(tempfile::TempDir, PathBuf), Box<dyn std::error::Error>> {
+        let directory = tempfile::Builder::new()
             .prefix(&format!(
                 "mokume_irs_autodetect_{name}_{}_{}_",
                 std::process::id(),
                 unique_suffix()
             ))
-            .tempdir()?
-            .keep()
-            .join("autodetect.sdrf.tsv");
+            .tempdir()?;
+        let path = directory.path().join("autodetect.sdrf.tsv");
         fs::write(&path, contents)?;
-        Ok(path)
+        Ok((directory, path))
     }
 
     #[test]
     fn resolve_irs_autodetect_channel_picks_mode_label() -> Result<(), Box<dyn std::error::Error>> {
         // Three pooled rows: TMT131 appears twice, TMT130 once -> mode TMT131.
         // A non-pooled row must not vote.
-        let sdrf = write_temp_sdrf(
+        let (_sdrf_guard, sdrf) = write_temp_sdrf(
             "pooled",
             "source name\tcomment[label]\tcharacteristics[pooled sample]\n\
              sample_pool_1\tTMT131\tpooled\n\
@@ -9830,7 +9839,7 @@ mod tests {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // TMT127 and TMT131 each match once; pandas `mode().iloc[0]` returns the
         // smallest of the tied labels -> TMT127.
-        let sdrf = write_temp_sdrf(
+        let (_sdrf_guard, sdrf) = write_temp_sdrf(
             "tie",
             "source name\tcomment[label]\n\
              pool_a\tTMT131\n\
@@ -9846,7 +9855,7 @@ mod tests {
     fn resolve_irs_autodetect_channel_returns_none_on_no_match(
     ) -> Result<(), Box<dyn std::error::Error>> {
         // No source name matches the regex -> None (Python skips IRS).
-        let sdrf = write_temp_sdrf(
+        let (_sdrf_guard, sdrf) = write_temp_sdrf(
             "nomatch",
             "source name\tcomment[label]\n\
              ordinary_1\tTMT126\n",
@@ -9854,7 +9863,7 @@ mod tests {
         assert!(resolve_irs_autodetect_channel(&sdrf, "pool")?.is_none());
         fs::remove_file(&sdrf)?;
         // Missing comment[label] column -> None.
-        let sdrf2 = write_temp_sdrf("nolabel", "source name\npool_1\n")?;
+        let (_sdrf2_guard, sdrf2) = write_temp_sdrf("nolabel", "source name\npool_1\n")?;
         assert!(resolve_irs_autodetect_channel(&sdrf2, "pool")?.is_none());
         fs::remove_file(&sdrf2)?;
         Ok(())
@@ -9908,7 +9917,7 @@ mod tests {
 
     #[test]
     fn accepts_directlfq_option_subset() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("directlfq_options")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("directlfq_options")?;
         let mut config = base_config(parquet);
         config.quantification = QuantMethod::DirectLfq;
         config.directlfq.min_nonan = 2;
@@ -9922,17 +9931,16 @@ mod tests {
     #[test]
     fn rejects_missing_normalization_proteins_file_before_loading(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("missing_normalization_proteins")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("missing_normalization_proteins")?;
         let mut config = base_config(parquet);
-        let missing_path = tempfile::Builder::new()
+        let missing_directory = tempfile::Builder::new()
             .prefix(&format!(
                 "mokume_missing_normalization_proteins_{}_{}_",
                 std::process::id(),
                 unique_suffix()
             ))
-            .tempdir()?
-            .keep()
-            .join("missing.txt");
+            .tempdir()?;
+        let missing_path = missing_directory.path().join("missing.txt");
         config.normalization.normalization_proteins = Some(missing_path.clone());
 
         let error = validate_features_to_proteins(&config).err();
@@ -9946,7 +9954,7 @@ mod tests {
 
     #[test]
     fn accepts_quantile_sample_normalization_subset() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("quantile_sample_normalization")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("quantile_sample_normalization")?;
         let mut config = base_config(parquet);
         config.normalization.sample_method = "quantile".to_string();
 
@@ -9957,7 +9965,7 @@ mod tests {
 
     #[test]
     fn accepts_limma_de_subset() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("limma_de")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("limma_de")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -9973,7 +9981,7 @@ mod tests {
     fn accepts_rots_de_subset() -> Result<(), Box<dyn std::error::Error>> {
         // rots is a faithful (RNG-based) port and is now a supported method, so
         // a well-formed rots DE config must validate.
-        let parquet = existing_dummy_path("rots_de")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("rots_de")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -9987,7 +9995,7 @@ mod tests {
 
     #[test]
     fn rejects_limma_de_without_sdrf() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("limma_de_no_sdrf")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("limma_de_no_sdrf")?;
         let mut config = base_config(parquet);
         config.differential_expression.enabled = true;
         config.differential_expression.method = "limma".to_string();
@@ -10000,7 +10008,7 @@ mod tests {
 
     #[test]
     fn rejects_limma_de_without_contrasts() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("limma_de_no_contrasts")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("limma_de_no_contrasts")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -10015,7 +10023,7 @@ mod tests {
     fn accepts_limrots_de_subset() -> Result<(), Box<dyn std::error::Error>> {
         // limrots is a faithful (RNG-based) port and is now a supported method, so
         // a well-formed limrots DE config must validate.
-        let parquet = existing_dummy_path("limrots_de")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("limrots_de")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -10033,7 +10041,7 @@ mod tests {
         // quantification selects `deqms`, every other quantification selects
         // `limrots`. It validates (both targets are ported) and is resolved to the
         // concrete method just before the DE stage runs.
-        let parquet = existing_dummy_path("de_method_auto")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_method_auto")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -10057,8 +10065,8 @@ mod tests {
         // columns appends "<g1> vs <g2>" after the repeated --de-contrast entries,
         // empty rows are skipped, and contrasts_file is cleared so downstream sees
         // one resolved list.
-        let parquet = existing_dummy_path("de_contrasts_file")?;
-        let contrasts_file = existing_dummy_path("de_contrasts_file_tsv")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_contrasts_file")?;
+        let (_contrasts_file_guard, contrasts_file) = existing_dummy_path("de_contrasts_file_tsv")?;
         fs::write(&contrasts_file, "group1\tgroup2\nTumor\tNormal\nA\tB\n\t\n")?;
 
         let mut config = base_config(parquet);
@@ -10080,8 +10088,8 @@ mod tests {
 
     #[test]
     fn rejects_de_contrasts_file_missing_group_columns() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("de_contrasts_bad")?;
-        let contrasts_file = existing_dummy_path("de_contrasts_bad_tsv")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_contrasts_bad")?;
+        let (_contrasts_file_guard, contrasts_file) = existing_dummy_path("de_contrasts_bad_tsv")?;
         fs::write(&contrasts_file, "groupA\tgroupB\nTumor\tNormal\n")?;
 
         let mut config = base_config(parquet);
@@ -10674,9 +10682,8 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
 
         let dir = tempfile::Builder::new()
             .prefix("mokume-batch-column-wiring-")
-            .tempdir()?
-            .keep();
-        let sdrf_path = dir.join("col.sdrf.tsv");
+            .tempdir()?;
+        let sdrf_path = dir.path().join("col.sdrf.tsv");
         fs::write(
             &sdrf_path,
             "source name\tbatch_id\nX1\tg1\nX2\tg1\nX3\tg2\nX4\tg2\n",
@@ -10849,11 +10856,10 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
 
         // Additive method (`Some(0.0)`): a missing cell in the observed sample S2 is
         // `0`, but the all-empty sample S3 stays blank (Python never densifies it).
-        let zero_path = tempfile::Builder::new()
+        let zero_directory = tempfile::Builder::new()
             .prefix("mokume-missing-zero-")
-            .tempdir()?
-            .keep()
-            .join("missing_zero.csv");
+            .tempdir()?;
+        let zero_path = zero_directory.path().join("missing_zero.csv");
         matrix.write_csv(&zero_path, OutputFormat::PythonCompatible, false, Some(0.0))?;
         let zero = fs::read_to_string(&zero_path)?;
         assert_eq!(cell(&zero, "P1", 1), "10");
@@ -10861,11 +10867,10 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         assert_eq!(cell(&zero, "P2", 3), "");
 
         // Average/ratio method (`None`): every missing cell is blank.
-        let nan_path = tempfile::Builder::new()
+        let nan_directory = tempfile::Builder::new()
             .prefix("mokume-missing-nan-")
-            .tempdir()?
-            .keep()
-            .join("missing_nan.csv");
+            .tempdir()?;
+        let nan_path = nan_directory.path().join("missing_nan.csv");
         matrix.write_csv(&nan_path, OutputFormat::PythonCompatible, false, None)?;
         let nan = fs::read_to_string(&nan_path)?;
         assert_eq!(cell(&nan, "P1", 1), "10");
@@ -10879,7 +10884,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         // ensemble runs member methods and fuses them with the deterministic
         // top-k consensus combiner; a well-formed ensemble DE config must validate
         // (including an explicit member list via repeated --de-ensemble-method).
-        let parquet = existing_dummy_path("ensemble_de")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("ensemble_de")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -10909,7 +10914,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         ];
 
         for (members, expected) in invalid_members {
-            let parquet = existing_dummy_path("invalid_ensemble_member")?;
+            let (_parquet_guard, parquet) = existing_dummy_path("invalid_ensemble_member")?;
             let mut config = base_config(parquet);
             config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
             config.differential_expression.enabled = true;
@@ -10935,7 +10940,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     fn validates_ensemble_min_k_against_configured_members(
     ) -> Result<(), Box<dyn std::error::Error>> {
         for min_k in [0, 3] {
-            let parquet = existing_dummy_path("invalid_ensemble_min_k")?;
+            let (_parquet_guard, parquet) = existing_dummy_path("invalid_ensemble_min_k")?;
             let mut config = base_config(parquet);
             config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
             config.differential_expression.enabled = true;
@@ -10983,7 +10988,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     fn rejects_ensemble_methods_for_single_method() -> Result<(), Box<dyn std::error::Error>> {
         // --de-ensemble-method is meaningless for a single-method run and must be
         // rejected rather than silently ignored.
-        let parquet = existing_dummy_path("ensemble_methods_on_limma")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("ensemble_methods_on_limma")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -11004,7 +11009,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         // IHW is now a supported FDR method (ported in mokume-stats'
         // `ihw_correction` and applied per method in `de::run_member`), so the
         // validation must let it through.
-        let parquet = existing_dummy_path("de_ihw")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_ihw")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -11020,7 +11025,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     #[test]
     fn accepts_adaptive_fdr_methods() -> Result<(), Box<dyn std::error::Error>> {
         for method in ["bky", "storey"] {
-            let parquet = existing_dummy_path(&format!("de_{method}"))?;
+            let (_parquet_guard, parquet) = existing_dummy_path(&format!("de_{method}"))?;
             let mut config = base_config(parquet);
             config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
             config.differential_expression.enabled = true;
@@ -11035,7 +11040,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
 
     #[test]
     fn rejects_unknown_fdr_method() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("de_unknown_fdr")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_unknown_fdr")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -11055,7 +11060,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
 
     #[test]
     fn accepts_most_frequent_imputation() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("impute_most_frequent")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("impute_most_frequent")?;
         let mut config = base_config(parquet);
         config.imputation.enabled = true;
         config.imputation.method = "most_frequent".to_string();
@@ -11067,7 +11072,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     #[test]
     fn disabled_de_options_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
         // Non-default DE options must not be accepted when no DE result will run.
-        let parquet = existing_dummy_path("de_disabled")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_disabled")?;
         let mut config = base_config(parquet);
         config.differential_expression.method = "deqms".to_string();
         config.differential_expression.fdr_method = "ihw".to_string();
@@ -11080,18 +11085,19 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         Ok(())
     }
 
-    fn existing_dummy_path(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let path = tempfile::Builder::new()
+    fn existing_dummy_path(
+        name: &str,
+    ) -> Result<(tempfile::TempDir, PathBuf), Box<dyn std::error::Error>> {
+        let directory = tempfile::Builder::new()
             .prefix(&format!(
                 "mokume_pipeline_{name}_{}_{}_",
                 std::process::id(),
                 unique_suffix()
             ))
-            .tempdir()?
-            .keep()
-            .join("dummy");
+            .tempdir()?;
+        let path = directory.path().join("dummy");
         fs::write(&path, [])?;
-        Ok(path)
+        Ok((directory, path))
     }
 
     fn unique_suffix() -> u128 {
