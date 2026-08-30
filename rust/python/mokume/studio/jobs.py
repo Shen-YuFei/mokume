@@ -11,17 +11,20 @@ import signal
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import Any
 
 from mokume.studio.catalog import command_paths, validate_and_canonicalize
 from mokume.studio.models import (
+    JobOperation,
     JobSpec,
     ProjectRecord,
     RunRecord,
     RunRequest,
     RunStatus,
+    ScientificJobRequest,
     TERMINAL_RUN_STATUSES,
     utc_now,
 )
@@ -37,6 +40,21 @@ def canonical_hash(payload: dict) -> str:
     """Hash stable JSON used by approval and worker verification."""
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_spec_integrity(spec: JobSpec) -> None:
+    """Verify the immutable fields shared by manager and worker boundaries."""
+    if canonical_hash(spec.parameters) != spec.approved_hash:
+        raise RuntimeError("job parameters no longer match the approved hash")
+    if spec.parameters.get("operation") != spec.operation.value:
+        raise RuntimeError("job operation does not match immutable parameters")
+    if spec.parameters.get("payload") != spec.payload:
+        raise RuntimeError("job payload does not match immutable parameters")
+    if spec.operation is JobOperation.NATIVE:
+        if spec.parameters.get("argv") != spec.argv:
+            raise RuntimeError("job argv does not match immutable parameters")
+    elif spec.argv:
+        raise RuntimeError("scientific jobs cannot carry native argv")
 
 
 def path_snapshot(path: Path, guard: ProjectPaths) -> dict:
@@ -116,7 +134,11 @@ def _fallback_provenance(
     return {
         "run_id": record.id,
         "command": record.argv,
+        "operation": parameters.get("operation", JobOperation.NATIVE.value),
         "contract_version": 1,
+        "knowledge_fingerprint": parameters.get("payload", {}).get(
+            "knowledge_fingerprint"
+        ),
         "approved_hash": record.approved_hash,
         "parameters": parameters,
         "threads": parameters.get("threads", 24),
@@ -125,6 +147,7 @@ def _fallback_provenance(
             artifact.model_dump(mode="json")
             for artifact in store.list_artifacts(record.id)
         ],
+        "plan_source": parameters.get("payload", {}).get("plan_source"),
         "started_at": record.started_at,
         "finished_at": record.finished_at,
         "status": record.status.value,
@@ -188,37 +211,69 @@ class JobManager:
 
     def submit(self, request: RunRequest, project: ProjectRecord) -> RunRecord:
         """Validate, persist, and spawn one immutable run specification."""
+        spec = self._prepare_spec(request, project.root)
+        return self.submit_spec(spec, project, " ".join(self._command_path(spec.argv)))
+
+    def prepare_scientific_spec(
+        self,
+        request: ScientificJobRequest,
+        project: ProjectRecord,
+    ) -> JobSpec:
+        """Build an unmaterialized, hash-bound scientific worker spec."""
+        if request.operation is JobOperation.NATIVE:
+            raise ValueError("scientific specs require a scientific operation")
+        guard = ProjectPaths(project.root)
+        identifier = str(uuid.uuid4())
+        base_directory = guard.resolve_output(
+            request.output_directory, allow_existing=True
+        )
+        if base_directory.exists() and not base_directory.is_dir():
+            raise PathAccessError(f"run output is not a directory: {base_directory}")
+        run_directory = base_directory / identifier
+        if run_directory.exists():
+            raise PathAccessError(f"run directory already exists: {run_directory}")
+        snapshots = [
+            path_snapshot(guard.resolve_existing(path), guard)
+            for path in request.input_paths
+        ]
+        parameters = {
+            "operation": request.operation.value,
+            "payload": request.payload,
+            "project_root": str(guard.root),
+            "run_directory": str(run_directory),
+            "threads": 24,
+            "input_snapshots": snapshots,
+        }
+        return JobSpec(
+            run_id=identifier,
+            project_root=str(guard.root),
+            run_directory=str(run_directory),
+            operation=request.operation,
+            argv=[],
+            payload=request.payload,
+            parameters=parameters,
+            approved_hash=canonical_hash(parameters),
+            created_at=utc_now(),
+        )
+
+    def submit_spec(
+        self,
+        spec: JobSpec,
+        project: ProjectRecord,
+        command: str,
+        *,
+        authorize: Callable[[], None] | None = None,
+    ) -> RunRecord:
+        """Revalidate and spawn a trusted server-created specification."""
         with self._lock:
             self._discard_finished_locked()
             if self._processes:
                 raise JobConflictError("another Mokume run is already active")
-            spec = self._prepare_spec(request, project.root)
-            self._write_spec(spec)
-            record = self.store.create_run(
-                spec,
-                project.id,
-                " ".join(self._command_path(spec.argv)),
-            )
-            self.store.update_run(spec.run_id, RunStatus.STARTING)
-            try:
-                process = self._spawn(spec)
-                worker_pid = process.pid
-                if worker_pid is None:
-                    raise RuntimeError("worker process did not expose a process ID")
-            except (OSError, RuntimeError) as exc:
-                self.store.update_run(spec.run_id, RunStatus.FAILED, error=str(exc))
-                write_terminal_files(self.store, spec.run_id, spec.run_directory)
-                raise
-            self._processes[spec.run_id] = process
-            self.store.set_worker_pid(spec.run_id, worker_pid)
-            threading.Thread(
-                target=self._monitor,
-                args=(spec, process),
-                daemon=True,
-            ).start()
-            return record.model_copy(
-                update={"status": RunStatus.STARTING, "worker_pid": worker_pid}
-            )
+            self._validate_spec(spec, project)
+            if authorize is not None:
+                authorize()
+            self._materialize_spec(spec)
+            return self._start_locked(spec, project, command)
 
     def _prepare_spec(self, request: RunRequest, project_root: str) -> JobSpec:
         canonical = validate_and_canonicalize(request.argv, project_root)
@@ -232,13 +287,13 @@ class JobManager:
         run_directory = base_directory / run_id
         if run_directory.exists():  # practically impossible, kept deterministic
             raise PathAccessError(f"run directory already exists: {run_directory}")
-        self._prepare_command_outputs(canonical, guard)
-        run_directory.mkdir(parents=True)
         inputs, _outputs = command_paths(canonical)
         input_snapshots = [
             path_snapshot(guard.resolve_existing(path), guard) for path in inputs
         ]
         parameters = {
+            "operation": JobOperation.NATIVE.value,
+            "payload": {},
             "argv": canonical,
             "project_root": str(guard.root),
             "run_directory": str(run_directory),
@@ -249,10 +304,60 @@ class JobManager:
             run_id=run_id,
             project_root=str(guard.root),
             run_directory=str(run_directory),
+            operation=JobOperation.NATIVE,
             argv=canonical,
+            payload={},
             parameters=parameters,
             approved_hash=canonical_hash(parameters),
             created_at=utc_now(),
+        )
+
+    def _validate_spec(self, spec: JobSpec, project: ProjectRecord) -> None:
+        if spec.project_root != project.root:
+            raise RuntimeError("job project no longer matches the active project")
+        validate_spec_integrity(spec)
+        guard = ProjectPaths(spec.project_root)
+        snapshots = [
+            path_snapshot(guard.resolve_existing(item["path"]), guard)
+            for item in spec.parameters.get("input_snapshots", [])
+        ]
+        if snapshots != spec.parameters.get("input_snapshots"):
+            raise RuntimeError("input files changed after the run was approved")
+
+    def _materialize_spec(self, spec: JobSpec) -> None:
+        guard = ProjectPaths(spec.project_root)
+        directory = guard.resolve_output(spec.run_directory)
+        directory.mkdir(parents=True)
+        if spec.operation is JobOperation.NATIVE:
+            self._prepare_command_outputs(spec.argv, guard)
+
+    def _start_locked(
+        self,
+        spec: JobSpec,
+        project: ProjectRecord,
+        command: str,
+    ) -> RunRecord:
+        self._write_spec(spec)
+        record = self.store.create_run(spec, project.id, command)
+        self.store.update_run(spec.run_id, RunStatus.STARTING)
+        try:
+            process = self._spawn(spec)
+            worker_pid = process.pid
+            if worker_pid is None:
+                raise RuntimeError("worker process did not expose a process ID")
+        except (OSError, RuntimeError) as exc:
+            self.store.update_run(spec.run_id, RunStatus.FAILED, error=str(exc))
+            write_terminal_files(self.store, spec.run_id, spec.run_directory)
+            raise
+        self._processes[spec.run_id] = process
+        self.store.set_worker_pid(spec.run_id, worker_pid)
+        threading.Thread(
+            target=self._monitor,
+            args=(spec, process),
+            daemon=True,
+        ).start()
+        return record.model_copy(
+            update={"status": RunStatus.STARTING, "worker_pid": worker_pid}
         )
 
     def cancel(self, run_id: str) -> RunRecord:

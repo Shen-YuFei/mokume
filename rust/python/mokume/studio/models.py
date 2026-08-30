@@ -28,6 +28,14 @@ class RunStatus(str, Enum):
     INTERRUPTED = "interrupted"
 
 
+class JobOperation(str, Enum):
+    """Worker operations accepted from trusted server controllers."""
+
+    NATIVE = "native"
+    INSPECT_DATASET = "inspect_dataset"
+    EVALUATE_RECOMMENDATION = "evaluate_recommendation"
+
+
 TERMINAL_RUN_STATUSES = {
     RunStatus.CANCELLED,
     RunStatus.SUCCEEDED,
@@ -80,7 +88,9 @@ class JobSpec(BaseModel):
     run_id: str
     project_root: str
     run_directory: str
+    operation: JobOperation = JobOperation.NATIVE
     argv: list[str]
+    payload: dict[str, Any] = Field(default_factory=dict)
     parameters: dict[str, Any]
     approved_hash: str
     created_at: str
@@ -90,6 +100,15 @@ class JobSpec(BaseModel):
     def path(self) -> Path:
         """Return the immutable run directory as a path."""
         return Path(self.run_directory)
+
+
+class ScientificJobRequest(BaseModel):
+    """Trusted controller request for one isolated scientific worker."""
+
+    operation: JobOperation
+    payload: dict[str, Any]
+    input_paths: list[str]
+    output_directory: str = "results/mokume"
 
 
 class RunRecord(BaseModel):
@@ -130,3 +149,4 @@ class ApprovalDecision(BaseModel):
     """Server-validated response to a pending AI or compute approval."""
 
     approved: bool
+    payload_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")

@@ -231,6 +231,20 @@ class StateStore:
             ).fetchall()
         return [self._decode_run(row) for row in rows]
 
+    def has_active_run(self) -> bool:
+        """Return whether a run is still able to read the active project."""
+        statuses = (
+            RunStatus.QUEUED.value,
+            RunStatus.STARTING.value,
+            RunStatus.RUNNING.value,
+            RunStatus.CANCELLING.value,
+        )
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM runs WHERE status IN (?, ?, ?, ?) LIMIT 1", statuses
+            ).fetchone()
+        return row is not None
+
     def add_event(self, run_id: str, event_type: str, payload: dict) -> int:
         """Append one resumable run event and return its sequence number."""
         with self._connect() as connection:

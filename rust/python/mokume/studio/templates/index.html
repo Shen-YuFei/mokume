@@ -14,7 +14,7 @@
       </div>
       <nav class="menu-bar" aria-label="Application menu">
         <button id="file-menu-trigger" class="menu-trigger" data-menu="file-menu" aria-haspopup="menu" aria-controls="file-menu" aria-expanded="false">File</button>
-        <button id="run-menu-trigger" class="menu-trigger" data-menu="run-menu" aria-haspopup="menu" aria-controls="run-menu" aria-expanded="false">Run</button>
+        <button id="analysis-menu-trigger" class="menu-trigger" data-menu="analysis-menu" aria-haspopup="menu" aria-controls="analysis-menu" aria-expanded="false">Analysis</button>
         <button id="view-menu-trigger" class="menu-trigger" data-menu="view-menu" aria-haspopup="menu" aria-controls="view-menu" aria-expanded="false">View</button>
         <button id="help-menu-trigger" class="menu-trigger" data-menu="help-menu" aria-haspopup="menu" aria-controls="help-menu" aria-expanded="false">Help</button>
       </nav>
@@ -28,7 +28,9 @@
       <div class="menu-separator" role="separator"></div>
       <button role="menuitem" data-action="exit-studio">Exit Mokume Studio</button>
     </div>
-    <div class="menu-popover" id="run-menu" role="menu" aria-labelledby="run-menu-trigger">
+    <div class="menu-popover" id="analysis-menu" role="menu" aria-labelledby="analysis-menu-trigger">
+      <button role="menuitem" data-action="inspect-dataset">Inspect Dataset</button>
+      <div class="menu-separator" role="separator"></div>
       <button role="menuitem" data-action="validate-command">Validate Parameters <kbd>Ctrl+Shift+Enter</kbd></button>
       <button role="menuitem" data-action="run-command">Run Analysis <kbd>Ctrl+Enter</kbd></button>
       <button role="menuitem" data-action="cancel-run">Cancel Run <kbd>Ctrl+.</kbd></button>
@@ -37,6 +39,7 @@
     </div>
     <div class="menu-popover" id="view-menu" role="menu" aria-labelledby="view-menu-trigger">
       <button role="menuitem" data-action="toggle-sidebar">Toggle Sidebar <kbd>Alt+1</kbd></button>
+      <button role="menuitem" data-action="toggle-assistant">Toggle Assistant <kbd>Alt+4</kbd></button>
       <button role="menuitem" data-action="toggle-bottom">Toggle Bottom Panel <kbd>Alt+2</kbd></button>
       <button role="menuitem" data-action="show-artifacts">Artifacts <kbd>Alt+3</kbd></button>
       <div class="menu-separator" role="separator"></div>
@@ -79,11 +82,39 @@
 
       <aside class="assistant-panel" id="assistant-panel">
         <div class="panel-title"><span>ASSISTANT</span><span class="badge">Optional</span></div>
-        <div class="assistant-empty">
-          <div class="assistant-orb"></div>
-          <h3>AI is not configured</h3>
-          <p>All data inspection and compute workflows remain available without a model provider.</p>
-          <button data-action="assistant-settings">Configure provider</button>
+        <div class="assistant-toolbar">
+          <label class="assistant-mode-control" for="assistant-mode">
+            <span>Mode</span>
+            <select id="assistant-mode">
+              <option value="ask">Ask</option>
+              <option value="plan">Plan</option>
+            </select>
+          </label>
+          <div class="assistant-actions">
+            <button id="inspect-dataset" data-action="inspect-dataset">Inspect Dataset</button>
+            <button id="configure-provider" data-action="assistant-settings" title="Configure model provider" aria-label="Configure model provider">Provider</button>
+          </div>
+        </div>
+        <div id="assistant-messages" class="assistant-messages" aria-live="polite" aria-label="Assistant conversation">
+          <article class="assistant-message assistant">
+            <div class="assistant-orb" aria-hidden="true"></div>
+            <div class="message-body">
+              <strong>Mokume Assistant</strong>
+              <p>Inspect a dataset, then ask about its profile or prepare a reviewable analysis plan.</p>
+            </div>
+          </article>
+          <div class="assistant-notice">
+            <strong>AI is not configured</strong>
+            <p>Native workflows remain available. Add a provider for Ask and Plan; credentials stay in this server session.</p>
+          </div>
+        </div>
+        <div class="assistant-composer">
+          <label class="sr-only" for="assistant-input">Message Mokume Assistant</label>
+          <textarea id="assistant-input" rows="3" placeholder="Ask about the inspected dataset or request an analysis plan"></textarea>
+          <div class="composer-actions">
+            <span>Enter to send · Shift+Enter for a new line</span>
+            <button id="assistant-send" class="primary" type="button">Send</button>
+          </div>
         </div>
       </aside>
     </main>
@@ -109,6 +140,130 @@
       <div class="dialog-header"><h2 id="info-title">Mokume Studio</h2><button class="icon-button" data-close-dialog>×</button></div>
       <div id="info-content" class="info-content"></div>
       <div class="dialog-actions"><button class="primary" data-close-dialog>Done</button></div>
+    </dialog>
+
+    <dialog id="provider-dialog" class="dialog provider-dialog">
+      <div class="dialog-header"><div><span class="eyebrow">ASSISTANT</span><h2>Configure Provider</h2></div><button class="icon-button" data-close-dialog aria-label="Close provider settings">×</button></div>
+      <form id="provider-form" class="dialog-form">
+        <div class="dialog-field">
+          <label for="provider-kind">Provider</label>
+          <select id="provider-kind" required>
+            <option value="openai">OpenAI</option>
+            <option value="openai-compatible">OpenAI-compatible</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
+        <div class="dialog-field">
+          <label for="provider-model">Model</label>
+          <input id="provider-model" type="text" placeholder="Model name" autocomplete="off" spellcheck="false" required>
+        </div>
+        <div class="dialog-field">
+          <label for="provider-base-url">Base URL <span class="optional-label">OpenAI-compatible only</span></label>
+          <input id="provider-base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="dialog-field">
+          <label for="provider-api-key">API key</label>
+          <input id="provider-api-key" type="password" placeholder="Optional when supplied by the server environment" autocomplete="off" spellcheck="false">
+          <small>The key is held only in server memory. It is not written to the project or Studio database.</small>
+        </div>
+        <div class="dialog-actions split-actions">
+          <button id="clear-provider" type="button" class="danger-button">Clear Provider</button>
+          <div><button type="button" data-close-dialog>Cancel</button><button class="primary" type="submit">Save for Session</button></div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dataset-dialog" class="dialog dataset-dialog">
+      <div class="dialog-header"><div><span class="eyebrow">DATASET</span><h2>Inspect Dataset</h2></div><button class="icon-button" data-close-dialog aria-label="Close dataset inspection">×</button></div>
+      <form id="dataset-form" class="dialog-form">
+        <div class="dialog-grid">
+          <div class="dialog-field full-width">
+            <label for="dataset-matrix">Protein matrix</label>
+            <input id="dataset-matrix" type="text" placeholder="Relative path inside the open folder" autocomplete="off" spellcheck="false" required>
+            <small>First column: protein IDs. Remaining columns: numeric sample intensities.</small>
+          </div>
+          <div class="dialog-field full-width">
+            <label for="dataset-sdrf">SDRF</label>
+            <input id="dataset-sdrf" type="text" placeholder="Relative path inside the open folder" autocomplete="off" spellcheck="false" required>
+          </div>
+          <div class="dialog-field">
+            <label for="dataset-condition-a">Condition A</label>
+            <input id="dataset-condition-a" type="text" placeholder="Treatment" autocomplete="off" required>
+          </div>
+          <div class="dialog-field">
+            <label for="dataset-condition-b">Condition B</label>
+            <input id="dataset-condition-b" type="text" placeholder="Control" autocomplete="off" required>
+          </div>
+          <div class="dialog-field">
+            <label for="dataset-input-scale">Input scale</label>
+            <select id="dataset-input-scale" required>
+              <option value="" selected disabled>Select scale</option>
+              <option value="linear">Linear intensity</option>
+              <option value="log2">Log2 intensity</option>
+            </select>
+          </div>
+          <div class="dialog-field">
+            <label for="dataset-data-type">Data type <span class="optional-label">Optional</span></label>
+            <select id="dataset-data-type">
+              <option value="">Infer when possible</option>
+              <option value="LFQ">LFQ</option>
+              <option value="DIA">DIA</option>
+              <option value="TMT">TMT</option>
+            </select>
+          </div>
+          <div class="dialog-field full-width">
+            <label for="dataset-peptide-counts">Peptide counts <span class="optional-label">Optional</span></label>
+            <input id="dataset-peptide-counts" type="text" placeholder="Needed when evaluating DEqMS" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="dialog-field">
+            <label for="dataset-quantification">Quantification <span class="optional-label">Optional</span></label>
+            <input id="dataset-quantification" type="text" list="quantification-methods" placeholder="e.g. directlfq" autocomplete="off" spellcheck="false">
+            <datalist id="quantification-methods">
+              <option value="directlfq"></option>
+              <option value="pibaq"></option>
+              <option value="maxlfq"></option>
+              <option value="sum"></option>
+              <option value="median"></option>
+              <option value="ratio"></option>
+              <option value="intensity"></option>
+              <option value="peptide_count"></option>
+              <option value="spectral_count"></option>
+              <option value="top3"></option>
+            </datalist>
+          </div>
+          <div class="dialog-field">
+            <label for="dataset-engine">Upstream engine <span class="optional-label">Optional</span></label>
+            <input id="dataset-engine" type="text" list="upstream-engines" placeholder="e.g. quantms" autocomplete="off" spellcheck="false">
+            <datalist id="upstream-engines">
+              <option value="quantms"></option>
+              <option value="DIA-NN"></option>
+              <option value="FragPipe"></option>
+              <option value="MaxQuant"></option>
+              <option value="Spectronaut"></option>
+            </datalist>
+          </div>
+          <div class="dialog-field full-width">
+            <label for="dataset-factor-column">SDRF factor column <span class="optional-label">Optional</span></label>
+            <input id="dataset-factor-column" type="text" placeholder="Defaults to the detected condition column" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <p class="dialog-note">Inspection is read-only and runs locally. Raw matrix rows are not sent to a model by default.</p>
+        <div class="dialog-actions"><button type="button" data-close-dialog>Cancel</button><button class="primary" type="submit">Inspect Dataset</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="approval-dialog" class="dialog approval-dialog">
+      <div class="dialog-header"><div><span class="eyebrow">FINAL REVIEW</span><h2>Approve Analysis</h2></div><button class="icon-button" data-close-dialog aria-label="Close analysis approval">×</button></div>
+      <div class="approval-intro">
+        Review the canonical parameters below. Computation cannot start until this exact plan is approved.
+      </div>
+      <div id="approval-content" class="approval-content">
+        <section class="approval-card">
+          <div class="approval-card-title"><span>Canonical parameters</span><span class="approval-status">Pending</span></div>
+          <p class="empty-state">No analysis plan is awaiting approval.</p>
+        </section>
+      </div>
+      <div class="dialog-actions"><button id="approval-reject" type="button" class="danger-button">Reject</button><button id="approval-approve" class="primary" type="button">Approve and Run</button></div>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

@@ -6,8 +6,8 @@ from importlib.resources import files
 
 import httpx
 import pytest
+from studio_test_support import make_studio_app
 
-from mokume.studio.app import create_app
 from mokume.studio.models import JobSpec, utc_now
 from mokume.studio.paths import PathAccessError, ProjectPaths
 from mokume.studio.state import StateStore
@@ -19,21 +19,10 @@ TOKEN = "test-startup-token"
 pytestmark = pytest.mark.anyio
 
 
-@pytest.fixture
-def anyio_backend():
-    """Run the async API tests on the asyncio backend."""
-    return "asyncio"
-
-
 @pytest.fixture(name="studio_client")
 async def build_studio_client(tmp_path):
     """Create an in-memory authenticated-capable Studio HTTP client."""
-    app = create_app(
-        port=PORT,
-        startup_token=TOKEN,
-        state_directory=tmp_path / "state",
-        testing=True,
-    )
+    app = make_studio_app(PORT, TOKEN, tmp_path / "state")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
@@ -132,6 +121,41 @@ async def test_project_guard_rejects_parent_and_symlink_escape(tmp_path):
         guard.resolve_existing("escape/secret.txt")
 
 
+async def test_active_run_blocks_project_switches(studio_client, tmp_path):
+    """A queued worker keeps both project mutations locked."""
+    csrf = await authenticate(studio_client)
+    headers = mutation_headers(csrf)
+    opened = await studio_client.post(
+        "/api/projects/open", json={"path": str(tmp_path)}, headers=headers
+    )
+    project = opened.json()
+    store = studio_client.app.state.runtime.store
+    store.create_run(
+        JobSpec(
+            run_id="active-run",
+            project_root=project["root"],
+            run_directory=str(tmp_path / "active-run"),
+            argv=["correct-batches"],
+            parameters={},
+            approved_hash="hash",
+            created_at=utc_now(),
+        ),
+        project["id"],
+        "correct-batches",
+    )
+
+    reopened = await studio_client.post(
+        "/api/projects/open", json={"path": str(tmp_path)}, headers=headers
+    )
+    closed = await studio_client.post("/api/projects/close", headers=headers)
+    exited = await studio_client.post("/api/studio/exit", headers=headers)
+
+    assert reopened.status_code == 409
+    assert closed.status_code == 409
+    assert exited.status_code == 409
+    assert store.active_project().id == project["id"]
+
+
 async def test_state_restart_marks_active_runs_interrupted(tmp_path):
     """Restart recovery converts nonterminal runs into interrupted records."""
     store = StateStore(tmp_path / "state")
@@ -164,6 +188,6 @@ async def test_wheel_resources_and_menu_bar_are_present(studio_client):
     assert package.joinpath("static/studio.js").is_file()
 
     page = (await studio_client.get("/")).text
-    for menu in ("File", "Run", "View", "Help"):
+    for menu in ("File", "Analysis", "View", "Help"):
         assert f">{menu}<" in page
     assert ">Edit<" not in page

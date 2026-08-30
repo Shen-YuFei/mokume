@@ -21,6 +21,7 @@ from fastapi.responses import (
 )
 from fastapi.templating import Jinja2Templates
 
+from mokume.studio.ai_routes import install_ai_routes
 from mokume.studio.auth import (
     CSRF_HEADER,
     SESSION_COOKIE,
@@ -49,6 +50,9 @@ from mokume.studio.paths import (
     readable_directory,
 )
 from mokume.studio.state import StateStore
+from mokume.studio.providers import ProviderRegistry
+from mokume.studio.science import ScienceStore
+from mokume.studio.scientific import ScientificController
 
 
 CONTENT_SECURITY_POLICY = "; ".join(
@@ -70,6 +74,15 @@ Dependency = Callable[..., Any]
 
 
 @dataclass(frozen=True)
+class StudioAI:
+    """AI and scientific services that are optional at the UI boundary."""
+
+    providers: ProviderRegistry
+    science: ScienceStore
+    scientific: ScientificController
+
+
+@dataclass(frozen=True)
 class StudioRuntime:
     """Process-local services shared by the HTTP route groups."""
 
@@ -78,7 +91,23 @@ class StudioRuntime:
     sessions: SessionManager
     store: StateStore
     jobs: JobManager
+    ai: StudioAI
     shutdown_callback: Callable[[], None] | None
+
+    @property
+    def providers(self) -> ProviderRegistry:
+        """Expose session-local provider state to the AI route contract."""
+        return self.ai.providers
+
+    @property
+    def science(self) -> ScienceStore:
+        """Expose scientific records to the AI route contract."""
+        return self.ai.science
+
+    @property
+    def scientific(self) -> ScientificController:
+        """Expose the scientific controller to the AI route contract."""
+        return self.ai.scientific
 
 
 def create_app(
@@ -96,12 +125,20 @@ def create_app(
         hosts.add("testserver")
     store = StateStore(state_directory)
     store.interrupt_incomplete_runs()
+    jobs = JobManager(store)
+    science = ScienceStore(store)
+    science.interrupt_incomplete_datasets()
     runtime = StudioRuntime(
         origin=origin,
         allowed_hosts=frozenset(hosts),
         sessions=SessionManager(startup_token),
         store=store,
-        jobs=JobManager(store),
+        jobs=jobs,
+        ai=StudioAI(
+            providers=ProviderRegistry(),
+            science=science,
+            scientific=ScientificController(science, jobs),
+        ),
         shutdown_callback=shutdown_callback,
     )
 
@@ -125,6 +162,7 @@ def create_app(
     _install_command_routes(app, runtime, require_session, require_mutation)
     _install_run_routes(app, runtime, require_session, require_mutation)
     _install_control_routes(app, runtime, require_session, require_mutation)
+    install_ai_routes(app, runtime, require_session, require_mutation)
     return app
 
 
@@ -207,11 +245,13 @@ def _install_page_routes(
         session: Session = Depends(require_session),
     ) -> dict:
         package = importlib.import_module("mokume")
+        provider = runtime.providers.summary(session.id)
         return {
             "csrf_token": session.csrf_token,
             "version": package.__version__,
             "origin": runtime.origin,
-            "ai_configured": False,
+            "ai_configured": provider is not None,
+            "ai_provider": provider,
         }
 
 
@@ -246,6 +286,7 @@ def _install_project_routes(
         payload: OpenProjectRequest,
         _session: Session = Depends(require_mutation),
     ):
+        _require_idle(runtime.store)
         try:
             root = readable_directory(payload.path)
         except PathAccessError as exc:
@@ -256,6 +297,7 @@ def _install_project_routes(
     async def close_project(
         _session: Session = Depends(require_mutation),
     ) -> None:
+        _require_idle(runtime.store)
         runtime.store.close_project()
 
     @app.get("/api/files")
@@ -440,6 +482,7 @@ def _install_control_routes(
     async def exit_studio(
         _session: Session = Depends(require_mutation),
     ) -> dict:
+        _require_idle(runtime.store)
         if runtime.shutdown_callback is None:
             raise HTTPException(
                 status.HTTP_501_NOT_IMPLEMENTED, "Shutdown is unavailable"
@@ -456,6 +499,14 @@ def _active_paths(store: StateStore) -> ProjectPaths:
         return ProjectPaths(project.root)
     except PathAccessError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+def _require_idle(store: StateStore) -> None:
+    if store.has_active_run():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "cannot change project while a run is active",
+        )
 
 
 async def _event_stream(store: StateStore, run_id: str, cursor: int):

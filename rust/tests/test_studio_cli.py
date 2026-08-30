@@ -150,7 +150,8 @@ def test_studio_and_all_extras_have_runtime_dependencies():
         "uvicorn",
         "jinja2",
         "platformdirs",
-        "pydantic-ai-slim[ag-ui,openai,anthropic]",
+        "pydantic-ai-slim[ag-ui,openai,anthropic]>=2.36,<3",
+        "ag-ui-protocol>=0.1.19,<1",
     }
 
     assert expected <= set(extras["studio"])
