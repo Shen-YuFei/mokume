@@ -2742,40 +2742,119 @@ fn features2proteins_lfq_methods_match_synthetic_oracles() -> Result<(), Box<dyn
 }
 
 #[test]
-fn features2proteins_builtin_maxlfq_sums_duplicate_peptide_sample_rows(
+fn features2proteins_maxlfq_maxes_contextual_ions_then_sums_canonical_peptides(
 ) -> Result<(), Box<dyn Error>> {
-    // The built-in MaxLFQ fallback must sum duplicate (peptide, sample) rows,
-    // matching Python's pivot_table(aggfunc="sum"). Here sample-1 has two
-    // PEPTIDEAK rows (60 + 40) that must collapse to 100 before the solver runs.
-    // Python built-in oracle on the summed matrix: [500.0, 1000.0]. If duplicates
-    // were max-collapsed (60) instead, the oracle would be ~345.96 / ~1094.04, so
-    // this asserts the SUM semantics rather than the old MAX behavior.
+    // Python's loader first keeps the maximum intensity for each
+    // (peptidoform, charge, sample, condition, biological-replicate) ion, then
+    // sums those contextual ions into the canonical peptide. For sample-1 this
+    // yields PEPTIDEK = max(100, 80) + 20 + 40 = 160 and ANOTHERK = 30;
+    // sample-2 is exactly 2x. The delegated DirectLFQ solver normalizes that 2x
+    // sample shift to [190, 190], while the forced built-in solver returns the
+    // unnormalized canonical totals [190, 380].
     let root = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("maxlfq_dup.features.parquet");
     let sdrf = root.join("maxlfq_dup.sdrf.tsv");
-    let output = root.join("maxlfq_dup.protein.csv");
+    let delegated_output = root.join("maxlfq_dup.delegated.csv");
+    let builtin_output = root.join("maxlfq_dup.builtin.csv");
 
     write_qpx_rows(
         &parquet,
         &[
-            QpxRow::new("PEPTIDEAK", "run1.raw", 60.0, &["P6"]),
-            QpxRow::new("PEPTIDEAK", "run1.raw", 40.0, &["P6"]),
-            QpxRow::new("APEPTIDECK", "run1.raw", 400.0, &["P6"]),
-            QpxRow::new("PEPTIDEAK", "run2.raw", 200.0, &["P6"]),
-            QpxRow::new("APEPTIDECK", "run2.raw", 800.0, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run1.raw", 100.0, 2, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run1.raw", 80.0, 2, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run1.raw", 40.0, 3, &["P6"])
+                .with_peptidoform("PEP[UNIMOD:35]TIDEK"),
+            QpxRow::new("ANOTHERK", "run1.raw", 30.0, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run2.raw", 20.0, 2, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run3.raw", 200.0, 2, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run3.raw", 160.0, 2, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run3.raw", 80.0, 3, &["P6"])
+                .with_peptidoform("PEP[UNIMOD:35]TIDEK"),
+            QpxRow::new("ANOTHERK", "run3.raw", 60.0, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEK", "run4.raw", 40.0, 2, &["P6"]),
         ],
     )?;
-    write_synthetic_sdrf(&sdrf)?;
+    std::fs::write(
+        &sdrf,
+        concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\tcharacteristics[biological replicate]\tfactor value[cell line]\n",
+            "sample-1\trun 1\trun1.raw\tAC=MS:1002038;NT=label free sample\t1\tA\n",
+            "sample-1\trun 2\trun2.raw\tAC=MS:1002038;NT=label free sample\t2\tA\n",
+            "sample-2\trun 3\trun3.raw\tAC=MS:1002038;NT=label free sample\t1\tB\n",
+            "sample-2\trun 4\trun4.raw\tAC=MS:1002038;NT=label free sample\t2\tB\n",
+        ),
+    )?;
 
-    let mut config = default_sum_config(parquet, sdrf, output.clone());
+    let mut config = default_sum_config(parquet, sdrf, delegated_output.clone());
     config.quantification = QuantMethod::MaxLfq;
+    run_features_to_proteins(&config)?;
+    let delegated = read_csv(&delegated_output)?;
+    assert_numeric_cell_close(&delegated, "P6", "sample-1", 190.0);
+    assert_numeric_cell_close(&delegated, "P6", "sample-2", 190.0);
+
+    config.output.protein_matrix = builtin_output.clone();
     config.maxlfq.force_builtin = true;
     run_features_to_proteins(&config)?;
+    let builtin = read_csv(&builtin_output)?;
+    assert_numeric_cell_close(&builtin, "P6", "sample-1", 190.0);
+    assert_numeric_cell_close(&builtin, "P6", "sample-2", 380.0);
+    Ok(())
+}
 
-    let table = read_csv(&output)?;
-    assert_numeric_cell_close(&table, "P6", "sample-1", 500.0);
-    assert_numeric_cell_close(&table, "P6", "sample-2", 1000.0);
+#[test]
+fn features2proteins_delegated_maxlfq_is_invariant_to_feature_order() -> Result<(), Box<dyn Error>>
+{
+    let root = temp_root()?;
+    create_dir_all(&root)?;
+    let forward_parquet = root.join("maxlfq_order.forward.features.parquet");
+    let reversed_parquet = root.join("maxlfq_order.reversed.features.parquet");
+    let sdrf = root.join("maxlfq_order.sdrf.tsv");
+    let forward_output = root.join("maxlfq_order.forward.csv");
+    let reversed_output = root.join("maxlfq_order.reversed.csv");
+
+    // Minimal observations from PXD002099 that exposed encounter-order IDs in
+    // the delegated DirectLFQ solver. The two parquets carry identical data in
+    // opposite row order.
+    let rows = vec![
+        QpxRow::new("LRTDETLR", "run1.raw", 1_661_357.0, &["A5Z2X5"]),
+        QpxRow::new("LRTDETLR", "run2.raw", 2_011_746.0, &["A5Z2X5"]),
+        QpxRow::new("LRTDETLR", "run3.raw", 771_094.9, &["A5Z2X5"]),
+        QpxRow::new("LTGNPELSSLDEVLAK", "run1.raw", 3_310_899.0, &["A5Z2X5"]),
+        QpxRow::new("LTGNPELSSLDEVLAK", "run2.raw", 2_914_053.0, &["A5Z2X5"]),
+        QpxRow::new("LTGNPELSSLDEVLAK", "run3.raw", 4_332_763.0, &["A5Z2X5"]),
+        QpxRow::new("LTGNPELSSLDEVLAK", "run4.raw", 5_018_000.0, &["A5Z2X5"]),
+        QpxRow::new("LTGNPELSSLDEVLAK", "run5.raw", 4_421_422.0, &["A5Z2X5"]),
+    ];
+    write_qpx_rows(&forward_parquet, &rows)?;
+    let mut reversed_rows = rows;
+    reversed_rows.reverse();
+    write_qpx_rows(&reversed_parquet, &reversed_rows)?;
+    write_maxlfq_order_sdrf(&sdrf)?;
+
+    let mut config = default_sum_config(forward_parquet, sdrf.clone(), forward_output.clone());
+    config.quantification = QuantMethod::MaxLfq;
+    run_features_to_proteins(&config)?;
+    config.input.parquet = Some(reversed_parquet);
+    config.output.protein_matrix = reversed_output.clone();
+    run_features_to_proteins(&config)?;
+
+    let forward = read_csv(&forward_output)?;
+    let reversed = read_csv(&reversed_output)?;
+    let protein_row = forward
+        .rows
+        .iter()
+        .find(|row| row.first().is_some_and(|protein| protein == "A5Z2X5"))
+        .ok_or("forward MaxLFQ protein row is missing")?;
+    for sample in ["Sample 1", "Sample 2", "Sample 3"] {
+        let column = forward
+            .headers
+            .iter()
+            .position(|header| header == sample)
+            .ok_or("forward MaxLFQ sample column is missing")?;
+        let expected = protein_row[column].parse::<f64>()?;
+        assert_numeric_cell_close(&reversed, "A5Z2X5", sample, expected);
+    }
     Ok(())
 }
 
@@ -4667,6 +4746,21 @@ fn write_synthetic_sdrf(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn write_maxlfq_order_sdrf(path: &Path) -> Result<(), Box<dyn Error>> {
+    std::fs::write(
+        path,
+        concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\tfactor value[cell line]\n",
+            "Sample 1\trun 1\trun1.raw\tAC=MS:1002038;NT=label free sample\tA\n",
+            "Sample 2\trun 2\trun2.raw\tAC=MS:1002038;NT=label free sample\tA\n",
+            "Sample 3\trun 3\trun3.raw\tAC=MS:1002038;NT=label free sample\tA\n",
+            "Sample 4\trun 4\trun4.raw\tAC=MS:1002038;NT=label free sample\tA\n",
+            "Sample 5\trun 5\trun5.raw\tAC=MS:1002038;NT=label free sample\tA\n",
+        ),
+    )?;
+    Ok(())
+}
+
 fn write_hier_order_sdrf(path: &Path) -> Result<(), Box<dyn Error>> {
     // Names sort [hsample-a..d]; the parquet emits run-c first, so registration
     // order is [c, a, d, b]. The data-file -> source-name mapping is what makes
@@ -4785,6 +4879,7 @@ fn test_pibaq_digest(entries: &[(&str, &[&str])]) -> PibaqDigest {
 #[derive(Debug, Clone, Copy)]
 struct QpxRow<'a> {
     sequence: &'a str,
+    peptidoform: &'a str,
     run_file_name: &'a str,
     intensity: f32,
     charge: i16,
@@ -4807,6 +4902,7 @@ impl<'a> QpxRow<'a> {
     ) -> Self {
         Self {
             sequence,
+            peptidoform: sequence,
             run_file_name,
             intensity,
             charge: 2,
@@ -4827,6 +4923,7 @@ impl<'a> QpxRow<'a> {
     ) -> Self {
         Self {
             sequence,
+            peptidoform: sequence,
             run_file_name,
             intensity,
             charge,
@@ -4846,6 +4943,7 @@ impl<'a> QpxRow<'a> {
     ) -> Self {
         Self {
             sequence,
+            peptidoform: sequence,
             run_file_name,
             intensity,
             charge: 2,
@@ -4867,6 +4965,11 @@ impl<'a> QpxRow<'a> {
         self.score = Some((name, value, higher_better));
         self
     }
+
+    const fn with_peptidoform(mut self, peptidoform: &'a str) -> Self {
+        self.peptidoform = peptidoform;
+        self
+    }
 }
 
 fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>> {
@@ -4874,7 +4977,7 @@ fn write_qpx_rows(path: &Path, rows: &[QpxRow<'_>]) -> Result<(), Box<dyn Error>
         rows.iter().map(|row| row.sequence).collect::<Vec<_>>(),
     )) as ArrayRef;
     let peptidoform = Arc::new(StringArray::from(
-        rows.iter().map(|row| row.sequence).collect::<Vec<_>>(),
+        rows.iter().map(|row| row.peptidoform).collect::<Vec<_>>(),
     )) as ArrayRef;
     let charge = Arc::new(Int16Array::from(
         rows.iter().map(|row| row.charge).collect::<Vec<_>>(),
