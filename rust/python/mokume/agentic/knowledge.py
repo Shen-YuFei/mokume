@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 
 _KNOWLEDGE_ENV = "MOKUME_AGENTIC_KNOWLEDGE"
+_BUNDLED_KNOWLEDGE = Path(__file__).with_name("knowledge_bundle") / "knowledge.yaml"
 _DATA_TYPES = {"DIA", "LFQ", "TMT"}
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -196,13 +197,11 @@ class KnowledgeGraph:
 
 
 def load_knowledge_graph(path: str | Path | None = None) -> KnowledgeGraph:
-    """Load and validate the plugin-owned knowledge graph."""
-    selected = path or os.environ.get(_KNOWLEDGE_ENV)
-    if selected is None:
-        raise FileNotFoundError(
-            "No Mokume agentic knowledge catalog was supplied. Use the Mokume "
-            "Plugin or set MOKUME_AGENTIC_KNOWLEDGE."
-        )
+    """Load an explicit, environment-selected, or bundled knowledge graph."""
+    if path is not None:
+        selected = path
+    else:
+        selected = os.environ.get(_KNOWLEDGE_ENV, _BUNDLED_KNOWLEDGE)
     return _load_knowledge_graph(str(Path(selected).expanduser().resolve()))
 
 

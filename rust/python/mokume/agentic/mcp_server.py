@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-def create_server(knowledge: str):
+def create_server(knowledge: str | None = None):
     """Build the MCP server around one immutable knowledge snapshot."""
     try:
         fast_mcp = getattr(importlib.import_module("mcp.server.fastmcp"), "FastMCP")
@@ -78,10 +78,13 @@ def create_server(knowledge: str):
 def main(argv: list[str] | None = None) -> int:
     """Run the plugin MCP server over stdio."""
     parser = argparse.ArgumentParser(prog="mokume mcp serve")
-    parser.add_argument("--knowledge", metavar="<FILE>", required=True)
+    parser.add_argument("--knowledge", metavar="<FILE>")
     args = parser.parse_args(argv)
-    knowledge = Path(args.knowledge).expanduser().resolve()
-    if not knowledge.is_file():
-        parser.error(f"knowledge catalog not found: {knowledge}")
-    create_server(str(knowledge)).run(transport="stdio")
+    knowledge = None
+    if args.knowledge is not None:
+        path = Path(args.knowledge).expanduser().resolve()
+        if not path.is_file():
+            parser.error(f"knowledge catalog not found: {path}")
+        knowledge = str(path)
+    create_server(knowledge).run(transport="stdio")
     return 0

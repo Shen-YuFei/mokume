@@ -24,10 +24,13 @@ from mokume.agentic.state import CandidateConfig
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 PLUGIN = REPOSITORY / "plugins" / "mokume"
-KNOWLEDGE = PLUGIN / "knowledge" / "knowledge.yaml"
+KNOWLEDGE_BUNDLE = (
+    REPOSITORY / "rust" / "python" / "mokume" / "agentic" / "knowledge_bundle"
+)
+BUNDLED_KNOWLEDGE = KNOWLEDGE_BUNDLE / "knowledge.yaml"
 CODEX_MANIFEST = PLUGIN / ".codex-plugin" / "plugin.json"
 CLAUDE_MANIFEST = PLUGIN / ".claude-plugin" / "plugin.json"
-SERVICE = RecommendationService(str(KNOWLEDGE))
+SERVICE = RecommendationService()
 
 
 @pytest.fixture(name="lfq_inputs")
@@ -487,7 +490,7 @@ def test_method_sensitivity_reports_signed_call_agreement() -> None:
 def test_bundled_knowledge_rejects_modified_source_artifacts(tmp_path: Path) -> None:
     """Every bundled benchmark artifact is bound to its declared hash."""
     copied = tmp_path / "knowledge"
-    shutil.copytree(PLUGIN / "knowledge", copied)
+    shutil.copytree(KNOWLEDGE_BUNDLE, copied)
     report = copied / "sources" / "spike-in-score-a-320" / "benchmark_report.md"
     report.write_text(
         report.read_text(encoding="utf-8") + "\nmodified\n",
@@ -501,7 +504,7 @@ def test_bundled_knowledge_rejects_modified_source_artifacts(tmp_path: Path) -> 
 def test_bundled_knowledge_rejects_nonfinite_profile_ranges(tmp_path: Path) -> None:
     """Applicability ranges cannot contain YAML NaN or infinities."""
     copied = tmp_path / "knowledge"
-    shutil.copytree(PLUGIN / "knowledge", copied)
+    shutil.copytree(KNOWLEDGE_BUNDLE, copied)
     knowledge = copied / "knowledge.yaml"
     contents = knowledge.read_text(encoding="utf-8").replace(
         "missing_rate: [0.033081, 0.057325]",
@@ -517,7 +520,7 @@ def test_bundled_knowledge_rejects_nonfinite_profile_ranges(tmp_path: Path) -> N
 def test_agentic_catalog_rejects_version_branches(tmp_path: Path) -> None:
     """The runtime catalog is updated in place rather than schema-versioned."""
     copied = tmp_path / "knowledge"
-    shutil.copytree(PLUGIN / "knowledge", copied)
+    shutil.copytree(KNOWLEDGE_BUNDLE, copied)
     knowledge = copied / "knowledge.yaml"
     knowledge.write_text(
         "version: 1\n" + knowledge.read_text(encoding="utf-8"),
@@ -904,8 +907,8 @@ def test_inspection_rejects_contrast_without_two_conditions(
         _inspect(lfq_inputs)
 
 
-def test_plugin_manifests_share_one_skill_and_knowledge_tree() -> None:
-    """Codex and Claude adapters package the same workflow and evidence."""
+def test_plugin_manifests_share_one_skill_and_wheel_runtime() -> None:
+    """Host adapters share one skill while evidence ships in the wheel."""
     codex = json.loads(CODEX_MANIFEST.read_text(encoding="utf-8"))
     claude = json.loads(CLAUDE_MANIFEST.read_text(encoding="utf-8"))
 
@@ -913,7 +916,8 @@ def test_plugin_manifests_share_one_skill_and_knowledge_tree() -> None:
     assert codex["version"] == claude["version"]
     assert codex["skills"] == "./skills/"
     assert (PLUGIN / "skills" / "analyze-proteomics" / "SKILL.md").is_file()
-    assert KNOWLEDGE.is_file()
+    assert BUNDLED_KNOWLEDGE.is_file()
+    assert not (PLUGIN / "knowledge").exists()
 
     codex_marketplace = json.loads(
         (REPOSITORY / ".agents" / "plugins" / "marketplace.json").read_text(
@@ -932,7 +936,10 @@ def test_plugin_manifests_share_one_skill_and_knowledge_tree() -> None:
     assert claude_plugins["mokume"]["source"] == "./plugins/mokume"
 
 
-def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plugin_registers_the_local_mcp_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Both host adapters start the same two public local tools."""
     pytest.importorskip("mcp")
     create_server = getattr(
@@ -943,28 +950,18 @@ def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -
     codex_manifest = json.loads(CODEX_MANIFEST.read_text(encoding="utf-8"))
     server_config = codex_manifest["mcpServers"]["mokume"]
     assert server_config["command"] == "mokume"
-    assert server_config["args"] == [
-        "mcp",
-        "serve",
-        "--knowledge",
-        "./knowledge/knowledge.yaml",
-    ]
+    assert server_config["args"] == ["mcp", "serve"]
     assert server_config["cwd"] == "."
 
     claude = json.loads(CLAUDE_MANIFEST.read_text(encoding="utf-8"))
     claude_server = claude["mcpServers"]["mokume"]
     assert claude_server == {
         "command": "mokume",
-        "args": [
-            "mcp",
-            "serve",
-            "--knowledge",
-            "${CLAUDE_PLUGIN_ROOT}/knowledge/knowledge.yaml",
-        ],
+        "args": ["mcp", "serve"],
     }
 
-    monkeypatch.chdir(PLUGIN)
-    server = create_server(server_config["args"][-1])
+    monkeypatch.chdir(tmp_path)
+    server = create_server()
     tools = asyncio.run(server.list_tools())
     tools_by_name = {tool.name: tool for tool in tools}
     assert set(tools_by_name) == {"inspect_dataset", "evaluate_recommendation"}

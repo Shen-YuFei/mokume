@@ -158,7 +158,7 @@ def test_console_dispatches_periphery_arguments(monkeypatch):
     assert observed["args"] == ["--input", "datasets"]
 
 
-def test_console_dispatches_mcp_with_global_options(monkeypatch):
+def test_console_dispatches_mcp_without_knowledge_path(monkeypatch):
     """Global logging options must be consumed before MCP argparse runs."""
     observed = {}
     module = SimpleNamespace(
@@ -193,8 +193,6 @@ def test_console_dispatches_mcp_with_global_options(monkeypatch):
             "info",
             "mcp",
             "serve",
-            "--knowledge",
-            "knowledge.yaml",
             "--log-file",
             "mokume.log",
         ],
@@ -204,7 +202,7 @@ def test_console_dispatches_mcp_with_global_options(monkeypatch):
         entrypoint.main()
 
     assert exc_info.value.code == 0
-    assert observed["args"] == ["--knowledge", "knowledge.yaml"]
+    assert observed["args"] == []
     assert observed["logging"] == {"level": "info", "log_file": "mokume.log"}
 
 

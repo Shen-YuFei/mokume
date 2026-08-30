@@ -161,7 +161,7 @@ def main():
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from None
     if routed_args and routed_args[0] == "mcp":
-        raise SystemExit("Usage: mokume mcp serve --knowledge PATH")
+        raise SystemExit("Usage: mokume mcp serve [--knowledge PATH]")
     package = importlib.import_module("mokume")
     if routed_args[:1] == ["help"]:
         args = [*routed_args[1:], "--help"]

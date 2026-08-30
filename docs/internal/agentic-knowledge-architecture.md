@@ -5,7 +5,7 @@ LLM client. The host owns the model, conversation, and credentials. Mokume owns
 the scientific contract and deterministic local execution:
 
 ```text
-plugin knowledge snapshot
+wheel-bundled knowledge snapshot
   -> typed KnowledgeGraph
   -> deterministic PolicyDecision + Diagnostic[]
   -> ProfileBlock + ContractBlock + DiagnosticBlock + EvidenceBlock
@@ -17,30 +17,29 @@ plugin knowledge snapshot
 
 ## Plugin boundary
 
-`plugins/mokume/` is the distributable unit for Codex and Claude Code. Each host
-has a thin manifest and local stdio MCP path adapter, while both discover the
-same skill and committed knowledge snapshot. Enabling the plugin makes either
-host start the equivalent of:
+`plugins/mokume/` is the distributable host adapter for Codex and Claude Code.
+Each host has a thin manifest and discovers the same skill, while the installed
+Mokume wheel owns the MCP service and committed knowledge snapshot. Enabling
+the plugin makes either host start the equivalent of:
 
 ```text
-mokume mcp serve --knowledge ./knowledge/knowledge.yaml
+mokume mcp serve
 ```
 
-The Codex adapter resolves its relative working directory against the installed
-plugin root. The Claude Code adapter passes the absolute installation path via
-`${CLAUDE_PLUGIN_ROOT}`. The MCP service itself lives in
-`rust/python/mokume/agentic/` and is installed by the default
-`mokume[plugin]` wheel. There is no custom provider configuration, Mokume API
-key, internal model call, or standalone agentic TUI.
+The MCP service and knowledge bundle live in `rust/python/mokume/agentic/` and
+are installed by the default `mokume[plugin]` wheel. There is no custom provider
+configuration, Mokume API key, internal model call, or standalone agentic TUI.
 
 ## Knowledge and provenance
 
-`plugins/mokume/knowledge/knowledge.yaml` is the runtime evidence index. It
-stores `SourceEnvelope`, `EvidenceRecord`, `PipelineConfig`, applicability
-metadata, and the profile envelope observed in supporting datasets. Bundled
-source artifacts live beside it under `knowledge/sources/`. Loading fails on an
-unknown source reference, unsupported method, missing or undeclared artifact,
-or artifact hash mismatch.
+`rust/python/mokume/agentic/knowledge_bundle/knowledge.yaml` is the runtime
+evidence index. It stores `SourceEnvelope`, `EvidenceRecord`, `PipelineConfig`,
+applicability metadata, and the profile envelope observed in supporting
+datasets. Bundled source artifacts live beside it under `sources/`. Loading
+fails on an unknown source reference, unsupported method, missing or undeclared
+artifact, or artifact hash mismatch. An explicit `--knowledge` path or the
+`MOKUME_AGENTIC_KNOWLEDGE` environment variable may override the bundled
+snapshot for development and validation.
 
 Evidence retains complete upstream quantification provenance. The current MCP
 entry point starts from a protein matrix, so quantification, run normalization,

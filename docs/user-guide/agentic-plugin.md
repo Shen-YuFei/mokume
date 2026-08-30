@@ -50,9 +50,9 @@ claude plugin install mokume@bigbio
 ```
 
 Start a new Claude Code session after installation. The plugin discovers the
-shared `analyze-proteomics` skill and starts the bundled Mokume MCP server with
-an installation-independent knowledge path. The `mokume` executable must be on
-the `PATH` inherited by Claude Code. No separate `/mcp` setup is required.
+shared `analyze-proteomics` skill and starts the Mokume MCP server, which loads
+its knowledge snapshot from the installed wheel. The `mokume` executable must
+be on the `PATH` inherited by Claude Code. No separate `/mcp` setup is required.
 
 ## Use
 
@@ -152,10 +152,10 @@ input scale, diagnostics, measurements, and ranking status.
 plugins/mokume/
 ├── .codex-plugin/                      # Codex manifest and MCP adapter
 ├── .claude-plugin/plugin.json         # Claude Code manifest and MCP adapter
-├── knowledge/knowledge.yaml           # evidence index
-├── knowledge/sources/                 # immutable benchmark source artifacts
 └── skills/analyze-proteomics/          # shared workflow and output contract
-rust/python/mokume/agentic/             # deterministic MCP service
+rust/python/mokume/agentic/
+├── knowledge_bundle/                   # evidence index and source artifacts
+└── ...                                 # deterministic MCP service
 ```
 
 Update the knowledge index separately from model prompts. Every eligible

@@ -123,6 +123,7 @@ all = [
 manifest-path = "crates/mokume-py/Cargo.toml"
 module-name = "mokume._mokume"
 python-source = "python"
+include = ["python/mokume/agentic/knowledge_bundle/**"]
 exclude = ["python/**/__pycache__/**"]
 
 [tool.pylint.design]
