@@ -34,7 +34,7 @@ Label-free QPX entries whose intensity labels are run filenames use each intensi
 | Filter | Parameter | Default | Description |
 |--------|-----------|---------|-------------|
 | ContaminantFilter | `remove_contaminants/decoys` | true | Remove contaminants/decoys |
-| MinPeptideFilter | `min_unique_peptides` | 2 | Min unique peptides per protein |
+| MinPeptideFilter | `min_unique_peptides` | 2 | Min unique peptides per protein/sample cell |
 | RazorPeptideFilter | `razor_peptide_handling` | "keep" | Handle shared peptides |
 
 ### Run/Sample QC Filters

@@ -3,7 +3,10 @@ use mokume_core::{PeptideId, QuantMethod, SampleId};
 mod directlfq_aligned;
 mod maxlfq;
 
-pub use directlfq_aligned::{direct_lfq_aligned, DirectLfqIon};
+pub use directlfq_aligned::{
+    direct_lfq_aligned, direct_lfq_aligned_with_ions, DirectLfqIon, DirectLfqNormalizedIon,
+    DirectLfqResult,
+};
 pub use maxlfq::{max_lfq, max_lfq_with_samples};
 
 #[derive(Debug, Clone, Copy, PartialEq)]

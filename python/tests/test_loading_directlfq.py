@@ -4,11 +4,10 @@ Exercises ``LoadingStage.load_for_directlfq`` (returns a ``pa.Table``) and
 ``LoadingStage.convert_to_directlfq_format`` (Arrow Table -> wide pandas
 DataFrame).
 
-The new implementation streams DuckDB results via the Arrow reader and runs
-the pivot through polars (zero-copy from Arrow). These tests pin down the
-required filter behaviour (contaminants/decoys/entrapments/short peptides/
-single-peptide proteins all dropped), the wide-format shape, and the numeric
-log2 transform expected by DirectLFQ.
+The implementation aggregates contextual precursor ions in DuckDB, streams the
+result through Arrow, and pivots through polars. These tests pin down full
+protein-group naming, per-protein/sample filtering, precursor MAX followed by
+canonical SUM, the wide-format shape, and the DirectLFQ log2 transform.
 
 We deliberately keep a self-contained fixture instead of importing the one
 from ``test_loading_sqlfirst`` because the directlfq path relies on the
@@ -70,8 +69,16 @@ _LFQ_SCHEMA = pa.schema(
 )
 
 
-def _pg(accession: str) -> List[dict]:
-    return [{"accession": accession, "start": 1, "end": 10, "pre": "K", "post": "A"}]
+def _pg(accession: str | tuple[str, ...]) -> List[dict]:
+    accessions = (accession,) if isinstance(accession, str) else accession
+    return [
+        {"accession": item, "start": 1, "end": 10, "pre": "K", "post": "A"}
+        for item in accessions
+    ]
+
+
+def _anchor(accession: str | tuple[str, ...]) -> str:
+    return accession if isinstance(accession, str) else accession[0]
 
 
 def _intensities(value: float) -> List[dict]:
@@ -87,9 +94,10 @@ def _make_lfq_parquet(path: str) -> List[str]:
     """
     runs = ["run_S1", "run_S2", "run_S3", "run_S4"]
 
-    p12345 = "sp|P12345|GOOD_HUMAN"
+    p12345 = ("sp|P12345|GOOD_HUMAN", "sp|Q54321|ALSO_GOOD_HUMAN")
     p67890 = "sp|P67890|LONE_HUMAN"
     p99999 = "P99999"
+    p55555 = "sp|P55555|SCATTERED_HUMAN"
     contam = "sp|CONTAMINANT_P00761|TRYP_PIG"
     decoy = "sp|DECOY_P11111|REV_HUMAN"
     entrap = "sp|ENTRAP_P22222|ENT_HUMAN"
@@ -98,6 +106,8 @@ def _make_lfq_parquet(path: str) -> List[str]:
     for sample_run in runs:
         # P12345: three unique peptides; PEPTIDEAR has two charges per sample
         rows.append(("PEPTIDEAR", "PEPTIDEAR", p12345, 2, sample_run, 101.0, False))
+        # Duplicate observation of the same ion: the higher intensity is kept.
+        rows.append(("PEPTIDEAR", "PEPTIDEAR", p12345, 2, sample_run, 51.0, False))
         rows.append(("PEPTIDEAR", "PEPTIDEAR", p12345, 3, sample_run, 302.0, False))
         rows.append(("PEPTIDEBR", "PEPTIDEBR", p12345, 2, sample_run, 203.0, False))
         rows.append(("PEPTIDECR", "PEPTIDECR", p12345, 2, sample_run, 404.0, False))
@@ -118,6 +128,12 @@ def _make_lfq_parquet(path: str) -> List[str]:
         # Short peptide -> dropped by min_aa=7
         rows.append(("SHORT", "SHORT", p12345, 2, sample_run, 999.0, False))
 
+    # Two distinct peptides globally, but only one in each sample. A global
+    # protein-level min-unique gate would retain these rows; the documented
+    # per-(protein, sample) gate must drop them.
+    rows.append(("SCATTERA", "SCATTERA", p55555, 2, runs[0], 111.0, False))
+    rows.append(("SCATTERB", "SCATTERB", p55555, 2, runs[1], 222.0, False))
+
     # Non-unique rows on the good protein -> dropped by require_unique
     non_unique = [
         ("PEPTIDEAR", "PEPTIDEAR", p12345, 2, run_S, 12345.0, False) for run_S in runs
@@ -127,7 +143,8 @@ def _make_lfq_parquet(path: str) -> List[str]:
         "sequence": [r[0] for r in rows] + [r[0] for r in non_unique],
         "peptidoform": [r[1] for r in rows] + [r[1] for r in non_unique],
         "pg_accessions": [_pg(r[2]) for r in rows] + [_pg(r[2]) for r in non_unique],
-        "anchor_protein": [r[2] for r in rows] + [r[2] for r in non_unique],
+        "anchor_protein": [_anchor(r[2]) for r in rows]
+        + [_anchor(r[2]) for r in non_unique],
         "charge": [r[3] for r in rows] + [r[3] for r in non_unique],
         "run_file_name": [r[4] for r in rows] + [r[4] for r in non_unique],
         "unique": [True] * len(rows) + [False] * len(non_unique),
@@ -221,8 +238,8 @@ def test_load_for_directlfq_returns_arrow_table_with_expected_columns(lfq_datase
 
     assert isinstance(table, pa.Table)
     assert set(table.column_names) == {
-        "pg_accessions",
-        "sequence",
+        "protein",
+        "ion",
         "sample_accession",
         "intensity",
     }
@@ -241,7 +258,7 @@ def test_load_for_directlfq_filters_contaminants_decoys_short(lfq_dataset):
     cfg = _make_directlfq_config(parquet, sdrf)
 
     table = LoadingStage(cfg).load_for_directlfq()
-    seqs = set(table.column("sequence").to_pylist())
+    seqs = set(table.column("ion").to_pylist())
 
     forbidden = {
         "SHORT",
@@ -255,10 +272,22 @@ def test_load_for_directlfq_filters_contaminants_decoys_short(lfq_dataset):
     assert forbidden.isdisjoint(seqs), forbidden & seqs
 
 
+def test_load_for_directlfq_preserves_schema_when_all_rows_are_filtered(lfq_dataset):
+    """Keep the DirectLFQ Arrow schema when filtering removes every row."""
+    parquet, sdrf = lfq_dataset
+    cfg = _make_directlfq_config(parquet, sdrf)
+    cfg.filtering.min_unique_peptides = 100
+
+    table = LoadingStage(cfg).load_for_directlfq()
+
+    assert table.num_rows == 0
+    assert table.column_names == ["protein", "ion", "sample_accession", "intensity"]
+
+
 def test_convert_to_directlfq_format_shape_and_index(lfq_dataset):
     """Wide DataFrame must be MultiIndex(['protein', 'ion']) with one column
-    per sample. The fixture keeps two proteins (P12345, P99999) and four
-    samples; P12345 contributes 3 peptides, P99999 contributes 2 → 5 rows.
+    per sample. The fixture keeps two proteins (P12345;Q54321, P99999) and four
+    samples; the protein group contributes 3 peptides and P99999 contributes 2.
 
     ``ONLYONEPEP`` (P67890) drops out via ``min_unique_peptides=2``.
     """
@@ -274,7 +303,7 @@ def test_convert_to_directlfq_format_shape_and_index(lfq_dataset):
     assert wide.shape == (5, 4), wide.shape
 
     proteins = set(wide.index.get_level_values("protein"))
-    assert proteins == {"P12345", "P99999"}, proteins
+    assert proteins == {"P12345;Q54321", "P99999"}, proteins
 
     ions = set(wide.index.get_level_values("ion"))
     assert ions == {
@@ -291,8 +320,8 @@ def test_convert_to_directlfq_format_shape_and_index(lfq_dataset):
 
 
 def test_convert_to_directlfq_format_log2_values(lfq_dataset):
-    """PEPTIDEAR for P12345 has two charges per sample (101.0 and 302.0). The
-    sum is 403.0 and the log2 value stored in DirectLFQ format is log2(403).
+    """PEPTIDEAR has duplicate charge-2 values (101.0 and 51.0) plus charge 3
+    (302.0). The ion max then canonical sum is 101 + 302 = 403, not 454.
     """
     parquet, sdrf = lfq_dataset
     cfg = _make_directlfq_config(parquet, sdrf)
@@ -301,7 +330,7 @@ def test_convert_to_directlfq_format_log2_values(lfq_dataset):
     table = loader.load_for_directlfq()
     wide = loader.convert_to_directlfq_format(table)
 
-    row = wide.loc[("P12345", "PEPTIDEAR")]
+    row = wide.loc[("P12345;Q54321", "PEPTIDEAR")]
     expected = math.log2(403.0)
     np.testing.assert_allclose(row.values.astype(float), expected, rtol=1e-5)
 

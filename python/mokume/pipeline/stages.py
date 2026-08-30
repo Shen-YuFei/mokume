@@ -154,7 +154,7 @@ _SQLFIRST_LOAD_QUERY_SUFFIX = """
                  "BioReplicate", "Condition"
         """
 
-_MAXLFQ_DIRECTLFQ_QUERY_SUFFIX = """
+_LFQ_DIRECTLFQ_QUERY_SUFFIX = """
             )
             WHERE _rn = 1
         )
@@ -468,11 +468,8 @@ class LoadingStage:
             scale_select = f'mu.* REPLACE ({scale_expr} AS "Intensity")'
             scale_orderby = scale_expr
 
-        # NOTE: this UniProt mid-section extraction (`sp|UNIPROT|name` -> `UNIPROT`)
-        # is duplicated in two more places. Keep all three in sync when the
-        # protein-accession parsing rules change:
-        #   - _compute_run_scale_map (SQL, this file)
-        #   - convert_to_directlfq_format (polars, this file)
+        # Protein-accession parsing is shared with _compute_run_scale_map via
+        # the SQL query builders above.
         query = _build_sqlfirst_load_query(
             where_clause,
             scale_select,
@@ -537,8 +534,8 @@ class LoadingStage:
         # never has to carry the peptidoform/charge/condition columns through
         # the window-function pipeline used to enforce min_unique_peptides.
         #
-        # The UniProt mid-section extraction below mirrors _load_for_mokume_sqlfirst
-        # and convert_to_directlfq_format (polars). Keep all three in sync.
+        # Protein-accession parsing mirrors _load_for_mokume_sqlfirst through
+        # the shared SQL query builders.
         sql = _build_run_scale_query(where_clause, metric_expr)
         sql_params = [*where_params, min_aa, min_unique]
         return feature.parquet_db.execute(sql, sql_params).df()
@@ -709,13 +706,13 @@ class LoadingStage:
                 scale_select,
                 scale_orderby,
                 scale_join_clause,
-                query_suffix=_MAXLFQ_DIRECTLFQ_QUERY_SUFFIX,
+                query_suffix=_LFQ_DIRECTLFQ_QUERY_SUFFIX,
             )
             query_params = [*where_params, min_aa, min_unique]
             try:
                 result = feature.parquet_db.execute(query, query_params)
                 reader = result.to_arrow_reader(batch_size=1_000_000)
-                return pa.Table.from_batches(reader)
+                return pa.Table.from_batches(reader, schema=reader.schema)
             finally:
                 if scale_df is not None:
                     feature.parquet_db.unregister("run_scale_map")
@@ -761,24 +758,21 @@ class LoadingStage:
         return wide
 
     def load_for_directlfq(self) -> pa.Table:
-        """Load and filter peptide rows for DirectLFQ as a streaming Arrow Table.
+        """Load canonical-peptide rows for DirectLFQ as a streaming Arrow Table.
 
-        Streams the long-format query result through DuckDB's Arrow reader
-        instead of materialising it as a pandas DataFrame. On large parquets
-        (e.g. PXD030304: 163M peptide rows × 5798 samples) this avoids the
-        ~30+ GB pandas object overhead that previously caused OOM kills, and
-        cuts wall time roughly 30% on medium datasets (validated on
-        PXD017199: 51.5s → 35.4s, 11.8 GB → 7.1 GB peak RSS).
+        Streams the aggregated long-format query result through DuckDB's Arrow
+        reader instead of materialising an additional pandas long table.
 
-        Protein-accession parsing and the ``min_unique_peptides`` filter are
-        deferred to :meth:`convert_to_directlfq_format`, which performs them
-        in-place on the polars frame (zero-copy from this Arrow Table).
+        The shared SQL-first feature aggregation preserves the full protein
+        group, applies ``min_unique_peptides`` per protein/sample, keeps the
+        maximum intensity for each peptidoform/charge ion, and then sums those
+        ions to the canonical-peptide level.
 
         Returns
         -------
         pa.Table
             Long-format Arrow Table with columns
-            ``[pg_accessions, sequence, sample_accession, intensity]``.
+            ``[protein, ion, sample_accession, intensity]``.
         """
         filter_builder = SQLFilterBuilder(
             remove_contaminants=self.config.filtering.remove_contaminants,
@@ -788,110 +782,40 @@ class LoadingStage:
 
         feature = self._open_feature(filter_builder)
 
-        if self.config.input.sdrf:
-            feature.enrich_with_sdrf(self.config.input.sdrf)
-
-        where_clause, where_params = filter_builder.build_where_clause()
-        query = "".join(
-            [
-                "SELECT pg_accessions, sequence, sample_accession, intensity ",
-                "FROM parquet_db WHERE ",
-                where_clause,
-            ]
-        )
-
         try:
-            result = feature.parquet_db.execute(query, where_params)
+            if self.config.input.sdrf:
+                feature.enrich_with_sdrf(self.config.input.sdrf)
+
+            where_clause, where_params = filter_builder.build_where_clause()
+            query = _build_sqlfirst_load_query(
+                where_clause,
+                "mu.*",
+                'mu."Intensity"',
+                "",
+                query_suffix=_LFQ_DIRECTLFQ_QUERY_SUFFIX,
+            )
+            query_params = [
+                *where_params,
+                self.config.filtering.min_aa,
+                self.config.filtering.min_unique_peptides,
+            ]
+            result = feature.parquet_db.execute(query, query_params)
             reader = result.to_arrow_reader(batch_size=1_000_000)
             # ``from_batches`` eagerly consumes the reader, materialising every
             # batch into Arrow buffers that own their memory independently of
             # the DuckDB connection, so it is safe to close the connection in
             # the ``finally`` below even though we return the Table.
-            return pa.Table.from_batches(reader)
+            return pa.Table.from_batches(reader, schema=reader.schema)
         finally:
             feature.parquet_db.close()
 
     def convert_to_directlfq_format(self, table: pa.Table) -> pd.DataFrame:
         """Convert long-format Arrow Table into the DirectLFQ wide log2 frame.
 
-        The pipeline is end-to-end polars (zero-copy from Arrow):
-        protein extraction, ``min_unique_peptides`` filter, sum aggregation,
-        pivot to wide, replace 0 with null, ``log2``. A single
-        :py:meth:`polars.DataFrame.to_pandas` at the end yields the
-        ``MultiIndex(['protein', 'ion'])``-indexed pandas frame DirectLFQ
-        expects.
-
-        Going via polars avoids materialising the long-format pandas
-        DataFrame, which dominated peak RSS on large datasets, and lets the
-        pivot run in parallel (PXD017199 wall: 51.5s → 18.3s, -64%).
+        Feature aggregation is completed by :meth:`load_for_directlfq`; this
+        method only pivots the canonical-ion rows and applies the log2 transform.
         """
-        try:
-            import polars as pl
-        except ImportError as exc:
-            raise ImportError(
-                "polars is required for the DirectLFQ format conversion. "
-                "Install it with `pip install polars` or "
-                "`pip install mokume-py[directlfq]`."
-            ) from exc
-
-        pdf = pl.from_arrow(table)
-        if isinstance(pdf, pl.Series):
-            pdf = pdf.to_frame()
-
-        # Protein extraction: take pg_accessions[0]; parse UniProt mid-section
-        # ('sp|UNIPROT|name' -> 'UNIPROT') when pipe-separated, else as-is.
-        # The same rule is implemented in SQL inside _load_for_mokume_sqlfirst
-        # and _compute_run_scale_map (this file). Keep all three in sync; do
-        # NOT extract a shared Python helper, because calling it via polars
-        # ``map_elements`` would force a row-wise Python call and erase the
-        # 64% wall-time win that polars's columnar pivot provides.
-        pdf = pdf.with_columns(
-            pl.col("pg_accessions")
-            .list.get(0, null_on_oob=True)
-            .fill_null("")
-            .alias("_first_acc")
-        )
-        pdf = pdf.with_columns(
-            pl.when(pl.col("_first_acc").str.contains("|", literal=True))
-            .then(pl.col("_first_acc").str.split("|").list.get(1, null_on_oob=True))
-            .otherwise(pl.col("_first_acc"))
-            .alias("protein")
-        ).drop(["_first_acc", "pg_accessions"])
-
-        min_pep = self.config.filtering.min_unique_peptides
-        if min_pep > 0:
-            counts = pdf.group_by("protein").agg(
-                pl.col("sequence").n_unique().alias("_n_pep")
-            )
-            valid = counts.filter(pl.col("_n_pep") >= min_pep).get_column("protein")
-            pdf = pdf.filter(pl.col("protein").is_in(valid.implode()))
-
-        summed = pdf.group_by(["protein", "sequence", "sample_accession"]).agg(
-            pl.col("intensity").cast(pl.Float64).sum()
-        )
-
-        wide_pl = summed.pivot(
-            index=["protein", "sequence"],
-            on="sample_accession",
-            values="intensity",
-            aggregate_function=None,
-        ).sort(["protein", "sequence"])
-
-        sample_cols = sorted(
-            c for c in wide_pl.columns if c not in ("protein", "sequence")
-        )
-        wide_pl = wide_pl.select(["protein", "sequence", *sample_cols])
-        wide_pl = wide_pl.with_columns(
-            [
-                pl.when(pl.col(c) == 0).then(None).otherwise(pl.col(c).log(2)).alias(c)
-                for c in sample_cols
-            ]
-        )
-
-        wide = wide_pl.to_pandas()
-        wide = wide.set_index(["protein", "sequence"])
-        wide.index.names = ["protein", "ion"]
-        return wide
+        return self.convert_maxlfq_to_directlfq_format(table)
 
     def load_for_ratio(self) -> tuple:
         """Load PSM data and detect references for ratio quantification.

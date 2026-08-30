@@ -2867,49 +2867,91 @@ fn features2proteins_directlfq_exports_python_shaped_ion_matrix() -> Result<(), 
     let output = root.join("directlfq_ions.protein.csv");
     let ions = root.join("directlfq_ions.ions.csv");
 
-    write_qpx_rows(
-        &parquet,
-        &[
-            QpxRow::new("PEPTIDEAK", "run1.raw", 100.0, &["P6"]),
-            QpxRow::new("PEPTIDEAK", "run1.raw", 150.0, &["P6"]),
-            QpxRow::new("APEPTIDECK", "run1.raw", 400.0, &["P6"]),
-            QpxRow::new("PEPTIDEAK", "run2.raw", 200.0, &["P6"]),
-            QpxRow::new("APEPTIDECK", "run2.raw", 800.0, &["P6"]),
-        ],
-    )?;
-    write_synthetic_sdrf(&sdrf)?;
+    write_qpx_rows(&parquet, &directlfq_export_rows())?;
+    write_directlfq_export_sdrf(&sdrf)?;
 
-    let mut config = default_sum_config(parquet, sdrf, output);
+    let mut config = default_sum_config(parquet, sdrf, output.clone());
     config.quantification = QuantMethod::DirectLfq;
     config.output.export_ions = Some(ions.clone());
     run_features_to_proteins(&config)?;
 
-    let table = read_csv(&ions)?;
-    assert_eq!(
-        table.headers,
-        vec![
-            "protein".to_owned(),
-            "ion".to_owned(),
-            "sample-1".to_owned(),
-            "sample-2".to_owned(),
-        ]
-    );
-    assert_eq!(
-        table.rows,
-        vec![
-            vec![
-                "P6".to_owned(),
-                "APEPTIDECK".to_owned(),
-                "400".to_owned(),
-                "800".to_owned(),
-            ],
-            vec![
-                "P6".to_owned(),
-                "PEPTIDEAK".to_owned(),
-                "250".to_owned(),
-                "200".to_owned(),
-            ],
-        ]
+    assert_directlfq_ion_matrix(&read_csv(&ions)?)?;
+
+    let protein = read_csv(&output)?;
+    assert_numeric_cell_close(&protein, "P6;Q6", "sample-1", 190.0);
+    assert_numeric_cell_close(&protein, "P6;Q6", "sample-2", 190.0);
+    Ok(())
+}
+
+fn directlfq_export_rows() -> Vec<QpxRow<'static>> {
+    vec![
+        QpxRow::new_with_charge("PEPTIDEK", "run1.raw", 100.0, 2, &["P6", "Q6"]),
+        QpxRow::new_with_charge("PEPTIDEK", "run1.raw", 80.0, 2, &["P6", "Q6"]),
+        QpxRow::new_with_charge("PEPTIDEK", "run1.raw", 40.0, 3, &["P6", "Q6"])
+            .with_peptidoform("PEP[UNIMOD:35]TIDEK"),
+        QpxRow::new("ANOTHERK", "run1.raw", 30.0, &["P6", "Q6"]),
+        QpxRow::new_with_charge("PEPTIDEK", "run2.raw", 20.0, 2, &["P6", "Q6"]),
+        QpxRow::new_with_charge("PEPTIDEK", "run3.raw", 200.0, 2, &["P6", "Q6"]),
+        QpxRow::new_with_charge("PEPTIDEK", "run3.raw", 160.0, 2, &["P6", "Q6"]),
+        QpxRow::new_with_charge("PEPTIDEK", "run3.raw", 80.0, 3, &["P6", "Q6"])
+            .with_peptidoform("PEP[UNIMOD:35]TIDEK"),
+        QpxRow::new("ANOTHERK", "run3.raw", 60.0, &["P6", "Q6"]),
+        QpxRow::new_with_charge("PEPTIDEK", "run4.raw", 40.0, 2, &["P6", "Q6"]),
+    ]
+}
+
+fn write_directlfq_export_sdrf(path: &Path) -> Result<(), Box<dyn Error>> {
+    std::fs::write(
+        path,
+        concat!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\tcharacteristics[biological replicate]\tfactor value[cell line]\n",
+            "sample-1\trun 1\trun1.raw\tAC=MS:1002038;NT=label free sample\t1\tA\n",
+            "sample-1\trun 2\trun2.raw\tAC=MS:1002038;NT=label free sample\t2\tA\n",
+            "sample-2\trun 3\trun3.raw\tAC=MS:1002038;NT=label free sample\t1\tB\n",
+            "sample-2\trun 4\trun4.raw\tAC=MS:1002038;NT=label free sample\t2\tB\n",
+        ),
+    )?;
+    Ok(())
+}
+
+fn assert_directlfq_ion_matrix(table: &CsvTable) -> Result<(), Box<dyn Error>> {
+    assert_eq!(table.headers, ["protein", "ion", "sample-1", "sample-2"]);
+    assert_eq!(table.rows.len(), 2);
+    for ion in ["ANOTHERK", "PEPTIDEK"] {
+        for sample in ["sample-1", "sample-2"] {
+            assert_directlfq_ion_value(table, ion, sample, 30.0)?;
+        }
+    }
+    Ok(())
+}
+
+fn assert_directlfq_ion_value(
+    table: &CsvTable,
+    ion: &str,
+    sample: &str,
+    expected: f64,
+) -> Result<(), Box<dyn Error>> {
+    let sample_index = table
+        .headers
+        .iter()
+        .position(|header| header == sample)
+        .ok_or_else(|| format!("sample column '{sample}' is missing"))?;
+    let row = table
+        .rows
+        .iter()
+        .find(|row| {
+            row.first().is_some_and(|protein| protein == "P6;Q6")
+                && row.get(1).is_some_and(|value| value == ion)
+        })
+        .ok_or_else(|| format!("DirectLFQ ion row P6;Q6/{ion} is missing"))?;
+    let actual = row
+        .get(sample_index)
+        .ok_or_else(|| format!("sample column '{sample}' is missing from ion row"))?
+        .parse::<f64>()?;
+    let delta = (actual - expected).abs();
+    assert!(
+        delta <= 1e-9,
+        "aligned ion P6;Q6/{ion}/{sample} is {actual}, expected {expected} (delta {delta})"
     );
     Ok(())
 }

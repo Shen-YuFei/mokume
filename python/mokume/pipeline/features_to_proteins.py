@@ -758,7 +758,7 @@ def features_to_proteins(
     min_aa : int
         Minimum amino acid length for peptides. Default: 7.
     min_unique_peptides : int
-        Minimum unique peptides per protein. Default: 2.
+        Minimum unique peptides per protein/sample cell. Default: 2.
     remove_contaminants : bool
         Whether to remove contaminants and decoys. Default: True.
     run_normalization : str
