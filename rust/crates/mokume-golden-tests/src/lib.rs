@@ -2614,6 +2614,9 @@ fn features2proteins_collapses_charges_into_canonical_before_rollup() -> Result<
 
     let peptide_count = run_canonical_collapse_quantification(QuantMethod::PeptideCount, 3)?;
     assert_numeric_cell_close(&peptide_count, "P50", "sample-1", 2.0);
+
+    let pibaq = run_canonical_collapse_quantification(QuantMethod::Pibaq, 3)?;
+    assert_numeric_cell_close(&pibaq, "P50", "sample-1", 85.0);
     Ok(())
 }
 
@@ -3402,7 +3405,17 @@ fn run_canonical_collapse_quantification(
     let mut config = default_sum_config(parquet, sdrf, output.clone());
     config.quantification = quantification;
     config.topn_peptides = topn_peptides;
-    run_features_to_proteins(&config)?;
+    if quantification == QuantMethod::Pibaq {
+        let fasta = root.join("canonical_collapse.fasta");
+        std::fs::write(&fasta, ">P50\nPEPTIDEKANOTHERK\n")?;
+        config.input.fasta = Some(fasta);
+        run_features_to_proteins_with_pibaq_digest(
+            &config,
+            test_pibaq_digest(&[("P50", &["PEPTIDEK", "ANOTHERK"])]),
+        )?;
+    } else {
+        run_features_to_proteins(&config)?;
+    }
 
     read_csv(&output)
 }

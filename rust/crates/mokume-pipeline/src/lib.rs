@@ -352,7 +352,6 @@ impl FeatureToProteinState {
             canonical: canonical_peptide,
             intensity,
             protein_name: &protein_group,
-            peptide_name: &peptide_key,
             ion_name: &feature.sequence,
             sample_name: &sample_name,
             charge: feature.charge,
@@ -1212,7 +1211,7 @@ enum FeatureAggregation {
     Median(HashMap<CellKey, HashMap<PeptideId, f64>>),
     Abd(HashMap<CellKey, HashMap<PeptideId, f64>>),
     PeptideCount(HashMap<CellKey, HashMap<PeptideId, f64>>),
-    Pibaq(PibaqAggregation),
+    Pibaq(Box<PibaqFeatureAggregation>),
     Ratio(RatioAggregation),
     TopN {
         topn: usize,
@@ -1254,6 +1253,14 @@ struct PibaqAggregation {
     /// caller requests TPA (`peptides2protein --tpa`). `None` leaves the piBAQ
     /// path untouched for every other consumer.
     mw_map: Option<HashMap<String, f64>>,
+}
+
+#[derive(Debug)]
+struct PibaqFeatureAggregation {
+    core: PibaqAggregation,
+    ion_observations: HashMap<PeptideSampleKey, f64>,
+    ion_to_canonical: HashMap<PeptideId, PeptideId>,
+    canonical_names: HashMap<PeptideId, String>,
 }
 
 #[derive(Debug)]
@@ -1347,7 +1354,6 @@ struct AggregationMeasurement<'a> {
     canonical: PeptideId,
     intensity: f64,
     protein_name: &'a str,
-    peptide_name: &'a str,
     ion_name: &'a str,
     sample_name: &'a str,
     charge: i32,
@@ -1368,12 +1374,14 @@ impl FeatureAggregation {
             QuantMethod::SpectralCount => Err(invalid_input(
                 "spectral_count requires the PSM-level aggregation path",
             )),
-            QuantMethod::Pibaq => Ok(Self::Pibaq(PibaqAggregation::from_digest(
-                config,
-                pibaq_digest.ok_or_else(|| {
-                    invalid_input("piBAQ requires a runtime pyOpenMS FASTA digest")
-                })?,
-            )?)),
+            QuantMethod::Pibaq => Ok(Self::Pibaq(Box::new(PibaqFeatureAggregation::new(
+                PibaqAggregation::from_digest(
+                    config,
+                    pibaq_digest.ok_or_else(|| {
+                        invalid_input("piBAQ requires a runtime pyOpenMS FASTA digest")
+                    })?,
+                )?,
+            )))),
             QuantMethod::Ratio => Ok(Self::Ratio(RatioAggregation::from_config(
                 config, sdrf, raw_sdrf,
             )?)),
@@ -1427,12 +1435,7 @@ impl FeatureAggregation {
                 push_peptide_max(cells, cell, measurement.peptide, measurement.intensity);
             }
             Self::Pibaq(pibaq) => {
-                pibaq.push(
-                    measurement.sample,
-                    measurement.peptide,
-                    measurement.peptide_name,
-                    measurement.intensity,
-                );
+                pibaq.push(measurement);
             }
             Self::Ratio(ratio) => {
                 ratio.push(measurement);
@@ -1577,7 +1580,7 @@ impl FeatureAggregation {
 
     fn peptide_key(&self, feature: &QpxFeatureRecord) -> String {
         match self {
-            Self::Pibaq(_) | Self::Ratio(_) => feature.sequence.clone(),
+            Self::Ratio(_) => feature.sequence.clone(),
             _ => peptide_key(feature),
         }
     }
@@ -1799,6 +1802,72 @@ impl FeatureAggregation {
                 )
             }
         }
+    }
+}
+
+impl PibaqFeatureAggregation {
+    fn new(core: PibaqAggregation) -> Self {
+        Self {
+            core,
+            ion_observations: HashMap::new(),
+            ion_to_canonical: HashMap::new(),
+            canonical_names: HashMap::new(),
+        }
+    }
+
+    fn push(&mut self, measurement: AggregationMeasurement<'_>) {
+        self.ion_to_canonical
+            .entry(measurement.peptide)
+            .or_insert(measurement.canonical);
+        self.canonical_names
+            .entry(measurement.canonical)
+            .or_insert_with(|| measurement.ion_name.to_owned());
+        let key = PeptideSampleKey {
+            peptide: measurement.peptide,
+            sample: measurement.sample,
+        };
+        self.ion_observations
+            .entry(key)
+            .and_modify(|current| {
+                if measurement.intensity > *current {
+                    *current = measurement.intensity;
+                }
+            })
+            .or_insert(measurement.intensity);
+    }
+
+    fn collapse_ions(&mut self) {
+        let mut canonical_ions = HashMap::<PeptideSampleKey, Vec<(PeptideId, f64)>>::new();
+        for (key, intensity) in std::mem::take(&mut self.ion_observations) {
+            let Some(canonical) = self.ion_to_canonical.get(&key.peptide).copied() else {
+                continue;
+            };
+            canonical_ions
+                .entry(PeptideSampleKey {
+                    peptide: canonical,
+                    sample: key.sample,
+                })
+                .or_default()
+                .push((key.peptide, intensity));
+        }
+        for (key, mut ions) in canonical_ions {
+            let Some(name) = self.canonical_names.get(&key.peptide) else {
+                continue;
+            };
+            ions.sort_by_key(|(ion, _)| *ion);
+            let intensity = ions.into_iter().map(|(_, value)| value).sum();
+            self.core.push(key.sample, key.peptide, name, intensity);
+        }
+    }
+
+    fn apply_quantile_normalization(&mut self) {
+        self.collapse_ions();
+        self.core.apply_quantile_normalization();
+    }
+
+    fn finalize(mut self, proteins: &mut StringIdRegistry<ProteinId>) -> HashMap<CellKey, f64> {
+        self.collapse_ions();
+        self.core.finalize(proteins)
     }
 }
 
