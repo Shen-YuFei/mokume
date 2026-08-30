@@ -923,10 +923,13 @@ def test_plugin_manifests_share_one_skill_and_knowledge_tree() -> None:
     claude_marketplace = json.loads(
         (REPOSITORY / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
     )
-    assert codex_marketplace["plugins"][0]["name"] == "mokume"
-    claude_entry = claude_marketplace["plugins"][0]
-    assert claude_entry["name"] == "mokume"
-    assert claude_entry["source"] == "./plugins/mokume"
+    codex_plugins = {entry["name"]: entry for entry in codex_marketplace["plugins"]}
+    claude_plugins = {entry["name"]: entry for entry in claude_marketplace["plugins"]}
+    assert codex_plugins["mokume"]["source"] == {
+        "source": "local",
+        "path": "./plugins/mokume",
+    }
+    assert claude_plugins["mokume"]["source"] == "./plugins/mokume"
 
 
 def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -963,11 +966,9 @@ def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.chdir(PLUGIN)
     server = create_server(server_config["args"][-1])
     tools = asyncio.run(server.list_tools())
-    assert [tool.name for tool in tools] == [
-        "inspect_dataset",
-        "evaluate_recommendation",
-    ]
-    inspection_schema = tools[0].inputSchema
+    tools_by_name = {tool.name: tool for tool in tools}
+    assert set(tools_by_name) == {"inspect_dataset", "evaluate_recommendation"}
+    inspection_schema = tools_by_name["inspect_dataset"].inputSchema
     assert set(inspection_schema["properties"]) == {
         "protein_matrix",
         "sdrf",
@@ -980,7 +981,7 @@ def test_plugin_registers_the_local_mcp_tools(monkeypatch: pytest.MonkeyPatch) -
         "contrast",
         "options",
     }
-    evaluation_schema = tools[1].inputSchema
+    evaluation_schema = tools_by_name["evaluate_recommendation"].inputSchema
     assert set(evaluation_schema["properties"]) == {
         "protein_matrix",
         "sdrf",

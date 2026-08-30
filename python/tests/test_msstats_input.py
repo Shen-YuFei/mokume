@@ -25,8 +25,8 @@ def test_msstats_parameter_preserves_positional_api():
         .arguments
     )
 
-    if arguments["quant_method"] != "sum" or "msstats" in arguments:
-        pytest.fail("MSstats input shifted the existing positional API")
+    assert arguments["quant_method"] == "sum"
+    assert "msstats" not in arguments
 
 
 def _write_sdrf(path: Path, rows: list[dict]) -> None:
