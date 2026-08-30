@@ -776,12 +776,13 @@ mod tests {
     // so the test helpers spell out the two-parameter standard `Result`.
     type TestResult<T> = std::result::Result<T, Box<dyn Error>>;
 
-    fn temp_dir(tag: &str) -> TestResult<PathBuf> {
+    fn temp_dir(tag: &str) -> TestResult<(tempfile::TempDir, PathBuf)> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        Ok(tempfile::Builder::new()
+        let directory = tempfile::Builder::new()
             .prefix(&format!("mokume-correct-batches-{tag}-{nanos}-"))
-            .tempdir()?
-            .keep())
+            .tempdir()?;
+        let path = directory.path().to_path_buf();
+        Ok((directory, path))
     }
 
     fn write_file(dir: &Path, name: &str, contents: &str) -> TestResult<PathBuf> {
@@ -1046,7 +1047,7 @@ P2\tB2-s2\t7.5\told\n";
     /// complete dataset (including one explicit observed zero).
     #[test]
     fn correct_batches_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("oracle")?;
+        let (_dir_guard, dir) = temp_dir("oracle")?;
         write_file(&dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(&dir, "batchB_pibaq.tsv", BATCH_B)?;
         let output = dir.join("corrected.tsv");
@@ -1075,13 +1076,13 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn reordered_input_columns_preserve_identity() -> TestResult<()> {
-        let canonical_dir = temp_dir("canonical-order")?;
+        let (_canonical_dir_guard, canonical_dir) = temp_dir("canonical-order")?;
         write_file(&canonical_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(&canonical_dir, "batchB_pibaq.tsv", BATCH_B)?;
         let canonical_output = canonical_dir.join("corrected.tsv");
         run_correct_batches(&args_for(&canonical_dir, &canonical_output))?;
 
-        let reordered_dir = temp_dir("reordered-order")?;
+        let (_reordered_dir_guard, reordered_dir) = temp_dir("reordered-order")?;
         write_file(&reordered_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(
             &reordered_dir,
@@ -1101,7 +1102,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn selected_delimiter_and_quoted_fields_round_trip() -> TestResult<()> {
-        let dir = temp_dir("delimited-output")?;
+        let (_dir_guard, dir) = temp_dir("delimited-output")?;
         write_file(&dir, "batchA_pibaq.csv", DELIMITED_A)?;
         write_file(&dir, "batchB_pibaq.csv", DELIMITED_B)?;
         let output = dir.join("corrected.csv");
@@ -1146,7 +1147,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn duplicate_headers_fail_before_output_creation() -> TestResult<()> {
-        let duplicate_dir = temp_dir("duplicate-header")?;
+        let (_duplicate_dir_guard, duplicate_dir) = temp_dir("duplicate-header")?;
         write_file(
             &duplicate_dir,
             "batchA_pibaq.tsv",
@@ -1160,7 +1161,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn extra_schema_column_fails_before_output_creation() -> TestResult<()> {
-        let mismatch_dir = temp_dir("schema-mismatch")?;
+        let (_mismatch_dir_guard, mismatch_dir) = temp_dir("schema-mismatch")?;
         write_file(&mismatch_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(
             &mismatch_dir,
@@ -1174,7 +1175,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn missing_schema_column_fails_before_output_creation() -> TestResult<()> {
-        let missing_dir = temp_dir("schema-missing")?;
+        let (_missing_dir_guard, missing_dir) = temp_dir("schema-missing")?;
         write_file(&missing_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(
             &missing_dir,
@@ -1188,7 +1189,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn duplicate_source_roles_fail_before_output_creation() -> TestResult<()> {
-        let role_dir = temp_dir("source-role")?;
+        let (_role_dir_guard, role_dir) = temp_dir("source-role")?;
         write_file(&role_dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(&role_dir, "batchB_pibaq.tsv", BATCH_B)?;
         let role_output = role_dir.join("corrected.tsv");
@@ -1199,7 +1200,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn corrected_column_collision_fails_before_output_creation() -> TestResult<()> {
-        let collision_dir = temp_dir("corrected-column")?;
+        let (_collision_dir_guard, collision_dir) = temp_dir("corrected-column")?;
         write_file(&collision_dir, "batchA_pibaq.tsv", COLLISION_A)?;
         write_file(&collision_dir, "batchB_pibaq.tsv", COLLISION_B)?;
         let collision_output = collision_dir.join("corrected.tsv");
@@ -1209,7 +1210,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn input_output_collision_does_not_truncate_input() -> TestResult<()> {
-        let dir = temp_dir("input-output-collision")?;
+        let (_dir_guard, dir) = temp_dir("input-output-collision")?;
         let input = write_file(&dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(&dir, "batchB_pibaq.tsv", BATCH_B)?;
         let before = std::fs::read(&input)?;
@@ -1240,7 +1241,7 @@ P2\tB2-s2\t7.5\told\n";
 
     #[test]
     fn export_anndata_writes_h5ad_file() -> TestResult<()> {
-        let dir = temp_dir("anndata")?;
+        let (_dir_guard, dir) = temp_dir("anndata")?;
         write_file(&dir, "batchA_pibaq.tsv", BATCH_A)?;
         write_file(&dir, "batchB_pibaq.tsv", BATCH_B)?;
         let output = dir.join("corrected.tsv");

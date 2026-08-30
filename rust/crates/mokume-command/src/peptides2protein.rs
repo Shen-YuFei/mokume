@@ -1105,12 +1105,13 @@ mod tests {
     // so the test helpers spell out the two-parameter standard `Result`.
     type TestResult<T> = std::result::Result<T, Box<dyn Error>>;
 
-    fn temp_dir(tag: &str) -> TestResult<std::path::PathBuf> {
+    fn temp_dir(tag: &str) -> TestResult<(tempfile::TempDir, std::path::PathBuf)> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        Ok(tempfile::Builder::new()
+        let directory = tempfile::Builder::new()
             .prefix(&format!("mokume-peptides2protein-{tag}-{nanos}-"))
-            .tempdir()?
-            .keep())
+            .tempdir()?;
+        let path = directory.path().to_path_buf();
+        Ok((directory, path))
     }
 
     fn write_file(path: &Path, contents: &str) -> TestResult<()> {
@@ -1344,7 +1345,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // Columns: ProteinName SampleID Intensity Condition.
     #[test]
     fn peptides2protein_sum_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("sum")?;
+        let (_tempdir, dir) = temp_dir("sum")?;
         let peptides = dir.join("peptides.csv");
         let output = dir.join("out.tsv");
         write_file(&peptides, PEPTIDES_CSV)?;
@@ -1403,7 +1404,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // the same data (Python reads either via `pd.read_parquet`/`pd.read_csv`).
     #[test]
     fn peptides2protein_parquet_input_matches_csv_input() -> TestResult<()> {
-        let dir = temp_dir("parquet-parity")?;
+        let (_tempdir, dir) = temp_dir("parquet-parity")?;
         let csv_path = dir.join("peptides.csv");
         let parquet_path = dir.join("peptides.parquet");
         write_file(&csv_path, PEPTIDES_CSV)?;
@@ -1434,7 +1435,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // --topn_n 2`; N moved into the method name, the arithmetic did not change)
     #[test]
     fn peptides2protein_topn_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("topn")?;
+        let (_tempdir, dir) = temp_dir("topn")?;
         let peptides = dir.join("peptides.csv");
         let output = dir.join("out.tsv");
         write_file(&peptides, PEPTIDES_CSV)?;
@@ -1455,7 +1456,7 @@ P3,THIDPECK,S1,A,900.0\n";
     //   ... quantify peptides2protein --quant-method top3 -p peptides.csv -o out.tsv
     #[test]
     fn peptides2protein_top3_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("top3")?;
+        let (_tempdir, dir) = temp_dir("top3")?;
         let peptides = dir.join("peptides.csv");
         let output = dir.join("out.tsv");
         write_file(&peptides, PEPTIDES_CSV)?;
@@ -1475,7 +1476,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // Adds IntensityNorm = Intensity / sum(Intensity per SampleID).
     #[test]
     fn peptides2protein_sum_normalize_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("sumnorm")?;
+        let (_tempdir, dir) = temp_dir("sumnorm")?;
         let peptides = dir.join("peptides.csv");
         let output = dir.join("out.tsv");
         write_file(&peptides, PEPTIDES_CSV)?;
@@ -1506,7 +1507,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // Columns: ProteinName SampleID Condition NormIntensity PiBAQ FamilyId EvidenceLevel FamilySize.
     #[test]
     fn peptides2protein_pibaq_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("pibaq")?;
+        let (_tempdir, dir) = temp_dir("pibaq")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1554,7 +1555,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // 1 promotes P2 medium -> high; raising it to 4 demotes P1 high -> medium.
     #[test]
     fn peptides2protein_pibaq_high_anchor_threshold_only_changes_evidence() -> TestResult<()> {
-        let dir = temp_dir("pibaq-threshold")?;
+        let (_tempdir, dir) = temp_dir("pibaq-threshold")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         write_file(&peptides, PEPTIDES_CSV)?;
@@ -1584,7 +1585,7 @@ P3,THIDPECK,S1,A,900.0\n";
 
     #[test]
     fn peptides2protein_pibaq_requires_fasta() -> TestResult<()> {
-        let dir = temp_dir("nofasta")?;
+        let (_tempdir, dir) = temp_dir("nofasta")?;
         let peptides = dir.join("peptides.csv");
         let output = dir.join("out.tsv");
         write_file(&peptides, PEPTIDES_CSV)?;
@@ -1604,7 +1605,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // TPA = NormIntensity / MolecularWeight.
     #[test]
     fn peptides2protein_pibaq_tpa_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("pibaqtpa")?;
+        let (_tempdir, dir) = temp_dir("pibaqtpa")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1628,7 +1629,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // PiBAQLog = 10 + log10(PiBAQNorm); PiBAQPpb = PiBAQNorm * 1e8.
     #[test]
     fn peptides2protein_pibaq_normalize_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("pibaqnorm")?;
+        let (_tempdir, dir) = temp_dir("pibaqnorm")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1670,7 +1671,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // dna_mass = 2 * 3.22e9 * 617.96 / 6.02214129e23.
     #[test]
     fn peptides2protein_pibaq_ruler_matches_python_oracle() -> TestResult<()> {
-        let dir = temp_dir("pibaqruler")?;
+        let (_tempdir, dir) = temp_dir("pibaqruler")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1695,7 +1696,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // the command must fail with an InvalidInput, not silently skip the ruler.
     #[test]
     fn peptides2protein_ruler_requires_tpa() -> TestResult<()> {
-        let dir = temp_dir("rulernotpa")?;
+        let (_tempdir, dir) = temp_dir("rulernotpa")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1716,7 +1717,7 @@ P3,THIDPECK,S1,A,900.0\n";
     // ruler is not requested -- the organism is always resolved on the piBAQ path.
     #[test]
     fn peptides2protein_rejects_unknown_organism() -> TestResult<()> {
-        let dir = temp_dir("badorg")?;
+        let (_tempdir, dir) = temp_dir("badorg")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");
@@ -1737,7 +1738,7 @@ P3,THIDPECK,S1,A,900.0\n";
     fn peptides2protein_runs_lfq_methods() -> TestResult<()> {
         // maxlfq and directlfq both roll the peptide matrix up via the DirectLFQ
         // estimator and write the long-format `Intensity` table.
-        let dir = temp_dir("lfq")?;
+        let (_tempdir, dir) = temp_dir("lfq")?;
         let peptides = dir.join("peptides.csv");
         write_file(&peptides, PEPTIDES_CSV)?;
 
@@ -1769,7 +1770,7 @@ P3,THIDPECK,S1,A,900.0\n";
     fn peptides2protein_kernel_leaves_verbose_qc_to_python_wrapper() -> TestResult<()> {
         // The native kernel writes the data table; the Python console wrapper renders
         // the optional PDF from those exact values after a successful native run.
-        let dir = temp_dir("verbose")?;
+        let (_tempdir, dir) = temp_dir("verbose")?;
         let peptides = dir.join("peptides.csv");
         let fasta = dir.join("proteome.fasta");
         let output = dir.join("out.tsv");

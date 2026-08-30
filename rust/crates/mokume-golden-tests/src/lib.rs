@@ -36,7 +36,7 @@ fn features2proteins_sum_matches_synthetic_golden_matrix() -> Result<(), Box<dyn
 
 #[test]
 fn features2proteins_preserves_biological_replicate_peptide_rows() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("bioreplicate.features.parquet");
     let sdrf = root.join("bioreplicate.sdrf.tsv");
@@ -89,7 +89,7 @@ fn features2proteins_preserves_biological_replicate_peptide_rows() -> Result<(),
 #[test]
 fn features2proteins_exports_python_compatible_peptide_intermediates() -> Result<(), Box<dyn Error>>
 {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("export.features.parquet");
     let sdrf = root.join("export.sdrf.tsv");
@@ -173,7 +173,7 @@ fn features2proteins_exports_python_compatible_peptide_intermediates() -> Result
 // agree, quantile normalization equalizes the two samples' values.
 #[test]
 fn features2proteins_export_peptides_applies_dataset_normalization() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("qn.features.parquet");
     let sdrf = root.join("qn.sdrf.tsv");
@@ -319,7 +319,7 @@ fn default_peptides_config(parquet: PathBuf, output: PathBuf) -> FeatureToPeptid
 
 #[test]
 fn features2peptides_disabled_filter_pipeline_is_inert() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.disabled-filter.features.parquet");
     write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
@@ -480,7 +480,7 @@ fn assert_peptide_condition(
 //   P1,PEPTIDEAK,run1,1,run1,250.0
 #[test]
 fn features2peptides_skip_normalization_matches_python_oracle() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.skip.features.parquet");
     let output = root.join("peptides.skip.csv");
@@ -537,7 +537,7 @@ fn features2peptides_skip_normalization_matches_python_oracle() -> Result<(), Bo
 // The reference channel TMT126 also survives as its own (lower-intensity) cell,
 // scaled by the same per-techreplicate factor.
 fn run_tmt_irs_global(stat: IrsStat) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("tmt.irs.features.parquet");
     let output = root.join("tmt.irs.csv");
@@ -638,7 +638,7 @@ fn features2peptides_tmt_irs_global_mean_matches_python_oracle() -> Result<(), B
 // Each surviving (peptide, run) cell is the sample channel (max over channels),
 // scaled by the per-techreplicate factor below.
 fn run_tmt_irs_multimix(scope: IrsScope) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("tmt.irs.multimix.features.parquet");
     let output = root.join("tmt.irs.multimix.csv");
@@ -758,7 +758,7 @@ fn features2peptides_tmt_irs_two_stage_median_matches_python_oracle() -> Result<
 #[test]
 fn features2peptides_tmt_irs_by_mixture_uses_sdrf_source_name_mixture() -> Result<(), Box<dyn Error>>
 {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("tmt.irs.sdrfmix.features.parquet");
     let sdrf = root.join("tmt.irs.sdrfmix.sdrf.tsv");
@@ -869,7 +869,7 @@ fn features2peptides_tmt_irs_by_mixture_uses_sdrf_source_name_mixture() -> Resul
 #[test]
 fn features2peptides_filter_pipeline_applies_per_row_before_unique_gate(
 ) -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.filter.features.parquet");
     let output = root.join("peptides.filter.csv");
@@ -930,7 +930,7 @@ fn features2peptides_filter_pipeline_applies_per_row_before_unique_gate(
 #[test]
 fn features2peptides_exclude_sequence_patterns_drops_matching_canonicals(
 ) -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.exclude.features.parquet");
     write_qpx_rows(
@@ -996,7 +996,7 @@ fn features2peptides_exclude_sequence_patterns_drops_matching_canonicals(
 // (only_py=0/only_rs=0) is verified on PXD003539 (quantile [0.05, 0.95]).
 #[test]
 fn features2peptides_quantile_filter_drops_out_of_bound_rows() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.quantile.features.parquet");
     let output = root.join("peptides.quantile.csv");
@@ -1073,7 +1073,7 @@ fn features2peptides_quantile_filter_drops_out_of_bound_rows() -> Result<(), Box
 // default "run1" vs "Empty"), which the cell helpers ignore.
 #[test]
 fn features2peptides_cv_filter_drops_high_cv_canonical() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.cv.features.parquet");
     let output = root.join("peptides.cv.csv");
@@ -1130,7 +1130,7 @@ fn features2peptides_cv_filter_drops_high_cv_canonical() -> Result<(), Box<dyn E
 // f32-input/f64-sum behaviour shared by every peptide cell).
 #[test]
 fn features2peptides_cv_filter_float32_boundary_keep() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.cvboundary.features.parquet");
     let output = root.join("peptides.cvboundary.csv");
@@ -1201,7 +1201,7 @@ fn features2peptides_cv_filter_float32_boundary_keep() -> Result<(), Box<dyn Err
 // exactly these two rows, cell-identical on the parity key.
 #[test]
 fn features2peptides_cv_then_quantile_share_buffer() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.cvquant.features.parquet");
     let output = root.join("peptides.cvquant.csv");
@@ -1254,7 +1254,7 @@ fn features2peptides_cv_then_quantile_share_buffer() -> Result<(), Box<dyn Error
 // PEPTIDECK/PEPTIDEDK).
 #[test]
 fn features2peptides_cv_precedes_charge_filter() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.cvcharge.features.parquet");
     let output = root.join("peptides.cvcharge.csv");
@@ -1311,7 +1311,7 @@ fn features2peptides_cv_precedes_charge_filter() -> Result<(), Box<dyn Error>> {
 // rejecting every feature at ingest and emits the same header-only table.
 #[test]
 fn features2peptides_replicate_agreement_empties_output() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.rep.features.parquet");
     let output = root.join("peptides.rep.csv");
@@ -1364,7 +1364,7 @@ fn features2peptides_replicate_agreement_empties_output() -> Result<(), Box<dyn 
 // on PXD003539 (Rust previously zeroed the threshold and kept the singletons).
 #[test]
 fn features2peptides_keep_shared_still_applies_min_peptide_filter() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.keepshared.features.parquet");
     let output = root.join("peptides.keepshared.csv");
@@ -1423,7 +1423,7 @@ fn features2peptides_keep_shared_still_applies_min_peptide_filter() -> Result<()
 // test fails on the pre-fix binary.
 #[test]
 fn features2peptides_keep_shared_median_includes_shared_peptides() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.keepshared.median.features.parquet");
     let output = root.join("peptides.keepshared.median.csv");
@@ -1524,7 +1524,7 @@ fn razor_filter_pipeline(handling: &str) -> PreprocessingFilterConfig {
 
 #[test]
 fn features2peptides_razor_remove_drops_only_the_razor_peptide() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.razor.features.parquet");
     write_qpx_rows(
@@ -1723,7 +1723,7 @@ fn razor_winner(table: &CsvTable, peptide: &str) -> Result<String, Box<dyn Error
 
 #[test]
 fn features2peptides_razor_assign_to_top_flips_winner_on_row_order() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
 
     // Fixture A: PY row precedes PX -> the tied razor goes to PY.
@@ -1783,7 +1783,7 @@ fn features2peptides_razor_assign_to_top_flips_winner_on_row_order() -> Result<(
 #[test]
 fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
 ) -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.unsupported.features.parquet");
     write_qpx_rows(&parquet, &synthetic_peptide_rows())?;
@@ -1824,7 +1824,7 @@ fn features2peptides_rejects_unavailable_search_score_and_coverage_filters(
 
 #[test]
 fn features2peptides_applies_named_score_direction() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
 
     for (case, higher_better) in [("higher", true), ("lower", false)] {
@@ -1859,7 +1859,7 @@ fn features2peptides_applies_named_score_direction() -> Result<(), Box<dyn Error
 
 #[test]
 fn features2peptides_applies_explicit_qpx_fdr_filters() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.fdr.features.parquet");
     write_qpx_rows(
@@ -1915,7 +1915,7 @@ fn features2peptides_applies_explicit_qpx_fdr_filters() -> Result<(), Box<dyn Er
 
 #[test]
 fn features2peptides_fdr_request_rejects_unpopulated_qvalue() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.missing-fdr.features.parquet");
     let output = root.join("peptides.missing-fdr.csv");
@@ -1946,7 +1946,7 @@ fn features2peptides_fdr_request_rejects_unpopulated_qvalue() -> Result<(), Box<
 // two, so min_features=3 keeps only run1.
 #[test]
 fn features2peptides_run_qc_drops_low_feature_samples() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.runqc.features.parquet");
     let output = root.join("peptides.runqc.csv");
@@ -2000,7 +2000,7 @@ fn features2peptides_run_qc_drops_low_feature_samples() -> Result<(), Box<dyn Er
 // did not leak into aggregation (10 rather than 10 + 9).
 #[test]
 fn features2peptides_missing_rate_drops_incomplete_technical_run() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.missing-rate.features.parquet");
     let sdrf = root.join("peptides.missing-rate.sdrf.tsv");
@@ -2046,7 +2046,7 @@ fn features2peptides_missing_rate_drops_incomplete_technical_run() -> Result<(),
 // Default and custom contaminant patterns (`ProteinFilterConfig`).
 #[test]
 fn features2peptides_default_patterns_drop_contam_prefix() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.contam.features.parquet");
     write_qpx_rows(
@@ -2111,7 +2111,7 @@ fn features2peptides_default_patterns_drop_contam_prefix() -> Result<(), Box<dyn
 //   P1,PEPTIDEAK,run1  -> log2(250) = 7.965784...
 #[test]
 fn features2peptides_log2_matches_python_oracle() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.log2.features.parquet");
     let output = root.join("peptides.log2.csv");
@@ -2138,7 +2138,7 @@ fn features2peptides_log2_matches_python_oracle() -> Result<(), Box<dyn Error>> 
 // extra P2 row is the non-vacuity proof: the baseline (4 rows) lacks it.
 #[test]
 fn features2peptides_keep_shared_peptides_matches_python_oracle() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.keep.features.parquet");
     let output = root.join("peptides.keep.csv");
@@ -2164,7 +2164,7 @@ fn features2peptides_keep_shared_peptides_matches_python_oracle() -> Result<(), 
 // Dictionary(Int8, Utf8), BioReplicate = Int32, NormIntensity = Float32.
 #[test]
 fn features2peptides_save_parquet_matches_csv_and_python_schema() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.sp.features.parquet");
     let output = root.join("peptides.sp.csv");
@@ -2231,7 +2231,7 @@ fn features2peptides_save_parquet_matches_csv_and_python_schema() -> Result<(), 
 // proof against the sample-level (6-column) path.
 #[test]
 fn features2peptides_aggregation_level_run_matches_python_oracle() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.aggrun.features.parquet");
     let output = root.join("peptides.aggrun.csv");
@@ -2276,7 +2276,7 @@ fn features2peptides_aggregation_level_run_matches_python_oracle() -> Result<(),
 // run-level WriteParquetTask schema, and its values equal the run-level CSV.
 #[test]
 fn features2peptides_aggregation_run_parquet_matches_python_schema() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.aggrunpq.features.parquet");
     let output = root.join("peptides.aggrunpq.csv");
@@ -2323,7 +2323,7 @@ fn features2peptides_rejects_dataset_level_sample_normalization() -> Result<(), 
         "loess",
         "hierarchical",
     ] {
-        let root = temp_root()?;
+        let (_tempdir, root) = temp_root()?;
         create_dir_all(&root)?;
         let parquet = root.join(format!("peptides.noop.{method}.features.parquet"));
         let output = root.join(format!("peptides.unsupported.{method}.csv"));
@@ -2356,7 +2356,7 @@ fn features2peptides_rejects_dataset_level_sample_normalization() -> Result<(), 
 // is non-vacuous: a no-op normalization would fail every cell.
 #[test]
 fn features2peptides_normalization_matches_python_oracle() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.norm.features.parquet");
     let output = root.join("peptides.norm.csv");
@@ -2384,7 +2384,7 @@ fn features2peptides_normalization_matches_python_oracle() -> Result<(), Box<dyn
 // (no P9 rows; baseline without --remove_ids keeps two extra P9 rows).
 #[test]
 fn features2peptides_remove_ids_matches_python_oracle() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.rid.features.parquet");
     let output = root.join("peptides.rid.csv");
@@ -2434,7 +2434,7 @@ fn features2peptides_remove_ids_matches_python_oracle() -> Result<(), Box<dyn Er
 #[test]
 fn features2peptides_remove_low_frequency_peptides_matches_python_oracle(
 ) -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("peptides.lf.features.parquet");
     let output = root.join("peptides.lf.csv");
@@ -2493,7 +2493,7 @@ fn features2peptides_remove_low_frequency_peptides_matches_python_oracle(
 
 #[test]
 fn features2proteins_sums_charge_states_per_sample() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("charge_states.features.parquet");
     let sdrf = root.join("charge_states.sdrf.tsv");
@@ -2519,7 +2519,7 @@ fn features2proteins_sums_charge_states_per_sample() -> Result<(), Box<dyn Error
 
 #[test]
 fn features2proteins_min_unique_counts_canonical_peptides() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("canonical_min_unique.features.parquet");
     let sdrf = root.join("canonical_min_unique.sdrf.tsv");
@@ -2751,7 +2751,7 @@ fn features2proteins_maxlfq_maxes_contextual_ions_then_sums_canonical_peptides(
     // sample-2 is exactly 2x. The delegated DirectLFQ solver normalizes that 2x
     // sample shift to [190, 190], while the forced built-in solver returns the
     // unnormalized canonical totals [190, 380].
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("maxlfq_dup.features.parquet");
     let sdrf = root.join("maxlfq_dup.sdrf.tsv");
@@ -2805,7 +2805,7 @@ fn features2proteins_maxlfq_maxes_contextual_ions_then_sums_canonical_peptides(
 #[test]
 fn features2proteins_delegated_maxlfq_is_invariant_to_feature_order() -> Result<(), Box<dyn Error>>
 {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let forward_parquet = root.join("maxlfq_order.forward.features.parquet");
     let reversed_parquet = root.join("maxlfq_order.reversed.features.parquet");
@@ -2860,7 +2860,7 @@ fn features2proteins_delegated_maxlfq_is_invariant_to_feature_order() -> Result<
 
 #[test]
 fn features2proteins_directlfq_exports_python_shaped_ion_matrix() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("directlfq_ions.features.parquet");
     let sdrf = root.join("directlfq_ions.sdrf.tsv");
@@ -3422,7 +3422,7 @@ fn run_synthetic_quantification(
     quantification: QuantMethod,
     topn_peptides: usize,
 ) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("features.parquet");
     let sdrf = root.join("test.sdrf.tsv");
@@ -3506,7 +3506,7 @@ fn run_canonical_collapse_quantification(
     quantification: QuantMethod,
     topn_peptides: usize,
 ) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("canonical_collapse.features.parquet");
     let sdrf = root.join("canonical_collapse.sdrf.tsv");
@@ -3542,7 +3542,7 @@ fn run_canonical_collapse_quantification(
 }
 
 fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("ratio.features.parquet");
     let sdrf = root.join("ratio.sdrf.tsv");
@@ -3609,7 +3609,7 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_ratio_multiplex_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("ratio_mplex.features.parquet");
     let sdrf = root.join("ratio_mplex.sdrf.tsv");
@@ -3647,7 +3647,7 @@ fn run_ratio_multiplex_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_family_pibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("family.features.parquet");
     let sdrf = root.join("family.sdrf.tsv");
@@ -3719,7 +3719,7 @@ fn run_family_pibaq_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_lfq_quantification(quantification: QuantMethod) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("lfq.features.parquet");
     let sdrf = root.join("lfq.sdrf.tsv");
@@ -3747,7 +3747,7 @@ fn run_lfq_quantification(quantification: QuantMethod) -> Result<CsvTable, Box<d
 /// fallback (Python's directlfq-not-installed path) instead of delegating to the
 /// DirectLFQ-aligned solver.
 fn run_lfq_quantification_builtin_maxlfq() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("lfq_builtin.features.parquet");
     let sdrf = root.join("lfq_builtin.sdrf.tsv");
@@ -3773,7 +3773,7 @@ fn run_lfq_quantification_builtin_maxlfq() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_global_median_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("global_median.features.parquet");
     let sdrf = root.join("global_median.sdrf.tsv");
@@ -3798,7 +3798,7 @@ fn run_global_median_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_condition_median_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("condition_median.features.parquet");
     let sdrf = root.join("condition_median.sdrf.tsv");
@@ -3827,7 +3827,7 @@ fn run_condition_median_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_quantile_sample_normalization() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("quantile_sample.features.parquet");
     let sdrf = root.join("quantile_sample.sdrf.tsv");
@@ -3864,7 +3864,7 @@ fn run_quantile_sample_normalization() -> Result<CsvTable, Box<dyn Error>> {
 /// onto the mean reference distribution [55, 210, 465]. One peptide per protein
 /// (min_unique=1) so each protein value equals its peptide's normalized value.
 fn run_quantile_cross_distribution_normalization() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("quantile_cross.features.parquet");
     let sdrf = root.join("quantile_cross.sdrf.tsv");
@@ -3898,7 +3898,7 @@ fn run_loess_cross_distribution_normalization() -> Result<CsvTable, Box<dyn Erro
 }
 
 fn run_named_cross_distribution_normalization(method: &str) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join(format!("{method}_cross.features.parquet"));
     let sdrf = root.join(format!("{method}_cross.sdrf.tsv"));
@@ -3929,7 +3929,7 @@ fn run_named_cross_distribution_normalization(method: &str) -> Result<CsvTable, 
 /// against the per-row median with no minimum-row guard, so all 6 rows
 /// participate and the real algorithm runs. Oracle from the Python reference.
 fn run_rlr_cross_distribution_normalization() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("rlr_cross.features.parquet");
     let sdrf = root.join("rlr_cross.sdrf.tsv");
@@ -3991,7 +3991,7 @@ const SAMPLE_NORM_SAMPLE2: [f32; 12] = [
 /// Run the 12-row two-sample matrix through `features_to_proteins` with the named
 /// sample normalization method, returning the protein matrix.
 fn run_sample_normalization_real_path(method: &str) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join(format!("{method}_real.features.parquet"));
     let sdrf = root.join(format!("{method}_real.sdrf.tsv"));
@@ -4097,7 +4097,7 @@ const CENTER_PEPTIDE_Z3_SAMPLE2: [[f32; 2]; 12] = [
 /// with the named centering method (`mediancenter` / `meancenter`), returning the
 /// protein matrix.
 fn run_center_real_path(method: &str) -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join(format!("{method}_center.features.parquet"));
     let sdrf = root.join(format!("{method}_center.sdrf.tsv"));
@@ -4198,7 +4198,7 @@ const HIER_ORDER_SAMPLE_D: [f32; 12] = [
 /// run-d, run-b so `SampleId` insertion order is [c, a, d, b] while names sort
 /// [a, b, c, d].
 fn run_hier_order_real_path() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("hier_order.features.parquet");
     let sdrf = root.join("hier_order.sdrf.tsv");
@@ -4235,7 +4235,7 @@ fn run_hier_order_real_path() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_run_median_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("run_median.features.parquet");
     let sdrf = root.join("run_median.sdrf.tsv");
@@ -4260,7 +4260,7 @@ fn run_run_median_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_run_max_min_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("run_max_min.features.parquet");
     let sdrf = root.join("run_max_min.sdrf.tsv");
@@ -4285,7 +4285,7 @@ fn run_run_max_min_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_irs_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("irs.features.parquet");
     let sdrf = root.join("irs.sdrf.tsv");
@@ -4319,7 +4319,7 @@ fn run_irs_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_normalization_proteins_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("normalization_proteins.features.parquet");
     let sdrf = root.join("normalization_proteins.sdrf.tsv");
@@ -4395,7 +4395,7 @@ fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> Featu
 }
 
 fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("coverage.features.parquet");
     let sdrf = root.join("coverage.sdrf.tsv");
@@ -4460,7 +4460,7 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
 }
 
 fn run_mindet_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("mindet.features.parquet");
     let sdrf = root.join("mindet.sdrf.tsv");
@@ -4497,7 +4497,7 @@ fn run_imputation_quantification<F>(method: &str, configure: F) -> Result<CsvTab
 where
     F: FnOnce(&mut FeatureToProteinsConfig),
 {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join(format!("{method}.features.parquet"));
     let sdrf = root.join(format!("{method}.sdrf.tsv"));
@@ -4541,7 +4541,7 @@ where
 }
 
 fn run_seqknn_quantification() -> Result<CsvTable, Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("seqknn.features.parquet");
     let sdrf = root.join("seqknn.sdrf.tsv");
@@ -5584,12 +5584,13 @@ fn assert_float_close(actual: &str, expected: &str) {
     );
 }
 
-fn temp_root() -> Result<PathBuf, Box<dyn Error>> {
+fn temp_root() -> Result<(tempfile::TempDir, PathBuf), Box<dyn Error>> {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    Ok(tempfile::Builder::new()
+    let directory = tempfile::Builder::new()
         .prefix(&format!("mokume-golden-{timestamp}-"))
-        .tempdir()?
-        .keep())
+        .tempdir()?;
+    let path = directory.path().to_path_buf();
+    Ok((directory, path))
 }
 
 // impSeq: with only 2 complete rows (P30, P33) < max(2, p=3), the algorithm
@@ -5839,7 +5840,7 @@ const DEQMS_FALLBACK_SCA_T: &[(&str, f64)] = &[
 
 #[test]
 fn features2proteins_deqms_wires_per_protein_peptide_counts() -> Result<(), Box<dyn Error>> {
-    let root = temp_root()?;
+    let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("deqms.features.parquet");
     let sdrf = root.join("deqms.sdrf.tsv");

@@ -464,9 +464,8 @@ mod tests {
     fn sample_mode_schema_and_values_match_python() -> TestResult {
         let dir = tempfile::Builder::new()
             .prefix(&format!("mokume_pq_sample_{}_", std::process::id()))
-            .tempdir()?
-            .keep();
-        let path = dir.join("pep.parquet");
+            .tempdir()?;
+        let path = dir.path().join("pep.parquet");
         let rows = vec![PeptideParquetRow {
             protein_name: "P1".to_owned(),
             peptide_canonical: "APEPTIDECK".to_owned(),
@@ -510,9 +509,8 @@ mod tests {
     fn run_mode_appends_run_and_tech_replicate_before_intensity() -> TestResult {
         let dir = tempfile::Builder::new()
             .prefix(&format!("mokume_pq_run_{}_", std::process::id()))
-            .tempdir()?
-            .keep();
-        let path = dir.join("pep_run.parquet");
+            .tempdir()?;
+        let path = dir.path().join("pep_run.parquet");
         let rows = vec![PeptideParquetRow {
             protein_name: "P1".to_owned(),
             peptide_canonical: "PEPTIDEAK".to_owned(),
@@ -549,9 +547,8 @@ mod tests {
     fn read_peptide_parquet_round_trips_sample_mode() -> TestResult {
         let dir = tempfile::Builder::new()
             .prefix(&format!("mokume_pq_read_{}_", std::process::id()))
-            .tempdir()?
-            .keep();
-        let path = dir.join("read_sample.parquet");
+            .tempdir()?;
+        let path = dir.path().join("read_sample.parquet");
         let rows = vec![
             PeptideParquetRow {
                 protein_name: "P1".to_owned(),
@@ -605,9 +602,8 @@ mod tests {
     fn read_peptide_parquet_ignores_run_level_extra_columns() -> TestResult {
         let dir = tempfile::Builder::new()
             .prefix(&format!("mokume_pq_read_run_{}_", std::process::id()))
-            .tempdir()?
-            .keep();
-        let path = dir.join("read_run.parquet");
+            .tempdir()?;
+        let path = dir.path().join("read_run.parquet");
         let rows = vec![PeptideParquetRow {
             protein_name: "P1".to_owned(),
             peptide_canonical: "PEPTIDEAK".to_owned(),
@@ -642,9 +638,8 @@ mod tests {
 
         let dir = tempfile::Builder::new()
             .prefix(&format!("mokume_pq_read_bad_{}_", std::process::id()))
-            .tempdir()?
-            .keep();
-        let path = dir.join("read_bad.parquet");
+            .tempdir()?;
+        let path = dir.path().join("read_bad.parquet");
 
         // A parquet without `SampleID` must be rejected, not silently mis-read.
         let schema = Arc::new(Schema::new(vec![

@@ -1357,12 +1357,13 @@ mod tests {
         ("P6", 8.954019282642177),
     ];
 
-    fn temp_dir(tag: &str) -> TestResult<std::path::PathBuf> {
+    fn temp_dir(tag: &str) -> TestResult<(tempfile::TempDir, std::path::PathBuf)> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        Ok(tempfile::Builder::new()
+        let directory = tempfile::Builder::new()
             .prefix(&format!("mokume-de-{tag}-{nanos}-"))
-            .tempdir()?
-            .keep())
+            .tempdir()?;
+        let path = directory.path().to_path_buf();
+        Ok((directory, path))
     }
 
     /// Build a `ProteinMatrix` directly from the raw fixture, with every protein
@@ -1404,7 +1405,7 @@ mod tests {
 
     #[test]
     fn standard_de_csv_quotes_identifiers_and_dynamic_headers() -> TestResult<()> {
-        let dir = temp_dir("quoted-standard-csv")?;
+        let (_tempdir, dir) = temp_dir("quoted-standard-csv")?;
         let output = dir.join("quoted.csv");
         let matrix = fixture_matrix()?;
         let rows = vec![DeResult {
@@ -1827,7 +1828,7 @@ mod tests {
     // relative 1e-6.
     #[test]
     fn de_dispatcher_matches_python_limma_oracle() -> TestResult<()> {
-        let dir = temp_dir("oracle")?;
+        let (_tempdir, dir) = temp_dir("oracle")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -1927,7 +1928,7 @@ mod tests {
     // covered cell-by-cell in mokume-stats' deqms unit tests with explicit counts.
     #[test]
     fn de_dispatcher_deqms_falls_back_to_limma_oracle() -> TestResult<()> {
-        let dir = temp_dir("oracle-deqms")?;
+        let (_tempdir, dir) = temp_dir("oracle-deqms")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -1991,7 +1992,7 @@ mod tests {
     // grids/rank_abs) are covered cell-by-cell in mokume-stats' rots unit tests.
     #[test]
     fn de_dispatcher_rots_wires_dstat_column_and_log2fc() -> TestResult<()> {
-        let dir = temp_dir("oracle-rots")?;
+        let (_tempdir, dir) = temp_dir("oracle-rots")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -2057,7 +2058,7 @@ mod tests {
     // limrots unit tests.
     #[test]
     fn de_dispatcher_limrots_wires_tstat_column_and_log2fc() -> TestResult<()> {
-        let dir = temp_dir("oracle-limrots")?;
+        let (_tempdir, dir) = temp_dir("oracle-limrots")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -2234,7 +2235,8 @@ mod tests {
 
     #[test]
     fn ensemble_members_are_canonicalized_once() -> TestResult<()> {
-        let output = temp_dir("ensemble-member-canonicalization")?.join("de.csv");
+        let (_tempdir, dir) = temp_dir("ensemble-member-canonicalization")?;
+        let output = dir.join("de.csv");
         let mut config = ensemble_config(&output, &[" LimMA ", "DeQMS"]);
         config.ensemble_min_k = 1;
 
@@ -2260,7 +2262,7 @@ mod tests {
     //   (5) median log2FC is finite for every protein both members reported.
     #[test]
     fn de_dispatcher_ensemble_with_rng_member_is_valid() -> TestResult<()> {
-        let dir = temp_dir("oracle-ensemble-rng")?;
+        let (_tempdir, dir) = temp_dir("oracle-ensemble-rng")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
