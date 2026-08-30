@@ -1,0 +1,132 @@
+"""Typed control-plane records used by Mokume Studio."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def utc_now() -> str:
+    """Return an ISO-8601 timestamp in UTC."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+class RunStatus(str, Enum):
+    """Persisted lifecycle states for one compute worker."""
+
+    QUEUED = "queued"
+    STARTING = "starting"
+    RUNNING = "running"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+
+TERMINAL_RUN_STATUSES = {
+    RunStatus.CANCELLED,
+    RunStatus.SUCCEEDED,
+    RunStatus.FAILED,
+    RunStatus.INTERRUPTED,
+}
+
+
+class FolderEntry(BaseModel):
+    """One directory returned by the authenticated folder browser."""
+
+    name: str
+    path: str
+
+
+class ProjectRecord(BaseModel):
+    """The currently selected local project root."""
+
+    id: str
+    root: str
+    opened_at: str
+
+
+class OpenProjectRequest(BaseModel):
+    """Request to select a readable local directory as the project root."""
+
+    path: str = Field(min_length=1)
+
+
+class RunRequest(BaseModel):
+    """Canonical user-approved native command request."""
+
+    argv: list[str] = Field(min_length=1)
+    output_directory: str = "results/mokume"
+
+    @field_validator("argv")
+    @classmethod
+    def reject_empty_arguments(cls, value: list[str]) -> list[str]:
+        """Reject arguments that cannot safely cross process boundaries."""
+        if any(not item or "\x00" in item for item in value):
+            raise ValueError("argv entries must be non-empty and contain no NUL bytes")
+        return value
+
+
+class JobSpec(BaseModel):
+    """Immutable specification reloaded and verified by a worker process."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    project_root: str
+    run_directory: str
+    argv: list[str]
+    parameters: dict[str, Any]
+    approved_hash: str
+    created_at: str
+    threads: int = 24
+
+    @property
+    def path(self) -> Path:
+        """Return the immutable run directory as a path."""
+        return Path(self.run_directory)
+
+
+class RunRecord(BaseModel):
+    """Persisted summary of one Studio run."""
+
+    id: str
+    project_id: str
+    status: RunStatus
+    command: str
+    argv: list[str]
+    approved_hash: str
+    run_directory: str
+    worker_pid: int | None = None
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+
+
+class ArtifactRecord(BaseModel):
+    """A worker output addressable through an opaque artifact ID."""
+
+    id: str
+    run_id: str
+    path: str
+    media_type: str
+    size: int
+    sha256: str
+
+
+class ValidationRequest(BaseModel):
+    """A parse-only command validation request."""
+
+    argv: list[str] = Field(min_length=1)
+
+
+class ApprovalDecision(BaseModel):
+    """Server-validated response to a pending AI or compute approval."""
+
+    approved: bool

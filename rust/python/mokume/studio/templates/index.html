@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mokume Studio</title>
+    <link rel="stylesheet" href="/static/studio.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand" aria-label="Mokume Studio">
+        <span class="brand-mark">M</span>
+        <span>Mokume Studio</span>
+      </div>
+      <nav class="menu-bar" aria-label="Application menu">
+        <button id="file-menu-trigger" class="menu-trigger" data-menu="file-menu" aria-haspopup="menu" aria-controls="file-menu" aria-expanded="false">File</button>
+        <button id="run-menu-trigger" class="menu-trigger" data-menu="run-menu" aria-haspopup="menu" aria-controls="run-menu" aria-expanded="false">Run</button>
+        <button id="view-menu-trigger" class="menu-trigger" data-menu="view-menu" aria-haspopup="menu" aria-controls="view-menu" aria-expanded="false">View</button>
+        <button id="help-menu-trigger" class="menu-trigger" data-menu="help-menu" aria-haspopup="menu" aria-controls="help-menu" aria-expanded="false">Help</button>
+      </nav>
+      <div class="project-chip" id="project-chip">No project</div>
+      <div class="run-indicator"><span class="status-dot idle"></span><span id="run-state">Idle</span></div>
+    </header>
+
+    <div class="menu-popover" id="file-menu" role="menu" aria-labelledby="file-menu-trigger">
+      <button role="menuitem" data-action="open-folder">Open Folder <kbd>Ctrl+O</kbd></button>
+      <button role="menuitem" data-action="close-project">Close Project</button>
+      <div class="menu-separator" role="separator"></div>
+      <button role="menuitem" data-action="exit-studio">Exit Mokume Studio</button>
+    </div>
+    <div class="menu-popover" id="run-menu" role="menu" aria-labelledby="run-menu-trigger">
+      <button role="menuitem" data-action="validate-command">Validate Parameters <kbd>Ctrl+Shift+Enter</kbd></button>
+      <button role="menuitem" data-action="run-command">Run Analysis <kbd>Ctrl+Enter</kbd></button>
+      <button role="menuitem" data-action="cancel-run">Cancel Run <kbd>Ctrl+.</kbd></button>
+      <div class="menu-separator" role="separator"></div>
+      <button role="menuitem" data-action="show-runs">Run History</button>
+    </div>
+    <div class="menu-popover" id="view-menu" role="menu" aria-labelledby="view-menu-trigger">
+      <button role="menuitem" data-action="toggle-sidebar">Toggle Sidebar <kbd>Alt+1</kbd></button>
+      <button role="menuitem" data-action="toggle-bottom">Toggle Bottom Panel <kbd>Alt+2</kbd></button>
+      <button role="menuitem" data-action="show-artifacts">Artifacts <kbd>Alt+3</kbd></button>
+      <div class="menu-separator" role="separator"></div>
+      <button role="menuitem" data-action="fullscreen">Full Screen <kbd>F11</kbd></button>
+    </div>
+    <div class="menu-popover" id="help-menu" role="menu" aria-labelledby="help-menu-trigger">
+      <a role="menuitem" href="https://github.com/bigbio/mokume/tree/dev/docs" target="_blank" rel="noreferrer">Documentation</a>
+      <button role="menuitem" data-action="shortcuts">Keyboard Shortcuts <kbd>Ctrl+/</kbd></button>
+      <button role="menuitem" data-action="system-status">System Status</button>
+      <div class="menu-separator" role="separator"></div>
+      <button role="menuitem" data-action="about">About Mokume</button>
+    </div>
+
+    <main class="workspace">
+      <aside class="sidebar" id="sidebar">
+        <div class="panel-title"><span>DATA</span><button class="icon-button" data-action="open-folder" title="Open folder">＋</button></div>
+        <div id="project-files" class="file-tree empty-state">Open a folder to browse input files.</div>
+      </aside>
+
+      <section class="workflow-panel">
+        <div class="welcome" id="welcome">
+          <div class="welcome-mark">M</div>
+          <h1>Start a Mokume analysis</h1>
+          <p>Open a local folder, inspect its proteomics data, then configure a reproducible workflow.</p>
+          <button class="primary" data-action="open-folder">Open Folder</button>
+          <p class="privacy-note">Files stay on this computer. Inputs are opened read-only.</p>
+        </div>
+        <div id="workflow" class="hidden">
+          <div class="panel-heading">
+            <div><span class="eyebrow">WORKFLOW</span><h2>Configure analysis</h2></div>
+            <div class="heading-actions">
+              <button data-action="validate-command">Validate</button>
+              <button class="primary" data-action="run-command">Run</button>
+            </div>
+          </div>
+          <div id="command-catalog" class="command-catalog"></div>
+          <div id="command-form" class="command-form empty-state">Select a workflow to configure its parameters.</div>
+        </div>
+      </section>
+
+      <aside class="assistant-panel" id="assistant-panel">
+        <div class="panel-title"><span>ASSISTANT</span><span class="badge">Optional</span></div>
+        <div class="assistant-empty">
+          <div class="assistant-orb"></div>
+          <h3>AI is not configured</h3>
+          <p>All data inspection and compute workflows remain available without a model provider.</p>
+          <button data-action="assistant-settings">Configure provider</button>
+        </div>
+      </aside>
+    </main>
+
+    <section class="bottom-panel" id="bottom-panel">
+      <div class="bottom-tabs">
+        <button class="active" data-bottom-tab="runs">Runs</button>
+        <button data-bottom-tab="logs">Logs</button>
+        <button data-bottom-tab="artifacts">Artifacts</button>
+        <button class="collapse-button" data-action="toggle-bottom">⌄</button>
+      </div>
+      <div class="bottom-content" id="bottom-content">No runs yet.</div>
+    </section>
+
+    <dialog id="folder-dialog" class="dialog folder-dialog">
+      <div class="dialog-header"><div><span class="eyebrow">PROJECT</span><h2>Open Folder</h2></div><button class="icon-button" data-close-dialog>×</button></div>
+      <div class="folder-path"><button id="folder-parent" title="Parent folder">↑</button><input id="folder-current" aria-label="Current folder" readonly></div>
+      <div class="folder-list" id="folder-list"></div>
+      <div class="dialog-actions"><button data-close-dialog>Cancel</button><button class="primary" id="select-folder">Open this folder</button></div>
+    </dialog>
+
+    <dialog id="info-dialog" class="dialog info-dialog">
+      <div class="dialog-header"><h2 id="info-title">Mokume Studio</h2><button class="icon-button" data-close-dialog>×</button></div>
+      <div id="info-content" class="info-content"></div>
+      <div class="dialog-actions"><button class="primary" data-close-dialog>Done</button></div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/static/studio.js"></script>
+  </body>
+</html>
