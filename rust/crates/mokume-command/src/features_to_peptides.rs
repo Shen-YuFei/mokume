@@ -225,6 +225,10 @@ fn validate_irs_options(args: &Features2PeptidesArgs) -> mokume_core::Result<()>
     Ok(())
 }
 
+pub(crate) fn validate_options(args: &Features2PeptidesArgs) -> mokume_core::Result<()> {
+    validate_irs_options(args)
+}
+
 fn resolve_irs_config(
     args: &Features2PeptidesArgs,
 ) -> mokume_core::Result<Option<IrsChannelConfig>> {

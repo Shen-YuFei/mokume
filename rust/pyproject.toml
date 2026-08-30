@@ -80,6 +80,19 @@ plugin = [
     "scikit-learn",
     "statsmodels>=0.13",
 ]
+studio = [
+    "numpy",
+    "pandas",
+    "PyYAML>=6.0",
+    "scipy",
+    "scikit-learn",
+    "statsmodels>=0.13",
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "platformdirs",
+    "pydantic-ai-slim[ag-ui,openai,anthropic]",
+]
 all = [
     "numpy",
     "pandas",
@@ -94,9 +107,14 @@ all = [
     "umap-learn",
     "combat",
     "pyarrow",
-    "PyYAML",
+    "PyYAML>=6.0",
     "mcp>=1.23,<2",
     "statsmodels>=0.13",
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "platformdirs",
+    "pydantic-ai-slim[ag-ui,openai,anthropic]",
 ]
 
 [tool.maturin]

@@ -20,6 +20,7 @@ reverse booleans. For full control, call :func:`run` with explicit argv.
 
 import importlib
 import importlib.metadata
+import json
 import sys
 import warnings
 
@@ -29,6 +30,8 @@ _differential_expression = getattr(_NATIVE_EXTENSION, "differential_expression")
 _impute_matrix = getattr(_NATIVE_EXTENSION, "impute_matrix")
 normalize_matrix = getattr(_NATIVE_EXTENSION, "normalize_matrix")
 _native_run = getattr(_NATIVE_EXTENSION, "run")
+_native_command_schema = getattr(_NATIVE_EXTENSION, "command_schema")
+_native_validate_args = getattr(_NATIVE_EXTENSION, "validate_args")
 version = getattr(_NATIVE_EXTENSION, "version")
 _pibaq_digest_request = getattr(_NATIVE_EXTENSION, "pibaq_digest_request")
 _native_run_cli = getattr(_NATIVE_EXTENSION, "run_cli")
@@ -55,6 +58,8 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "version",
     "run",
+    "command_schema",
+    "validate_args",
     "features2peptides",
     "features2proteins",
     "peptides2protein",
@@ -177,6 +182,16 @@ def run(args):
                     "--output", "y.csv"])
     """
     _run(list(args))
+
+
+def command_schema():
+    """Return the machine-readable native CLI contract derived from Clap."""
+    return json.loads(_native_command_schema())
+
+
+def validate_args(args):
+    """Parse native command arguments without executing any computation."""
+    _native_validate_args(list(args))
 
 
 def protease_catalog():

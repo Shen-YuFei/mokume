@@ -41,6 +41,22 @@ fn run(args: Vec<String>) -> PyResult<()> {
     mokume_command::run_from_args(argv).map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
+/// Return the machine-readable Rust command schema as JSON.
+#[pyfunction]
+fn command_schema() -> PyResult<String> {
+    mokume_command::command_schema_json()
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+/// Parse an argv vector without dispatching or executing the command.
+#[pyfunction]
+fn validate_args(args: Vec<String>) -> PyResult<()> {
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push("mokume".to_string());
+    argv.extend(args);
+    mokume_command::validate_args(argv).map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
 /// Return the runtime pyOpenMS digestion request for a parsed piBAQ command.
 #[pyfunction]
 fn pibaq_digest_request(args: Vec<String>) -> Option<(String, String, usize, usize, usize)> {
@@ -586,12 +602,19 @@ fn register_pibaq_functions(module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// The `mokume._mokume` extension module.
-#[pymodule]
-fn _mokume(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn register_command_functions(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(version, module)?)?;
     module.add_function(wrap_pyfunction!(run, module)?)?;
     module.add_function(wrap_pyfunction!(run_cli, module)?)?;
+    module.add_function(wrap_pyfunction!(command_schema, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_args, module)?)?;
+    Ok(())
+}
+
+/// The `mokume._mokume` extension module.
+#[pymodule]
+fn _mokume(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_command_functions(module)?;
     register_pibaq_functions(module)?;
     module.add_function(wrap_pyfunction!(normalize_matrix_py, module)?)?;
     module.add_function(wrap_pyfunction!(impute_matrix_py, module)?)?;

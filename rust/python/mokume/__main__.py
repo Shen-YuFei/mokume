@@ -8,6 +8,7 @@ from mokume.core.logger import configure_logging
 
 
 _PERIPHERY_COMMANDS = {
+    ("studio",): ("studio", None),
     ("tissuemap",): ("tissuemap", None),
     ("interactive-report",): ("interactive_report", None),
     ("plot", "tsne"): ("visualize", None),
@@ -23,6 +24,7 @@ Usage:
 Commands:
   quantify            Build peptide and protein expression matrices
   correct-batches     Correct batch effects in protein quantification output
+  studio              Launch the local web studio [requires: mokume[studio]]
   tissuemap           Build a tissue proteome atlas [requires: mokume[tissuemap]]
   plot                Render PCA, t-SNE, and DE plots [requires: mokume[plotting]]
   interactive-report  Build a DE HTML report [requires: mokume[reports]]

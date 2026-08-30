@@ -182,6 +182,12 @@ fn validate_pibaq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<(
     Ok(())
 }
 
+pub(crate) fn validate_options(args: &Peptides2ProteinArgs) -> Result<()> {
+    let method = args.quant_method.to_ascii_lowercase();
+    validate_lfq_options(args, &method)?;
+    validate_pibaq_options(args, &method)
+}
+
 /// DirectLFQ default `num_samples_quadratic` (the global-stage knob). The Python
 /// `DirectLFQQuantification` uses directlfq's default of 50; `peptides2protein`
 /// does not expose it, so it is fixed here too.
