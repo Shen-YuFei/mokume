@@ -43,6 +43,7 @@ pip install "mokume[plotting]"   # matplotlib / seaborn figures
 pip install "mokume[reports]"    # interactive plotly QC reports
 pip install "mokume[tissuemap]"  # tissue-map + AnnData export
 pip install "mokume[analysis]"   # QC/comparison reports + missforest
+pip install "mokume[studio]"     # local web workbench with optional AI
 pip install "mokume[plugin]"     # local MCP service for the Mokume Plugin
 pip install "mokume[all]"        # everything above
 ```
@@ -52,6 +53,11 @@ Mokume and the optional Plugin/MCP workflow require Python 3.10 or newer.
 The wheel also installs the `mokume` console command. A conda/mamba environment
 is provided in `environment.yaml`. See
 [Installation](../docs/installation.md) for details.
+
+Launch the optional local workbench with `mokume studio` or bind an exact port
+with `mokume studio --port 9000`, then choose **File > Open Folder** in the
+browser. Native workflows do not require an AI provider. See the
+[Mokume Studio guide](../docs/user-guide/studio.md).
 
 ## Quick start
 
@@ -147,9 +153,11 @@ computation work. For the full design and maintenance policy, see
 [Architecture](../docs/architecture.md) and
 [Maintenance scope](../docs/maintenance-scope.md).
 
-Agentic method recommendation is an installable plugin over this wheel. Its
-bundled local MCP configuration calls deterministic profile, policy, and
-evaluation services; the agent host owns the model and credentials. See the
+The optional Studio and installable Mokume Plugin both call the same
+deterministic profile, policy, and evaluation services. Studio can use a
+session-local provider after explicit configuration; the Plugin instead uses
+the model and credentials owned by Codex or Claude Code. See the
+[Mokume Studio guide](../docs/user-guide/studio.md) and
 [Mokume Plugin guide](../docs/user-guide/agentic-plugin.md).
 
 ## Example

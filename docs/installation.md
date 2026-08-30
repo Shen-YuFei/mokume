@@ -82,6 +82,19 @@ mokume uses optional dependencies for the periphery commands:
     — plus `mokume.qc_report`
     and `mokume.workflow_comparison` (numpy, pandas, scipy, scikit-learn).
 
+=== "Mokume Studio"
+
+    ```bash
+    pip install "mokume[studio]"
+    mokume studio
+    ```
+
+    Installs the loopback-only local web workbench, including workflow forms,
+    run history, logs, artifacts, and the optional Ask/Plan assistant. Native
+    workflows do not require an AI provider. Studio accepts `--port PORT` and
+    `--no-browser`; choose the project with **File > Open Folder** after launch.
+    Continue with the [Studio guide](user-guide/studio.md).
+
 === "Mokume Plugin"
 
     ```bash
@@ -100,7 +113,7 @@ mokume uses optional dependencies for the periphery commands:
     pip install mokume[all]
     ```
 
-    Installs all optional periphery and local MCP dependencies.
+    Installs all optional periphery, Studio, and local MCP dependencies.
 
 ## From Source
 
@@ -140,7 +153,7 @@ pip install ./rust
 ## Requirements
 
 - Python >= 3.10 for the Rust-backed ``mokume`` distribution, ``mokume-py``,
-  and the optional ``mokume[plugin]`` Plugin/MCP workflow
+  and the optional Studio and Plugin/MCP workflows
 - Both distributions declare pyOpenMS as a base dependency. In the default
   Rust-backed wheel, piBAQ reads every protease registered by the installed
   runtime, digests the FASTA in Python, and passes the complete theoretical-

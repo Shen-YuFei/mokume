@@ -20,9 +20,9 @@ behind the four commands above.
 
 It does **not** govern the Python periphery — the Python pipeline API and its
 shared post-processing, plotting, reporting, and
-[TissueMap](periphery/tissuemap.md). Agentic recommendation is an installable
-plugin over the default Rust-backed wheel, not a third computation
-implementation. See
+[TissueMap](periphery/tissuemap.md). Mokume Studio and the installable Mokume
+Plugin are interfaces over the default Rust-backed wheel, not additional
+computation implementations. See
 [Architecture](architecture.md) and [Rust Wheel](rust-wheel.md).
 
 ## The rule

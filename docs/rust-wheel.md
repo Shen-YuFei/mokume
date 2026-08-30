@@ -66,6 +66,7 @@ executable.
 | piBAQ QC report PDF | `mokume.peptides2protein_qc` |
 | `missforest` imputation | `mokume.impute(method=...)` |
 | piBAQ with any installed pyOpenMS protease | `mokume.peptides2protein(...)` or `mokume.features2proteins(...)` |
+| Local browser workbench | `pip install "mokume[studio]"`, then `mokume studio` |
 | Agent-host method recommendation | Mokume Plugin + local MCP service |
 
 The unified wheel CLI groups three Rust-native quantification commands under
@@ -75,6 +76,11 @@ optional Python periphery commands. The latter are still part of the installed
 Rust. The hidden `mokume mcp serve` service belongs to the `plugin` extra and
 is started by the installed Mokume Plugin; users do not configure or launch it
 manually.
+
+Studio is a separate optional interface in the same wheel. Its visible
+`mokume studio` command starts a loopback-only server and browser workbench; it
+does not create another computation implementation. See the
+[Mokume Studio guide](user-guide/studio.md).
 
 ## The kwargs &rarr; flags rule
 

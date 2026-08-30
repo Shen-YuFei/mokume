@@ -102,20 +102,26 @@ run at the default `debug` level (or explicit `info`) logs the pyOpenMS version,
 canonical enzyme, catalog SHA-256, length bounds, and missed-cleavage count so
 the runtime digest is traceable.
 
-## The Mokume Plugin
+## Mokume Studio and the Mokume Plugin
+
+`mokume[studio]` adds a loopback-only web workbench to the default Rust-backed
+wheel. Its typed workflow forms call the same native command catalog as the CLI.
+The optional Ask/Plan assistant uses session-local provider credentials and the
+same deterministic profile, policy, and evaluation service described below;
+Plan cannot start computation until the exact parameters are approved.
 
 Agentic recommendation is shipped as an installable host plugin under
-`plugins/mokume/`, not as a model client inside either computation package. The
-bundle contains one skill, automatic local MCP configuration, and a committed
-knowledge snapshot. Its MCP process is provided by `mokume[plugin]` in the
-default Rust-backed wheel.
+`plugins/mokume/`. The bundle contains one skill, automatic local MCP
+configuration, and a committed knowledge snapshot. Its MCP process is provided
+by `mokume[plugin]` in the default Rust-backed wheel. Unlike Studio, this path
+uses the model and credentials already owned by Codex or Claude Code.
 
 The host model reads the skill and calls `mokume.inspect_dataset` with a
 two-condition contrast to receive a contrast-scoped typed profile, deterministic
 diagnostics, compatible evidence, and a bounded generation contract. It returns
 an exact recommendation block to
 `mokume.evaluate_recommendation`, which validates the block before running the
-Rust matrix APIs. Mokume never receives the host's model API key.
+Rust matrix APIs. Mokume never receives the Plugin host's model API key.
 
 The scientific boundary is explicit: ground-truth datasets may be ranked with
 Score A; unlabelled datasets remain exploratory and have no winner. The plugin

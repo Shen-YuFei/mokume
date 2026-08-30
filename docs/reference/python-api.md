@@ -246,7 +246,8 @@ pip install "mokume[plotting]"     # + t-SNE / DE plots / piBAQ QC report
 pip install "mokume[tissuemap]"    # + per-dataset tissue proteome analysis
 pip install "mokume[reports]"      # + interactive HTML DE report
 pip install "mokume[analysis]"     # + QC / comparison reports + missforest
-pip install "mokume[plugin]"      # + local MCP service for the Mokume Plugin
+pip install "mokume[studio]"       # + local browser workbench and optional AI
+pip install "mokume[plugin]"       # + local MCP service for the Mokume Plugin
 pip install "mokume[all]"          # everything
 ```
 
@@ -259,12 +260,14 @@ pip install "mokume[all]"          # everything
 | `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
+| `mokume studio` | `studio` | FastAPI, Uvicorn, Jinja, Pydantic AI, AG-UI, analysis dependencies |
 | Mokume Plugin MCP service | `plugin` | mcp, numpy, pandas, scipy, scikit-learn, statsmodels, PyYAML |
 
 The exact dependency lists are declared in `pyproject.toml`. DirectLFQ and ComBat
 are native Rust, while pyOpenMS-backed digestion is part of the base piBAQ path.
 
-!!! note "Agentic reasoning belongs to the host"
-    The wheel provides deterministic MCP tools, not a model client. Install and
-    enable the [Mokume Plugin](../user-guide/agentic-plugin.md); the host starts
-    the local service and keeps ownership of its model credentials.
+!!! note "Choose the AI interface"
+    [Mokume Studio](../user-guide/studio.md) can use a provider configured for
+    the current local server process. The
+    [Mokume Plugin](../user-guide/agentic-plugin.md) instead uses the model and
+    credentials already owned by its agent host.

@@ -8,6 +8,14 @@ commands route to the periphery. The separately maintained pure-Python
 distribution is documented under
 [Python API (package)](../reference/python-api-package.md).
 
+## Local Studio
+
+Install `mokume[studio]` and run `mokume studio` for a loopback-only browser
+workbench with project browsing, typed native workflows, run history, logs, and
+artifacts. Its Assistant is optional: Ask is read-only, while Plan must stop for
+approval of the final parameters before starting computation. See the
+[Mokume Studio guide](studio.md).
+
 ## Rust-native compute commands
 
 The console command exposes exactly four compute subcommands. Each can also be
@@ -37,6 +45,7 @@ The same `mokume` console command exposes `tsne-visualization`, `tissuemap`,
 periphery of the wheel: plotting and reporting consume kernel tables, while
 TissueMap derives its downstream atlas from QPX data. Install the relevant
 extra (`plotting`, `reports`, `tissuemap`, or `all`) to pull in their libraries.
-The top-level Python wrappers remain available for scripts. The agentic workflow
-is provided by the [Mokume Plugin](agentic-plugin.md), whose hidden local MCP
-service uses the default Rust-backed wheel.
+The top-level Python wrappers remain available for scripts. Evidence-bound
+method selection is available through [Mokume Studio](studio.md) or the
+[Mokume Plugin](agentic-plugin.md); both use the default Rust-backed wheel and
+the same deterministic recommendation service.

@@ -19,6 +19,12 @@ For evidence-bound method recommendation, install `mokume[plugin]` and the
 [Mokume Plugin](user-guide/agentic-plugin.md). Do not configure a second MCP
 entry or put a model API key in Mokume.
 
+For the optional local browser workbench, install `mokume[studio]`, run
+`mokume studio`, and choose **File > Open Folder**. Native workflows work
+without AI. If you configure the Studio Assistant, its provider key remains in
+the current local server process and Plan mode requires final parameter
+approval. See the [Mokume Studio guide](user-guide/studio.md).
+
 ## One-Step Pipeline (Recommended)
 
 The `features2proteins` command handles everything: loading, filtering, normalization, and quantification.

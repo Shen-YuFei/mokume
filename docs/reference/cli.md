@@ -401,6 +401,23 @@ options; for those, use `features2proteins --batch-correction`.
 
 ---
 
+## studio
+
+Launch the optional loopback-only web workbench:
+
+```bash
+pip install "mokume[studio]"
+mokume studio [--port PORT] [--no-browser]
+```
+
+Without `--port`, Studio uses the first free local port starting at 8765.
+An explicit port is strict, and the command fails if it is unavailable.
+`--no-browser` prints the one-time launch URL without opening it. The command
+does not accept a project path; select one with **File > Open Folder**. See the
+[Mokume Studio guide](../user-guide/studio.md).
+
+---
+
 ## Periphery commands
 
 These commands ship in the `pip install mokume` wheel but remain implemented in

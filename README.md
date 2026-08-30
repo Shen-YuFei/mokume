@@ -76,6 +76,7 @@ pip install "mokume[plotting]"   # t-SNE, DE plots, and piBAQ QC
 pip install "mokume[reports]"    # interactive HTML reports
 pip install "mokume[tissuemap]"  # tissue-specificity pipeline
 pip install "mokume[analysis]"   # QC, workflow comparison, and missforest
+pip install "mokume[studio]"     # local web workbench with optional AI
 pip install "mokume[plugin]"     # local MCP service used by the Mokume Plugin
 pip install "mokume[all]"        # all Python periphery dependencies
 ```
@@ -84,6 +85,17 @@ The installed `mokume --help` lists both the Rust-native compute commands and
 the optional wheel workflows. After installing the matching extra, run
 `mokume plot tsne`, `mokume tissuemap`, `mokume plot de`, or
 `mokume interactive-report` directly.
+
+To use the local workbench, install the Studio extra and start it without a
+project-path argument. Choose **File > Open Folder** in the browser:
+
+```bash
+mokume studio
+# or bind an exact local port
+mokume studio --port 9000
+```
+
+See the [Mokume Studio guide](docs/user-guide/studio.md).
 
 Mokume and the optional Plugin/MCP workflow require Python 3.10 or newer.
 
@@ -266,10 +278,17 @@ not overwrite it. See [docs/concepts/differential-expression.md](docs/concepts/d
 
 ## AI-assisted method selection
 
+Mokume Studio provides an optional local browser interface. Native workflows
+work without AI; after a provider is configured, Ask remains read-only and Plan
+pauses for approval of the exact parameters before computation. Provider keys
+remain in the running Studio process. See the
+[Mokume Studio guide](docs/user-guide/studio.md).
+
 The installable Mokume Plugin lets Codex or Claude Code inspect a protein
 matrix, bind traceable benchmark evidence, and evaluate bounded normalization,
 imputation, and differential-expression candidates through the Rust kernel.
-The host owns the model and credentials; Mokume contains no BYOK model client.
+For this Plugin path, the host owns the model and credentials; Mokume receives
+no host API key.
 Its bundled local MCP server starts automatically when the plugin is enabled.
 With ground truth it ranks the five Score A metrics by benchmark mean rank;
 without ground truth it reports
@@ -327,8 +346,8 @@ mokume is **Rust-first**:
 
 This scope covers the **computation implementations only**. The Python pipeline
 API and its shared post-processing, plotting, reporting, and TissueMap remain
-periphery. Agentic recommendation is maintained as a plugin over the default
-Rust-backed wheel, rather than as a second computation backend. Full policy:
+periphery. Mokume Studio and the installable Mokume Plugin are interfaces over
+the default Rust-backed wheel, rather than additional computation backends. Full policy:
 [docs/maintenance-scope.md](docs/maintenance-scope.md).
 
 ## Example: a tissue proteome atlas
@@ -402,7 +421,7 @@ FDR < 0.05 and |log2FC| > 0.5. The complete, copy-pasteable workflow is in
 - [Documentation home](docs/index.md)
 - [Quick start](docs/quickstart.md)
 - [Installation](docs/installation.md)
-- [User guide](docs/user-guide/) · [Method concepts](docs/concepts/)
+- [Mokume Studio](docs/user-guide/studio.md) · [User guide](docs/user-guide/) · [Method concepts](docs/concepts/)
 - [Rust wheel](docs/rust-wheel.md) · [Architecture](docs/architecture.md) · [Maintenance scope](docs/maintenance-scope.md)
 - [Benchmarks](benchmarks/)
 
