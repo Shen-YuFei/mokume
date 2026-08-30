@@ -85,7 +85,7 @@ mokume uses optional dependencies for the periphery commands:
 === "Mokume Plugin"
 
     ```bash
-    pip install "mokume[agentic]"
+    pip install "mokume[plugin]"
     ```
 
     This optional MCP workflow requires Python 3.10 or newer.
@@ -140,7 +140,7 @@ pip install ./rust
 ## Requirements
 
 - Python >= 3.10 for the Rust-backed ``mokume`` distribution, ``mokume-py``,
-  and the optional ``mokume[agentic]`` Plugin/MCP workflow
+  and the optional ``mokume[plugin]`` Plugin/MCP workflow
 - Both distributions declare pyOpenMS as a base dependency. In the default
   Rust-backed wheel, piBAQ reads every protease registered by the installed
   runtime, digests the FASTA in Python, and passes the complete theoretical-
@@ -155,5 +155,5 @@ pip install ./rust
 - A method stays in the Python periphery because the kernel cannot reproduce
   it cross-language: the `missforest` imputer (`mokume.impute`), in the
   `analysis` extra
-- The Mokume Plugin requires an agent host plus `mokume[agentic]`; its bundled
+- The Mokume Plugin requires an agent host plus `mokume[plugin]`; its bundled
   stdio MCP server is started by the host and calls the local Rust-backed wheel

@@ -18,7 +18,7 @@ def create_server(knowledge: str):
         request_type = getattr(service_module, "EvaluationRequest")
     except ImportError as exc:
         raise RuntimeError(
-            "Mokume MCP dependencies are missing; install 'mokume[agentic]'"
+            "Mokume MCP dependencies are missing; install 'mokume[plugin]'"
         ) from exc
 
     server = fast_mcp("mokume")

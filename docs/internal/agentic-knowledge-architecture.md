@@ -30,7 +30,7 @@ The Codex adapter resolves its relative working directory against the installed
 plugin root. The Claude Code adapter passes the absolute installation path via
 `${CLAUDE_PLUGIN_ROOT}`. The MCP service itself lives in
 `rust/python/mokume/agentic/` and is installed by the default
-`mokume[agentic]` wheel. There is no custom provider configuration, Mokume API
+`mokume[plugin]` wheel. There is no custom provider configuration, Mokume API
 key, internal model call, or standalone agentic TUI.
 
 ## Knowledge and provenance

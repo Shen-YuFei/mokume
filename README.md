@@ -76,7 +76,7 @@ pip install "mokume[plotting]"   # t-SNE, DE plots, and piBAQ QC
 pip install "mokume[reports]"    # interactive HTML reports
 pip install "mokume[tissuemap]"  # tissue-specificity pipeline
 pip install "mokume[analysis]"   # QC, workflow comparison, and missforest
-pip install "mokume[agentic]"    # local MCP service used by the Mokume Plugin
+pip install "mokume[plugin]"     # local MCP service used by the Mokume Plugin
 pip install "mokume[all]"        # all Python periphery dependencies
 ```
 

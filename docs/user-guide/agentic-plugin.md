@@ -15,7 +15,7 @@ server manually.
 Install the default Rust-backed distribution with the plugin dependencies:
 
 ```bash
-pip install "mokume[agentic]"
+pip install "mokume[plugin]"
 ```
 
 The Rust-backed `mokume` distribution and this optional MCP workflow require

@@ -43,7 +43,7 @@ pip install "mokume[plotting]"   # matplotlib / seaborn figures
 pip install "mokume[reports]"    # interactive plotly QC reports
 pip install "mokume[tissuemap]"  # tissue-map + AnnData export
 pip install "mokume[analysis]"   # QC/comparison reports + missforest
-pip install "mokume[agentic]"    # local MCP service for the Mokume Plugin
+pip install "mokume[plugin]"     # local MCP service for the Mokume Plugin
 pip install "mokume[all]"        # everything above
 ```
 

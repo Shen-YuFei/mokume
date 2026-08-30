@@ -71,7 +71,7 @@ jobs:
             printf 'Expected exactly one Mokume wheel, found %d\n' "${#wheels[@]}" >&2
             exit 1
           fi
-          pip install "${wheels[0]}[plotting,agentic]" pyarrow
+          pip install "${wheels[0]}[plotting,plugin]" pyarrow
 
       - name: Run the Python test suite
         run: pytest tests -v --tb=short

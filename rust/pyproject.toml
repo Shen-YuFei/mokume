@@ -71,7 +71,7 @@ tissuemap = [
 # QC / workflow-comparison reports + the pure-Python method fallback
 # (missforest imputation) the Rust kernel does not reproduce.
 analysis = ["numpy", "pandas", "scipy", "scikit-learn"]
-agentic = [
+plugin = [
     "mcp>=1.23,<2",
     "numpy",
     "pandas",

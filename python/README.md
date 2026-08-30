@@ -1118,7 +1118,7 @@ pipeline.run()
 ## Agentic Recommendation
 
 Agentic recommendation is provided by the installable Mokume Plugin over the
-default Rust-backed `mokume[agentic]` distribution. The plugin host owns the
+default Rust-backed `mokume[plugin]` distribution. The plugin host owns the
 model and credentials. See the
 [Mokume Plugin guide](../docs/user-guide/agentic-plugin.md).
 

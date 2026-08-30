@@ -107,7 +107,7 @@ the runtime digest is traceable.
 Agentic recommendation is shipped as an installable host plugin under
 `plugins/mokume/`, not as a model client inside either computation package. The
 bundle contains one skill, automatic local MCP configuration, and a committed
-knowledge snapshot. Its MCP process is provided by `mokume[agentic]` in the
+knowledge snapshot. Its MCP process is provided by `mokume[plugin]` in the
 default Rust-backed wheel.
 
 The host model reads the skill and calls `mokume.inspect_dataset` with a

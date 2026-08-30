@@ -15,7 +15,7 @@ For most workflows, `pip install mokume` is enough. The wheel runs the Rust
 compute kernel in-process and installs the `mokume` console command. If you want
 the TissueMap periphery command, install `mokume[tissuemap]` first.
 
-For evidence-bound method recommendation, install `mokume[agentic]` and the
+For evidence-bound method recommendation, install `mokume[plugin]` and the
 [Mokume Plugin](user-guide/agentic-plugin.md). Do not configure a second MCP
 entry or put a model API key in Mokume.
 
