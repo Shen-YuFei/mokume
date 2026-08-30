@@ -21,11 +21,7 @@ from mokume.agentic.service import (
     RecommendationService,
 )
 from mokume.studio.catalog import command_paths, validate_and_canonicalize
-from mokume.studio.jobs import (
-    path_snapshot,
-    validate_spec_integrity,
-    write_terminal_files,
-)
+from mokume.studio.jobs import path_snapshot, validate_spec_integrity
 from mokume.studio.models import (
     ArtifactRecord,
     JobOperation,
@@ -36,6 +32,7 @@ from mokume.studio.models import (
 from mokume.studio.paths import ProjectPaths
 from mokume.studio.science import DatasetStatus, ScienceStore
 from mokume.studio.state import StateStore
+from mokume.studio.terminal import TerminalResult, finalize_run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -73,8 +70,12 @@ def execute(store: StateStore, spec: JobSpec) -> int:
         started_at,
         knowledge_fingerprint,
     )
-    store.update_run(spec.run_id, RunStatus.SUCCEEDED)
-    write_terminal_files(store, spec.run_id, spec.run_directory, provenance)
+    finalize_run(
+        store,
+        spec.run_id,
+        spec.run_directory,
+        TerminalResult(RunStatus.SUCCEEDED, provenance=provenance),
+    )
     return 0
 
 
@@ -187,17 +188,26 @@ def main(argv: list[str] | None = None) -> int:
         _fail_inspection(store, spec, "worker interrupted")
         record = store.get_run(args.run_id)
         if record and record.status is not RunStatus.CANCELLING:
-            store.update_run(
-                args.run_id, RunStatus.INTERRUPTED, error="worker interrupted"
+            finalize_run(
+                store,
+                args.run_id,
+                record.run_directory,
+                TerminalResult(
+                    RunStatus.INTERRUPTED,
+                    error="worker interrupted",
+                ),
             )
-            write_terminal_files(store, args.run_id, record.run_directory)
         return 130
     except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         _fail_inspection(store, spec, str(exc))
-        store.update_run(args.run_id, RunStatus.FAILED, error=str(exc))
         record = store.get_run(args.run_id)
         if record:
-            write_terminal_files(store, args.run_id, record.run_directory)
+            finalize_run(
+                store,
+                args.run_id,
+                record.run_directory,
+                TerminalResult(RunStatus.FAILED, error=str(exc)),
+            )
         print(f"Mokume Studio worker failed: {exc}", file=sys.stderr)
         return 1
 

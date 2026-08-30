@@ -30,6 +30,11 @@ from mokume.studio.models import (
 )
 from mokume.studio.paths import PathAccessError, ProjectPaths
 from mokume.studio.state import StateStore
+from mokume.studio.terminal import (
+    TerminalResult,
+    finalize_run,
+    write_terminal_files,
+)
 
 
 class JobConflictError(RuntimeError):
@@ -82,85 +87,6 @@ def path_snapshot(path: Path, guard: ProjectPaths) -> dict:
                 )
         snapshot["entries"] = entries
     return snapshot
-
-
-def write_json_atomic(path: Path, payload: dict) -> None:
-    """Replace one JSON record without exposing a partially written file."""
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    temporary.replace(path)
-
-
-def write_terminal_files(
-    store: StateStore,
-    run_id: str,
-    run_directory: str | Path,
-    provenance: dict | None = None,
-) -> None:
-    """Persist terminal run, provenance, and event records for every outcome."""
-    record = store.get_run(run_id)
-    if record is None or record.status not in TERMINAL_RUN_STATUSES:
-        return
-    directory = Path(run_directory)
-    if not directory.is_dir():
-        return
-    parameters = _read_parameters(directory)
-    provenance_path = directory / "provenance.json"
-    if provenance is not None:
-        write_json_atomic(provenance_path, provenance)
-    elif not provenance_path.exists():
-        write_json_atomic(
-            provenance_path,
-            _fallback_provenance(store, record, parameters),
-        )
-    write_json_atomic(directory / "run.json", record.model_dump(mode="json"))
-    _write_events_atomic(directory / "events.jsonl", store.events_after(run_id))
-
-
-def _read_parameters(run_directory: Path) -> dict:
-    try:
-        return json.loads(
-            (run_directory / "parameters.json").read_text(encoding="utf-8")
-        )
-    except (OSError, ValueError):
-        return {}
-
-
-def _fallback_provenance(
-    store: StateStore, record: RunRecord, parameters: dict
-) -> dict:
-    return {
-        "run_id": record.id,
-        "command": record.argv,
-        "operation": parameters.get("operation", JobOperation.NATIVE.value),
-        "contract_version": 1,
-        "knowledge_fingerprint": parameters.get("payload", {}).get(
-            "knowledge_fingerprint"
-        ),
-        "approved_hash": record.approved_hash,
-        "parameters": parameters,
-        "threads": parameters.get("threads", 24),
-        "inputs": parameters.get("input_snapshots", []),
-        "artifacts": [
-            artifact.model_dump(mode="json")
-            for artifact in store.list_artifacts(record.id)
-        ],
-        "plan_source": parameters.get("payload", {}).get("plan_source"),
-        "started_at": record.started_at,
-        "finished_at": record.finished_at,
-        "status": record.status.value,
-        "error": record.error,
-    }
-
-
-def _write_events_atomic(path: Path, events: list[dict]) -> None:
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    with temporary.open("w", encoding="utf-8") as stream:
-        for event in events:
-            stream.write(json.dumps(event, sort_keys=True) + "\n")
-    temporary.replace(path)
 
 
 def _run_worker_process(
@@ -346,8 +272,12 @@ class JobManager:
             if worker_pid is None:
                 raise RuntimeError("worker process did not expose a process ID")
         except (OSError, RuntimeError) as exc:
-            self.store.update_run(spec.run_id, RunStatus.FAILED, error=str(exc))
-            write_terminal_files(self.store, spec.run_id, spec.run_directory)
+            finalize_run(
+                self.store,
+                spec.run_id,
+                spec.run_directory,
+                TerminalResult(RunStatus.FAILED, error=str(exc)),
+            )
             raise
         self._processes[spec.run_id] = process
         self.store.set_worker_pid(spec.run_id, worker_pid)
@@ -381,10 +311,12 @@ class JobManager:
         if not self._wait(process, 3):
             process.kill()
             process.join(timeout=3)
-        self.store.update_run(run_id, RunStatus.CANCELLED)
-        terminal = self.store.get_run(run_id) or record
-        write_terminal_files(self.store, run_id, terminal.run_directory)
-        return terminal
+        return finalize_run(
+            self.store,
+            run_id,
+            record.run_directory,
+            TerminalResult(RunStatus.CANCELLED),
+        )
 
     def shutdown(self) -> None:
         """Cancel every active process during a graceful Studio shutdown."""
@@ -394,14 +326,17 @@ class JobManager:
             try:
                 self.cancel(run_id)
             except (KeyError, OSError, RuntimeError):
-                self.store.update_run(
-                    run_id,
-                    RunStatus.INTERRUPTED,
-                    error="Studio stopped during cancellation",
-                )
                 record = self.store.get_run(run_id)
                 if record:
-                    write_terminal_files(self.store, run_id, record.run_directory)
+                    finalize_run(
+                        self.store,
+                        run_id,
+                        record.run_directory,
+                        TerminalResult(
+                            RunStatus.INTERRUPTED,
+                            error="Studio stopped during cancellation",
+                        ),
+                    )
 
     def _write_spec(self, spec: JobSpec) -> None:
         path = self.store.spec_directory / f"{spec.run_id}.json"
@@ -450,11 +385,7 @@ class JobManager:
             time.sleep(0.2)
         self._append_log_events(run_id, offsets)
         record = self.store.get_run(run_id)
-        if record and record.status not in {
-            RunStatus.CANCELLED,
-            RunStatus.SUCCEEDED,
-            RunStatus.FAILED,
-        }:
+        if record and record.status not in TERMINAL_RUN_STATUSES:
             status = (
                 RunStatus.CANCELLED
                 if record.status is RunStatus.CANCELLING
@@ -465,7 +396,12 @@ class JobManager:
                 if status is RunStatus.CANCELLED
                 else f"worker exited with code {process.exitcode}"
             )
-            self.store.update_run(run_id, status, error=error)
+            finalize_run(
+                self.store,
+                run_id,
+                run_directory,
+                TerminalResult(status, error=error),
+            )
         write_terminal_files(self.store, run_id, run_directory)
         with self._lock:
             self._processes.pop(run_id, None)

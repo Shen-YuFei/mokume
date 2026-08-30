@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from platformdirs import user_state_dir
@@ -15,6 +16,7 @@ from mokume.studio.models import (
     ProjectRecord,
     RunRecord,
     RunStatus,
+    TERMINAL_RUN_STATUSES,
     utc_now,
 )
 
@@ -208,6 +210,56 @@ class StateStore:
             payload["error"] = error
         self.add_event(run_id, "status", payload)
 
+    def finalize_run(
+        self,
+        run_id: str,
+        status: RunStatus,
+        publish: Callable[[RunRecord, list[dict]], None],
+        *,
+        error: str | None = None,
+    ) -> RunRecord:
+        """Publish terminal files before exposing the terminal database state."""
+        if status not in TERMINAL_RUN_STATUSES:
+            raise ValueError(f"run status is not terminal: {status.value}")
+        payload = {"status": status.value, **({"error": error} if error else {})}
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if current is None:
+                raise KeyError(run_id)
+            current_record = self._decode_run(current)
+            if current_record.status in TERMINAL_RUN_STATUSES:
+                return current_record
+            connection.execute(
+                """
+                UPDATE runs SET status=?, finished_at=?, error=COALESCE(?, error)
+                WHERE id=?
+                """,
+                (status.value, utc_now(), error, run_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO run_events(run_id, created_at, event_type, payload_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (run_id, utc_now(), "status", json.dumps(payload, sort_keys=True)),
+            )
+            row = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            event_rows = connection.execute(
+                """
+                SELECT sequence, created_at, event_type, payload_json
+                FROM run_events WHERE run_id=? ORDER BY sequence
+                """,
+                (run_id,),
+            ).fetchall()
+            record = self._decode_run(row)
+            publish(record, self._decode_events(event_rows))
+        return record
+
     def set_worker_pid(self, run_id: str, worker_pid: int) -> None:
         """Attach the spawned process identity without changing lifecycle state."""
         with self._connect() as connection:
@@ -268,6 +320,10 @@ class StateStore:
                 """,
                 (run_id, sequence),
             ).fetchall()
+        return self._decode_events(rows)
+
+    @staticmethod
+    def _decode_events(rows: list[sqlite3.Row]) -> list[dict]:
         return [
             {
                 "sequence": row["sequence"],
