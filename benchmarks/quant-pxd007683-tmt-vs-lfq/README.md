@@ -80,7 +80,7 @@ QPX feature table. They do not represent imputed values.
 Install the Rust-backed distribution with plotting dependencies:
 
 ```bash
-python -m pip install "mokume[plotting]"
+python -m pip install "mokume[analysis]"
 ```
 
 From the repository root, run:

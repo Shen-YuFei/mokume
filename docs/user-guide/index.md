@@ -12,8 +12,9 @@ distribution is documented under
 
 Install `mokume[studio]` and run `mokume studio` for a loopback-only browser
 workbench with project browsing, typed native workflows, run history, logs, and
-artifacts. Its Assistant is optional: Ask is read-only, while Plan must stop for
-approval of the final parameters before starting computation. See the
+artifacts. Its Assistant is optional: Ask is read-only, while Agent is the only
+mode that can write results and must stop for approval of the final parameters
+before starting computation. See the
 [Mokume Studio guide](studio.md).
 
 ## Rust-native compute commands
@@ -44,7 +45,7 @@ The same `mokume` console command exposes `tsne-visualization`, `tissuemap`,
 `de-plots`, and `interactive-report`. These commands live in the Python
 periphery of the wheel: plotting and reporting consume kernel tables, while
 TissueMap derives its downstream atlas from QPX data. Install the relevant
-extra (`plotting`, `reports`, `tissuemap`, or `all`) to pull in their libraries.
+extra (`analysis`, `tissuemap`, or `all`) to pull in their libraries.
 The top-level Python wrappers remain available for scripts. Evidence-bound
 method selection is available through [Mokume Studio](studio.md) or the
 [Mokume Plugin](agentic-plugin.md); both use the default Rust-backed wheel and

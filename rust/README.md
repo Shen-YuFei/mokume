@@ -36,13 +36,11 @@ pip install mokume
 
 pyOpenMS and its numpy, pandas, and matplotlib dependencies are installed with
 the base wheel so piBAQ can use every protease in the runtime catalog. Optional
-plotting, reporting, tissue-map, and analysis stacks remain extras:
+analysis, tissue-map, Studio, and Plugin stacks remain extras:
 
 ```bash
-pip install "mokume[plotting]"   # matplotlib / seaborn figures
-pip install "mokume[reports]"    # interactive plotly QC reports
+pip install "mokume[analysis]"   # plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]"  # tissue-map + AnnData export
-pip install "mokume[analysis]"   # QC/comparison reports + missforest
 pip install "mokume[studio]"     # local web workbench with optional AI
 pip install "mokume[plugin]"     # local MCP service for the Mokume Plugin
 pip install "mokume[all]"        # everything above
@@ -154,9 +152,9 @@ computation work. For the full design and maintenance policy, see
 [Maintenance scope](../docs/maintenance-scope.md).
 
 The optional Studio and installable Mokume Plugin both call the same
-deterministic profile, policy, and evaluation services. Studio can use a
-session-local provider after explicit configuration; the Plugin instead uses
-the model and credentials owned by Codex or Claude Code. See the
+deterministic profile, policy, and evaluation services. Studio uses a
+session-local provider by default and offers explicit Studio-level persistence;
+the Plugin instead uses the model and credentials owned by Codex or Claude Code. See the
 [Mokume Studio guide](../docs/user-guide/studio.md) and
 [Mokume Plugin guide](../docs/user-guide/agentic-plugin.md).
 

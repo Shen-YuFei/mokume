@@ -158,25 +158,25 @@ top-level package.
 ```python
 import mokume
 
-# t-SNE over a folder of protein files (plotting extra)
+# t-SNE over a folder of protein files (analysis extra)
 mokume.tsne_visualization(input="./proteins", pattern="proteins.tsv",
                           output="tsne.pdf")
 
 # per-dataset tissue proteome analysis (tissuemap extra)
 mokume.tissuemap(input="./data", outdir="./out", threads=24)
 
-# piBAQ QC report from a protein table (plotting extra)
+# piBAQ QC report from a protein table (analysis extra)
 mokume.peptides2protein_qc(protein_table="proteins.tsv", qc_report="QC.pdf")
 ```
 
 `de_plots` and `interactive_report` take an explicit argv (the per-contrast `--contrast KEY A B CSV` flag repeats, which keyword arguments cannot express):
 
 ```python
-# DE volcano / heatmap from kernel-written CSVs (plotting extra)
+# DE volcano / heatmap from kernel-written CSVs (analysis extra)
 mokume.de_plots(["--protein-matrix", "proteins.csv", "--outdir", "plots",
                  "--volcano", "--contrast", "c1", "A", "B", "de.csv"])
 
-# interactive HTML report from kernel CSVs (reports extra)
+# interactive HTML report from kernel CSVs (analysis extra)
 mokume.interactive_report([
     "--protein-matrix", "proteins.csv",
     "--sdrf", "experiment.sdrf.tsv",
@@ -242,10 +242,8 @@ periphery command you run:
 
 ```bash
 pip install mokume                 # compute kernel + Python API
-pip install "mokume[plotting]"     # + t-SNE / DE plots / piBAQ QC report
+pip install "mokume[analysis]"     # + plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]"    # + per-dataset tissue proteome analysis
-pip install "mokume[reports]"      # + interactive HTML DE report
-pip install "mokume[analysis]"     # + QC / comparison reports + missforest
 pip install "mokume[studio]"       # + local browser workbench and optional AI
 pip install "mokume[plugin]"       # + local MCP service for the Mokume Plugin
 pip install "mokume[all]"          # everything
@@ -253,14 +251,14 @@ pip install "mokume[all]"          # everything
 
 | Wrapper | Extra | Third-party libraries |
 |---------|-------|------------------------|
-| `mokume.tsne_visualization` | `plotting` | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
-| `mokume.peptides2protein_qc` | `plotting` | numpy, pandas, matplotlib, seaborn |
-| `mokume.de_plots` | `plotting` | numpy, pandas, matplotlib, seaborn, scikit-learn |
-| `mokume.interactive_report` | `reports` | numpy, pandas, plotly |
+| `mokume.tsne_visualization` | `analysis` | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
+| `mokume.peptides2protein_qc` | `analysis` | numpy, pandas, matplotlib, seaborn |
+| `mokume.de_plots` | `analysis` | numpy, pandas, matplotlib, seaborn, scikit-learn |
+| `mokume.interactive_report` | `analysis` | numpy, pandas, plotly |
 | `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
-| `mokume studio` | `studio` | FastAPI, Uvicorn, Jinja, Pydantic AI, AG-UI, analysis dependencies |
+| `mokume studio` | `studio` | FastAPI, Uvicorn, Jinja, Pydantic AI, AG-UI, HTTPX, platformdirs, numpy, pandas, scipy, scikit-learn, statsmodels, PyYAML |
 | Mokume Plugin MCP service | `plugin` | mcp, numpy, pandas, scipy, scikit-learn, statsmodels, PyYAML |
 
 The exact dependency lists are declared in `pyproject.toml`. DirectLFQ and ComBat
@@ -268,6 +266,7 @@ are native Rust, while pyOpenMS-backed digestion is part of the base piBAQ path.
 
 !!! note "Choose the AI interface"
     [Mokume Studio](../user-guide/studio.md) can use a provider configured for
-    the current local server process. The
+    the current local server process or explicitly persisted in Mokume's
+    `mokume-studio-providers.json`. The
     [Mokume Plugin](../user-guide/agentic-plugin.md) instead uses the model and
     credentials already owned by its agent host.

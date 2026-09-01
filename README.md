@@ -72,10 +72,8 @@ that runtime's complete protease catalog and passes the theoretical peptide map
 into the Rust kernel. Extras select Mokume's additional periphery stacks:
 
 ```bash
-pip install "mokume[plotting]"   # t-SNE, DE plots, and piBAQ QC
-pip install "mokume[reports]"    # interactive HTML reports
+pip install "mokume[analysis]"   # plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]"  # tissue-specificity pipeline
-pip install "mokume[analysis]"   # QC, workflow comparison, and missforest
 pip install "mokume[studio]"     # local web workbench with optional AI
 pip install "mokume[plugin]"     # local MCP service used by the Mokume Plugin
 pip install "mokume[all]"        # all Python periphery dependencies
@@ -279,9 +277,10 @@ not overwrite it. See [docs/concepts/differential-expression.md](docs/concepts/d
 ## AI-assisted method selection
 
 Mokume Studio provides an optional local browser interface. Native workflows
-work without AI; after a provider is configured, Ask remains read-only and Plan
-pauses for approval of the exact parameters before computation. Provider keys
-remain in the running Studio process. See the
+work without AI; after a provider is configured, Ask remains read-only and
+Agent is the only assistant mode that can write results. Agent pauses for
+approval of the exact parameters before computation. Provider keys remain in
+the running Studio process. See the
 [Mokume Studio guide](docs/user-guide/studio.md).
 
 The installable Mokume Plugin lets Codex or Claude Code inspect a protein

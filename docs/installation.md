@@ -44,22 +44,17 @@ periphery command.
 
 mokume uses optional dependencies for the periphery commands:
 
-=== "Plotting"
+=== "Analysis"
 
     ```bash
-    pip install mokume[plotting]
+    pip install mokume[analysis]
     ```
 
-    Enables `mokume plot tsne`, `mokume plot pca`, `mokume plot de`, and the piBAQ QC
-    report (numpy, pandas, scipy, scikit-learn, matplotlib, seaborn).
-
-=== "Interactive Reports"
-
-    ```bash
-    pip install mokume[reports]
-    ```
-
-    Enables `mokume interactive-report` (plotly).
+    Enables `mokume plot tsne`, `mokume plot pca`, `mokume plot de`, the piBAQ
+    QC report, `mokume interactive-report`, the QC / workflow-comparison
+    reports, and the pure-Python method fallback the Rust kernel does not
+    reproduce — `mokume.impute(method="missforest")` (numpy, pandas, scipy,
+    scikit-learn, matplotlib, seaborn, plotly).
 
 === "TissueMap"
 
@@ -71,17 +66,6 @@ mokume uses optional dependencies for the periphery commands:
     AdaTiSS tissue-specificity scoring, embeddings, and atlas plots (scanpy,
     anndata, umap-learn, combat, matplotlib, seaborn, pyarrow).
 
-=== "Analysis"
-
-    ```bash
-    pip install mokume[analysis]
-    ```
-
-    Enables the QC / workflow-comparison reports and the pure-Python method
-    fallback the Rust kernel does not reproduce — `mokume.impute(method="missforest")`
-    — plus `mokume.qc_report`
-    and `mokume.workflow_comparison` (numpy, pandas, scipy, scikit-learn).
-
 === "Mokume Studio"
 
     ```bash
@@ -90,7 +74,7 @@ mokume uses optional dependencies for the periphery commands:
     ```
 
     Installs the loopback-only local web workbench, including workflow forms,
-    run history, logs, artifacts, and the optional Ask/Plan assistant. Native
+    run history, logs, artifacts, and the optional Ask/Agent assistant. Native
     workflows do not require an AI provider. Studio accepts `--port PORT` and
     `--no-browser`; choose the project with **File > Open Folder** after launch.
     Continue with the [Studio guide](user-guide/studio.md).

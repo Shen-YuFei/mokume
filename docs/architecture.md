@@ -106,9 +106,13 @@ the runtime digest is traceable.
 
 `mokume[studio]` adds a loopback-only web workbench to the default Rust-backed
 wheel. Its typed workflow forms call the same native command catalog as the CLI.
-The optional Ask/Plan assistant uses session-local provider credentials and the
-same deterministic profile, policy, and evaluation service described below;
-Plan cannot start computation until the exact parameters are approved.
+The optional Ask/Agent assistant uses session-local provider credentials by
+default. Users can explicitly persist them in `mokume-studio-providers.json` at
+the Mokume Git root. Installed wheels use the per-user Mokume configuration
+directory selected by `platformdirs` when no source checkout is available. The
+assistant uses the same deterministic profile, policy, and evaluation service
+described below; Ask is read-only, while Agent cannot write results until the
+exact parameters are approved.
 
 Agentic recommendation is shipped as an installable host plugin under
 `plugins/mokume/`. The bundle contains one skill, automatic local MCP

@@ -21,9 +21,11 @@ entry or put a model API key in Mokume.
 
 For the optional local browser workbench, install `mokume[studio]`, run
 `mokume studio`, and choose **File > Open Folder**. Native workflows work
-without AI. If you configure the Studio Assistant, its provider key remains in
-the current local server process and Plan mode requires final parameter
-approval. See the [Mokume Studio guide](user-guide/studio.md).
+without AI. Studio keeps its provider key in the current local server process
+unless you explicitly persist it in Mokume's `mokume-studio-providers.json`;
+Ask is read-only, and Agent requires final parameter approval before writing
+results. See the
+[Mokume Studio guide](user-guide/studio.md).
 
 ## One-Step Pipeline (Recommended)
 
@@ -123,7 +125,7 @@ The `features2proteins` command handles everything: loading, filtering, normaliz
     the DE result CSVs. Render figures from those tables with the Python
     periphery: `mokume plot de` for volcano/heatmap, `mokume plot pca` for PCA,
     and `mokume interactive-report` for the HTML report. These commands need the
-    `plotting` / `reports` extras.
+    `analysis` extra.
 
 ## Two-Step Pipeline
 

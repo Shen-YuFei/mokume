@@ -13,10 +13,10 @@ root of a local CPTAC archive that contains the PDC000125 QPX export.
 ## Install the runtime
 
 The helper needs PyArrow to read the QPX run column and Requests to query PDC.
-The plotting extra renders the final Mokume outputs.
+The analysis extra renders the final Mokume outputs.
 
 ```bash
-python -m pip install "mokume[plotting]" pyarrow requests
+python -m pip install "mokume[analysis]" pyarrow requests
 ```
 
 ## Build the analysis SDRF

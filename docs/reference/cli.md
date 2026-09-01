@@ -190,16 +190,16 @@ cell-exactly and p-values at rank level.
 `features2proteins` is pure compute and writes no figures. The kernel emits the protein-matrix CSV and (with `--de-output`) one DE result CSV per contrast; render plots and HTML reports from those CSVs with the wheel periphery:
 
 ```bash
-# PCA from the protein matrix (plotting extra)
+# PCA from the protein matrix (analysis extra)
 mokume plot pca --protein-matrix proteins.csv \
     --sdrf experiment.sdrf.tsv --output pca.pdf
 
-# DE volcano / heatmap from the kernel CSVs (plotting extra)
+# DE volcano / heatmap from the kernel CSVs (analysis extra)
 mokume plot de --protein-matrix proteins.csv --outdir plots \
     --sdrf experiment.sdrf.tsv --volcano --heatmap \
     --contrast c1 A B de.csv
 
-# Interactive HTML report (reports extra)
+# Interactive HTML report (analysis extra)
 mokume interactive-report --protein-matrix proteins.csv \
     --sdrf experiment.sdrf.tsv --output report.html \
     --contrast c1 A B de.csv
@@ -366,7 +366,7 @@ Use `--quant-method top5` or `--quant-method top10` for Top5 or Top10-style quan
 
 !!! note "`--qc-report` plots the native result table"
     Rust writes the piBAQ table first, then the wheel renders the density and box
-    plots from those exact values. Install `mokume[plotting]` to use this option.
+    plots from those exact values. Install `mokume[analysis]` to use this option.
 
 ---
 
@@ -424,7 +424,7 @@ These commands ship in the `pip install mokume` wheel but remain implemented in
 Python rather than the Rust compute kernel:
 
 ```bash
-pip install "mokume[plotting]"
+pip install "mokume[analysis]"
 mokume plot tsne --input ./proteins --pattern proteins.tsv --output tsne.pdf
 
 pip install "mokume[tissuemap]"

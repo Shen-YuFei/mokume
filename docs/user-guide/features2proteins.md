@@ -461,8 +461,8 @@ another method is rejected.
 Plotting and the interactive HTML report are **not** part of the `features2proteins`
 CLI — there are no `--plot-*` / `--interactive-report` flags. The kernel writes the
 protein matrix and, with `--de-output`, one DE result CSV per contrast; the Python
-periphery then reads those CSVs and renders the figures. Install the `plotting`
-and/or `reports` extra:
+periphery then reads those CSVs and renders the figures. Install the `analysis`
+extra:
 
 ```python
 import mokume
@@ -477,7 +477,7 @@ mokume.de_plots([
     "--contrast", "NASH-HL", "NASH", "HL", "de_results.csv",
 ])
 
-# Interactive HTML report from the same kernel CSVs (reports extra).
+# Interactive HTML report from the same kernel CSVs (analysis extra).
 mokume.interactive_report([
     "--protein-matrix", "proteins.csv",
     "--sdrf", "experiment.sdrf.tsv",
