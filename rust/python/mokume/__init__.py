@@ -267,7 +267,7 @@ def _run_command(module_name, argv):
 
 
 def tsne_visualization(**kwargs):
-    """Render the t-SNE plot for a folder of protein files (``plotting`` extra)."""
+    """Render the t-SNE plot for a folder of protein files (``analysis`` extra)."""
     _run_command("visualize", flags_for("visualize", kwargs))
 
 
@@ -277,7 +277,7 @@ def tissuemap(**kwargs):
 
 
 def peptides2protein_qc(**kwargs):
-    """Render the piBAQ QC report from a protein table (``plotting`` extra)."""
+    """Render the piBAQ QC report from a protein table (``analysis`` extra)."""
     _run_command("peptides2protein_qc", flags_for("peptides2protein_qc", kwargs))
 
 

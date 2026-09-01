@@ -133,13 +133,23 @@ def test_clean_keyboard_interrupt_does_not_escape_server(monkeypatch):
     )
 
 
-def test_studio_and_all_extras_have_runtime_dependencies():
-    """The Studio runtime is installable directly and through the all extra."""
+def test_public_extras_match_runtime_capabilities():
+    """The wheel exposes only supported feature extras and a complete union."""
     metadata = tomllib.loads(
         (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     )
     extras = metadata["project"]["optional-dependencies"]
-    expected = {
+    assert set(extras) == {"analysis", "tissuemap", "plugin", "studio", "all"}
+    assert set(extras["analysis"]) == {
+        "numpy",
+        "pandas",
+        "scipy",
+        "matplotlib",
+        "seaborn",
+        "scikit-learn",
+        "plotly",
+    }
+    expected_studio = {
         "numpy",
         "pandas",
         "PyYAML>=6.0",
@@ -150,9 +160,11 @@ def test_studio_and_all_extras_have_runtime_dependencies():
         "uvicorn",
         "jinja2",
         "platformdirs",
-        "pydantic-ai-slim[ag-ui,openai,anthropic]>=2.36,<3",
+        "pydantic-ai-slim[ag-ui,openai,anthropic,google]>=2.36,<3",
         "ag-ui-protocol>=0.1.19,<1",
     }
 
-    assert expected <= set(extras["studio"])
-    assert expected <= set(extras["all"])
+    assert expected_studio <= set(extras["studio"])
+    assert set(extras["all"]) == set().union(
+        *(set(extras[name]) for name in ("analysis", "tissuemap", "plugin", "studio"))
+    )

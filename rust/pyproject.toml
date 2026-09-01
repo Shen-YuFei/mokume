@@ -53,8 +53,15 @@ Issues = "https://github.com/bigbio/mokume/issues"
 # base dependency because both Rust-backed piBAQ commands digest their FASTA
 # through the installed runtime catalog.
 [project.optional-dependencies]
-plotting = ["numpy", "pandas", "scipy", "matplotlib", "seaborn", "scikit-learn"]
-reports = ["numpy", "pandas", "plotly"]
+analysis = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",
+    "plotly",
+]
 tissuemap = [
     "numpy",
     "pandas",
@@ -68,9 +75,6 @@ tissuemap = [
     "seaborn",
     "pyarrow",
 ]
-# QC / workflow-comparison reports + the pure-Python method fallback
-# (missforest imputation) the Rust kernel does not reproduce.
-analysis = ["numpy", "pandas", "scipy", "scikit-learn"]
 plugin = [
     "mcp>=1.23,<2",
     "numpy",
@@ -91,7 +95,8 @@ studio = [
     "uvicorn",
     "jinja2",
     "platformdirs",
-    "pydantic-ai-slim[ag-ui,openai,anthropic]>=2.36,<3",
+    "httpx[socks]",
+    "pydantic-ai-slim[ag-ui,openai,anthropic,google]>=2.36,<3",
     "ag-ui-protocol>=0.1.19,<1",
 ]
 all = [
@@ -115,7 +120,8 @@ all = [
     "uvicorn",
     "jinja2",
     "platformdirs",
-    "pydantic-ai-slim[ag-ui,openai,anthropic]>=2.36,<3",
+    "httpx[socks]",
+    "pydantic-ai-slim[ag-ui,openai,anthropic,google]>=2.36,<3",
     "ag-ui-protocol>=0.1.19,<1",
 ]
 

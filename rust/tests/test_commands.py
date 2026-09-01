@@ -45,6 +45,9 @@ def test_console_root_help_covers_the_installed_wheel(monkeypatch, capsys):
     assert "quantify" in output
     assert "plot" in output
     assert "interactive-report" in output
+    assert output.count("[requires: mokume[analysis]]") == 2
+    assert "mokume[plotting]" not in output
+    assert "mokume[reports]" not in output
     assert "--log-level <LEVEL>" in output
     assert "--log-file <FILE>" in output
     assert "mcp serve" not in output
