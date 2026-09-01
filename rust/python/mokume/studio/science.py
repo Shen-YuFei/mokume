@@ -7,13 +7,18 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
-from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Any
 
 from mokume.studio.models import utc_now
+from mokume.studio.science_models import (
+    AgentThreadRecord,
+    ApprovalRecord,
+    ApprovalStatus,
+    DatasetInspectionRequest,
+    DatasetRecord,
+    DatasetStatus,
+)
 from mokume.studio.state import StateStore
 
 
@@ -54,112 +59,6 @@ def _contains_api_key(value: Any) -> bool:
     return False
 
 
-class DatasetInspectionRequest(BaseModel):
-    """Validated, serializable input for deterministic dataset inspection."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    protein_matrix: str = Field(min_length=1)
-    sdrf: str = Field(min_length=1)
-    contrast: tuple[str, str]
-    input_scale: Literal["linear", "log2"]
-    peptide_counts: str | None = None
-    data_type: Literal["LFQ", "DIA", "TMT"] | None = None
-    quantification: str | None = None
-    upstream_engine: str | None = None
-    factor_column: str | None = None
-    output_directory: str = "results/mokume"
-
-    @field_validator(
-        "protein_matrix",
-        "sdrf",
-        "peptide_counts",
-        "quantification",
-        "upstream_engine",
-        "factor_column",
-        "output_directory",
-    )
-    @classmethod
-    def require_nonempty_strings(cls, value: str | None) -> str | None:
-        """Reject blank path or metadata values without changing their spelling."""
-        if value is not None and not value.strip():
-            raise ValueError("value must not be blank")
-        return value
-
-    @field_validator("contrast")
-    @classmethod
-    def require_distinct_contrast(cls, value: tuple[str, str]) -> tuple[str, str]:
-        """Require two non-empty, distinct contrast values."""
-        normalized = tuple(item.strip() for item in value)
-        if any(not item for item in normalized):
-            raise ValueError("contrast values must not be blank")
-        if normalized[0] == normalized[1]:
-            raise ValueError("contrast values must be distinct")
-        return normalized
-
-
-class DatasetStatus(str, Enum):
-    """Persisted lifecycle for one deterministic dataset inspection."""
-
-    QUEUED = "queued"
-    RUNNING = "running"
-    READY = "ready"
-    FAILED = "failed"
-
-
-class DatasetRecord(BaseModel):
-    """Control-plane reference to an inspection request and its result."""
-
-    id: str
-    project_id: str
-    request: DatasetInspectionRequest
-    status: DatasetStatus
-    result: dict[str, Any] | None = None
-    error: str | None = None
-    created_at: str
-    updated_at: str
-
-
-class ApprovalStatus(str, Enum):
-    """One-time authorization states for a scientific compute request."""
-
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    CONSUMED = "consumed"
-    EXPIRED = "expired"
-
-
-class ApprovalRecord(BaseModel):
-    """Hash-bound approval that can authorize at most one compute run."""
-
-    id: str
-    run_id: str | None = None
-    kind: str
-    payload: dict[str, Any]
-    payload_hash: str
-    status: ApprovalStatus
-    created_at: str
-    expires_at: str
-    decided_at: str | None = None
-
-
-class AgentThreadRecord(BaseModel):
-    """Conversation state scoped to exactly one project and agent mode."""
-
-    id: str
-    project_id: str
-    mode: str
-    messages_json: str
-    created_at: str
-    updated_at: str
-
-    @property
-    def messages(self) -> list[dict[str, Any]]:
-        """Return decoded messages while retaining canonical JSON in storage."""
-        return json.loads(self.messages_json)
-
-
 SCIENCE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS datasets (
     id TEXT PRIMARY KEY,
@@ -180,6 +79,7 @@ CREATE TABLE IF NOT EXISTS agent_threads (
     project_id TEXT NOT NULL REFERENCES projects(id),
     mode TEXT NOT NULL,
     messages_json TEXT NOT NULL,
+    custom_title TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -195,6 +95,7 @@ class ScienceStore:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCIENCE_SCHEMA)
             self._migrate_approvals(connection)
+            self._migrate_agent_threads(connection)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database, timeout=30)
@@ -220,6 +121,15 @@ class ScienceStore:
                 "UPDATE approvals SET expires_at=? WHERE id=?",
                 (_expiry(row["created_at"]), row["id"]),
             )
+
+    @staticmethod
+    def _migrate_agent_threads(connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(agent_threads)").fetchall()
+        }
+        if "custom_title" not in columns:
+            connection.execute("ALTER TABLE agent_threads ADD COLUMN custom_title TEXT")
 
     def create_dataset(
         self,
@@ -502,6 +412,50 @@ class ScienceStore:
         if row and (row["project_id"] != project_id or row["mode"] != mode):
             raise ValueError("agent thread belongs to a different project or mode")
         return AgentThreadRecord(**dict(row)) if row else None
+
+    def list_threads(self, *, project_id: str) -> list[AgentThreadRecord]:
+        """List only conversations created inside one project workspace."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM agent_threads WHERE project_id=?
+                ORDER BY updated_at DESC, id""",
+                (project_id,),
+            ).fetchall()
+        return [AgentThreadRecord(**dict(row)) for row in rows]
+
+    def delete_thread(self, thread_id: str, *, project_id: str, mode: str) -> bool:
+        """Delete one conversation only when its complete scope matches."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """DELETE FROM agent_threads
+                WHERE id=? AND project_id=? AND mode=?""",
+                (thread_id, project_id, mode),
+            )
+        return cursor.rowcount == 1
+
+    def rename_thread(
+        self,
+        thread_id: str,
+        *,
+        project_id: str,
+        mode: str,
+        title: str,
+    ) -> AgentThreadRecord | None:
+        """Rename one conversation only when its complete scope matches."""
+        normalized = " ".join(title.split())
+        if not normalized:
+            raise ValueError("conversation title must not be blank")
+        if len(normalized) > 120:
+            raise ValueError("conversation title must not exceed 120 characters")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE agent_threads SET custom_title=?
+                WHERE id=? AND project_id=? AND mode=?""",
+                (normalized, thread_id, project_id, mode),
+            )
+        if cursor.rowcount != 1:
+            return None
+        return self.get_thread(thread_id, project_id=project_id, mode=mode)
 
     def save_thread(
         self,

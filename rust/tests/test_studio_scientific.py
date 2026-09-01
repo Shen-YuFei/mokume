@@ -235,6 +235,12 @@ def test_real_unlabelled_workflow_is_unranked_and_traceable(tmp_path):
     assert len(harness.state.list_artifacts(inspection_run.id)) == 1
     safe = harness.controller.context(harness.project, dataset.id)
     assert safe["disclosure"] == {"metadata": True, "raw_rows": False}
+    assert safe["workspace"] == {
+        "id": harness.project.id,
+        "name": harness.matrix.parent.name,
+        "root": harness.project.root,
+        "access": "workspace_only",
+    }
     safe_dataset = _mapping(safe.get("dataset"))
     assert "missing_per_sample" not in _mapping(safe_dataset.get("profile"))
     _assert_unranked_evaluation(harness.matrix.parent, config["name"])

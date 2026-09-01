@@ -275,12 +275,23 @@ class StateStore:
             ).fetchone()
         return self._decode_run(row) if row else None
 
-    def list_runs(self, limit: int = 100) -> list[RunRecord]:
-        """Return newest runs without exposing unbounded history."""
+    def list_runs(
+        self,
+        limit: int = 100,
+        *,
+        project_id: str | None = None,
+    ) -> list[RunRecord]:
+        """Return newest runs, optionally restricted to one project."""
+        query = "SELECT * FROM runs"
+        parameters: tuple[object, ...]
+        if project_id is None:
+            parameters = (limit,)
+        else:
+            query += " WHERE project_id=?"
+            parameters = (project_id, limit)
+        query += " ORDER BY created_at DESC LIMIT ?"
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM runs ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = connection.execute(query, parameters).fetchall()
         return [self._decode_run(row) for row in rows]
 
     def has_active_run(self) -> bool:

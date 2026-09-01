@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,6 +24,15 @@ from mokume.studio.science import (
     DatasetStatus,
     ScienceStore,
 )
+
+
+def workspace_identity(project: ProjectRecord) -> dict[str, str]:
+    """Return the stable absolute identity shown for one active workspace."""
+    return {
+        "id": project.id,
+        "name": Path(project.root).name or project.root,
+        "root": project.root,
+    }
 
 
 class EvaluationPlanRequest(BaseModel):
@@ -99,6 +109,10 @@ class ScientificController:
             raise ValueError("dataset belongs to a different project")
         payload: dict[str, Any] = {
             "project_id": project.id,
+            "workspace": {
+                **workspace_identity(project),
+                "access": "workspace_only",
+            },
             "mokume_threads": 24,
             "knowledge_fingerprint": self.knowledge_fingerprint,
             "capabilities": ["inspect_dataset", "evaluate_recommendation"],

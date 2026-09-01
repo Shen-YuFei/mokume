@@ -6,7 +6,8 @@ import json
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
@@ -15,11 +16,19 @@ from mokume.studio.auth import Session
 from mokume.studio.models import ApprovalDecision
 from mokume.studio.providers import ProviderConfig, ProviderRegistry
 from mokume.studio.science import DatasetInspectionRequest, ScienceStore
-from mokume.studio.scientific import ScientificController
+from mokume.studio.scientific import ScientificController, workspace_identity
 from mokume.studio.state import StateStore
 
 
 Dependency = Callable[..., Any]
+
+
+class ThreadRenameRequest(BaseModel):
+    """Validated custom title for one scoped Studio conversation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
 
 
 class AIRuntime(Protocol):
@@ -27,7 +36,7 @@ class AIRuntime(Protocol):
 
     @property
     def providers(self) -> ProviderRegistry:
-        """Return process-local provider credentials."""
+        """Return session and persistent provider credentials."""
 
     @property
     def science(self) -> ScienceStore:
@@ -62,21 +71,50 @@ def _install_provider_routes(
     require_mutation: Dependency,
 ) -> None:
     @app.get("/api/ai/config")
-    async def provider_config(session: Session = Depends(require_session)):
-        return runtime.providers.summary(session.id)
+    async def provider_config(
+        response: Response,
+        session: Session = Depends(require_session),
+    ):
+        response.headers["Cache-Control"] = "no-store"
+        return runtime.providers.details(session.id)
 
     @app.post("/api/ai/config")
     async def configure_provider(
         payload: ProviderConfig,
+        response: Response,
         session: Session = Depends(require_mutation),
     ):
-        return runtime.providers.save(session.id, payload)
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            runtime.providers.save(session.id, payload)
+            return runtime.providers.details(session.id)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
+            ) from exc
+
+    @app.post("/api/ai/config/test")
+    async def test_provider(
+        payload: ProviderConfig,
+        session: Session = Depends(require_mutation),
+    ):
+        try:
+            return await runtime.providers.test(session.id, payload)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
+            ) from exc
 
     @app.delete("/api/ai/config", status_code=status.HTTP_204_NO_CONTENT)
     async def clear_provider(
         session: Session = Depends(require_mutation),
     ) -> None:
-        runtime.providers.clear(session.id)
+        try:
+            runtime.providers.clear(session.id)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
+            ) from exc
 
 
 def _install_dataset_routes(
@@ -153,10 +191,35 @@ def _install_approval_routes(
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
+def _message_history(
+    runtime: AIRuntime,
+    thread_id: str,
+    project_id: str,
+    mode: AgentMode,
+):
+    thread = runtime.science.get_thread(
+        thread_id,
+        project_id=project_id,
+        mode=mode,
+    )
+    return (
+        ModelMessagesTypeAdapter.validate_json(thread.messages_json) if thread else None
+    )
+
+
 def _install_agent_routes(
     app: FastAPI,
     runtime: AIRuntime,
     require_session: Dependency,
+    require_mutation: Dependency,
+) -> None:
+    _install_agent_run_route(app, runtime, require_mutation)
+    _install_thread_routes(app, runtime, require_session, require_mutation)
+
+
+def _install_agent_run_route(
+    app: FastAPI,
+    runtime: AIRuntime,
     require_mutation: Dependency,
 ) -> None:
     @app.post("/api/agent/run")
@@ -166,27 +229,23 @@ def _install_agent_routes(
     ):
         body = await _validated_agent_body(request)
         project = _active_project(runtime)
-        mode, dataset_id = _agent_options(body)
+        mode, dataset_id, workspace_id = _agent_options(body)
+        if workspace_id is not None and workspace_id != project.id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Conversation belongs to a different workspace",
+            )
         summary = runtime.providers.summary(session.id)
         if summary is None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Configure an AI provider first"
             )
         try:
-            model = runtime.providers.model_for(session.id)
+            execution = runtime.providers.execution_for(session.id)
             thread_id = cast(str, body["threadId"])
-            thread = runtime.science.get_thread(
-                thread_id,
-                project_id=project.id,
-                mode=mode,
-            )
+            history = _message_history(runtime, thread_id, project.id, mode)
         except (LookupError, RuntimeError, ValueError) as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-        history = (
-            ModelMessagesTypeAdapter.validate_json(thread.messages_json)
-            if thread
-            else None
-        )
         deps = StudioAgentDeps(
             controller=runtime.scientific,
             project=project,
@@ -196,6 +255,11 @@ def _install_agent_routes(
         )
 
         async def save_messages(result) -> None:
+            active = runtime.store.active_project()
+            if active is None or active.id != project.id:
+                raise RuntimeError(
+                    "Active workspace changed before conversation completed"
+                )
             messages = json.loads(result.all_messages_json())
             runtime.science.save_thread(
                 thread_id,
@@ -207,7 +271,9 @@ def _install_agent_routes(
         return await AGUIAdapter.dispatch_request(
             request,
             agent=agent_for(mode),
-            model=model,
+            model=execution.model,
+            model_settings=execution.model_settings,
+            usage_limits=execution.usage_limits,
             deps=deps,
             message_history=history,
             conversation_id=thread_id,
@@ -217,6 +283,41 @@ def _install_agent_routes(
             allow_uploaded_files=False,
         )
 
+
+def _install_thread_routes(
+    app: FastAPI,
+    runtime: AIRuntime,
+    require_session: Dependency,
+    require_mutation: Dependency,
+) -> None:
+    @app.get("/api/agent/threads")
+    async def agent_threads(
+        mode: AgentMode | None = Query(default=None),
+        _session: Session = Depends(require_session),
+    ) -> dict:
+        project = _active_project(runtime)
+        threads = [
+            thread
+            for thread in runtime.science.list_threads(project_id=project.id)
+            if thread.mode in {"ask", "agent"}
+        ]
+        if mode is not None:
+            threads = [thread for thread in threads if thread.mode == mode]
+        return {
+            "project_id": project.id,
+            "workspace": workspace_identity(project),
+            "threads": [
+                {
+                    "id": thread.id,
+                    "mode": thread.mode,
+                    "title": thread.title,
+                    "created_at": thread.created_at,
+                    "updated_at": thread.updated_at,
+                }
+                for thread in threads
+            ],
+        }
+
     @app.get("/api/agent/threads/{thread_id}")
     async def agent_thread(
         thread_id: str,
@@ -225,13 +326,65 @@ def _install_agent_routes(
     ):
         project = _active_project(runtime)
         try:
-            return runtime.science.get_thread(
+            thread = runtime.science.get_thread(
                 thread_id,
                 project_id=project.id,
                 mode=mode,
             )
         except ValueError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        if thread is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+        return {
+            **thread.model_dump(),
+            "title": thread.title,
+            "conversation": thread.conversation,
+        }
+
+    @app.delete(
+        "/api/agent/threads/{thread_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def delete_agent_thread(
+        thread_id: str,
+        mode: AgentMode = Query(),
+        _session: Session = Depends(require_mutation),
+    ) -> None:
+        project = _active_project(runtime)
+        deleted = runtime.science.delete_thread(
+            thread_id,
+            project_id=project.id,
+            mode=mode,
+        )
+        if not deleted:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+
+    @app.patch("/api/agent/threads/{thread_id}")
+    async def rename_agent_thread(
+        thread_id: str,
+        payload: ThreadRenameRequest,
+        mode: AgentMode = Query(),
+        _session: Session = Depends(require_mutation),
+    ) -> dict:
+        project = _active_project(runtime)
+        try:
+            thread = runtime.science.rename_thread(
+                thread_id,
+                project_id=project.id,
+                mode=mode,
+                title=payload.title,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
+            ) from exc
+        if thread is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+        return {
+            "id": thread.id,
+            "mode": thread.mode,
+            "title": thread.title,
+        }
 
 
 async def _validated_agent_body(request: Request) -> dict[str, Any]:
@@ -293,21 +446,32 @@ def _validate_agent_messages(messages: Any, has_resume: bool) -> None:
             )
 
 
-def _agent_options(body: dict[str, Any]) -> tuple[AgentMode, str | None]:
+def _agent_options(
+    body: dict[str, Any],
+) -> tuple[AgentMode, str | None, str | None]:
     forwarded = body.get("forwardedProps") or {}
-    if not isinstance(forwarded, dict) or set(forwarded) - {"mode", "datasetId"}:
+    if not isinstance(forwarded, dict) or set(forwarded) - {
+        "mode",
+        "datasetId",
+        "projectId",
+    }:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid agent options"
         )
     mode = forwarded.get("mode", "ask")
-    if mode not in {"ask", "plan"}:
+    if mode not in {"ask", "agent"}:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid agent mode")
     dataset_id = forwarded.get("datasetId")
     if dataset_id is not None and (
         not isinstance(dataset_id, str) or not dataset_id.strip()
     ):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid dataset ID")
-    return cast(AgentMode, mode), dataset_id
+    workspace_id = forwarded.get("projectId")
+    if workspace_id is not None and (
+        not isinstance(workspace_id, str) or not workspace_id.strip()
+    ):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid project ID")
+    return cast(AgentMode, mode), dataset_id, workspace_id
 
 
 def _active_project(runtime: AIRuntime):

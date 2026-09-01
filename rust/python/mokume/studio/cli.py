@@ -114,7 +114,6 @@ def _serve(
         server_holder["server"].should_exit = True
 
     app = create_app(
-        port=port,
         startup_token=startup_token,
         shutdown_callback=request_shutdown,
     )

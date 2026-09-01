@@ -28,6 +28,7 @@ from mokume.studio.auth import (
     Session,
     SessionManager,
     csrf_is_allowed,
+    loopback_origin_from_host,
     origin_is_allowed,
 )
 from mokume.studio.catalog import (
@@ -50,7 +51,7 @@ from mokume.studio.paths import (
     readable_directory,
 )
 from mokume.studio.state import StateStore
-from mokume.studio.providers import ProviderRegistry
+from mokume.studio.providers import ProviderRegistry, default_provider_config_root
 from mokume.studio.science import ScienceStore
 from mokume.studio.scientific import ScientificController
 
@@ -86,8 +87,6 @@ class StudioAI:
 class StudioRuntime:
     """Process-local services shared by the HTTP route groups."""
 
-    origin: str
-    allowed_hosts: frozenset[str]
     sessions: SessionManager
     store: StateStore
     jobs: JobManager
@@ -96,7 +95,7 @@ class StudioRuntime:
 
     @property
     def providers(self) -> ProviderRegistry:
-        """Expose session-local provider state to the AI route contract."""
+        """Expose session and persistent provider state to the AI route contract."""
         return self.ai.providers
 
     @property
@@ -112,30 +111,22 @@ class StudioRuntime:
 
 def create_app(
     *,
-    port: int,
     startup_token: str,
     state_directory: str | Path | None = None,
     shutdown_callback: Callable[[], None] | None = None,
-    testing: bool = False,
 ) -> FastAPI:
     """Build one single-user Studio app bound by the CLI to a loopback port."""
-    origin = f"http://127.0.0.1:{port}"
-    hosts = {f"127.0.0.1:{port}"}
-    if testing:
-        hosts.add("testserver")
     store = StateStore(state_directory)
     store.interrupt_incomplete_runs()
     jobs = JobManager(store)
     science = ScienceStore(store)
     science.interrupt_incomplete_datasets()
     runtime = StudioRuntime(
-        origin=origin,
-        allowed_hosts=frozenset(hosts),
         sessions=SessionManager(startup_token),
         store=store,
         jobs=jobs,
         ai=StudioAI(
-            providers=ProviderRegistry(),
+            providers=ProviderRegistry(default_provider_config_root()),
             science=science,
             scientific=ScientificController(science, jobs),
         ),
@@ -156,7 +147,7 @@ def create_app(
     )
     app.state.runtime = runtime
     require_session, require_mutation = _security_dependencies(runtime)
-    _install_security_middleware(app, runtime)
+    _install_security_middleware(app)
     _install_page_routes(app, runtime, require_session)
     _install_project_routes(app, runtime, require_session, require_mutation)
     _install_command_routes(app, runtime, require_session, require_mutation)
@@ -178,7 +169,9 @@ def _security_dependencies(runtime: StudioRuntime) -> tuple[Dependency, Dependen
         session: Session = Depends(require_session),
         csrf_token: str | None = Header(default=None, alias=CSRF_HEADER),
     ) -> Session:
-        if not origin_is_allowed(request.headers.get("origin"), runtime.origin):
+        if not origin_is_allowed(
+            request.headers.get("origin"), request.state.studio_origin
+        ):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Origin rejected")
         if not csrf_is_allowed(csrf_token, session):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "CSRF token rejected")
@@ -187,11 +180,14 @@ def _security_dependencies(runtime: StudioRuntime) -> tuple[Dependency, Dependen
     return require_session, require_mutation
 
 
-def _install_security_middleware(app: FastAPI, runtime: StudioRuntime) -> None:
+def _install_security_middleware(app: FastAPI) -> None:
     @app.middleware("http")
     async def secure_loopback_requests(request: Request, call_next):
-        if request.headers.get("host", "") not in runtime.allowed_hosts:
+        hosts = request.headers.getlist("host")
+        origin = loopback_origin_from_host(hosts[0]) if len(hosts) == 1 else None
+        if origin is None:
             return HTMLResponse("Invalid Host", status_code=status.HTTP_400_BAD_REQUEST)
+        request.state.studio_origin = origin
         response = await call_next(request)
         response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -236,12 +232,18 @@ def _install_page_routes(
 
     @app.get("/static/{asset}")
     async def static_asset(asset: str, _session: Session = Depends(require_session)):
-        if asset not in {"studio.css", "studio.js"}:
+        if asset not in {
+            "mokume-logo.png",
+            "mokume-mark.png",
+            "studio.css",
+            "studio.js",
+        }:
             raise HTTPException(status.HTTP_404_NOT_FOUND)
         return FileResponse(str(static_root.joinpath(asset)))
 
     @app.get("/api/session")
     async def session_info(
+        request: Request,
         session: Session = Depends(require_session),
     ) -> dict:
         package = importlib.import_module("mokume")
@@ -249,7 +251,7 @@ def _install_page_routes(
         return {
             "csrf_token": session.csrf_token,
             "version": package.__version__,
-            "origin": runtime.origin,
+            "origin": request.state.studio_origin,
             "ai_configured": provider is not None,
             "ai_provider": provider,
         }
@@ -400,7 +402,12 @@ def _install_run_read_routes(
 
     @app.get("/api/runs")
     async def runs(_session: Session = Depends(require_session)) -> dict:
-        return {"runs": runtime.store.list_runs()}
+        project = runtime.store.active_project()
+        return {
+            "runs": []
+            if project is None
+            else runtime.store.list_runs(project_id=project.id)
+        }
 
     @app.get("/api/runs/{run_id}")
     async def run(run_id: str, _session: Session = Depends(require_session)):
@@ -468,10 +475,11 @@ def _install_control_routes(
 
     @app.get("/api/system")
     async def system_status(
+        request: Request,
         _session: Session = Depends(require_session),
     ) -> dict:
         return {
-            "origin": runtime.origin,
+            "origin": request.state.studio_origin,
             "state_directory": str(runtime.store.directory),
             "project": runtime.store.active_project(),
             "runs": len(runtime.store.list_runs()),
@@ -524,7 +532,7 @@ async def _event_stream(store: StateStore, run_id: str, cursor: int):
 
 
 def _list_project_entries(guard: ProjectPaths, directory: Path) -> list[dict]:
-    """Return shallow project entries while omitting unreadable or escaping links."""
+    """Return folders before files while omitting unreadable or escaping links."""
     entries = []
     for child in directory_children(directory):
         try:
@@ -539,4 +547,7 @@ def _list_project_entries(guard: ProjectPaths, directory: Path) -> list[dict]:
                 "size": resolved.stat().st_size if resolved.is_file() else None,
             }
         )
+    entries.sort(
+        key=lambda entry: (entry["kind"] != "directory", entry["name"].casefold())
+    )
     return entries

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 
 SESSION_COOKIE = "mokume_studio_session"
@@ -50,6 +52,53 @@ class SessionManager:
 def origin_is_allowed(origin: str | None, expected_origin: str) -> bool:
     """Accept only the exact loopback origin for state-changing requests."""
     return bool(origin) and secrets.compare_digest(origin, expected_origin)
+
+
+def loopback_origin_from_host(host: str | None) -> str | None:
+    """Return a canonical origin for one explicit loopback Host authority."""
+    parsed = _parse_host_authority(host)
+    if parsed is None:
+        return None
+    hostname, port = parsed
+    authority = _loopback_authority(hostname, port)
+    return f"http://{authority}" if authority else None
+
+
+def _parse_host_authority(host: str | None) -> tuple[str, int] | None:
+    if not host or host != host.strip() or host.endswith(":"):
+        return None
+    try:
+        parsed = urlsplit(f"//{host}")
+        port = parsed.port
+    except ValueError:
+        return None
+    has_extra_components = any(
+        (
+            parsed.username is not None,
+            parsed.password is not None,
+            bool(parsed.path),
+            bool(parsed.query),
+            bool(parsed.fragment),
+        )
+    )
+    if parsed.hostname is None or port is None or port < 1 or has_extra_components:
+        return None
+    return parsed.hostname.casefold(), port
+
+
+def _loopback_authority(hostname: str, port: int) -> str | None:
+    if hostname == "localhost":
+        return f"localhost:{port}"
+    if "%" in hostname:
+        return None
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        return None
+    if not address.is_loopback:
+        return None
+    literal = f"[{address.compressed}]" if address.version == 6 else address.compressed
+    return f"{literal}:{port}"
 
 
 def csrf_is_allowed(supplied: str | None, session: Session) -> bool:

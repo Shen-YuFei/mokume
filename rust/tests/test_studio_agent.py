@@ -9,7 +9,7 @@ from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from mokume.studio.agent import ASK_AGENT, PLAN_AGENT, StudioAgentDeps
+from mokume.studio.agent import AGENT, ASK_AGENT, ASK_INSTRUCTIONS, StudioAgentDeps
 from mokume.studio.models import ProjectRecord
 
 
@@ -46,10 +46,11 @@ async def test_ask_agent_exposes_only_read_only_context():
 
     assert result.output == "read-only"
     assert exposed == ["get_analysis_context"]
+    assert "conversation's only workspace" in ASK_INSTRUCTIONS
 
 
-async def test_plan_agent_exposes_fixed_tools_and_defers_compute_approval():
-    """Plan mode exposes no arbitrary executor and defers its compute tool."""
+async def test_agent_exposes_fixed_write_tools_and_defers_compute_approval():
+    """Agent is the only mode with bounded write tools and defers computation."""
     exposed: list[str] = []
 
     async def request_compute(_messages, info):
@@ -64,7 +65,7 @@ async def test_plan_agent_exposes_fixed_tools_and_defers_compute_approval():
             ]
         )
 
-    result = await PLAN_AGENT.run(
+    result = await AGENT.run(
         "Run the approved plan",
         model=FunctionModel(request_compute),
         deps=agent_deps(),

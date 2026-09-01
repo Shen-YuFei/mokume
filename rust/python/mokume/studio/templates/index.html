@@ -9,262 +9,364 @@
   <body>
     <header class="app-header">
       <div class="brand" aria-label="Mokume Studio">
-        <span class="brand-mark">M</span>
+        <span class="brand-icon"><img class="brand-logo" src="/static/mokume-mark.png" width="512" height="512" alt=""></span>
         <span>Mokume Studio</span>
       </div>
-      <nav class="menu-bar" aria-label="Application menu">
-        <button id="file-menu-trigger" class="menu-trigger" data-menu="file-menu" aria-haspopup="menu" aria-controls="file-menu" aria-expanded="false">File</button>
-        <button id="analysis-menu-trigger" class="menu-trigger" data-menu="analysis-menu" aria-haspopup="menu" aria-controls="analysis-menu" aria-expanded="false">Analysis</button>
-        <button id="view-menu-trigger" class="menu-trigger" data-menu="view-menu" aria-haspopup="menu" aria-controls="view-menu" aria-expanded="false">View</button>
-        <button id="help-menu-trigger" class="menu-trigger" data-menu="help-menu" aria-haspopup="menu" aria-controls="help-menu" aria-expanded="false">Help</button>
+      <nav class="menu-bar" aria-label="Application menu" data-i18n-aria-label="Application menu">
+        <button id="file-menu-trigger" class="menu-trigger" data-menu="file-menu" data-i18n="File" aria-haspopup="menu" aria-controls="file-menu" aria-expanded="false">File</button>
+        <button id="analysis-menu-trigger" class="menu-trigger" data-menu="analysis-menu" data-i18n="Analysis" aria-haspopup="menu" aria-controls="analysis-menu" aria-expanded="false">Analysis</button>
+        <button id="view-menu-trigger" class="menu-trigger" data-menu="view-menu" data-i18n="View" aria-haspopup="menu" aria-controls="view-menu" aria-expanded="false">View</button>
+        <button id="help-menu-trigger" class="menu-trigger" data-menu="help-menu" data-i18n="Help" aria-haspopup="menu" aria-controls="help-menu" aria-expanded="false">Help</button>
       </nav>
-      <div class="project-chip" id="project-chip">No project</div>
-      <div class="run-indicator"><span class="status-dot idle"></span><span id="run-state">Idle</span></div>
+      <div class="project-chip" id="project-chip" data-i18n="No project">No project</div>
     </header>
 
     <div class="menu-popover" id="file-menu" role="menu" aria-labelledby="file-menu-trigger">
-      <button role="menuitem" data-action="open-folder">Open Folder <kbd>Ctrl+O</kbd></button>
-      <button role="menuitem" data-action="close-project">Close Project</button>
+      <button role="menuitem" data-action="open-folder"><span data-i18n="Open Folder">Open Folder</span><kbd>Ctrl+O</kbd></button>
+      <button role="menuitem" data-action="close-project" data-i18n="Close Project">Close Project</button>
       <div class="menu-separator" role="separator"></div>
-      <button role="menuitem" data-action="exit-studio">Exit Mokume Studio</button>
+      <button role="menuitem" data-action="exit-studio" data-i18n="Exit Mokume Studio">Exit Mokume Studio</button>
     </div>
     <div class="menu-popover" id="analysis-menu" role="menu" aria-labelledby="analysis-menu-trigger">
-      <button role="menuitem" data-action="inspect-dataset">Inspect Dataset</button>
+      <button role="menuitem" data-action="validate-command"><span data-i18n="Validate Parameters">Validate Parameters</span><kbd>Ctrl+Shift+Enter</kbd></button>
+      <button role="menuitem" data-action="run-command"><span data-i18n="Run Analysis">Run Analysis</span><kbd>Ctrl+Enter</kbd></button>
+      <button role="menuitem" data-action="cancel-run"><span data-i18n="Cancel Run">Cancel Run</span><kbd>Ctrl+.</kbd></button>
       <div class="menu-separator" role="separator"></div>
-      <button role="menuitem" data-action="validate-command">Validate Parameters <kbd>Ctrl+Shift+Enter</kbd></button>
-      <button role="menuitem" data-action="run-command">Run Analysis <kbd>Ctrl+Enter</kbd></button>
-      <button role="menuitem" data-action="cancel-run">Cancel Run <kbd>Ctrl+.</kbd></button>
-      <div class="menu-separator" role="separator"></div>
-      <button role="menuitem" data-action="show-runs">Run History</button>
+      <button role="menuitem" data-action="show-runs" data-i18n="Run History">Run History</button>
     </div>
     <div class="menu-popover" id="view-menu" role="menu" aria-labelledby="view-menu-trigger">
-      <button role="menuitem" data-action="toggle-sidebar">Toggle Sidebar <kbd>Alt+1</kbd></button>
-      <button role="menuitem" data-action="toggle-assistant">Toggle Assistant <kbd>Alt+4</kbd></button>
-      <button role="menuitem" data-action="toggle-bottom">Toggle Bottom Panel <kbd>Alt+2</kbd></button>
-      <button role="menuitem" data-action="show-artifacts">Artifacts <kbd>Alt+3</kbd></button>
+      <button role="menuitem" data-action="toggle-sidebar"><span data-i18n="Toggle Sidebar">Toggle Sidebar</span><kbd>Alt+1</kbd></button>
+      <button role="menuitem" data-action="toggle-assistant"><span data-i18n="Toggle Assistant">Toggle Assistant</span><kbd>Alt+4</kbd></button>
+      <button role="menuitem" data-action="toggle-bottom"><span data-i18n="Toggle Bottom Panel">Toggle Bottom Panel</span><kbd>Alt+2</kbd></button>
+      <button role="menuitem" data-action="show-artifacts"><span data-i18n="Artifacts">Artifacts</span><kbd>Alt+3</kbd></button>
       <div class="menu-separator" role="separator"></div>
-      <button role="menuitem" data-action="fullscreen">Full Screen <kbd>F11</kbd></button>
+      <button role="menuitem" data-action="fullscreen"><span data-i18n="Full Screen">Full Screen</span><kbd>F11</kbd></button>
+      <div class="menu-separator" role="separator"></div>
+      <button class="submenu-trigger" role="menuitem" data-submenu="appearance-submenu" aria-haspopup="menu" aria-controls="appearance-submenu" aria-expanded="false"><span data-i18n="Appearance">Appearance</span><span class="submenu-arrow" aria-hidden="true">›</span></button>
+      <button class="submenu-trigger" role="menuitem" data-submenu="language-submenu" aria-haspopup="menu" aria-controls="language-submenu" aria-expanded="false"><span data-i18n="Language">Language</span><span class="submenu-arrow" aria-hidden="true">›</span></button>
+    </div>
+    <div class="submenu-popover" id="appearance-submenu" role="menu" aria-label="Appearance" data-i18n-aria-label="Appearance">
+      <button role="menuitemradio" data-appearance="system" aria-checked="true"><span data-i18n="System">System</span><span class="menu-choice-check" aria-hidden="true">✓</span></button>
+      <button role="menuitemradio" data-appearance="light" aria-checked="false"><span data-i18n="Light">Light</span><span class="menu-choice-check" aria-hidden="true">✓</span></button>
+      <button role="menuitemradio" data-appearance="dark" aria-checked="false"><span data-i18n="Dark">Dark</span><span class="menu-choice-check" aria-hidden="true">✓</span></button>
+    </div>
+    <div class="submenu-popover" id="language-submenu" role="menu" aria-label="Language" data-i18n-aria-label="Language">
+      <button role="menuitemradio" data-language="en" aria-checked="true"><span>English</span><span class="menu-choice-check" aria-hidden="true">✓</span></button>
+      <button role="menuitemradio" data-language="zh-CN" aria-checked="false"><span>简体中文</span><span class="menu-choice-check" aria-hidden="true">✓</span></button>
     </div>
     <div class="menu-popover" id="help-menu" role="menu" aria-labelledby="help-menu-trigger">
-      <a role="menuitem" href="https://github.com/bigbio/mokume/tree/dev/docs" target="_blank" rel="noreferrer">Documentation</a>
-      <button role="menuitem" data-action="shortcuts">Keyboard Shortcuts <kbd>Ctrl+/</kbd></button>
-      <button role="menuitem" data-action="system-status">System Status</button>
+      <a role="menuitem" href="https://github.com/bigbio/mokume/tree/dev/docs" target="_blank" rel="noreferrer" data-i18n="Documentation">Documentation</a>
+      <button role="menuitem" data-action="shortcuts"><span data-i18n="Keyboard Shortcuts">Keyboard Shortcuts</span><kbd>Ctrl+/</kbd></button>
+      <button role="menuitem" data-action="system-status" data-i18n="System Status">System Status</button>
       <div class="menu-separator" role="separator"></div>
-      <button role="menuitem" data-action="about">About Mokume</button>
+      <button role="menuitem" data-action="about" data-i18n="About Mokume">About Mokume</button>
     </div>
 
     <main class="workspace">
       <aside class="sidebar" id="sidebar">
-        <div class="panel-title"><span>DATA</span><button class="icon-button" data-action="open-folder" title="Open folder">＋</button></div>
-        <div id="project-files" class="file-tree empty-state">Open a folder to browse input files.</div>
+        <div class="panel-title">
+          <span data-i18n="DATA">DATA</span>
+          <div class="panel-title-actions">
+            <button class="panel-icon-button" type="button" data-action="open-folder" title="Open folder" aria-label="Open folder" data-i18n-title="Open folder" data-i18n-aria-label="Open folder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+            <button class="panel-icon-button" type="button" data-action="refresh-files" title="Refresh files" aria-label="Refresh files" data-i18n-title="Refresh files" data-i18n-aria-label="Refresh files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.14 6.36L3 15"></path><path d="M3 21v-6h6"></path><path d="M3 12a9 9 0 0 1 15.14-6.36L21 9"></path><path d="M21 3v6h-6"></path></svg></button>
+            <button class="panel-icon-button" type="button" data-action="collapse-folders" title="Collapse all folders" aria-label="Collapse all folders" data-i18n-title="Collapse all folders" data-i18n-aria-label="Collapse all folders"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 13h6"></path><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-5.4a2 2 0 0 1-1.6-.8l-1.2-1.6A2 2 0 0 0 9.2 4H5a2 2 0 0 0-2 2Z"></path></svg></button>
+            <button class="panel-icon-button" type="button" data-action="toggle-sidebar" title="Collapse sidebar" aria-label="Collapse sidebar" data-i18n-title="Collapse sidebar" data-i18n-aria-label="Collapse sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="panel-icon-fill" d="M4 5h4v14H4z"></path><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button>
+          </div>
+        </div>
+        <div id="project-files" class="file-tree empty-state" data-i18n="Open a folder to browse input files.">Open a folder to browse input files.</div>
+        <div class="panel-resizer sidebar-resizer" data-resize-panel="sidebar" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize data panel" data-i18n-aria-label="Resize data panel"></div>
       </aside>
+
+      <button class="panel-restore-button sidebar-restore-button" type="button" data-action="toggle-sidebar" title="Expand sidebar" aria-label="Expand sidebar" data-i18n-title="Expand sidebar" data-i18n-aria-label="Expand sidebar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="panel-icon-fill" d="M4 5h4v14H4z"></path><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg>
+      </button>
 
       <section class="workflow-panel">
         <div class="welcome" id="welcome">
-          <div class="welcome-mark">M</div>
-          <h1>Start a Mokume analysis</h1>
-          <p>Open a local folder, inspect its proteomics data, then configure a reproducible workflow.</p>
-          <button class="primary" data-action="open-folder">Open Folder</button>
-          <p class="privacy-note">Files stay on this computer. Inputs are opened read-only.</p>
+          <div class="welcome-mark" aria-hidden="true"><img src="/static/mokume-mark.png" alt=""></div>
+          <h1 data-i18n="Start a Mokume analysis">Start a Mokume analysis</h1>
+          <p data-i18n="Open a local folder, configure a reproducible workflow, and review its results.">Open a local folder, configure a reproducible workflow, and review its results.</p>
+          <button class="primary" data-action="open-folder" data-i18n="Open Folder">Open Folder</button>
+          <p class="privacy-note" data-i18n="Files stay on this computer. Inputs are opened read-only.">Files stay on this computer. Inputs are opened read-only.</p>
         </div>
         <div id="workflow" class="hidden">
           <div class="panel-heading">
-            <div><span class="eyebrow">WORKFLOW</span><h2>Configure analysis</h2></div>
+            <div><span class="eyebrow" data-i18n="WORKFLOW">WORKFLOW</span><h2 data-i18n="Configure analysis">Configure analysis</h2></div>
             <div class="heading-actions">
-              <button data-action="validate-command">Validate</button>
-              <button class="primary" data-action="run-command">Run</button>
+              <button data-action="validate-command" data-i18n="Validate">Validate</button>
+              <button class="primary" data-action="run-command" data-i18n="Run">Run</button>
             </div>
           </div>
           <div id="command-catalog" class="command-catalog"></div>
-          <div id="command-form" class="command-form empty-state">Select a workflow to configure its parameters.</div>
+          <div id="command-form" class="command-form empty-state" data-i18n="Select a workflow to configure its parameters.">Select a workflow to configure its parameters.</div>
         </div>
       </section>
 
       <aside class="assistant-panel" id="assistant-panel">
-        <div class="panel-title"><span>ASSISTANT</span><span class="badge">Optional</span></div>
-        <div class="assistant-toolbar">
-          <label class="assistant-mode-control" for="assistant-mode">
-            <span>Mode</span>
-            <select id="assistant-mode">
-              <option value="ask">Ask</option>
-              <option value="plan">Plan</option>
-            </select>
-          </label>
-          <div class="assistant-actions">
-            <button id="inspect-dataset" data-action="inspect-dataset">Inspect Dataset</button>
-            <button id="configure-provider" data-action="assistant-settings" title="Configure model provider" aria-label="Configure model provider">Provider</button>
+        <div class="panel-resizer assistant-resizer" data-resize-panel="assistant" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="assistant-panel" aria-label="Resize assistant panel" data-i18n-aria-label="Resize assistant panel"></div>
+        <div class="assistant-chat-header">
+          <div class="assistant-header-actions">
+            <button class="panel-icon-button" type="button" data-action="new-assistant-chat" title="New chat" aria-label="New chat" data-i18n-title="New chat" data-i18n-aria-label="New chat">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            </button>
+            <button class="panel-icon-button" type="button" data-action="assistant-history" title="Conversation history" aria-label="Conversation history" data-i18n-title="Conversation history" data-i18n-aria-label="Conversation history">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5M12 7v5l3 2"></path></svg>
+            </button>
+            <button id="configure-provider" class="panel-icon-button" type="button" data-action="assistant-settings" title="Configure model provider" aria-label="Configure model provider" data-i18n-title="Configure model provider" data-i18n-aria-label="Configure model provider">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg>
+            </button>
+            <button class="panel-icon-button" type="button" data-action="toggle-assistant" title="Collapse assistant" aria-label="Collapse assistant" data-i18n-title="Collapse assistant" data-i18n-aria-label="Collapse assistant">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path class="panel-icon-fill" d="M16 5h4v14h-4z"></path><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M15 4v16"></path></svg>
+            </button>
           </div>
         </div>
-        <div id="assistant-messages" class="assistant-messages" aria-live="polite" aria-label="Assistant conversation">
-          <article class="assistant-message assistant">
-            <div class="assistant-orb" aria-hidden="true"></div>
-            <div class="message-body">
-              <strong>Mokume Assistant</strong>
-              <p>Inspect a dataset, then ask about its profile or prepare a reviewable analysis plan.</p>
-            </div>
-          </article>
-          <div class="assistant-notice">
-            <strong>AI is not configured</strong>
-            <p>Native workflows remain available. Add a provider for Ask and Plan; credentials stay in this server session.</p>
-          </div>
-        </div>
+        <div id="assistant-messages" class="assistant-messages" aria-live="polite" aria-label="Assistant conversation" data-i18n-aria-label="Assistant conversation"></div>
         <div class="assistant-composer">
-          <label class="sr-only" for="assistant-input">Message Mokume Assistant</label>
-          <textarea id="assistant-input" rows="3" placeholder="Ask about the inspected dataset or request an analysis plan"></textarea>
+          <label class="sr-only" for="assistant-input" data-i18n="Message Mokume Assistant">Message Mokume Assistant</label>
+          <textarea id="assistant-input" rows="2" placeholder="Ask about this workspace or ask Agent to help with an analysis" data-i18n-placeholder="Ask about this workspace or ask Agent to help with an analysis"></textarea>
           <div class="composer-actions">
-            <span>Enter to send · Shift+Enter for a new line</span>
-            <button id="assistant-send" class="primary" type="button">Send</button>
+            <div class="composer-context">
+              <div class="assistant-mode-control">
+                <button id="assistant-mode" class="assistant-mode-trigger" type="button" value="ask" aria-haspopup="listbox" aria-controls="assistant-mode-menu" aria-expanded="false" aria-label="Mode" data-i18n-aria-label="Mode">
+                  <svg class="assistant-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><use id="assistant-mode-icon-use" href="#assistant-icon-ask"></use></svg>
+                  <span id="assistant-mode-value" data-i18n="Ask">Ask</span>
+                  <svg class="assistant-mode-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"></path></svg>
+                </button>
+                <div id="assistant-mode-menu" class="assistant-mode-menu" role="listbox" aria-label="Mode" data-i18n-aria-label="Mode">
+                  <button type="button" role="option" data-assistant-mode="ask" aria-selected="true" tabindex="-1"><svg class="assistant-mode-option-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#assistant-icon-ask"></use></svg><span data-i18n="Ask">Ask</span></button>
+                  <button type="button" role="option" data-assistant-mode="agent" aria-selected="false" tabindex="-1"><svg class="assistant-mode-option-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#assistant-icon-agent"></use></svg><span data-i18n="Agent">Agent</span></button>
+                </div>
+              </div>
+              <button id="assistant-model" class="assistant-model-button" type="button" data-action="assistant-settings" title="Configure model provider" aria-label="Configure model provider" data-i18n-title="Configure model provider" data-i18n-aria-label="Configure model provider"><span id="assistant-model-name" data-i18n="Configure model">Configure model</span></button>
+            </div>
+            <button id="assistant-send" class="primary assistant-send-button" type="button" aria-label="Send" title="Send" data-i18n-aria-label="Send" data-i18n-title="Send">
+              <svg class="assistant-send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14"></path></svg>
+              <svg class="assistant-send-spinner" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle></svg>
+            </button>
           </div>
         </div>
       </aside>
+
+      <button class="panel-restore-button assistant-restore-button" type="button" data-action="toggle-assistant" title="Expand assistant" aria-label="Expand assistant" data-i18n-title="Expand assistant" data-i18n-aria-label="Expand assistant">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="panel-icon-fill" d="M16 5h4v14h-4z"></path><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M15 4v16"></path></svg>
+      </button>
     </main>
 
     <section class="bottom-panel" id="bottom-panel">
+      <div class="panel-resizer bottom-resizer" data-resize-panel="bottom" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="bottom-panel" aria-label="Resize bottom panel" data-i18n-aria-label="Resize bottom panel"></div>
       <div class="bottom-tabs">
-        <button class="active" data-bottom-tab="runs">Runs</button>
-        <button data-bottom-tab="logs">Logs</button>
-        <button data-bottom-tab="artifacts">Artifacts</button>
-        <button class="collapse-button" data-action="toggle-bottom">⌄</button>
+        <button class="active" data-bottom-tab="runs" data-i18n="Runs">Runs</button>
+        <button data-bottom-tab="logs" data-i18n="Logs">Logs</button>
+        <button data-bottom-tab="artifacts" data-i18n="Artifacts">Artifacts</button>
+        <button class="panel-icon-button collapse-button" type="button" data-action="toggle-bottom" title="Collapse bottom panel" aria-label="Collapse bottom panel" data-i18n-title="Collapse bottom panel" data-i18n-aria-label="Collapse bottom panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="panel-icon-fill" d="M4 15h16v4H4z"></path><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 14h18"></path></svg></button>
       </div>
-      <div class="bottom-content" id="bottom-content">No runs yet.</div>
+      <div class="bottom-content" id="bottom-content" data-i18n="No runs yet.">No runs yet.</div>
     </section>
 
     <dialog id="folder-dialog" class="dialog folder-dialog">
-      <div class="dialog-header"><div><span class="eyebrow">PROJECT</span><h2>Open Folder</h2></div><button class="icon-button" data-close-dialog>×</button></div>
-      <div class="folder-path"><button id="folder-parent" title="Parent folder">↑</button><input id="folder-current" aria-label="Current folder" readonly></div>
+      <div class="dialog-header"><div><span class="eyebrow" data-i18n="PROJECT">PROJECT</span><h2 data-i18n="Open Folder">Open Folder</h2></div><button class="icon-button" data-close-dialog>×</button></div>
+      <div class="folder-path"><button id="folder-parent" title="Parent folder" data-i18n-title="Parent folder">↑</button><input id="folder-current" aria-label="Current folder" data-i18n-aria-label="Current folder" readonly></div>
       <div class="folder-list" id="folder-list"></div>
-      <div class="dialog-actions"><button data-close-dialog>Cancel</button><button class="primary" id="select-folder">Open this folder</button></div>
+      <div class="dialog-actions"><button data-close-dialog data-i18n="Cancel">Cancel</button><button class="primary" id="select-folder" data-i18n="Open this folder">Open this folder</button></div>
     </dialog>
 
     <dialog id="info-dialog" class="dialog info-dialog">
       <div class="dialog-header"><h2 id="info-title">Mokume Studio</h2><button class="icon-button" data-close-dialog>×</button></div>
       <div id="info-content" class="info-content"></div>
-      <div class="dialog-actions"><button class="primary" data-close-dialog>Done</button></div>
+      <div class="dialog-actions"><button class="primary" data-close-dialog data-i18n="Done">Done</button></div>
+    </dialog>
+
+    <dialog id="conversation-dialog" class="dialog conversation-dialog">
+      <div class="dialog-header"><div><span class="eyebrow" data-i18n="ASSISTANT">ASSISTANT</span><h2 data-i18n="Conversation history">Conversation history</h2></div><button class="icon-button" data-close-dialog aria-label="Close conversation history" data-i18n-aria-label="Close conversation history">×</button></div>
+      <div id="conversation-list" class="conversation-list"></div>
     </dialog>
 
     <dialog id="provider-dialog" class="dialog provider-dialog">
-      <div class="dialog-header"><div><span class="eyebrow">ASSISTANT</span><h2>Configure Provider</h2></div><button class="icon-button" data-close-dialog aria-label="Close provider settings">×</button></div>
+      <div class="dialog-header"><div><span class="eyebrow" data-i18n="ASSISTANT">ASSISTANT</span><h2 data-i18n="Configure Provider">Configure Provider</h2></div><button class="icon-button" data-close-dialog aria-label="Close provider settings" data-i18n-aria-label="Close provider settings">×</button></div>
       <form id="provider-form" class="dialog-form">
-        <div class="dialog-field">
-          <label for="provider-kind">Provider</label>
-          <select id="provider-kind" required>
-            <option value="openai">OpenAI</option>
-            <option value="openai-compatible">OpenAI-compatible</option>
-            <option value="anthropic">Anthropic</option>
-          </select>
-        </div>
-        <div class="dialog-field">
-          <label for="provider-model">Model</label>
-          <input id="provider-model" type="text" placeholder="Model name" autocomplete="off" spellcheck="false" required>
-        </div>
-        <div class="dialog-field">
-          <label for="provider-base-url">Base URL <span class="optional-label">OpenAI-compatible only</span></label>
-          <input id="provider-base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false">
-        </div>
-        <div class="dialog-field">
-          <label for="provider-api-key">API key</label>
-          <input id="provider-api-key" type="password" placeholder="Optional when supplied by the server environment" autocomplete="off" spellcheck="false">
-          <small>The key is held only in server memory. It is not written to the project or Studio database.</small>
-        </div>
-        <div class="dialog-actions split-actions">
-          <button id="clear-provider" type="button" class="danger-button">Clear Provider</button>
-          <div><button type="button" data-close-dialog>Cancel</button><button class="primary" type="submit">Save for Session</button></div>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="dataset-dialog" class="dialog dataset-dialog">
-      <div class="dialog-header"><div><span class="eyebrow">DATASET</span><h2>Inspect Dataset</h2></div><button class="icon-button" data-close-dialog aria-label="Close dataset inspection">×</button></div>
-      <form id="dataset-form" class="dialog-form">
-        <div class="dialog-grid">
-          <div class="dialog-field full-width">
-            <label for="dataset-matrix">Protein matrix</label>
-            <input id="dataset-matrix" type="text" placeholder="Relative path inside the open folder" autocomplete="off" spellcheck="false" required>
-            <small>First column: protein IDs. Remaining columns: numeric sample intensities.</small>
-          </div>
-          <div class="dialog-field full-width">
-            <label for="dataset-sdrf">SDRF</label>
-            <input id="dataset-sdrf" type="text" placeholder="Relative path inside the open folder" autocomplete="off" spellcheck="false" required>
-          </div>
+        <div class="dialog-grid provider-grid">
           <div class="dialog-field">
-            <label for="dataset-condition-a">Condition A</label>
-            <input id="dataset-condition-a" type="text" placeholder="Treatment" autocomplete="off" required>
-          </div>
-          <div class="dialog-field">
-            <label for="dataset-condition-b">Condition B</label>
-            <input id="dataset-condition-b" type="text" placeholder="Control" autocomplete="off" required>
-          </div>
-          <div class="dialog-field">
-            <label for="dataset-input-scale">Input scale</label>
-            <select id="dataset-input-scale" required>
-              <option value="" selected disabled>Select scale</option>
-              <option value="linear">Linear intensity</option>
-              <option value="log2">Log2 intensity</option>
+            <label for="provider-kind" data-i18n="API format">API format</label>
+            <select id="provider-kind" required>
+              <option value="anthropic">anthropic</option>
+              <option value="openai-chat">openai-chat</option>
+              <option value="openai-responses">openai-responses</option>
+              <option value="gemini">gemini</option>
             </select>
           </div>
           <div class="dialog-field">
-            <label for="dataset-data-type">Data type <span class="optional-label">Optional</span></label>
-            <select id="dataset-data-type">
-              <option value="">Infer when possible</option>
-              <option value="LFQ">LFQ</option>
-              <option value="DIA">DIA</option>
-              <option value="TMT">TMT</option>
-            </select>
+            <label for="provider-model" data-i18n="Model ID">Model ID</label>
+            <input id="provider-model" type="text" placeholder="e.g. gpt-5, claude-sonnet-4-5, k3-256k" data-i18n-placeholder="e.g. gpt-5, claude-sonnet-4-5, k3-256k" autocomplete="off" spellcheck="false" required>
+            <small data-i18n="The selected model must support tool calling.">The selected model must support tool calling.</small>
           </div>
           <div class="dialog-field full-width">
-            <label for="dataset-peptide-counts">Peptide counts <span class="optional-label">Optional</span></label>
-            <input id="dataset-peptide-counts" type="text" placeholder="Needed when evaluating DEqMS" autocomplete="off" spellcheck="false">
-          </div>
-          <div class="dialog-field">
-            <label for="dataset-quantification">Quantification <span class="optional-label">Optional</span></label>
-            <input id="dataset-quantification" type="text" list="quantification-methods" placeholder="e.g. directlfq" autocomplete="off" spellcheck="false">
-            <datalist id="quantification-methods">
-              <option value="directlfq"></option>
-              <option value="pibaq"></option>
-              <option value="maxlfq"></option>
-              <option value="sum"></option>
-              <option value="median"></option>
-              <option value="ratio"></option>
-              <option value="intensity"></option>
-              <option value="peptide_count"></option>
-              <option value="spectral_count"></option>
-              <option value="top3"></option>
-            </datalist>
-          </div>
-          <div class="dialog-field">
-            <label for="dataset-engine">Upstream engine <span class="optional-label">Optional</span></label>
-            <input id="dataset-engine" type="text" list="upstream-engines" placeholder="e.g. quantms" autocomplete="off" spellcheck="false">
-            <datalist id="upstream-engines">
-              <option value="quantms"></option>
-              <option value="DIA-NN"></option>
-              <option value="FragPipe"></option>
-              <option value="MaxQuant"></option>
-              <option value="Spectronaut"></option>
-            </datalist>
+            <div class="field-label-row">
+              <label for="provider-base-url"><span data-i18n="Base URL">Base URL</span> <span class="optional-label" data-i18n="Optional">Optional</span></label>
+              <button id="test-provider" class="field-link-button" type="button" data-state="idle">
+                <svg class="service-test-check" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9"></circle><path d="m6 10 2.4 2.4L14 7"></path></svg>
+                <span id="provider-test-label" data-i18n="Test service">Test service</span>
+              </button>
+            </div>
+            <input id="provider-base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false">
+            <small data-i18n="Leave empty to use the SDK default endpoint.">Leave empty to use the SDK default endpoint.</small>
+            <p id="provider-test-status" class="provider-test-status" role="status" aria-live="polite"></p>
           </div>
           <div class="dialog-field full-width">
-            <label for="dataset-factor-column">SDRF factor column <span class="optional-label">Optional</span></label>
-            <input id="dataset-factor-column" type="text" placeholder="Defaults to the detected condition column" autocomplete="off" spellcheck="false">
+            <label for="provider-api-key" data-i18n="API key">API key</label>
+            <div class="secret-input">
+              <input id="provider-api-key" class="secret-masked" type="text" placeholder="Optional when supplied by the server environment" data-i18n-placeholder="Optional when supplied by the server environment" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
+              <button id="toggle-provider-key" class="field-icon-button" type="button" aria-label="Show API key" title="Show API key" data-i18n-aria-label="Show API key" data-i18n-title="Show API key" aria-pressed="false">
+                <svg class="key-visible-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                <svg class="key-hidden-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 4.2A11.4 11.4 0 0 1 12 4c7 0 10 8 10 8a16 16 0 0 1-2.1 3.2M6.6 6.6C3.5 8.5 2 12 2 12s3 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg>
+              </button>
+            </div>
+            <small id="provider-key-note" data-i18n="The key is held only in server memory. It is not written to the project or Studio database.">The key is held only in server memory. It is not written to the project or Studio database.</small>
           </div>
+          <details id="provider-advanced" class="provider-advanced">
+            <summary data-i18n="Advanced">Advanced</summary>
+            <div class="provider-advanced-grid">
+              <div class="dialog-field">
+                <label for="provider-context-tokens" data-i18n="Context token limit">Context token limit</label>
+                <input id="provider-context-tokens" type="number" min="1024" max="10000000" step="1" placeholder="Provider default" data-i18n-placeholder="Provider default" inputmode="numeric">
+                <small data-i18n="Maximum input context per model request.">Maximum input context per model request.</small>
+              </div>
+              <div class="dialog-field">
+                <label for="provider-max-output-tokens" data-i18n="Max output tokens">Max output tokens</label>
+                <input id="provider-max-output-tokens" type="number" min="1" max="1000000" step="1" placeholder="Provider default" data-i18n-placeholder="Provider default" inputmode="numeric">
+                <small data-i18n="Maximum tokens generated in one model response.">Maximum tokens generated in one model response.</small>
+              </div>
+              <div class="dialog-field full-width">
+                <label for="provider-thinking-level" data-i18n="Thinking level">Thinking level</label>
+                <select id="provider-thinking-level">
+                  <option value="" data-i18n="Provider default">Provider default</option>
+                  <option value="off" data-i18n="Off">Off</option>
+                  <option value="minimal" data-i18n="Minimal">Minimal</option>
+                  <option value="low" data-i18n="Low">Low</option>
+                  <option value="medium" data-i18n="Medium">Medium</option>
+                  <option value="high" data-i18n="High">High</option>
+                  <option value="xhigh" data-i18n="XHigh">XHigh</option>
+                </select>
+                <small data-i18n="Supported models use the closest available level; other models may ignore this setting.">Supported models use the closest available level; other models may ignore this setting.</small>
+              </div>
+            </div>
+          </details>
         </div>
-        <p class="dialog-note">Inspection is read-only and runs locally. Raw matrix rows are not sent to a model by default.</p>
-        <div class="dialog-actions"><button type="button" data-close-dialog>Cancel</button><button class="primary" type="submit">Inspect Dataset</button></div>
+        <div class="dialog-actions provider-save-actions">
+          <label class="provider-persist-option" for="provider-persist">
+            <input id="provider-persist" type="checkbox">
+            <span data-i18n="Persist Studio configuration">Persist Studio configuration</span>
+          </label>
+          <button class="primary" type="submit" data-i18n="Save">Save</button>
+        </div>
       </form>
     </dialog>
 
     <dialog id="approval-dialog" class="dialog approval-dialog">
-      <div class="dialog-header"><div><span class="eyebrow">FINAL REVIEW</span><h2>Approve Analysis</h2></div><button class="icon-button" data-close-dialog aria-label="Close analysis approval">×</button></div>
-      <div class="approval-intro">
+      <div class="dialog-header"><div><span class="eyebrow" data-i18n="FINAL REVIEW">FINAL REVIEW</span><h2 data-i18n="Approve Analysis">Approve Analysis</h2></div><button class="icon-button" data-close-dialog aria-label="Close analysis approval" data-i18n-aria-label="Close analysis approval">×</button></div>
+      <div class="approval-intro" data-i18n="Review the canonical parameters below. Computation cannot start until this exact plan is approved.">
         Review the canonical parameters below. Computation cannot start until this exact plan is approved.
       </div>
       <div id="approval-content" class="approval-content">
         <section class="approval-card">
-          <div class="approval-card-title"><span>Canonical parameters</span><span class="approval-status">Pending</span></div>
-          <p class="empty-state">No analysis plan is awaiting approval.</p>
+          <div class="approval-card-title"><span data-i18n="Canonical parameters">Canonical parameters</span><span class="approval-status" data-i18n="Pending">Pending</span></div>
+          <p class="empty-state" data-i18n="No analysis plan is awaiting approval.">No analysis plan is awaiting approval.</p>
         </section>
       </div>
-      <div class="dialog-actions"><button id="approval-reject" type="button" class="danger-button">Reject</button><button id="approval-approve" class="primary" type="button">Approve and Run</button></div>
+      <div class="dialog-actions"><button id="approval-reject" type="button" class="danger-button" data-i18n="Reject">Reject</button><button id="approval-approve" class="primary" type="button" data-i18n="Approve and Run">Approve and Run</button></div>
     </dialog>
+
+    <!-- Selected Lucide and vscode-icons assets; licenses are bundled with the wheel. -->
+    <svg class="file-icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="assistant-icon-ask" viewBox="0 0 24 24">
+        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+        <path d="M9.1 9a3 3 0 1 1 5.4 1.8c-.9.7-1.5 1.1-1.5 2.2M12 16h.01"></path>
+      </symbol>
+      <symbol id="assistant-icon-agent" viewBox="0 0 24 24">
+        <path d="M6 16c5 0 7-8 12-8a4 4 0 0 1 0 8c-5 0-7-8-12-8a4 4 0 1 0 0 8"></path>
+      </symbol>
+      <symbol id="file-icon-folder" viewBox="0 0 24 24">
+        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
+      </symbol>
+      <symbol id="file-icon-folder-open" viewBox="0 0 24 24">
+        <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"></path>
+      </symbol>
+      <symbol id="file-icon-file" viewBox="0 0 24 24">
+        <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path>
+        <path d="M14 2v5a1 1 0 0 0 1 1h5"></path>
+      </symbol>
+      <symbol id="file-icon-braces" viewBox="0 0 24 24">
+        <path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"></path>
+        <path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path>
+      </symbol>
+      <symbol id="file-icon-table-properties" viewBox="0 0 24 24">
+        <path d="M15 3v18"></path>
+        <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+        <path d="M21 9H3M21 15H3"></path>
+      </symbol>
+      <symbol id="file-icon-file-spreadsheet" viewBox="0 0 24 24">
+        <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2zM14 2v5a1 1 0 0 0 1 1h5M8 13h2M14 13h2M8 17h2M14 17h2"></path>
+      </symbol>
+      <symbol id="file-icon-sdrf" viewBox="0 0 24 24">
+        <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8l6 6v12a2 2 0 0 1-2 2zM14 2v6h6"></path>
+        <circle cx="8" cy="13" r="1"></circle>
+        <circle cx="15" cy="11" r="1"></circle>
+        <circle cx="15" cy="17" r="1"></circle>
+        <path d="M9 13h2c2 0 2-2 3-2M11 13c2 0 2 4 3 4"></path>
+      </symbol>
+      <symbol id="file-icon-mass-spectrum" viewBox="0 0 24 24">
+        <path d="M3 20h18M5 20v-4M8 20V7M11 20v-8M14 20V4M17 20v-5M20 20V9"></path>
+      </symbol>
+      <symbol id="file-icon-feature-map" viewBox="0 0 24 24">
+        <circle cx="7.5" cy="7.5" r=".8" fill="currentColor"></circle>
+        <circle cx="18.5" cy="5.5" r=".8" fill="currentColor"></circle>
+        <circle cx="11.5" cy="11.5" r=".8" fill="currentColor"></circle>
+        <circle cx="7.5" cy="16.5" r=".8" fill="currentColor"></circle>
+        <circle cx="17.5" cy="14.5" r=".8" fill="currentColor"></circle>
+        <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>
+      </symbol>
+      <symbol id="file-icon-identification" viewBox="0 0 24 24">
+        <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8l6 6v12a2 2 0 0 1-2 2zM14 2v6h6m-4 5-5 5-3-3"></path>
+      </symbol>
+      <symbol id="file-icon-workflow" viewBox="0 0 24 24">
+        <rect width="8" height="8" x="3" y="3" rx="2"></rect>
+        <path d="M7 11v4a2 2 0 0 0 2 2h4"></path>
+        <rect width="8" height="8" x="13" y="13" rx="2"></rect>
+      </symbol>
+      <symbol id="file-icon-msstats" viewBox="0 0 24 24">
+        <path d="M5 21v-6M12 21V9M19 21V3"></path>
+      </symbol>
+      <symbol id="file-icon-file-code" viewBox="0 0 24 24">
+        <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2zM14 2v5a1 1 0 0 0 1 1h5M10 12.5 8 15l2 2.5m4-5 2 2.5-2 2.5"></path>
+      </symbol>
+      <symbol id="file-icon-file-text" viewBox="0 0 24 24">
+        <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2zM14 2v5a1 1 0 0 0 1 1h5M10 9H8M16 13H8M16 17H8"></path>
+      </symbol>
+      <symbol id="file-icon-image" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+        <circle cx="9" cy="9" r="2"></circle>
+        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+      </symbol>
+      <symbol id="file-icon-dna" viewBox="0 0 24 24">
+        <path d="m10 16 1.5 1.5m2.5-9.5-1.5-1.5M15 2c-1.798 1.998-2.518 3.995-2.807 5.993m4.307 2.507 1 1M17 6l-2.891-2.891M2 15c6.667-6 13.333 0 20-6m-2 0 .891.891M3.109 14.109 4 15m2.5-2.5 1 1M7 18l2.891 2.891M9 22c1.798-1.998 2.518-3.995 2.807-5.993"></path>
+      </symbol>
+      <symbol id="file-icon-file-archive" viewBox="0 0 24 24">
+        <path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5M14 2v5a1 1 0 0 0 1 1h5M8 12v-1M8 18v-2M8 7V6"></path>
+        <circle cx="8" cy="20" r="2"></circle>
+      </symbol>
+      <symbol id="file-icon-vscode-parquet" viewBox="0 0 32 32">
+        <path fill="#50abf1" d="m14.67 26.604c-1.0147-1.2177-1.1162-1.3191-1.0147-1.5221l14.206-13.902c.10147-.10147 1.8265.71031 2.1309 1.1162.20295.20295-1.0147 1.4206-6.7987 7.9149l-7.1031 7.7119s-.81178-.60884-1.4206-1.3191m-3.1457-3.3486-1.0147-1.3191c.10147-.20295 7.9149-7.0016 8.1178-7.0016.10147 0 2.0295 1.5221 2.0295 1.725 0 .20295-7.9149 7.6105-8.1178 7.6105zm-2.7398-3.2471q-.81178-1.0147-.71031-1.1162l3.856-2.8412 1.725 1.6236c0 .20294-3.653 3.2471-3.856 3.2471q-.30442 0-1.0147-1.0147m-2.3339-2.5368q-1.0147-.91326-.60884-1.0147l11.162-7.8134c.20295 0 1.725 1.0147 1.725 1.1162l-11.365 8.6252zm7.3061-1.1162q-.81178-.71031-.81178-1.0147l.81178-.71031 4.7692-3.653 4.0589-3.0442c.30442 0 1.8265 1.0147 1.725 1.0147 0 .30442-9.437 8.1178-9.6399 8.1178zm-9.3355-1.2177q-.71031-.71031-.40589-.91326l7.6105-4.7692a4.0589 4.0589 0 0 1 1.4206 1.1162 80.164 80.164 0 0 1-8.0164 5.4795zm16.236 0-1.0147-.81178 5.3781-4.7692q.10147-.30442 1.2177.30442l1.0147.71031a70.016 70.016 0 0 1-5.581 5.2766zm-17.961-2.0295-.71031-.71031.30442-.20295 7.1031-4.1604 6.4943-3.856.60884.30442.71031.50736c0 .10147-14.003 8.9296-14.206 8.9296zm10.147-3.4501q-.60884-.40589-.60884-.60884.20294-.40589 2.8412-2.0295l2.8412-1.6236.71031.40589.71031.50736c0 .20295-5.581 3.9574-5.784 3.9574zm5.6825-.81178-.71031-.60884 2.3339-1.6236 1.5221.91326-.20295.30442c-.30442.40589-2.0295 1.5221-2.0295 1.5221z"></path>
+      </symbol>
+      <symbol id="file-icon-vscode-config" viewBox="0 0 32 32">
+        <path fill="#99b8c4" d="M23.265 24.381l.9-.894c4.164.136 4.228-.01 4.411-.438l1.144-2.785.085-.264-.093-.231c-.049-.122-.2-.486-2.8-2.965V15.5c3-2.89 2.936-3.038 2.765-3.461l-1.139-2.814c-.171-.422-.236-.587-4.37-.474l-.9-.93a20.166 20.166 0 0 0-.141-4.106l-.116-.263-2.974-1.3c-.438-.2-.592-.272-3.4 2.786l-1.262-.019c-2.891-3.086-3.028-3.03-3.461-2.855L9.149 3.182c-.433.175-.586.237-.418 4.437l-.893.89c-4.162-.136-4.226.012-4.407.438l-1.146 2.786-.09.267.094.232c.049.12.194.48 2.8 2.962l.001 1.3c-3 2.89-2.935 3.038-2.763 3.462l1.138 2.817c.174.431.236.584 4.369.476l.9.935a20.243 20.243 0 0 0 .137 4.1l.116.265 2.993 1.308c.435.182.586.247 3.386-2.8l1.262.016c2.895 3.09 3.043 3.03 3.466 2.859l2.759-1.115c.435-.177.587-.238.412-4.44ZM11.407 17.857a4.957 4.957 0 1 1 6.488 2.824 5.014 5.014 0 0 1-6.488-2.824Z"></path>
+      </symbol>
+      <symbol id="file-icon-vscode-shell" viewBox="0 0 32 32">
+        <path fill="#d9b400" d="M29.4 27.6H2.5V4.5h26.9Zm-25.9-1h24.9V5.5H3.5Z"></path>
+        <path fill="#d9b400" d="m6.077 19.316-.555-.832 4.844-3.229-4.887-4.071.641-.768 5.915 4.928Zm6.623-1.116h7.8v1h-7.8ZM2.5 5.5h26.9v1.9H2.5Z"></path>
+      </symbol>
+      <symbol id="file-icon-vscode-log" viewBox="0 0 32 32">
+        <path fill="#00bd02" d="M29.4 27.6H2.5V4.5h26.9Zm-25.9-1h24.9V5.5H3.5ZM2.5 5.5h26.9v1.9H2.5Zm8.833 4h8.167v1h-8.167Zm0 2.583h12.5v1h-12.5Zm0 2.667H21.95v1H11.333Zm0 2.833H25.5v1H11.333Zm.167 2.917h9.667v1H11.5Zm0 2.583h12.167v1H11.5ZM5.5 9.5h4.333v1H5.5Zm0 2.583h4.333v1H5.5Zm0 2.584h4.333v1H5.5Zm0 2.583h4.333v1H5.5Zm0 3.25h4.333v1H5.5Zm0 2.583h4.333v1H5.5Z"></path>
+      </symbol>
+    </svg>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="/static/studio.js"></script>

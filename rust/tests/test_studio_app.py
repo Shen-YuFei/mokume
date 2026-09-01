@@ -8,7 +8,7 @@ import httpx
 import pytest
 from studio_test_support import make_studio_app
 
-from mokume.studio.models import JobSpec, utc_now
+from mokume.studio.models import JobSpec, RunStatus, utc_now
 from mokume.studio.paths import PathAccessError, ProjectPaths
 from mokume.studio.state import StateStore
 
@@ -22,11 +22,9 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture(name="studio_client")
 async def build_studio_client(tmp_path):
     """Create an in-memory authenticated-capable Studio HTTP client."""
-    app = make_studio_app(PORT, TOKEN, tmp_path / "state")
+    app = make_studio_app(TOKEN, tmp_path / "state")
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as test_client:
+    async with httpx.AsyncClient(transport=transport, base_url=ORIGIN) as test_client:
         test_client.app = app
         yield test_client
 
@@ -63,9 +61,7 @@ async def test_startup_token_is_one_time_and_becomes_http_only_cookie(studio_cli
     assert (await studio_client.get("/")).status_code == 200
 
     transport = httpx.ASGITransport(app=studio_client.app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as second_client:
+    async with httpx.AsyncClient(transport=transport, base_url=ORIGIN) as second_client:
         assert (await second_client.get(f"/?token={TOKEN}")).status_code == 401
 
 
@@ -97,12 +93,57 @@ async def test_mutation_requires_exact_origin_and_csrf(studio_client, tmp_path):
     assert response.json()["root"] == str(tmp_path.resolve())
 
 
-async def test_invalid_host_is_rejected(studio_client):
+@pytest.mark.parametrize(
+    "host",
+    [
+        "attacker.invalid:57828",
+        "192.168.1.10:57828",
+        "localhost",
+        "localhost:0",
+        "localhost:65536",
+        "localhost:not-a-port",
+        "[::1%25lo]:57828",
+    ],
+)
+async def test_invalid_host_is_rejected(studio_client, host):
     """Host-header attacks are rejected before route dispatch."""
-    response = await studio_client.get(
-        "/api/health", headers={"Host": "attacker.invalid"}
-    )
+    response = await studio_client.get("/api/health", headers={"Host": host})
     assert response.status_code == 400
+
+
+async def test_forwarded_loopback_host_uses_its_own_origin(tmp_path):
+    """SSH and IDE loopback forwarding may replace the browser-side port."""
+    forwarded_origin = "http://localhost:57828"
+    app = make_studio_app(TOKEN, tmp_path / "forwarded-state")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url=forwarded_origin,
+    ) as client:
+        csrf = await authenticate(client)
+        session = await client.get("/api/session")
+        assert session.json()["origin"] == forwarded_origin
+        rejected = await client.post(
+            "/api/projects/open",
+            json={"path": str(tmp_path)},
+            headers={"Origin": ORIGIN, "X-CSRF-Token": csrf},
+        )
+        accepted = await client.post(
+            "/api/projects/open",
+            json={"path": str(tmp_path)},
+            headers={"Origin": forwarded_origin, "X-CSRF-Token": csrf},
+        )
+        system = await client.get("/api/system")
+
+    assert rejected.status_code == 403
+    assert accepted.status_code == 200
+    assert system.json()["origin"] == forwarded_origin
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url=ORIGIN,
+    ) as ipv6_client:
+        ipv6 = await ipv6_client.get("/api/health", headers={"Host": "[::1]:57828"})
+        assert ipv6.status_code == 200
 
 
 async def test_project_guard_rejects_parent_and_symlink_escape(tmp_path):
@@ -119,6 +160,35 @@ async def test_project_guard_rejects_parent_and_symlink_escape(tmp_path):
         guard.resolve_existing("../outside/secret.txt")
     with pytest.raises(PathAccessError, match="escapes project root"):
         guard.resolve_existing("escape/secret.txt")
+
+
+async def test_project_files_list_nested_directories(studio_client, tmp_path):
+    """The file tree can lazily request children beneath the project root."""
+    project = tmp_path / "project"
+    nested = project / "data" / "raw"
+    nested.mkdir(parents=True)
+    (nested / "sample.tsv").write_text("value\n", encoding="utf-8")
+    (project / "z-folder").mkdir()
+    (project / "a-file.txt").write_text("value\n", encoding="utf-8")
+    csrf = await authenticate(studio_client)
+    opened = await studio_client.post(
+        "/api/projects/open",
+        json={"path": str(project)},
+        headers=mutation_headers(csrf),
+    )
+    assert opened.status_code == 200
+
+    root = await studio_client.get("/api/files")
+    data = await studio_client.get("/api/files", params={"path": "data"})
+    raw = await studio_client.get("/api/files", params={"path": "data/raw"})
+
+    assert [entry["path"] for entry in root.json()["entries"]] == [
+        "data",
+        "z-folder",
+        "a-file.txt",
+    ]
+    assert data.json()["entries"][0]["path"] == "data/raw"
+    assert raw.json()["entries"][0]["path"] == "data/raw/sample.tsv"
 
 
 async def test_active_run_blocks_project_switches(studio_client, tmp_path):
@@ -156,6 +226,50 @@ async def test_active_run_blocks_project_switches(studio_client, tmp_path):
     assert store.active_project().id == project["id"]
 
 
+async def test_run_history_is_scoped_to_the_active_project(studio_client, tmp_path):
+    """Switching projects must not expose the previous project's run history."""
+    csrf = await authenticate(studio_client)
+    headers = mutation_headers(csrf)
+    store = studio_client.app.state.runtime.store
+    project_a_root = tmp_path / "project-a"
+    project_b_root = tmp_path / "project-b"
+    project_a_root.mkdir()
+    project_b_root.mkdir()
+
+    opened_a = await studio_client.post(
+        "/api/projects/open",
+        json={"path": str(project_a_root)},
+        headers=headers,
+    )
+    project_a = opened_a.json()
+    store.create_run(
+        JobSpec(
+            run_id="project-a-run",
+            project_root=project_a["root"],
+            run_directory=str(project_a_root / "run"),
+            argv=["quantify", "peptides2protein"],
+            parameters={},
+            approved_hash="hash-a",
+            created_at=utc_now(),
+        ),
+        project_a["id"],
+        "quantify peptides2protein",
+    )
+    store.update_run("project-a-run", RunStatus.SUCCEEDED)
+
+    runs_a = await studio_client.get("/api/runs")
+    assert [run["id"] for run in runs_a.json()["runs"]] == ["project-a-run"]
+
+    opened_b = await studio_client.post(
+        "/api/projects/open",
+        json={"path": str(project_b_root)},
+        headers=headers,
+    )
+    assert opened_b.status_code == 200
+    runs_b = await studio_client.get("/api/runs")
+    assert runs_b.json() == {"runs": []}
+
+
 async def test_state_restart_marks_active_runs_interrupted(tmp_path):
     """Restart recovery converts nonterminal runs into interrupted records."""
     store = StateStore(tmp_path / "state")
@@ -179,15 +293,134 @@ async def test_state_restart_marks_active_runs_interrupted(tmp_path):
     assert store.get_run("run-1").status.value == "interrupted"
 
 
+def _assert_packaged_assets(package) -> None:
+    assert package.joinpath("templates/index.html").is_file()
+    assert package.joinpath("static/studio.css").is_file()
+    assert package.joinpath("static/studio.js").is_file()
+    assert package.joinpath("static/mokume-logo.png").is_file()
+    assert package.joinpath("static/mokume-mark.png").is_file()
+    assert package.joinpath("static/LUCIDE_LICENSE.txt").is_file()
+    assert package.joinpath("static/VSCODE_ICONS_LICENSE.txt").is_file()
+
+
+def _assert_branding_and_menus(page: str) -> None:
+    assert 'src="/static/mokume-mark.png"' in page
+    assert 'src="/static/mokume-logo.png"' not in page
+    assert "<span>Mokume Studio</span>" in page
+    assert '<span class="brand-mark">M</span>' not in page
+    assert '<div class="welcome-mark">M</div>' not in page
+    for menu in ("File", "Analysis", "View", "Help"):
+        assert f">{menu}<" in page
+    assert ">Edit<" not in page
+    assert 'role="menuitemradio" data-language="zh-CN"' in page
+    assert 'data-submenu="appearance-submenu"' in page
+    assert 'data-submenu="language-submenu"' in page
+    for icon in (
+        "folder",
+        "vscode-parquet",
+        "vscode-config",
+        "sdrf",
+        "dna",
+        "mass-spectrum",
+        "feature-map",
+        "msstats",
+        "workflow",
+    ):
+        assert f'<symbol id="file-icon-{icon}"' in page
+
+
+def _assert_assistant_controls(page: str) -> None:
+    assert 'class="assistant-chat-header"' in page
+    assert 'class="assistant-title-chip"' not in page
+    assert 'data-action="new-assistant-chat"' in page
+    assert 'data-action="assistant-history"' in page
+    assert (
+        page.index('data-action="new-assistant-chat"')
+        < page.index('data-action="assistant-history"')
+        < page.index('id="configure-provider"')
+    )
+    assert 'data-action="inspect-dataset"' not in page
+    assert 'id="dataset-dialog"' not in page
+    assert 'id="dataset-form"' not in page
+    assert 'id="conversation-dialog"' in page
+    assert 'data-i18n-title="Collapse sidebar"' in page
+    assert 'data-action="refresh-files"' in page
+    assert 'data-action="collapse-folders"' in page
+    assert 'data-i18n-title="Collapse bottom panel"' in page
+    assert 'class="panel-restore-button sidebar-restore-button"' in page
+    assert 'class="panel-restore-button assistant-restore-button"' in page
+    assert 'id="assistant-mode-menu" class="assistant-mode-menu"' in page
+    assert '<select id="assistant-mode"' not in page
+    assert 'data-assistant-mode="ask"' in page
+    assert 'data-assistant-mode="agent"' in page
+    assert 'data-assistant-mode="plan"' not in page
+    assert 'class="assistant-notice"' not in page
+    assert 'id="assistant-model-name"' in page
+    assert 'id="assistant-icon-ask"' in page
+    assert 'id="assistant-icon-agent"' in page
+    assert 'class="primary assistant-send-button"' in page
+    assert ">Send</button>" not in page
+    assert "Enter to send · Shift+Enter for a new line" not in page
+    assert 'id="provider-persist" type="checkbox"' in page
+    assert 'data-i18n="Save">Save</button>' in page
+    assert "Save for Session" not in page
+    for panel in ("sidebar", "assistant", "bottom"):
+        assert f'data-resize-panel="{panel}"' in page
+    for appearance in ("system", "light", "dark"):
+        assert f'data-appearance="{appearance}"' in page
+
+
+def _assert_theme_and_layout_scripts(script_text: str, stylesheet_text: str) -> None:
+    assert 'const LANGUAGE_STORAGE_KEY = "mokume:language"' in script_text
+    assert 'const APPEARANCE_STORAGE_KEY = "mokume:appearance"' in script_text
+    assert "document.documentElement.lang = state.language" in script_text
+    assert "document.documentElement.dataset.theme" in script_text
+    assert ':root[data-theme="light"]' in stylesheet_text
+    assert "function openSubmenu" in script_text
+    assert (
+        'trigger.addEventListener("mouseenter", () => openSubmenu(trigger))'
+        in script_text
+    )
+    assert 'menu.addEventListener("mouseenter", cancelSubmenuClose)' in script_text
+    assert "const PANEL_SIZE_LIMITS" in script_text
+    assert "function bindPanelResizers" in script_text
+    assert 'handle.addEventListener("pointerdown"' in script_text
+
+
+def _assert_workspace_scripts(script_text: str) -> None:
+    assert 'row.addEventListener("dblclick"' not in script_text
+    assert (
+        'row.addEventListener("click", () => loadFolders(directory.path)' in script_text
+    )
+    assert "async function toggleDirectory" in script_text
+    assert "function collapseFileTree" in script_text
+    assert "async function openConversationHistory" in script_text
+    assert "async function openStoredConversation" in script_text
+    assert "async function renameStoredConversation" in script_text
+    assert "async function deleteStoredConversation" in script_text
+    assert 'className = "conversation-rename"' in script_text
+    assert 'className = "conversation-delete"' in script_text
+    assert 'className = "conversation-workspace"' in script_text
+    assert '"Workspace: {path}", { path: workspace.root }' in script_text
+    assert "function openDatasetDialog" not in script_text
+    assert "function inspectDataset" not in script_text
+    assert 'api("/api/datasets/inspect"' not in script_text
+    assert "projectId: state.projectId" in script_text
+    assert "const expandedPaths = expandedDirectoryPaths(tree);" in script_text
+    assert "await restoreExpandedDirectories(tree, expandedPaths);" in script_text
+    assert "row.dataset.path = entry.path;" in script_text
+    assert "`/api/files?path=${encodeURIComponent(path)}`" in script_text
+
+
 async def test_wheel_resources_and_menu_bar_are_present(studio_client):
     """Packaged Studio resources expose the intentional workbench menu bar."""
     await authenticate(studio_client)
     package = files("mokume.studio")
-    assert package.joinpath("templates/index.html").is_file()
-    assert package.joinpath("static/studio.css").is_file()
-    assert package.joinpath("static/studio.js").is_file()
-
     page = (await studio_client.get("/")).text
-    for menu in ("File", "Analysis", "View", "Help"):
-        assert f">{menu}<" in page
-    assert ">Edit<" not in page
+    stylesheet_text = package.joinpath("static/studio.css").read_text(encoding="utf-8")
+    script_text = package.joinpath("static/studio.js").read_text(encoding="utf-8")
+    _assert_packaged_assets(package)
+    _assert_branding_and_menus(page)
+    _assert_assistant_controls(page)
+    _assert_theme_and_layout_scripts(script_text, stylesheet_text)
+    _assert_workspace_scripts(script_text)

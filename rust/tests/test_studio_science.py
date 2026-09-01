@@ -22,6 +22,20 @@ def _stores(tmp_path):
     return state, ScienceStore(state)
 
 
+def _saved_thread(tmp_path):
+    state, science = _stores(tmp_path)
+    first = state.open_project(str(tmp_path / "first"))
+    second = state.open_project(str(tmp_path / "second"))
+    messages = [{"role": "user", "content": "Explain missingness", "z": 2}]
+    saved = science.save_thread(
+        "thread-1",
+        project_id=first.id,
+        mode="ask",
+        messages=messages,
+    )
+    return science, first, second, messages, saved
+
+
 def _request(**overrides) -> DatasetInspectionRequest:
     values = {
         "protein_matrix": "inputs/proteins.tsv",
@@ -163,19 +177,9 @@ def test_expired_approval_cannot_be_decided(tmp_path):
     assert expired.status is ApprovalStatus.EXPIRED
 
 
-def test_thread_cannot_cross_project_or_mode(tmp_path):
-    """Keep conversation records isolated by project and agent mode."""
-    state, science = _stores(tmp_path)
-    first = state.open_project(str(tmp_path / "first"))
-    second = state.open_project(str(tmp_path / "second"))
-    messages = [{"role": "user", "content": "Explain missingness", "z": 2}]
-    saved = science.save_thread(
-        "thread-1",
-        project_id=first.id,
-        mode="ask",
-        messages=messages,
-    )
-
+def test_thread_round_trip_and_history_projection(tmp_path):
+    """Persist canonical messages and expose compact conversation history."""
+    science, first, second, messages, saved = _saved_thread(tmp_path)
     assert saved.messages == messages
     assert saved.messages_json == json.dumps(
         messages,
@@ -184,12 +188,85 @@ def test_thread_cannot_cross_project_or_mode(tmp_path):
         sort_keys=True,
     )
     assert science.get_thread("thread-1", project_id=first.id, mode="ask") == saved
+    assert science.list_threads(project_id=first.id) == [saved]
+    assert science.list_threads(project_id=second.id) == []
+    assert saved.title == "Explain missingness"
+    assert saved.conversation == [{"role": "user", "text": "Explain missingness"}]
+
+
+def test_thread_cannot_cross_project_or_mode(tmp_path):
+    """Keep conversation records isolated by project and agent mode."""
+    science, first, second, _messages, _saved = _saved_thread(tmp_path)
     with pytest.raises(ValueError, match="different project or mode"):
         science.get_thread("thread-1", project_id=second.id, mode="ask")
     with pytest.raises(ValueError, match="different project or mode"):
         science.save_thread(
             "thread-1",
             project_id=first.id,
-            mode="plan-run",
+            mode="agent",
             messages=[],
         )
+
+
+def test_thread_rename_and_delete_are_scope_bound(tmp_path):
+    """Apply rename and deletion only inside the complete thread scope."""
+    science, first, second, _messages, _saved = _saved_thread(tmp_path)
+    assert (
+        science.rename_thread(
+            "thread-1",
+            project_id=second.id,
+            mode="ask",
+            title="Other workspace",
+        )
+        is None
+    )
+    assert (
+        science.rename_thread(
+            "thread-1",
+            project_id=first.id,
+            mode="agent",
+            title="Wrong mode",
+        )
+        is None
+    )
+    renamed = science.rename_thread(
+        "thread-1",
+        project_id=first.id,
+        mode="ask",
+        title="  Missingness review  ",
+    )
+    assert renamed is not None
+    assert renamed.title == "Missingness review"
+    assert science.list_threads(project_id=first.id)[0].title == "Missingness review"
+    with pytest.raises(ValueError, match="must not be blank"):
+        science.rename_thread("thread-1", project_id=first.id, mode="ask", title="   ")
+    assert not science.delete_thread("thread-1", project_id=second.id, mode="ask")
+    assert not science.delete_thread("thread-1", project_id=first.id, mode="agent")
+    assert science.get_thread("thread-1", project_id=first.id, mode="ask") == renamed
+    assert science.delete_thread("thread-1", project_id=first.id, mode="ask")
+    assert science.get_thread("thread-1", project_id=first.id, mode="ask") is None
+
+
+def test_conversation_title_migrates_existing_studio_database(tmp_path):
+    """Existing Studio databases gain rename storage without losing threads."""
+    state = StateStore(tmp_path / "state")
+    with sqlite3.connect(state.database) as connection:
+        connection.execute(
+            """CREATE TABLE agent_threads (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                mode TEXT NOT NULL,
+                messages_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+
+    ScienceStore(state)
+
+    with sqlite3.connect(state.database) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(agent_threads)").fetchall()
+        }
+    assert "custom_title" in columns

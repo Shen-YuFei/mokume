@@ -261,6 +261,7 @@ Dockerfile
 # maturin wheel build output
 /dist/
 .env
+/mokume-studio-providers.json
 *.log
 *.tmp
 *.bak
