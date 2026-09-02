@@ -116,6 +116,11 @@ fn validate_lfq_options(
     args: &Features2ProteinsArgs,
     method: QuantMethod,
 ) -> mokume_core::Result<()> {
+    if method != QuantMethod::DirectLfq && args.export_ions.is_some() {
+        return Err(MokumeError::InvalidInput {
+            message: "--export-ions requires --quant-method directlfq".to_owned(),
+        });
+    }
     if method != QuantMethod::DirectLfq && args.directlfq_min_nonan.is_some() {
         return Err(MokumeError::InvalidInput {
             message: "--directlfq-min-nonan requires --quant-method directlfq".to_owned(),

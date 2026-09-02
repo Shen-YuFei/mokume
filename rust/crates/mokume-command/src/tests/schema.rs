@@ -106,6 +106,26 @@ fn validate_args_parses_without_executing() {
         "unused.tsv",
     ]);
     assert!(semantically_invalid.is_err());
+
+    let export_ions_without_directlfq = validate_args([
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "--parquet",
+        "missing-but-parseable.parquet",
+        "--output",
+        "unused.csv",
+        "--quant-method",
+        "sum",
+        "--export-ions",
+        "ions.csv",
+    ]);
+    assert_eq!(
+        export_ions_without_directlfq
+            .err()
+            .map(|error| error.to_string()),
+        Some("invalid input: --export-ions requires --quant-method directlfq".to_owned())
+    );
 }
 
 fn find_command<'a>(schema: &'a [CommandSpec], path: &[&str]) -> &'a CommandSpec {

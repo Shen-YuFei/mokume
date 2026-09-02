@@ -6618,7 +6618,9 @@ fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
         return unsupported("dataset-normalization-export-peptides");
     }
     if config.output.export_ions.is_some() && config.quantification != QuantMethod::DirectLfq {
-        return unsupported("export-ions");
+        return Err(invalid_input(
+            "--export-ions requires --quant-method directlfq",
+        ));
     }
     if let Some(alignment) = &config.maxlfq.ion_alignment {
         if !alignment.eq_ignore_ascii_case("none") {

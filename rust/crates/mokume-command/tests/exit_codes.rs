@@ -226,8 +226,7 @@ fn features2peptides_generates_filter_config() -> Result<(), Box<dyn std::error:
 }
 
 #[test]
-fn unimplemented_features2proteins_options_return_stable_error(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn features2proteins_options_return_stable_errors() -> Result<(), Box<dyn std::error::Error>> {
     let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("input.parquet");
@@ -253,14 +252,11 @@ fn unimplemented_features2proteins_options_return_stable_error(
                 "--export-peptides",
                 "peptides.csv",
             ],
-            stage: "dataset-normalization-export-peptides",
+            expected: "stage `dataset-normalization-export-peptides` is not implemented yet",
         },
-        // The `--plot-*` / `--interactive-report` / `--report-output` flags were
-        // removed from the Rust command interface (plotting / reports moved to
-        // the Python periphery), so they are no longer exercised here.
         FeatureToProteinsCase {
             args: &["--quant-method", "sum", "--export-ions", "ions.csv"],
-            stage: "export-ions",
+            expected: "--export-ions requires --quant-method directlfq",
         },
     ] {
         let mut args = vec![
@@ -275,13 +271,12 @@ fn unimplemented_features2proteins_options_return_stable_error(
         ];
         args.extend_from_slice(case.args);
         let error = match run(&args) {
-            Ok(()) => panic!("unimplemented options must fail"),
+            Ok(()) => panic!("invalid or unimplemented options must fail"),
             Err(error) => error,
         };
         let message = error.to_string();
-        let expected = format!("stage `{}` is not implemented yet", case.stage);
         assert!(
-            message.contains(&expected),
+            message.contains(case.expected),
             "unexpected error for {:?}: {message}",
             case.args
         );
@@ -311,7 +306,7 @@ fn unimplemented_features2proteins_options_return_stable_error(
 
 struct FeatureToProteinsCase<'a> {
     args: &'a [&'a str],
-    stage: &'a str,
+    expected: &'a str,
 }
 
 fn run(args: &[&str]) -> mokume_core::Result<()> {
