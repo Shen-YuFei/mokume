@@ -1191,12 +1191,11 @@ enum RatioFractionMerge {
 struct IntensityFactors {
     run: HashMap<RunCellKey, RunNormalizationTransform>,
     sample: HashMap<String, f64>,
-    /// Channel-IRS scale factors keyed by technical replicate (Python
-    /// `irs_scale_by_techrep`). The lookup key is the **apply-side**
-    /// techreplicate ([`tech_replicate_of`], the last `_` token), matching
-    /// Python's `dataset_df[TECHREPLICATE].map(...)` (`peptide.py:336`). Empty
-    /// when IRS is disabled or no reference-channel rows were found.
-    irs_scale_by_techrep: HashMap<i64, f64>,
+    /// Channel-IRS scale factors keyed by the QPX run identity. A run is one
+    /// TMT plex, so this remains unambiguous when technical-replicate numbers
+    /// repeat across mixtures. Empty when IRS is disabled or no reference-
+    /// channel rows were found.
+    irs_scale_by_run: HashMap<String, f64>,
 }
 
 /// Derive a peptide row's `TechReplicate` from its run name, matching Python's
@@ -1216,31 +1215,6 @@ fn tech_replicate_of(run_file_name: &str) -> i64 {
     run_file_name.parse::<i64>().unwrap_or(1)
 }
 
-/// IRS-internal technical-replicate derivation used when *collecting* the
-/// reference-channel scale factors. Mirrors Python's
-/// `CASE WHEN position('_' in run) > 0 THEN CAST(split_part(run, '_', 2) AS INTEGER)
-/// ELSE CAST(run AS INTEGER) END` (`feature.py:764-766`): take the **second**
-/// token (the part between the first and second `_`, or the tail after the first
-/// `_`), not the last one. A run with no `_` parses the whole name as an integer.
-/// `None` means the run cannot supply an integer techreplicate (DuckDB's `CAST`
-/// would error / the row would not contribute), so it is dropped, matching the
-/// `irs_value > 0` filter that follows in spirit (the run simply yields no key).
-///
-/// This is deliberately distinct from [`tech_replicate_of`], which keeps the
-/// **last** token (Python's apply-side `run.str.split('_').str.get(-1)`,
-/// `aggregation.py:215`). The two agree for two-token `mixture_techrep` names
-/// (typical quantms TMT) but diverge for names with three or more tokens.
-fn irs_tech_replicate_of(run_file_name: &str) -> Option<i64> {
-    if let Some((_, rest)) = run_file_name.split_once('_') {
-        // `split_part(run, '_', 2)` is the token between the first and second
-        // `_`; if there is no second `_`, it is the remainder after the first.
-        let second = rest.split('_').next().unwrap_or(rest);
-        second.parse::<i64>().ok()
-    } else {
-        run_file_name.parse::<i64>().ok()
-    }
-}
-
 impl IntensityFactors {
     fn normalize(&self, intensity: f64, sample: &str, run: &str) -> f64 {
         let sample_factor = self.sample.get(sample).copied().unwrap_or(1.0);
@@ -1256,18 +1230,13 @@ impl IntensityFactors {
         // position Python uses: `feature_normalization` (run) runs first
         // (`peptide.py:324`), then IRS multiplies `NORM_INTENSITY`
         // (`peptide.py:333-340`), then `peptide_normalized` (sample) runs later
-        // (`peptide.py:370`). Missing techreplicates map to 1.0 (Python's
-        // `.fillna(1.0)`).
-        let irs_scale = self
-            .irs_scale_by_techrep
-            .get(&tech_replicate_of(run))
-            .copied()
-            .unwrap_or(1.0);
+        // (`peptide.py:370`). Missing runs map to 1.0.
+        let irs_scale = self.irs_scale_by_run.get(run).copied().unwrap_or(1.0);
         run_intensity * irs_scale * sample_factor
     }
 
     fn is_empty(&self) -> bool {
-        self.run.is_empty() && self.sample.is_empty() && self.irs_scale_by_techrep.is_empty()
+        self.run.is_empty() && self.sample.is_empty() && self.irs_scale_by_run.is_empty()
     }
 }
 
@@ -5820,7 +5789,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     if let Some(irs) = &config.irs {
         let irs_min_intensity =
             filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
-        let irs_scale_by_techrep = collect_irs_scale(
+        let irs_scale_by_run = collect_irs_scale(
             parquet,
             irs,
             sdrf.as_ref(),
@@ -5829,13 +5798,13 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             irs_min_intensity,
             named_score,
         )?;
-        if irs_scale_by_techrep.is_empty() {
+        if irs_scale_by_run.is_empty() {
             return Err(invalid_input(format!(
                 "features2peptides IRS channel `{}` produced no scaling factors",
                 irs.channel
             )));
         }
-        intensity_factors.irs_scale_by_techrep = irs_scale_by_techrep;
+        intensity_factors.irs_scale_by_run = irs_scale_by_run;
     }
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref(), None, None)?;
@@ -7413,7 +7382,7 @@ fn irs_mixture_first_token(value: &str) -> &str {
 /// Python's SQL uses (`intensity > 0`; the contaminant `NOT LIKE` only when
 /// `remove_contaminants`; the `min_intensity` floor only when positive), groups
 /// the surviving intensities by run into a per-run `irs_value` via the chosen
-/// statistic, then derives the scale per technical replicate under `irs.scope`.
+/// statistic, then derives one scale per run under `irs.scope`.
 ///
 /// Each run also carries its `mixture` (Python `split_part(sample_accession,
 /// '_', 1)`): with no SDRF the sample accession is the `run_file_name`, so the
@@ -7421,12 +7390,11 @@ fn irs_mixture_first_token(value: &str) -> &str {
 /// of the joined `source name`. `by_mixture` / `two_stage` use this; `global`
 /// ignores it.
 ///
-/// Returns the `techreplicate -> scale` map. The techreplicate key is Python's
-/// IRS-internal `split_part(run, '_', 2)` ([`irs_tech_replicate_of`]); the
-/// **apply** side keys by the last `_` token ([`tech_replicate_of`]) — both are
-/// reproduced exactly because they diverge for runs with three or more tokens.
-/// An empty map means no valid scale could be computed; the command layer turns
-/// that into an explicit input error.
+/// Returns the `run_file_name -> scale` map. Run identity is the correct plex
+/// key: unlike a technical-replicate number, it is stable for arbitrary file
+/// names and cannot collide when the same replicate number occurs in multiple
+/// mixtures. An empty map means no valid scale could be computed; the command
+/// layer turns that into an explicit input error.
 fn collect_irs_scale(
     parquet: &Path,
     irs: &IrsChannelConfig,
@@ -7435,13 +7403,10 @@ fn collect_irs_scale(
     contaminant_patterns: &[String],
     min_intensity: f64,
     named_score: Option<&NamedScoreFilterConfig>,
-) -> Result<HashMap<i64, f64>> {
-    // Phase 1: per run, buffer the reference-channel intensities and remember the
-    // IRS-internal techreplicate and mixture. A run with no integer techreplicate
-    // cannot key into the scale dict, so it is dropped (Python's `CAST` would
-    // error out).
+) -> Result<HashMap<String, f64>> {
+    // Phase 1: per run, buffer the reference-channel intensities and remember
+    // the mixture used by the non-global scopes.
     struct RunBuffer {
-        techrep: i64,
         mixture: String,
         intensities: Vec<f64>,
     }
@@ -7467,9 +7432,6 @@ fn collect_irs_scale(
         {
             return Ok(());
         }
-        let Some(techrep) = irs_tech_replicate_of(&feature.run_file_name) else {
-            return Ok(());
-        };
         let sdrf_record = sdrf_record(&feature, sdrf)?;
         let sample_accession = sdrf_record.map_or(feature.run_file_name.as_str(), |record| {
             record.sample_accession.as_str()
@@ -7483,7 +7445,6 @@ fn collect_irs_scale(
                 // `enrich_with_sdrf`; when an SDRF is present, an unmatched run or
                 // label is rejected instead of falling back to the run name.
                 RunBuffer {
-                    techrep,
                     mixture: irs_mixture_first_token(sample_accession).to_owned(),
                     intensities: Vec::new(),
                 }
@@ -7495,25 +7456,19 @@ fn collect_irs_scale(
 
     // Phase 2: collapse each run's buffered intensities into one `irs_value`, then
     // derive the scale under `irs.scope`. Collect into a `BTreeMap` keyed by run
-    // name so the runs are visited in a stable (sorted) order; this makes the
-    // (rare) techreplicate collision resolve deterministically (last run name
-    // wins), matching Python's `dict(zip(...))`.
-    let per_run: Vec<(i64, String, Vec<f64>)> = runs
+    // name so the runs are visited in a stable (sorted) order.
+    let per_run: Vec<(String, String, Vec<f64>)> = runs
         .into_iter()
-        .map(|(run_name, buffer)| {
-            (
-                run_name,
-                (buffer.techrep, buffer.mixture, buffer.intensities),
-            )
-        })
+        .map(|(run_name, buffer)| (run_name, (buffer.mixture, buffer.intensities)))
         .collect::<BTreeMap<_, _>>()
-        .into_values()
+        .into_iter()
+        .map(|(run_name, (mixture, intensities))| (run_name, mixture, intensities))
         .collect();
     Ok(match irs.scope {
         IrsScope::Global => {
             let runs = per_run
                 .into_iter()
-                .map(|(techrep, _mixture, intensities)| (techrep, intensities))
+                .map(|(run, _mixture, intensities)| (run, intensities))
                 .collect();
             irs_global_scale_from_runs(runs, irs.stat)
         }
@@ -7523,59 +7478,59 @@ fn collect_irs_scale(
 }
 
 /// Pure global-scope IRS math (Python `get_irs_scaling_factors`,
-/// `feature.py:776-815`, global branch). Given each run's `(techreplicate,
+/// `feature.py:776-815`, global branch). Given each run's `(run identity,
 /// reference-channel intensities)` in a stable order, collapse to one
 /// `irs_value` per run via `stat`, drop non-positive `irs_value`s, take the
-/// global center via the same `stat`, and return `scale[techrep] = center /
-/// irs_value`. Runs sharing a techreplicate resolve last-wins, matching Python's
-/// `dict(zip(...))`. Returns an empty map when nothing positive survives.
-fn irs_global_scale_from_runs(per_run: Vec<(i64, Vec<f64>)>, stat: IrsStat) -> HashMap<i64, f64> {
+/// global center via the same `stat`, and return `scale[run] = center /
+/// irs_value`. Returns an empty map when nothing positive survives.
+fn irs_global_scale_from_runs(
+    per_run: Vec<(String, Vec<f64>)>,
+    stat: IrsStat,
+) -> HashMap<String, f64> {
     let aggregate = |values: &mut Vec<f64>| match stat {
         IrsStat::Median => median(values),
         IrsStat::Mean => mean_positive(values),
     };
-    let mut irs_values: Vec<(i64, f64)> = Vec::new();
-    for (techrep, mut intensities) in per_run {
+    let mut irs_values: Vec<(String, f64)> = Vec::new();
+    for (run, mut intensities) in per_run {
         // `irs_df = irs_df[irs_df["irs_value"] > 0]` drops non-positive centers.
         if let Some(irs_value) = aggregate(&mut intensities) {
             if irs_value > 0.0 {
-                irs_values.push((techrep, irs_value));
+                irs_values.push((run, irs_value));
             }
         }
     }
     if irs_values.is_empty() {
         return HashMap::new();
     }
-    let mut centers: Vec<f64> = irs_values.iter().map(|&(_, value)| value).collect();
+    let mut centers: Vec<f64> = irs_values.iter().map(|(_, value)| *value).collect();
     let Some(global_center) = aggregate(&mut centers) else {
         return HashMap::new();
     };
-    let mut scale_by_techrep: HashMap<i64, f64> = HashMap::new();
-    for (techrep, irs_value) in irs_values {
-        scale_by_techrep.insert(techrep, global_center / irs_value);
+    let mut scale_by_run: HashMap<String, f64> = HashMap::new();
+    for (run, irs_value) in irs_values {
+        scale_by_run.insert(run, global_center / irs_value);
     }
-    scale_by_techrep
+    scale_by_run
 }
 
 /// Collapse each run's buffered reference-channel intensities into a single
-/// `irs_value` and drop the runs whose center is non-positive, mirroring
-/// Python's per-run aggregate followed by `irs_df = irs_df[irs_df["irs_value"]
-/// > 0]`. Preserves input (stable, run-name-sorted) order so any later
-/// `dict(zip(...))` collision resolves last-wins exactly as in pandas. Returns
-/// `(techrep, mixture, irs_value)` per surviving run.
+/// `irs_value` and drop the runs whose center is non-positive, mirroring the
+/// Python filter `irs_value > 0`. Preserves input (stable, run-name-sorted)
+/// order. Returns `(run identity, mixture, irs_value)` per surviving run.
 fn irs_values_per_run(
-    per_run: Vec<(i64, String, Vec<f64>)>,
+    per_run: Vec<(String, String, Vec<f64>)>,
     stat: IrsStat,
-) -> Vec<(i64, String, f64)> {
+) -> Vec<(String, String, f64)> {
     let aggregate = |values: &mut Vec<f64>| match stat {
         IrsStat::Median => median(values),
         IrsStat::Mean => mean_positive(values),
     };
     let mut out = Vec::with_capacity(per_run.len());
-    for (techrep, mixture, mut intensities) in per_run {
+    for (run, mixture, mut intensities) in per_run {
         if let Some(irs_value) = aggregate(&mut intensities) {
             if irs_value > 0.0 {
-                out.push((techrep, mixture, irs_value));
+                out.push((run, mixture, irs_value));
             }
         }
     }
@@ -7587,7 +7542,10 @@ fn irs_values_per_run(
 /// keyed by mixture; every input mixture is present because each contributes at
 /// least one run. `median` / `mean_positive` keep only positive finite values,
 /// which is a no-op here (all `irs_value`s are already positive).
-fn irs_mixture_centers(irs_values: &[(i64, String, f64)], stat: IrsStat) -> HashMap<String, f64> {
+fn irs_mixture_centers(
+    irs_values: &[(String, String, f64)],
+    stat: IrsStat,
+) -> HashMap<String, f64> {
     let mut by_mixture: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for (_, mixture, irs_value) in irs_values {
         by_mixture
@@ -7611,25 +7569,24 @@ fn irs_mixture_centers(irs_values: &[(i64, String, f64)], stat: IrsStat) -> Hash
 /// Pure `by_mixture`-scope IRS math (Python `get_irs_scaling_factors`,
 /// `feature.py:779-784`). For each surviving run, `scale = mixture_center /
 /// irs_value`, where `mixture_center` is the `stat` over that mixture's
-/// `irs_value`s. Runs sharing a techreplicate resolve last-wins over the stable
-/// input order, matching Python's `dict(zip(techrep_guess, scale))`. Returns an
-/// empty map when no run survives the positive-`irs_value` filter.
+/// `irs_value`s. Returns an empty map when no run survives the positive-
+/// `irs_value` filter.
 fn irs_by_mixture_scale_from_runs(
-    per_run: Vec<(i64, String, Vec<f64>)>,
+    per_run: Vec<(String, String, Vec<f64>)>,
     stat: IrsStat,
-) -> HashMap<i64, f64> {
+) -> HashMap<String, f64> {
     let irs_values = irs_values_per_run(per_run, stat);
     if irs_values.is_empty() {
         return HashMap::new();
     }
     let centers = irs_mixture_centers(&irs_values, stat);
-    let mut scale_by_techrep: HashMap<i64, f64> = HashMap::new();
-    for (techrep, mixture, irs_value) in irs_values {
+    let mut scale_by_run: HashMap<String, f64> = HashMap::new();
+    for (run, mixture, irs_value) in irs_values {
         if let Some(&mixture_center) = centers.get(&mixture) {
-            scale_by_techrep.insert(techrep, mixture_center / irs_value);
+            scale_by_run.insert(run, mixture_center / irs_value);
         }
     }
-    scale_by_techrep
+    scale_by_run
 }
 
 /// Pure `two_stage`-scope IRS math (Python `get_irs_scaling_factors`,
@@ -7639,13 +7596,12 @@ fn irs_by_mixture_scale_from_runs(
 /// scale is the product, which algebraically equals `global_center / irs_value`
 /// but is computed exactly as the two factors so float rounding matches Python.
 /// `global_center` is the `stat` over one center per distinct mixture, mirroring
-/// `irs_df[["mixture","mixture_center"]].drop_duplicates()`. Runs sharing a
-/// techreplicate resolve last-wins over the stable input order. Returns an empty
+/// `irs_df[["mixture","mixture_center"]].drop_duplicates()`. Returns an empty
 /// map when no run survives or the global center cannot be formed.
 fn irs_two_stage_scale_from_runs(
-    per_run: Vec<(i64, String, Vec<f64>)>,
+    per_run: Vec<(String, String, Vec<f64>)>,
     stat: IrsStat,
-) -> HashMap<i64, f64> {
+) -> HashMap<String, f64> {
     let irs_values = irs_values_per_run(per_run, stat);
     if irs_values.is_empty() {
         return HashMap::new();
@@ -7662,15 +7618,15 @@ fn irs_two_stage_scale_from_runs(
     let Some(global_center) = global_center else {
         return HashMap::new();
     };
-    let mut scale_by_techrep: HashMap<i64, f64> = HashMap::new();
-    for (techrep, mixture, irs_value) in irs_values {
+    let mut scale_by_run: HashMap<String, f64> = HashMap::new();
+    for (run, mixture, irs_value) in irs_values {
         if let Some(&mixture_center) = centers.get(&mixture) {
             let stage1 = mixture_center / irs_value;
             let stage2 = global_center / mixture_center;
-            scale_by_techrep.insert(techrep, stage1 * stage2);
+            scale_by_run.insert(run, stage1 * stage2);
         }
     }
-    scale_by_techrep
+    scale_by_run
 }
 
 /// Resolve the IRS reference channel from the SDRF when `--irs_channel` is not
@@ -9370,13 +9326,12 @@ mod tests {
     use super::{
         batch_column_values_for_samples, detect_reference_samples, expand_de_contrasts_file,
         extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
-        irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
-        irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
-        resolve_de_method, resolve_irs_autodetect_channel, resolve_irs_reference_samples,
-        resolve_reference_batch, run_features_to_proteins, sum_peptide_values, tech_replicate_of,
-        validate_batch_sizes, validate_combat_design, validate_features_to_proteins,
-        validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
-        ProteinValues,
+        irs_global_scale_from_runs, irs_mixture_first_token, irs_two_stage_scale_from_runs,
+        load_normalization_proteins, match_sdrf_column, resolve_de_method,
+        resolve_irs_autodetect_channel, resolve_irs_reference_samples, resolve_reference_batch,
+        run_features_to_proteins, sum_peptide_values, validate_batch_sizes, validate_combat_design,
+        validate_features_to_proteins, validate_implemented_subset, CellKey, IrsStat,
+        NormalizationFactorCollector, ProteinMatrix, ProteinValues,
     };
 
     #[test]
@@ -9628,48 +9583,21 @@ mod tests {
         Ok(())
     }
 
-    // The IRS collect side uses Python's `split_part(run, '_', 2)` (second token),
-    // while the apply side uses `run.str.split('_').str.get(-1)` (last token). They
-    // agree for two-token names and diverge for three-or-more-token names; both
-    // must be reproduced exactly (see `irs_tech_replicate_of` / `tech_replicate_of`).
-    #[test]
-    fn irs_and_apply_techreplicate_derivations_agree_for_two_token_runs() {
-        for run in ["M1_3", "M2_2", "mixture_7"] {
-            assert_eq!(
-                irs_tech_replicate_of(run),
-                Some(tech_replicate_of(run)),
-                "two-token run {run} should match on both derivations",
-            );
-        }
-    }
-
-    #[test]
-    fn irs_and_apply_techreplicate_derivations_diverge_for_three_token_runs() {
-        // "plex_2_5": collect side -> split_part(_,2) = 2; apply side -> last = 5.
-        assert_eq!(irs_tech_replicate_of("plex_2_5"), Some(2));
-        assert_eq!(tech_replicate_of("plex_2_5"), 5);
-        // A run with no underscore parses the whole name as the techreplicate.
-        assert_eq!(irs_tech_replicate_of("4"), Some(4));
-        assert_eq!(tech_replicate_of("4"), 4);
-        // A non-integer second token yields no IRS key (Python's CAST would error).
-        assert_eq!(irs_tech_replicate_of("M1_xx"), None);
-    }
-
     // Locks the synthetic TMT oracle (also verified against Python's
     // `get_irs_scaling_factors`): reference-channel `irs_value` per run = 200 / 100
     // / 400 -> global_center = median(200,100,400) = 200 ->
-    // scale = {techrep1: 1.0, techrep2: 2.0, techrep3: 0.5}.
+    // scale = {M1_1: 1.0, M2_2: 2.0, M3_3: 0.5}.
     #[test]
     fn irs_global_scale_matches_synthetic_tmt_oracle_median() {
         let per_run = vec![
-            (1_i64, vec![150.0_f64, 250.0]), // median 200
-            (2_i64, vec![80.0, 120.0]),      // median 100
-            (3_i64, vec![350.0, 450.0]),     // median 400
+            ("M1_1".to_owned(), vec![150.0_f64, 250.0]), // median 200
+            ("M2_2".to_owned(), vec![80.0, 120.0]),      // median 100
+            ("M3_3".to_owned(), vec![350.0, 450.0]),     // median 400
         ];
         let scale = irs_global_scale_from_runs(per_run, IrsStat::Median);
-        assert_eq!(scale.get(&1).copied(), Some(1.0));
-        assert_eq!(scale.get(&2).copied(), Some(2.0));
-        assert_eq!(scale.get(&3).copied(), Some(0.5));
+        assert_eq!(scale.get("M1_1").copied(), Some(1.0));
+        assert_eq!(scale.get("M2_2").copied(), Some(2.0));
+        assert_eq!(scale.get("M3_3").copied(), Some(0.5));
         assert_eq!(scale.len(), 3);
     }
 
@@ -9677,15 +9605,15 @@ mod tests {
     fn irs_global_scale_matches_synthetic_tmt_oracle_mean() {
         // Same per-run intensities; mean center = mean(200,100,400) = 233.333...
         let per_run = vec![
-            (1_i64, vec![150.0_f64, 250.0]),
-            (2_i64, vec![80.0, 120.0]),
-            (3_i64, vec![350.0, 450.0]),
+            ("M1_1".to_owned(), vec![150.0_f64, 250.0]),
+            ("M2_2".to_owned(), vec![80.0, 120.0]),
+            ("M3_3".to_owned(), vec![350.0, 450.0]),
         ];
         let scale = irs_global_scale_from_runs(per_run, IrsStat::Mean);
         let center = (200.0 + 100.0 + 400.0) / 3.0;
-        assert!((scale[&1] - center / 200.0).abs() < 1e-12);
-        assert!((scale[&2] - center / 100.0).abs() < 1e-12);
-        assert!((scale[&3] - center / 400.0).abs() < 1e-12);
+        assert!((scale["M1_1"] - center / 200.0).abs() < 1e-12);
+        assert!((scale["M2_2"] - center / 100.0).abs() < 1e-12);
+        assert!((scale["M3_3"] - center / 400.0).abs() < 1e-12);
     }
 
     #[test]
@@ -9693,12 +9621,15 @@ mod tests {
         // A run whose only intensities aggregate to a non-positive center is
         // dropped (Python's `irs_value > 0` filter); empty input yields no scale.
         assert!(irs_global_scale_from_runs(Vec::new(), IrsStat::Median).is_empty());
-        let per_run = vec![(1_i64, vec![100.0_f64]), (2_i64, vec![0.0, 0.0])];
+        let per_run = vec![
+            ("run1".to_owned(), vec![100.0_f64]),
+            ("run2".to_owned(), vec![0.0, 0.0]),
+        ];
         let scale = irs_global_scale_from_runs(per_run, IrsStat::Median);
-        // techrep 2 aggregates to 0 (median drops zeros -> None), so only techrep 1
+        // run2 aggregates to 0 (median drops zeros -> None), so only run1
         // survives; with one surviving run the center equals its own value -> 1.0.
-        assert_eq!(scale.get(&1).copied(), Some(1.0));
-        assert!(!scale.contains_key(&2));
+        assert_eq!(scale.get("run1").copied(), Some(1.0));
+        assert!(!scale.contains_key("run2"));
     }
 
     // Multi-mixture synthetic TMT fixture shared by the by_mixture / two_stage
@@ -9710,12 +9641,28 @@ mod tests {
     //   mixB_4 -> [ 80,120,400]  (median 120, mean 200)   techrep 4
     // Values are locked against Python `get_irs_scaling_factors` run on the
     // matching pyarrow fixture (see scratchpad oracle).
-    fn multi_mixture_runs() -> Vec<(i64, String, Vec<f64>)> {
+    fn multi_mixture_runs() -> Vec<(String, String, Vec<f64>)> {
         vec![
-            (1, "mixA".to_owned(), vec![100.0, 200.0, 300.0]),
-            (2, "mixA".to_owned(), vec![50.0, 150.0, 250.0]),
-            (3, "mixB".to_owned(), vec![400.0, 500.0, 600.0]),
-            (4, "mixB".to_owned(), vec![80.0, 120.0, 400.0]),
+            (
+                "mixA_1".to_owned(),
+                "mixA".to_owned(),
+                vec![100.0, 200.0, 300.0],
+            ),
+            (
+                "mixA_2".to_owned(),
+                "mixA".to_owned(),
+                vec![50.0, 150.0, 250.0],
+            ),
+            (
+                "mixB_3".to_owned(),
+                "mixB".to_owned(),
+                vec![400.0, 500.0, 600.0],
+            ),
+            (
+                "mixB_4".to_owned(),
+                "mixB".to_owned(),
+                vec![80.0, 120.0, 400.0],
+            ),
         ]
     }
 
@@ -9731,10 +9678,10 @@ mod tests {
         // mixA center = median(200,150) = 175; mixB center = median(500,120) = 310.
         let scale = irs_by_mixture_scale_from_runs(multi_mixture_runs(), IrsStat::Median);
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], 175.0 / 200.0); // 0.875
-        assert_close(scale[&2], 175.0 / 150.0); // 1.16666...
-        assert_close(scale[&3], 310.0 / 500.0); // 0.62
-        assert_close(scale[&4], 310.0 / 120.0); // 2.58333...
+        assert_close(scale["mixA_1"], 175.0 / 200.0); // 0.875
+        assert_close(scale["mixA_2"], 175.0 / 150.0); // 1.16666...
+        assert_close(scale["mixB_3"], 310.0 / 500.0); // 0.62
+        assert_close(scale["mixB_4"], 310.0 / 120.0); // 2.58333...
     }
 
     #[test]
@@ -9742,10 +9689,10 @@ mod tests {
         // mixA center = mean(200,150) = 175; mixB center = mean(500,200) = 350.
         let scale = irs_by_mixture_scale_from_runs(multi_mixture_runs(), IrsStat::Mean);
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], 175.0 / 200.0); // 0.875
-        assert_close(scale[&2], 175.0 / 150.0); // 1.16666...
-        assert_close(scale[&3], 350.0 / 500.0); // 0.7
-        assert_close(scale[&4], 350.0 / 200.0); // 1.75
+        assert_close(scale["mixA_1"], 175.0 / 200.0); // 0.875
+        assert_close(scale["mixA_2"], 175.0 / 150.0); // 1.16666...
+        assert_close(scale["mixB_3"], 350.0 / 500.0); // 0.7
+        assert_close(scale["mixB_4"], 350.0 / 200.0); // 1.75
     }
 
     #[test]
@@ -9756,10 +9703,10 @@ mod tests {
         let scale = irs_two_stage_scale_from_runs(multi_mixture_runs(), IrsStat::Median);
         let global = 242.5;
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], (175.0 / 200.0) * (global / 175.0)); // 1.2125
-        assert_close(scale[&2], (175.0 / 150.0) * (global / 175.0)); // 1.61666...
-        assert_close(scale[&3], (310.0 / 500.0) * (global / 310.0)); // 0.485
-        assert_close(scale[&4], (310.0 / 120.0) * (global / 310.0)); // 2.02083...
+        assert_close(scale["mixA_1"], (175.0 / 200.0) * (global / 175.0));
+        assert_close(scale["mixA_2"], (175.0 / 150.0) * (global / 175.0));
+        assert_close(scale["mixB_3"], (310.0 / 500.0) * (global / 310.0));
+        assert_close(scale["mixB_4"], (310.0 / 120.0) * (global / 310.0));
     }
 
     #[test]
@@ -9768,10 +9715,10 @@ mod tests {
         let scale = irs_two_stage_scale_from_runs(multi_mixture_runs(), IrsStat::Mean);
         let global = 262.5;
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], (175.0 / 200.0) * (global / 175.0)); // 1.3125
-        assert_close(scale[&2], (175.0 / 150.0) * (global / 175.0)); // 1.75
-        assert_close(scale[&3], (350.0 / 500.0) * (global / 350.0)); // 0.525
-        assert_close(scale[&4], (350.0 / 200.0) * (global / 350.0)); // 1.3125
+        assert_close(scale["mixA_1"], (175.0 / 200.0) * (global / 175.0));
+        assert_close(scale["mixA_2"], (175.0 / 150.0) * (global / 175.0));
+        assert_close(scale["mixB_3"], (350.0 / 500.0) * (global / 350.0));
+        assert_close(scale["mixB_4"], (350.0 / 200.0) * (global / 350.0));
     }
 
     #[test]
@@ -9781,15 +9728,15 @@ mod tests {
         // A run aggregating to a non-positive center is dropped before the
         // mixture center is formed (Python's `irs_value > 0`).
         let runs = vec![
-            (1_i64, "m".to_owned(), vec![100.0]),
-            (2_i64, "m".to_owned(), vec![0.0, 0.0]),
+            ("run1".to_owned(), "m".to_owned(), vec![100.0]),
+            ("run2".to_owned(), "m".to_owned(), vec![0.0, 0.0]),
         ];
         let by_mixture = irs_by_mixture_scale_from_runs(runs.clone(), IrsStat::Median);
-        assert_eq!(by_mixture.get(&1).copied(), Some(1.0));
-        assert!(!by_mixture.contains_key(&2));
+        assert_eq!(by_mixture.get("run1").copied(), Some(1.0));
+        assert!(!by_mixture.contains_key("run2"));
         let two_stage = irs_two_stage_scale_from_runs(runs, IrsStat::Median);
-        assert_eq!(two_stage.get(&1).copied(), Some(1.0));
-        assert!(!two_stage.contains_key(&2));
+        assert_eq!(two_stage.get("run1").copied(), Some(1.0));
+        assert!(!two_stage.contains_key("run2"));
     }
 
     #[test]

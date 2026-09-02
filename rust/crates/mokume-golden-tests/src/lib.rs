@@ -625,6 +625,60 @@ fn features2peptides_tmt_irs_global_mean_matches_python_oracle() -> Result<(), B
     Ok(())
 }
 
+#[test]
+fn features2peptides_irs_keys_scales_by_run_identity() -> Result<(), Box<dyn Error>> {
+    let (_tempdir, root) = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("tmt.irs.run-key.features.parquet");
+    let sdrf = root.join("tmt.irs.run-key.sdrf.tsv");
+    let output = root.join("tmt.irs.run-key.csv");
+    let run1 = "161122_SILAC_Mixture1_01";
+    let run2 = "161122_SILAC_Mixture2_01";
+
+    write_qpx_tmt_rows(
+        &parquet,
+        &[
+            TmtRow {
+                sequence: "PEPTIDEAAK",
+                run_file_name: run1,
+                channels: &[("TMT126", 100.0), ("TMT127", 1000.0)],
+                accessions: &["P1"],
+            },
+            TmtRow {
+                sequence: "PEPTIDEAAK",
+                run_file_name: run2,
+                channels: &[("TMT126", 400.0), ("TMT127", 2000.0)],
+                accessions: &["P1"],
+            },
+        ],
+    )?;
+    std::fs::write(
+        &sdrf,
+        format!(
+            "source name\tassay name\tcomment[data file]\tcomment[label]\tcomment[technical replicate]\tfactor value[group]\n\
+             POOLX_ref\trun 1 ref\t{run1}\tTMT126\t1\tA\n\
+             POOLX_sample\trun 1 sample\t{run1}\tTMT127\t1\tA\n\
+             POOLY_ref\trun 2 ref\t{run2}\tTMT126\t1\tB\n\
+             POOLY_sample\trun 2 sample\t{run2}\tTMT127\t1\tB\n"
+        ),
+    )?;
+
+    let mut config = default_peptides_config(parquet, output.clone());
+    config.input.sdrf = Some(sdrf);
+    config.filtering.min_unique_peptides = 1;
+    config.irs = Some(IrsChannelConfig {
+        channel: "TMT126".to_owned(),
+        stat: IrsStat::Median,
+        scope: IrsScope::Global,
+    });
+    run_features_to_peptides(&config)?;
+
+    let table = read_csv(&output)?;
+    assert_peptide_cell(&table, "P1", "PEPTIDEAAK", "POOLX_sample", 2500.0)?;
+    assert_peptide_cell(&table, "P1", "PEPTIDEAAK", "POOLY_sample", 1250.0)?;
+    Ok(())
+}
+
 // Channel IRS, non-global scopes (`by_mixture` / `two_stage`), median stat,
 // --skip_normalization, no --sdrf. Verified cell-for-cell against the Python
 // `peptide_normalization` path on the matching pyarrow fixture (scratchpad
