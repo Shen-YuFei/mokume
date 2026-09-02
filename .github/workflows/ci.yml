@@ -62,7 +62,7 @@ jobs:
 
       - name: Build and install wheel (debug)
         run: |
-          pip install maturin pytest
+          pip install maturin pytest 'tomli>=2; python_version < "3.11"'
           wheel_dir="$(mktemp -d "$RUNNER_TEMP/mokume-wheels.XXXXXX")"
           maturin build --out "$wheel_dir"
           shopt -s nullglob

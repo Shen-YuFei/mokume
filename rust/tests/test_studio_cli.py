@@ -2,13 +2,17 @@
 
 import importlib
 import sys
-import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from mokume.studio import cli
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = importlib.import_module("tomli")
 
 
 def test_root_help_advertises_studio(monkeypatch, capsys):
