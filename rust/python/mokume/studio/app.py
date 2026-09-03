@@ -38,6 +38,7 @@ from mokume.studio.catalog import (
     validate_and_canonicalize,
 )
 from mokume.studio.jobs import JobConflictError, JobManager
+from mokume.studio.insights import install_insight_routes
 from mokume.studio.models import (
     TERMINAL_RUN_STATUSES,
     OpenProjectRequest,
@@ -163,6 +164,7 @@ def create_app(
     _install_project_routes(app, runtime, require_session, require_mutation)
     _install_command_routes(app, runtime, require_session, require_mutation)
     _install_run_routes(app, runtime, require_session, require_mutation)
+    install_insight_routes(app, runtime, require_session, require_mutation)
     _install_control_routes(app, runtime, require_session, require_mutation)
     install_ai_routes(app, runtime, require_session, require_mutation)
     return app
@@ -251,7 +253,9 @@ def _install_page_routes(
             "studio.js",
         }:
             raise HTTPException(status.HTTP_404_NOT_FOUND)
-        return FileResponse(str(static_root.joinpath(asset)))
+        return FileResponse(
+            str(static_root.joinpath(asset)), headers={"Cache-Control": "no-store"}
+        )
 
     @app.get("/api/session")
     async def session_info(
@@ -432,8 +436,9 @@ def _install_run_read_routes(
 
     @app.get("/api/runs/{run_id}")
     async def run(run_id: str, _session: Session = Depends(require_session)):
+        project = runtime.store.active_project()
         record = runtime.store.get_run(run_id)
-        if record is None:
+        if project is None or record is None or record.project_id != project.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
         return record
 
@@ -443,7 +448,9 @@ def _install_run_read_routes(
         _session: Session = Depends(require_session),
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     ):
-        if runtime.store.get_run(run_id) is None:
+        project = runtime.store.active_project()
+        record = runtime.store.get_run(run_id)
+        if project is None or record is None or record.project_id != project.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
         try:
             cursor = int(last_event_id or 0)
@@ -467,7 +474,15 @@ def _install_control_routes(
         _session: Session = Depends(require_session),
         run_id: str | None = Query(default=None),
     ) -> dict:
-        return {"artifacts": runtime.store.list_artifacts(run_id)}
+        project = runtime.store.active_project()
+        if project is None:
+            return {"artifacts": []}
+        if run_id is not None:
+            record = runtime.store.get_run(run_id)
+            if record is None or record.project_id != project.id:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+            return {"artifacts": runtime.store.list_artifacts(run_id)}
+        return {"artifacts": runtime.store.list_project_artifacts(project.id)}
 
     @app.get("/api/artifacts/{artifact_id}")
     async def artifact(
@@ -478,10 +493,8 @@ def _install_control_routes(
         if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
         run_record = runtime.store.get_run(record.run_id)
-        project = (
-            runtime.store.get_project(run_record.project_id) if run_record else None
-        )
-        if project is None:
+        project = runtime.store.active_project()
+        if project is None or run_record is None or run_record.project_id != project.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact project not found")
         try:
             path = ProjectPaths(project.root).resolve_existing(record.path)

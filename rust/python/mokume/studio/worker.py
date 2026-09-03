@@ -9,7 +9,9 @@ import mimetypes
 import os
 import platform
 import sys
+import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import mokume
@@ -60,20 +62,24 @@ def file_identity(path: Path, guard: ProjectPaths) -> dict:
 
 def execute(store: StateStore, spec: JobSpec) -> int:
     """Revalidate and execute one native or scientific operation."""
-    _validate_spec(spec)
-    guard, resolved_inputs = _validated_inputs(spec)
-    input_identities = [file_identity(path, guard) for path in resolved_inputs]
     started_at = utc_now()
     store.update_run(spec.run_id, RunStatus.RUNNING, worker_pid=os.getpid())
-    output_paths, knowledge_fingerprint = _execute_operation(store, spec, guard)
-    artifacts = _register_outputs(store, spec.run_id, guard, output_paths)
-    provenance = _provenance(
-        spec,
-        artifacts,
-        input_identities,
-        started_at,
-        knowledge_fingerprint,
-    )
+    with _tracked_stage(store, spec.run_id, "inputs"):
+        _validate_spec(spec)
+        guard, resolved_inputs = _validated_inputs(spec)
+        input_identities = [file_identity(path, guard) for path in resolved_inputs]
+    with _tracked_stage(store, spec.run_id, "workflow"):
+        output_paths, knowledge_fingerprint = _execute_operation(store, spec, guard)
+    with _tracked_stage(store, spec.run_id, "artifacts"):
+        artifacts = _register_outputs(store, spec.run_id, guard, output_paths)
+    with _tracked_stage(store, spec.run_id, "provenance"):
+        provenance = _provenance(
+            spec,
+            artifacts,
+            input_identities,
+            started_at,
+            knowledge_fingerprint,
+        )
     finalize_run(
         store,
         spec.run_id,
@@ -81,6 +87,36 @@ def execute(store: StateStore, spec: JobSpec) -> int:
         TerminalResult(RunStatus.SUCCEEDED, provenance=provenance),
     )
     return 0
+
+
+@contextmanager
+def _tracked_stage(store: StateStore, run_id: str, stage: str):
+    """Publish truthful worker-boundary timing without inferring inner CLI steps."""
+    started = time.monotonic()
+    store.add_event(run_id, "stage", {"stage": stage, "status": "running"})
+    try:
+        yield
+    except BaseException as exc:
+        store.add_event(
+            run_id,
+            "stage",
+            {
+                "stage": stage,
+                "status": "failed",
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "error": str(exc)[:8192],
+            },
+        )
+        raise
+    store.add_event(
+        run_id,
+        "stage",
+        {
+            "stage": stage,
+            "status": "succeeded",
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+        },
+    )
 
 
 def _validate_spec(spec: JobSpec) -> None:

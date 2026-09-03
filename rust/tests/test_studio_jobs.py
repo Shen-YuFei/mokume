@@ -59,6 +59,42 @@ def _sleep_until_cancelled(ready) -> None:
     time.sleep(60)
 
 
+def _assert_stage_events(store: StateStore, record) -> None:
+    """Verify live and persisted worker stage events."""
+    run_directory = Path(record.run_directory)
+    stages = [
+        event["payload"]
+        for event in store.events_after(record.id)
+        if event["type"] == "stage"
+    ]
+    assert [(stage["stage"], stage["status"]) for stage in stages] == [
+        ("inputs", "running"),
+        ("inputs", "succeeded"),
+        ("workflow", "running"),
+        ("workflow", "succeeded"),
+        ("artifacts", "running"),
+        ("artifacts", "succeeded"),
+        ("provenance", "running"),
+        ("provenance", "succeeded"),
+    ]
+    persisted_events = [
+        json.loads(line)
+        for line in (run_directory / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert any(
+        event["type"] == "stage"
+        and event["payload"]
+        == {
+            "elapsed_seconds": stages[-1]["elapsed_seconds"],
+            "stage": "provenance",
+            "status": "succeeded",
+        }
+        for event in persisted_events
+    )
+
+
 def test_real_worker_writes_output_artifact_and_provenance(tmp_path):
     """A real worker records output, input identity, provenance, and events."""
     store, project_root = _project_with_peptides(tmp_path)
@@ -83,6 +119,7 @@ def test_real_worker_writes_output_artifact_and_provenance(tmp_path):
     run_directory = Path(record.run_directory)
     assert json.loads((run_directory / "run.json").read_text())["status"] == "succeeded"
     assert (run_directory / "events.jsonl").read_text(encoding="utf-8").strip()
+    _assert_stage_events(store, record)
 
 
 class _SleepingJobManager(JobManager):

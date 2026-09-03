@@ -416,6 +416,19 @@ class StateStore:
             rows = connection.execute(query, parameters).fetchall()
         return [ArtifactRecord(**dict(row)) for row in rows]
 
+    def list_project_artifacts(self, project_id: str) -> list[ArtifactRecord]:
+        """List artifacts belonging to runs in one workspace."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT artifacts.* FROM artifacts
+                JOIN runs ON runs.id = artifacts.run_id
+                WHERE runs.project_id=? ORDER BY artifacts.rowid
+                """,
+                (project_id,),
+            ).fetchall()
+        return [ArtifactRecord(**dict(row)) for row in rows]
+
     @staticmethod
     def _decode_run(row: sqlite3.Row) -> RunRecord:
         payload = dict(row)
