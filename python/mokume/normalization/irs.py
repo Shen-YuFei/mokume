@@ -303,14 +303,18 @@ def detect_plexes_from_sdrf(sdrf_path: str) -> dict[str, str]:
 
     sample_to_plex = {}
     for source_name in sdrf["source name"].unique():
+        mixture = re.search(r"(?:^|_)(mixture\d+)(?:_|$)", source_name, re.IGNORECASE)
+        if mixture:
+            sample_to_plex[source_name] = mixture.group(1).lower()
+            continue
         # Parse prefix: p1_1 -> p1, p2_10 -> p2
-        match = re.match(r"^(p\d+)_\d+$", source_name)
+        match = re.match(r"^(p\d+)_\d+[NC]?$", source_name, re.IGNORECASE)
         if match:
             sample_to_plex[source_name] = match.group(1)
         else:
             # Fallback: use everything before the last underscore+digit
             parts = source_name.rsplit("_", 1)
-            if len(parts) == 2 and parts[1].isdigit():
+            if len(parts) == 2 and re.fullmatch(r"\d+[NC]?", parts[1], re.IGNORECASE):
                 sample_to_plex[source_name] = parts[0]
             else:
                 sample_to_plex[source_name] = "plex1"

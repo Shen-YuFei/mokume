@@ -9235,10 +9235,23 @@ fn mean_finite(mut values: Vec<f64>) -> Option<f64> {
 }
 
 fn sample_plex(sample_name: &str) -> String {
+    if let Some(mixture) = sample_name.split('_').find(|part| {
+        part.to_ascii_lowercase()
+            .strip_prefix("mixture")
+            .is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit())
+            })
+    }) {
+        return mixture.to_ascii_lowercase();
+    }
     let Some((prefix, suffix)) = sample_name.rsplit_once('_') else {
         return "plex1".to_owned();
     };
-    if suffix.chars().all(|character| character.is_ascii_digit()) && !prefix.is_empty() {
+    let channel = suffix.strip_suffix(['N', 'C', 'n', 'c']).unwrap_or(suffix);
+    if !channel.is_empty()
+        && channel.chars().all(|character| character.is_ascii_digit())
+        && !prefix.is_empty()
+    {
         prefix.to_owned()
     } else {
         "plex1".to_owned()
@@ -9341,9 +9354,9 @@ mod tests {
         irs_global_scale_from_runs, irs_mixture_first_token, irs_two_stage_scale_from_runs,
         load_normalization_proteins, match_sdrf_column, resolve_de_method,
         resolve_irs_autodetect_channel, resolve_irs_reference_samples, resolve_reference_batch,
-        run_features_to_proteins, sum_peptide_values, validate_batch_sizes, validate_combat_design,
-        validate_features_to_proteins, validate_implemented_subset, CellKey, IrsStat,
-        NormalizationFactorCollector, ProteinMatrix, ProteinValues,
+        run_features_to_proteins, sample_plex, sum_peptide_values, validate_batch_sizes,
+        validate_combat_design, validate_features_to_proteins, validate_implemented_subset,
+        CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix, ProteinValues,
     };
 
     #[test]
@@ -9773,6 +9786,15 @@ mod tests {
         assert_eq!(irs_mixture_first_token("plex_2_5"), "plex");
         assert_eq!(irs_mixture_first_token("noUnderscore"), "noUnderscore");
         assert_eq!(irs_mixture_first_token(""), "");
+    }
+
+    #[test]
+    fn sample_plex_recognizes_tmt_channel_suffixes() {
+        assert_eq!(sample_plex("UPS1_Norm_Mixture1_126"), "mixture1");
+        assert_eq!(sample_plex("UPS1_0.5_Mixture1_127N"), "mixture1");
+        assert_eq!(sample_plex("UPS1_0.5_Mixture1_127C"), "mixture1");
+        assert_eq!(sample_plex("p2_127N"), "p2");
+        assert_eq!(sample_plex("sample_alpha"), "plex1");
     }
 
     fn write_temp_sdrf(
