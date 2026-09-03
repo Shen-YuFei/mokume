@@ -34,7 +34,8 @@ from platformdirs import user_config_dir
 
 
 ProviderName = Literal["anthropic", "openai-chat", "openai-responses", "gemini"]
-ThinkingLevelName = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+ThinkingLevelName = str
+UNIFIED_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high", "xhigh"})
 OPENAI_COMPATIBLE_PLACEHOLDER_KEY = "mokume-local-no-api-key"
 PROVIDER_CONFIG_FILENAME = Path("mokume-studio-providers.json")
 PROVIDER_CONFIG_IGNORE_PATTERN = "/mokume-studio-providers.json"
@@ -68,7 +69,12 @@ class ProviderConfig(BaseModel):
     base_url: str | None = Field(default=None, validate_default=True)
     context_tokens: int | None = Field(default=None, ge=1024, le=10_000_000)
     max_output_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
-    thinking_level: ThinkingLevelName | None = None
+    thinking_level: ThinkingLevelName | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_-]*$",
+    )
     persist: bool = False
 
     @field_validator("model")
@@ -106,6 +112,12 @@ class ProviderConfig(BaseModel):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("base_url must be an absolute HTTP(S) URL")
         return normalized.rstrip("/")
+
+    @field_validator("thinking_level", mode="before")
+    @classmethod
+    def normalize_thinking_level(cls, value: object) -> object:
+        """Normalize built-in and provider-specific effort names."""
+        return value.strip().lower() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_token_limits(self) -> ProviderConfig:
@@ -344,11 +356,22 @@ class ProviderRegistry:
         if config.max_output_tokens is not None:
             settings["max_tokens"] = config.max_output_tokens
         if config.thinking_level is not None:
-            settings["thinking"] = (
-                False
-                if config.thinking_level == "off"
-                else cast(ThinkingLevel, config.thinking_level)
-            )
+            level = config.thinking_level
+            if level == "off":
+                settings["thinking"] = False
+            elif level in UNIFIED_THINKING_LEVELS:
+                settings["thinking"] = cast(ThinkingLevel, level)
+            elif level == "max" and config.provider == "gemini":
+                settings["thinking"] = "xhigh"
+            elif config.provider.startswith("openai"):
+                settings["openai_reasoning_effort"] = level
+            elif config.provider == "anthropic":
+                settings["anthropic_effort"] = level
+            else:
+                settings["google_thinking_config"] = {
+                    "include_thoughts": True,
+                    "thinking_level": level.upper(),
+                }
         return settings or None
 
     @staticmethod

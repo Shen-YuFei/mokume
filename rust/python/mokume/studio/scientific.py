@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from mokume.agentic.knowledge import load_knowledge_graph
+from mokume.agentic.knowledge import EvidenceRecord, load_knowledge_graph
 from mokume.studio.jobs import JobManager
 from mokume.studio.models import (
     JobOperation,
@@ -24,6 +25,10 @@ from mokume.studio.science import (
     DatasetStatus,
     ScienceStore,
 )
+
+
+_KNOWLEDGE_DATA_TYPES = {"DIA", "LFQ", "TMT"}
+_SEARCH_TOKEN = re.compile(r"[^\W_]+(?:[.+-][^\W_]+)*", re.UNICODE)
 
 
 def workspace_identity(project: ProjectRecord) -> dict[str, str]:
@@ -63,7 +68,8 @@ class ScientificController:
     def __init__(self, store: ScienceStore, jobs: JobManager) -> None:
         self.store = store
         self.jobs = jobs
-        self.knowledge_fingerprint = load_knowledge_graph().fingerprint
+        self.knowledge = load_knowledge_graph()
+        self.knowledge_fingerprint = self.knowledge.fingerprint
 
     def inspect(
         self,
@@ -115,13 +121,160 @@ class ScientificController:
             },
             "mokume_threads": 24,
             "knowledge_fingerprint": self.knowledge_fingerprint,
-            "capabilities": ["inspect_dataset", "evaluate_recommendation"],
+            "capabilities": [
+                "inspect_dataset",
+                "search_knowledge",
+                "evaluate_recommendation",
+            ],
             "disclosure": {"metadata": True, "raw_rows": False},
             "dataset": None,
         }
         if dataset is not None:
             payload["dataset"] = self._dataset_context(dataset, project)
         return payload
+
+    def search_knowledge(
+        self,
+        query: str,
+        *,
+        data_type: str | None = None,
+        method: str | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Search the validated bundled evidence without reading arbitrary files."""
+        (
+            normalized_query,
+            normalized_type,
+            normalized_method,
+            query_tokens,
+            method_key,
+        ) = self._knowledge_search_filters(query, data_type, method, limit)
+        results = []
+        for record in self._matching_knowledge_records(
+            query_tokens, normalized_type, method_key, limit
+        ):
+            result = record.to_context_dict(self.knowledge.sources[record.source_id])
+            result["eligible_as_prior"] = record.eligible_as_prior
+            results.append(result)
+        return {
+            "scope": "explanation_only",
+            "execution_authority": False,
+            "knowledge_fingerprint": self.knowledge_fingerprint,
+            "query": normalized_query,
+            "filters": {
+                "data_type": normalized_type,
+                "method": normalized_method,
+            },
+            "count": len(results),
+            "results": results,
+        }
+
+    def _knowledge_search_filters(
+        self,
+        query: str,
+        data_type: str | None,
+        method: str | None,
+        limit: int,
+    ) -> tuple[str, str | None, str | None, set[str], str | None]:
+        normalized_query = self._search_value(query, "query", 200)
+        normalized_type = (
+            self._search_value(data_type, "data_type", 3).upper()
+            if data_type is not None
+            else None
+        )
+        if normalized_type is not None and normalized_type not in _KNOWLEDGE_DATA_TYPES:
+            raise ValueError("data_type must be DIA, LFQ, or TMT")
+        normalized_method = (
+            self._search_value(method, "method", 64) if method is not None else None
+        )
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 5:
+            raise ValueError("limit must be an integer from 1 to 5")
+        query_tokens = {
+            token.casefold() for token in _SEARCH_TOKEN.findall(normalized_query)
+        }
+        if not query_tokens:
+            raise ValueError("query must contain searchable text")
+        method_key = self._method_key(normalized_method) if normalized_method else None
+        if normalized_method and not method_key:
+            raise ValueError("method must contain searchable text")
+        return (
+            normalized_query,
+            normalized_type,
+            normalized_method,
+            query_tokens,
+            method_key,
+        )
+
+    def _matching_knowledge_records(
+        self,
+        query_tokens: set[str],
+        data_type: str | None,
+        method_key: str | None,
+        limit: int,
+    ) -> list[EvidenceRecord]:
+        ranked: list[tuple[int, int, str, EvidenceRecord]] = []
+        for record in self.knowledge.evidence.values():
+            if data_type and record.applicability.data_type.upper() != data_type:
+                continue
+            if method_key and method_key not in self._record_method_keys(record):
+                continue
+            search_text = self._record_search_text(record)
+            score = sum(token in search_text for token in query_tokens)
+            if score:
+                ranked.append((-score, record.priority, record.id, record))
+        ranked.sort(key=lambda item: item[:3])
+        return [record for _, _, _, record in ranked[:limit]]
+
+    @staticmethod
+    def _search_value(value: str, name: str, maximum: int) -> str:
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be text")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"{name} must not be blank")
+        if "\x00" in normalized or len(normalized) > maximum:
+            raise ValueError(f"{name} is invalid or too long")
+        return normalized
+
+    @staticmethod
+    def _method_key(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+    def _record_method_keys(self, record: EvidenceRecord) -> set[str]:
+        values = [
+            record.pipeline.quantification,
+            record.pipeline.normalization,
+            record.pipeline.imputation,
+            record.pipeline.de_method,
+            record.pipeline.fdr_method,
+            record.pipeline.ensemble,
+            record.applicability.setting,
+            record.applicability.upstream_engine,
+        ]
+        return {self._method_key(str(value)) for value in values if value is not None}
+
+    def _record_search_text(self, record: EvidenceRecord) -> str:
+        source = self.knowledge.sources[record.source_id]
+        values = [
+            record.id,
+            record.source_id,
+            record.kind,
+            record.status,
+            record.confidence,
+            *record.applicability.to_dict().values(),
+            *record.pipeline.to_dict().values(),
+            *record.metrics.keys(),
+            *record.metrics.values(),
+            *record.limitations,
+            source.id,
+            source.kind,
+            source.title,
+            source.trust,
+            source.status,
+        ]
+        if record.reference_profile is not None:
+            values.extend(record.reference_profile.projects)
+        return " ".join(str(value).casefold() for value in values if value is not None)
 
     def prepare_evaluation(
         self,

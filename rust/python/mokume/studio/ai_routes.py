@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from markdown_it import MarkdownIt
 from pydantic import BaseModel, ConfigDict
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-from mokume.studio.agent import AgentMode, StudioAgentDeps, agent_for
+from mokume.studio.agent import (
+    AgentMode,
+    StudioAgentDeps,
+    agent_for,
+    validate_workflow_form_state,
+)
 from mokume.studio.auth import Session
 from mokume.studio.models import ApprovalDecision
 from mokume.studio.providers import ProviderConfig, ProviderRegistry
@@ -21,6 +28,10 @@ from mokume.studio.state import StateStore
 
 
 Dependency = Callable[..., Any]
+logging.getLogger("markdown_it").setLevel(logging.WARNING)
+MARKDOWN_RENDERER = MarkdownIt("commonmark", {"html": False}).enable(
+    ["strikethrough", "table"]
+)
 
 
 class ThreadRenameRequest(BaseModel):
@@ -29,6 +40,14 @@ class ThreadRenameRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str
+
+
+class MarkdownRenderRequest(BaseModel):
+    """Assistant Markdown submitted for safe local rendering."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
 
 
 class AIRuntime(Protocol):
@@ -213,6 +232,13 @@ def _install_agent_routes(
     require_session: Dependency,
     require_mutation: Dependency,
 ) -> None:
+    @app.post("/api/agent/markdown")
+    async def render_agent_markdown(
+        payload: MarkdownRenderRequest,
+        _session: Session = Depends(require_mutation),
+    ) -> dict[str, str]:
+        return {"html": MARKDOWN_RENDERER.render(payload.text)}
+
     _install_agent_run_route(app, runtime, require_mutation)
     _install_thread_routes(app, runtime, require_session, require_mutation)
 
@@ -229,12 +255,8 @@ def _install_agent_run_route(
     ):
         body = await _validated_agent_body(request)
         project = _active_project(runtime)
-        mode, dataset_id, workspace_id = _agent_options(body)
-        if workspace_id is not None and workspace_id != project.id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Conversation belongs to a different workspace",
-            )
+        mode, dataset_id, form_state = _scoped_agent_options(body, project.id)
+        workflow_form = _validated_workflow_form(form_state, project.root)
         summary = runtime.providers.summary(session.id)
         if summary is None:
             raise HTTPException(
@@ -252,6 +274,7 @@ def _install_agent_run_route(
             provider=summary.provider,
             model=summary.model,
             dataset_id=dataset_id,
+            workflow_form=workflow_form,
         )
 
         async def save_messages(result) -> None:
@@ -448,12 +471,13 @@ def _validate_agent_messages(messages: Any, has_resume: bool) -> None:
 
 def _agent_options(
     body: dict[str, Any],
-) -> tuple[AgentMode, str | None, str | None]:
+) -> tuple[AgentMode, str | None, str | None, Any]:
     forwarded = body.get("forwardedProps") or {}
     if not isinstance(forwarded, dict) or set(forwarded) - {
         "mode",
         "datasetId",
         "projectId",
+        "formState",
     }:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid agent options"
@@ -471,7 +495,26 @@ def _agent_options(
         not isinstance(workspace_id, str) or not workspace_id.strip()
     ):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid project ID")
-    return cast(AgentMode, mode), dataset_id, workspace_id
+    return cast(AgentMode, mode), dataset_id, workspace_id, forwarded.get("formState")
+
+
+def _validated_workflow_form(value: Any, project_root: str):
+    try:
+        return validate_workflow_form_state(value, project_root)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+
+
+def _scoped_agent_options(
+    body: dict[str, Any], project_id: str
+) -> tuple[AgentMode, str | None, Any]:
+    mode, dataset_id, workspace_id, form_state = _agent_options(body)
+    if workspace_id is not None and workspace_id != project_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Conversation belongs to a different workspace",
+        )
+    return mode, dataset_id, form_state
 
 
 def _active_project(runtime: AIRuntime):

@@ -208,6 +208,33 @@ def _assert_unranked_evaluation(
     assert evaluation["results"][0]["score_a"] is None
 
 
+def test_knowledge_search_is_bounded_and_explanation_only(tmp_path):
+    """Studio exposes filtered evidence without granting execution authority."""
+    harness = _harness(tmp_path)
+    try:
+        result = harness.controller.search_knowledge(
+            "DirectLFQ LFQ benchmark",
+            data_type="lfq",
+            method="DirectLFQ",
+            limit=2,
+        )
+        with pytest.raises(ValueError, match="integer from 1 to 5"):
+            harness.controller.search_knowledge("LFQ", limit=6)
+        with pytest.raises(ValueError, match="DIA, LFQ, or TMT"):
+            harness.controller.search_knowledge("LFQ", data_type="DDA")
+    finally:
+        harness.manager.shutdown()
+
+    assert result["scope"] == "explanation_only"
+    assert result["execution_authority"] is False
+    assert result["knowledge_fingerprint"] == harness.controller.knowledge_fingerprint
+    assert result["filters"] == {"data_type": "LFQ", "method": "DirectLFQ"}
+    assert result["count"] == 1
+    assert result["results"][0]["id"] == "grid-lfq-preset"
+    assert result["results"][0]["eligible_as_prior"] is True
+    assert result["results"][0]["source"]["id"] == "spike-in-score-a-320"
+
+
 def test_real_unlabelled_workflow_is_unranked_and_traceable(tmp_path):
     """Run inspect, policy selection, approval, and unlabelled evaluation."""
     harness = _harness(tmp_path)

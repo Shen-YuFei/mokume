@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import secrets
-
 import httpx
 import pytest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
-from studio_test_support import make_studio_app
+from studio_test_support import (
+    AI_ORIGIN as ORIGIN,
+    AI_SECRET as SECRET,
+    agent_body as _agent_body,
+    authenticated_project as _authenticated_project,
+    configure_provider as _configure_provider,
+    make_studio_app,
+    offline_ask as _run_offline_ask,
+)
 
-from mokume.studio.providers import ProviderExecution, ProviderRegistry
+from mokume.studio.providers import ProviderRegistry
 
 
-PORT = 18766
-ORIGIN = f"http://127.0.0.1:{PORT}"
-TOKEN = "studio-ai-startup-token"
-SECRET = secrets.token_urlsafe(32)
 pytestmark = pytest.mark.anyio
 
 
@@ -26,84 +28,6 @@ class CountingTestModel(TestModel):
     async def count_tokens(self, messages, model_settings, model_request_parameters):
         del messages, model_settings, model_request_parameters
         return RequestUsage(input_tokens=64)
-
-
-@pytest.fixture(name="ai_client")
-async def build_ai_client(tmp_path):
-    """Create one authenticated-capable Studio app and ASGI client."""
-    app = make_studio_app(TOKEN, tmp_path / "state")
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url=ORIGIN,
-    ) as client:
-        yield client, app
-
-
-async def _authenticated_project(client: httpx.AsyncClient, project) -> dict[str, str]:
-    response = await client.get(f"/?token={TOKEN}", follow_redirects=False)
-    assert response.status_code == 303
-    session = (await client.get("/api/session")).json()
-    headers = {"Origin": ORIGIN, "X-CSRF-Token": session["csrf_token"]}
-    opened = await client.post(
-        "/api/projects/open",
-        json={"path": str(project)},
-        headers=headers,
-    )
-    assert opened.status_code == 200
-    return headers
-
-
-async def _configure_provider(client: httpx.AsyncClient, headers: dict[str, str]):
-    response = await client.post(
-        "/api/ai/config",
-        json={
-            "provider": "openai-responses",
-            "model": "offline",
-            "api_key": SECRET,
-        },
-        headers=headers,
-    )
-    assert response.status_code == 200, response.text
-    return response
-
-
-def _agent_body(**updates):
-    body = {
-        "threadId": "ask-thread",
-        "runId": "ask-run",
-        "state": None,
-        "messages": [{"id": "message-1", "role": "user", "content": "Help"}],
-        "tools": [],
-        "context": [],
-        "forwardedProps": {"mode": "ask", "datasetId": None},
-    }
-    body.update(updates)
-    return body
-
-
-async def _run_offline_ask(client, project_path, monkeypatch):
-    headers = await _authenticated_project(client, project_path)
-    await _configure_provider(client, headers)
-    project_id = (await client.get("/api/project")).json()["id"]
-    offline = TestModel(call_tools=["get_analysis_context"])
-    monkeypatch.setattr(
-        ProviderRegistry,
-        "execution_for",
-        lambda _self, _session: ProviderExecution(offline, None, None),
-    )
-    response = await client.post(
-        "/api/agent/run",
-        json=_agent_body(
-            forwardedProps={
-                "mode": "ask",
-                "datasetId": None,
-                "projectId": project_id,
-            }
-        ),
-        headers={**headers, "Accept": "text/event-stream"},
-    )
-    return response, headers, project_id
 
 
 async def _stored_conversation(client, app, project_path):

@@ -33,9 +33,14 @@ def agent_deps() -> StudioAgentDeps:
 async def test_ask_agent_exposes_only_read_only_context():
     """Ask mode cannot see planning or compute tools."""
     exposed: list[str] = []
+    search_schema = {}
 
     async def answer(_messages, info):
         exposed.extend(tool.name for tool in info.function_tools)
+        search_tool = next(
+            tool for tool in info.function_tools if tool.name == "search_knowledge"
+        )
+        search_schema.update(search_tool.parameters_json_schema)
         return ModelResponse(parts=[TextPart(content="read-only")])
 
     result = await ASK_AGENT.run(
@@ -45,12 +50,13 @@ async def test_ask_agent_exposes_only_read_only_context():
     )
 
     assert result.output == "read-only"
-    assert exposed == ["get_analysis_context"]
+    assert exposed == ["get_analysis_context", "search_knowledge"]
+    assert set(search_schema["properties"]) == {"query", "data_type", "method"}
     assert "conversation's only workspace" in ASK_INSTRUCTIONS
 
 
-async def test_agent_exposes_fixed_write_tools_and_defers_compute_approval():
-    """Agent is the only mode with bounded write tools and defers computation."""
+async def test_agent_exposes_fixed_tools_and_defers_compute_approval():
+    """Agent has bounded form and write tools while computation stays deferred."""
     exposed: list[str] = []
 
     async def request_compute(_messages, info):
@@ -72,9 +78,12 @@ async def test_agent_exposes_fixed_write_tools_and_defers_compute_approval():
     )
 
     assert set(exposed) == {
+        "fill_workflow_parameters",
         "get_analysis_context",
+        "get_workflow_form",
         "prepare_evaluation",
         "run_approved_evaluation",
+        "search_knowledge",
     }
     assert isinstance(result.output, DeferredToolRequests)
     assert result.output.calls == []

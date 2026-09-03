@@ -129,7 +129,7 @@ class AgentThreadRecord(BaseModel):
 
     @property
     def conversation(self) -> list[dict[str, str]]:
-        """Return only user and assistant text suitable for Studio history."""
+        """Return visible user, assistant, and model reasoning text for history."""
         conversation = []
         for message in self.messages:
             role = message.get("role")
@@ -145,6 +145,8 @@ class AgentThreadRecord(BaseModel):
                     if part_kind == "user-prompt"
                     else "assistant"
                     if part_kind == "text"
+                    else "reasoning"
+                    if part_kind == "thinking"
                     else None
                 )
                 if part_role and isinstance(part.get("content"), str):

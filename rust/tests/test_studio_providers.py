@@ -129,6 +129,23 @@ def test_provider_config_validates_contract_without_disclosing_secrets():
         )
 
 
+def test_provider_config_normalizes_and_validates_thinking_level():
+    """Portable thinking levels are normalized and unknown values are rejected."""
+    config = ProviderConfig(
+        provider="openai-responses",
+        model="gpt-5",
+        thinking_level=" MAX ",
+    )
+    assert config.thinking_level == "max"
+
+    with pytest.raises(ValidationError, match="thinking_level"):
+        ProviderConfig(
+            provider="openai-responses",
+            model="gpt-5",
+            thinking_level="not valid",
+        )
+
+
 def test_registry_isolates_sessions_and_clears_credentials():
     """One browser session cannot see or reuse another session's settings."""
     registry = ProviderRegistry()
@@ -520,3 +537,41 @@ def test_request_settings_and_context_limit_are_applied_per_session(monkeypatch)
     execution = registry.execution_for("chat")
     assert execution.model_settings == {"thinking": False}
     assert execution.usage_limits.count_tokens_before_request is False
+
+
+@pytest.mark.parametrize(
+    ("provider", "level", "expected"),
+    [
+        ("openai-responses", "max", {"openai_reasoning_effort": "max"}),
+        ("anthropic", "max", {"anthropic_effort": "max"}),
+        ("gemini", "max", {"thinking": "xhigh"}),
+        ("openai-chat", "ultra", {"openai_reasoning_effort": "ultra"}),
+        ("anthropic", "adaptive", {"anthropic_effort": "adaptive"}),
+        (
+            "gemini",
+            "level_5",
+            {
+                "google_thinking_config": {
+                    "include_thoughts": True,
+                    "thinking_level": "LEVEL_5",
+                }
+            },
+        ),
+    ],
+)
+def test_max_and_custom_thinking_levels_use_provider_specific_settings(
+    monkeypatch, provider, level, expected
+):
+    """Forward levels beyond the portable set through each provider's setting."""
+    monkeypatch.setattr(
+        ProviderRegistry,
+        "_build_model",
+        staticmethod(lambda _config: TestModel()),
+    )
+    registry = ProviderRegistry()
+    registry.save(
+        "session",
+        ProviderConfig(provider=provider, model="test-model", thinking_level=level),
+    )
+
+    assert registry.execution_for("session").model_settings == expected
