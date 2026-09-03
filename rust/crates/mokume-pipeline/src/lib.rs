@@ -6368,6 +6368,16 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
             return Err(MokumeError::MissingInput { path: sdrf.clone() });
         }
     }
+    if config.input.sdrf.is_none()
+        && matches!(
+            parse_sample_normalization_method(&config.normalization.sample_method),
+            Ok(Some(SampleNormalizationMethod::ConditionMedian))
+        )
+    {
+        return Err(invalid_input(
+            "conditionmedian sample normalization requires --sdrf option",
+        ));
+    }
     if config.directlfq.cores.is_some() && config.quantification != QuantMethod::DirectLfq {
         return Err(invalid_input(
             "DirectLfqConfig.cores only applies to --quant-method directlfq; use RuntimeConfig.threads for other methods",
@@ -9472,6 +9482,22 @@ mod tests {
         assert_eq!(
             error.map(|error| error.to_string()).as_deref(),
             Some("invalid input: Ratio quantification requires --sdrf option")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_condition_median_without_sdrf_before_loading(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_parquet_guard, parquet) = existing_dummy_path("condition_median_without_sdrf")?;
+        let mut config = base_config(parquet);
+        config.normalization.sample_method = "conditionmedian".to_string();
+
+        let error = validate_features_to_proteins(&config).err();
+
+        assert_eq!(
+            error.map(|error| error.to_string()).as_deref(),
+            Some("invalid input: conditionmedian sample normalization requires --sdrf option")
         );
         Ok(())
     }

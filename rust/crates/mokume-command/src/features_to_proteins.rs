@@ -18,7 +18,7 @@ pub(crate) struct Features2ProteinsArgs {
         value_name = "FILE",
         required_unless_present_any = ["msstats", "psm"],
         conflicts_with = "msstats",
-        help = "Feature-level QPX input; also supplies protein groups for spectral-count"
+        help = "Feature-level QPX input for protein quantification; also supplies protein-group assignments for spectral-count"
     )]
     parquet: Option<PathBuf>,
 
@@ -27,7 +27,8 @@ pub(crate) struct Features2ProteinsArgs {
         value_name = "FILE",
         required_unless_present_any = ["parquet", "psm"],
         conflicts_with_all = ["parquet", "psm"],
-        requires = "sdrf"
+        requires = "sdrf",
+        help = "Feature-level MSstats input for protein quantification; requires SDRF metadata"
     )]
     msstats: Option<PathBuf>,
 

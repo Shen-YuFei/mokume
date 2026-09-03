@@ -308,6 +308,31 @@ fn native_msstats_input_requires_sdrf() {
 }
 
 #[test]
+fn condition_median_sample_normalization_requires_sdrf() {
+    let cli = Cli::parse_from([
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "--parquet",
+        "input.parquet",
+        "--output",
+        "protein.csv",
+        "--sample-normalization",
+        "condition-median",
+    ]);
+    let args = features_to_proteins_args(cli);
+
+    let Err(error) = args.into_config() else {
+        panic!("condition-median without SDRF should fail");
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "invalid input: conditionmedian sample normalization requires --sdrf option"
+    );
+}
+
+#[test]
 fn zero_impute_method_enables_imputation() {
     let cli = Cli::parse_from([
         "mokume",

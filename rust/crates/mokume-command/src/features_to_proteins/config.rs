@@ -109,6 +109,16 @@ fn validate_input_for_quantification(
             message: "--psm only applies to --quant-method spectral_count".to_owned(),
         });
     }
+    if args.sdrf.is_none()
+        && args
+            .sample_normalization
+            .as_deref()
+            .is_some_and(|method| method.eq_ignore_ascii_case("condition-median"))
+    {
+        return Err(MokumeError::InvalidInput {
+            message: "conditionmedian sample normalization requires --sdrf option".to_owned(),
+        });
+    }
     Ok(())
 }
 
