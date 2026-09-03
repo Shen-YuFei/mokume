@@ -20,7 +20,11 @@ from mokume.agentic.service import (
     InspectionRequest,
     RecommendationService,
 )
-from mokume.studio.catalog import command_paths, validate_and_canonicalize
+from mokume.studio.catalog import (
+    command_paths,
+    execute_command,
+    validate_and_canonicalize,
+)
 from mokume.studio.jobs import path_snapshot, validate_spec_integrity
 from mokume.studio.models import (
     ArtifactRecord,
@@ -105,7 +109,7 @@ def _execute_operation(
 ) -> tuple[list[Path], str | None]:
     if spec.operation is JobOperation.NATIVE:
         _inputs, outputs = command_paths(spec.argv)
-        mokume.run(spec.argv)
+        execute_command(spec.argv)
         return outputs, None
     if spec.operation is JobOperation.INSPECT_DATASET:
         return _inspect_dataset(store, spec)

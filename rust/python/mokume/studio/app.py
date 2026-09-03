@@ -12,6 +12,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+import psutil
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import (
     FileResponse,
@@ -46,7 +47,6 @@ from mokume.studio.models import (
 from mokume.studio.paths import (
     PathAccessError,
     ProjectPaths,
-    directory_children,
     list_directories,
     readable_directory,
 )
@@ -54,6 +54,11 @@ from mokume.studio.state import StateStore
 from mokume.studio.providers import ProviderRegistry, default_provider_config_root
 from mokume.studio.science import ScienceStore
 from mokume.studio.scientific import ScientificController
+from mokume.studio.workspace import (
+    active_project_paths,
+    install_workflow_template_routes,
+    list_project_entries,
+)
 
 
 CONTENT_SECURITY_POLICY = "; ".join(
@@ -118,6 +123,12 @@ def create_app(
     """Build one single-user Studio app bound by the CLI to a loopback port."""
     store = StateStore(state_directory)
     store.interrupt_incomplete_runs()
+    active_project = store.active_project()
+    if active_project is not None:
+        try:
+            readable_directory(active_project.root)
+        except PathAccessError:
+            store.close_project()
     jobs = JobManager(store)
     science = ScienceStore(store)
     science.interrupt_incomplete_datasets()
@@ -233,6 +244,7 @@ def _install_page_routes(
     @app.get("/static/{asset}")
     async def static_asset(asset: str, _session: Session = Depends(require_session)):
         if asset not in {
+            "mokume-favicon.png",
             "mokume-logo.png",
             "mokume-mark.png",
             "studio.css",
@@ -307,15 +319,20 @@ def _install_project_routes(
         _session: Session = Depends(require_session),
         path: str = Query(default="."),
     ) -> dict:
-        guard = _active_paths(runtime.store)
+        guard = active_project_paths(runtime.store)
         try:
             directory = guard.resolve_existing(path)
             if not directory.is_dir():
                 raise PathAccessError(f"not a directory: {path}")
-            entries = _list_project_entries(guard, directory)
+            entries = list_project_entries(guard, directory)
         except PathAccessError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-        return {"path": guard.relative(directory), "entries": entries}
+        parent = directory.parent if directory != guard.root else None
+        return {
+            "path": guard.relative(directory),
+            "parent": guard.relative(parent) if parent else None,
+            "entries": entries,
+        }
 
 
 def _install_command_routes(
@@ -324,6 +341,10 @@ def _install_command_routes(
     require_session: Dependency,
     require_mutation: Dependency,
 ) -> None:
+    install_workflow_template_routes(
+        app, runtime.store, require_session, require_mutation
+    )
+
     @app.get("/api/commands")
     async def commands(_session: Session = Depends(require_session)):
         return {"commands": command_schema()}
@@ -478,12 +499,19 @@ def _install_control_routes(
         request: Request,
         _session: Session = Depends(require_session),
     ) -> dict:
+        memory = psutil.virtual_memory()
         return {
             "origin": request.state.studio_origin,
             "state_directory": str(runtime.store.directory),
             "project": runtime.store.active_project(),
             "runs": len(runtime.store.list_runs()),
             "threads": 24,
+            "memory": {
+                "total_bytes": memory.total,
+                "available_bytes": memory.available,
+                "used_bytes": memory.total - memory.available,
+                "percent": round(memory.percent, 1),
+            },
         }
 
     @app.post("/api/studio/exit", status_code=status.HTTP_202_ACCEPTED)
@@ -497,16 +525,6 @@ def _install_control_routes(
             )
         runtime.shutdown_callback()
         return {"status": "stopping"}
-
-
-def _active_paths(store: StateStore) -> ProjectPaths:
-    project = store.active_project()
-    if project is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Open a project folder first")
-    try:
-        return ProjectPaths(project.root)
-    except PathAccessError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 def _require_idle(store: StateStore) -> None:
@@ -529,25 +547,3 @@ async def _event_stream(store: StateStore, run_id: str, cursor: int):
         if record is None or (record.status in TERMINAL_RUN_STATUSES and not events):
             break
         await asyncio.sleep(0.4)
-
-
-def _list_project_entries(guard: ProjectPaths, directory: Path) -> list[dict]:
-    """Return folders before files while omitting unreadable or escaping links."""
-    entries = []
-    for child in directory_children(directory):
-        try:
-            resolved = guard.resolve_existing(child)
-        except PathAccessError:
-            continue
-        entries.append(
-            {
-                "name": child.name,
-                "path": str(resolved.relative_to(guard.root)),
-                "kind": "directory" if resolved.is_dir() else "file",
-                "size": resolved.stat().st_size if resolved.is_file() else None,
-            }
-        )
-    entries.sort(
-        key=lambda entry: (entry["kind"] != "directory", entry["name"].casefold())
-    )
-    return entries

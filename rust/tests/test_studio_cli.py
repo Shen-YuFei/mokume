@@ -163,7 +163,9 @@ def test_public_extras_match_runtime_capabilities():
         "fastapi",
         "uvicorn",
         "jinja2",
+        "markdown-it-py>=4,<5",
         "platformdirs",
+        "psutil",
         "pydantic-ai-slim[ag-ui,openai,anthropic,google]>=2.36,<3",
         "ag-ui-protocol>=0.1.19,<1",
     }

@@ -145,6 +145,44 @@ class ValidationRequest(BaseModel):
     argv: list[str] = Field(min_length=1)
 
 
+class WorkflowTemplateDocument(BaseModel):
+    """A portable Studio workflow configuration."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: int = Field(alias="$schemaVersion")
+    workflow: list[str] = Field(min_length=1)
+    parameters: dict[str, Any]
+
+    @field_validator("workflow")
+    @classmethod
+    def reject_invalid_workflow_parts(cls, value: list[str]) -> list[str]:
+        """Keep workflow command parts safe and unambiguous."""
+        if any(not part.strip() or "\x00" in part for part in value):
+            raise ValueError(
+                "workflow parts must be non-empty and contain no NUL bytes"
+            )
+        return value
+
+
+class WorkflowTemplateWriteRequest(BaseModel):
+    """Write one workflow template beneath the active project root."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1)
+    template: WorkflowTemplateDocument
+    overwrite: bool = False
+
+    @field_validator("path")
+    @classmethod
+    def reject_invalid_template_path(cls, value: str) -> str:
+        """Reject paths that cannot be passed safely to the filesystem."""
+        if "\x00" in value:
+            raise ValueError("template path must not contain NUL bytes")
+        return value
+
+
 class ApprovalDecision(BaseModel):
     """Server-validated response to a pending AI or compute approval."""
 
