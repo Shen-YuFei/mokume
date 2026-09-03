@@ -4,12 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mokume Studio</title>
+    <link rel="icon" type="image/png" sizes="256x256" href="/static/mokume-favicon.png?v=transparent">
     <link rel="stylesheet" href="/static/studio.css">
   </head>
   <body>
     <header class="app-header">
       <div class="brand" aria-label="Mokume Studio">
-        <span class="brand-icon"><img class="brand-logo" src="/static/mokume-mark.png" width="512" height="512" alt=""></span>
         <span>Mokume Studio</span>
       </div>
       <nav class="menu-bar" aria-label="Application menu" data-i18n-aria-label="Application menu">
@@ -19,6 +19,9 @@
         <button id="help-menu-trigger" class="menu-trigger" data-menu="help-menu" data-i18n="Help" aria-haspopup="menu" aria-controls="help-menu" aria-expanded="false">Help</button>
       </nav>
       <div class="project-chip" id="project-chip" data-i18n="No project">No project</div>
+      <div id="system-memory" class="system-memory unavailable" role="meter" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="System memory" data-i18n-aria-label="System memory">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle class="system-memory-track" cx="12" cy="12" r="8" pathLength="100"></circle><circle class="system-memory-value" cx="12" cy="12" r="8" pathLength="100"></circle></svg>
+      </div>
     </header>
 
     <div class="menu-popover" id="file-menu" role="menu" aria-labelledby="file-menu-trigger">
@@ -67,7 +70,7 @@
         <div class="panel-title">
           <span data-i18n="DATA">DATA</span>
           <div class="panel-title-actions">
-            <button class="panel-icon-button" type="button" data-action="open-folder" title="Open folder" aria-label="Open folder" data-i18n-title="Open folder" data-i18n-aria-label="Open folder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+            <button class="panel-icon-button" type="button" data-action="open-folder" title="Open folder" aria-label="Open folder" data-i18n-title="Open folder" data-i18n-aria-label="Open folder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"></path></svg></button>
             <button class="panel-icon-button" type="button" data-action="refresh-files" title="Refresh files" aria-label="Refresh files" data-i18n-title="Refresh files" data-i18n-aria-label="Refresh files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.14 6.36L3 15"></path><path d="M3 21v-6h6"></path><path d="M3 12a9 9 0 0 1 15.14-6.36L21 9"></path><path d="M21 3v6h-6"></path></svg></button>
             <button class="panel-icon-button" type="button" data-action="collapse-folders" title="Collapse all folders" aria-label="Collapse all folders" data-i18n-title="Collapse all folders" data-i18n-aria-label="Collapse all folders"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 13h6"></path><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-5.4a2 2 0 0 1-1.6-.8l-1.2-1.6A2 2 0 0 0 9.2 4H5a2 2 0 0 0-2 2Z"></path></svg></button>
             <button class="panel-icon-button" type="button" data-action="toggle-sidebar" title="Collapse sidebar" aria-label="Collapse sidebar" data-i18n-title="Collapse sidebar" data-i18n-aria-label="Collapse sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="panel-icon-fill" d="M4 5h4v14H4z"></path><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button>
@@ -93,6 +96,8 @@
           <div class="panel-heading">
             <div><span class="eyebrow" data-i18n="WORKFLOW">WORKFLOW</span><h2 data-i18n="Configure analysis">Configure analysis</h2></div>
             <div class="heading-actions">
+              <button data-action="import-workflow-template" data-i18n="Import template">Import template</button>
+              <button data-action="export-workflow-template" data-i18n="Export template">Export template</button>
               <button data-action="validate-command" data-i18n="Validate">Validate</button>
               <button class="primary" data-action="run-command" data-i18n="Run">Run</button>
             </div>
@@ -170,6 +175,19 @@
       <div class="dialog-actions"><button data-close-dialog data-i18n="Cancel">Cancel</button><button class="primary" id="select-folder" data-i18n="Open this folder">Open this folder</button></div>
     </dialog>
 
+    <dialog id="workflow-template-dialog" class="dialog workflow-template-dialog">
+      <div class="dialog-header"><div><span class="eyebrow" data-i18n="WORKFLOW">WORKFLOW</span><h2 id="workflow-template-title">Workflow template</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="Close workflow template" data-i18n-aria-label="Close workflow template">×</button></div>
+      <form id="workflow-template-form" class="dialog-form">
+        <div class="folder-path"><button id="workflow-template-parent" type="button" title="Parent folder" data-i18n-title="Parent folder">↑</button><input id="workflow-template-current" aria-label="Workspace folder" data-i18n-aria-label="Workspace folder" readonly></div>
+        <div class="workflow-template-list" id="workflow-template-list"></div>
+        <div class="dialog-field workflow-template-name-field">
+          <label for="workflow-template-name" data-i18n="Template file">Template file</label>
+          <input id="workflow-template-name" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="dialog-actions"><button type="button" data-close-dialog data-i18n="Cancel">Cancel</button><button class="primary" id="workflow-template-confirm" type="submit">Import from workspace</button></div>
+      </form>
+    </dialog>
+
     <dialog id="info-dialog" class="dialog info-dialog">
       <div class="dialog-header"><h2 id="info-title">Mokume Studio</h2><button class="icon-button" data-close-dialog>×</button></div>
       <div id="info-content" class="info-content"></div>
@@ -238,14 +256,15 @@
               <div class="dialog-field full-width">
                 <label for="provider-thinking-level" data-i18n="Thinking level">Thinking level</label>
                 <select id="provider-thinking-level">
-                  <option value="" data-i18n="Provider default">Provider default</option>
-                  <option value="off" data-i18n="Off">Off</option>
-                  <option value="minimal" data-i18n="Minimal">Minimal</option>
-                  <option value="low" data-i18n="Low">Low</option>
-                  <option value="medium" data-i18n="Medium">Medium</option>
-                  <option value="high" data-i18n="High">High</option>
-                  <option value="xhigh" data-i18n="XHigh">XHigh</option>
+                  <option value="">default</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
+                  <option value="custom">custom</option>
                 </select>
+                <input id="provider-thinking-custom" type="text" maxlength="64" pattern="[a-z][a-z0-9_-]*" placeholder="custom level" aria-label="custom thinking level" autocomplete="off" autocapitalize="none" spellcheck="false" hidden disabled>
                 <small data-i18n="Supported models use the closest available level; other models may ignore this setting.">Supported models use the closest available level; other models may ignore this setting.</small>
               </div>
             </div>

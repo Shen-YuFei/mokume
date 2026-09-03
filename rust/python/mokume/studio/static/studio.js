@@ -1,4 +1,5 @@
 const ACTIVE_RUN_STATUSES = new Set(["queued", "starting", "running", "cancelling"]);
+const WORKFLOW_TEMPLATE_SCHEMA_VERSION = 1;
 const LANGUAGE_STORAGE_KEY = "mokume:language";
 const APPEARANCE_STORAGE_KEY = "mokume:appearance";
 const SYSTEM_DARK_QUERY = window.matchMedia("(prefers-color-scheme: dark)");
@@ -10,6 +11,8 @@ const PANEL_SIZE_LIMITS = Object.freeze({
 });
 const SIDE_PANEL_MAX_VIEWPORT_RATIO = 0.5;
 const SIDE_PANEL_COLLAPSE_RATIO = 0.5;
+const SYSTEM_MEMORY_REFRESH_MS = 5000;
+const BUILTIN_THINKING_LEVELS = new Set(["", "low", "medium", "high", "xhigh", "max"]);
 const PROTEOMICS_FILE_RULES = Object.freeze([
   Object.freeze({ pattern: /(^|[._-])sdrf([._-]|$)/, icon: "sdrf", tone: "sdrf" }),
   Object.freeze({ pattern: /(^|[._-])msstats([._-]|$)/, icon: "msstats", tone: "stats" }),
@@ -83,6 +86,8 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   Documentation: "文档",
   "Keyboard Shortcuts": "快捷键",
   "System Status": "系统状态",
+  "System memory": "系统内存",
+  "System memory: {percent}% ({used} / {total})": "系统内存：{percent}%（{used} / {total}）",
   "About Mokume": "关于 Mokume",
   DATA: "数据",
   "Open a folder to browse input files.": "打开文件夹以浏览输入文件。",
@@ -91,9 +96,57 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   "Files stay on this computer. Inputs are opened read-only.": "文件保留在此计算机上，输入文件以只读方式打开。",
   WORKFLOW: "工作流",
   "Configure analysis": "配置分析",
+  "Import template": "导入模板",
+  "Export template": "导出模板",
+  "Import workflow template": "导入工作流模板",
+  "Export workflow template": "导出工作流模板",
+  "Close workflow template": "关闭工作流模板",
+  "Workspace folder": "工作区文件夹",
+  "Template file": "模板文件",
+  "Select a JSON template": "选择一个 JSON 模板",
+  "Enter a JSON file name": "输入 JSON 文件名",
+  "No JSON templates in this folder.": "此文件夹中没有 JSON 模板。",
+  "Import from workspace": "从工作区导入",
+  "Save to workspace": "保存到工作区",
+  "Template file name must end with .json": "模板文件名必须以 .json 结尾",
+  "Replace the existing workflow template?": "替换现有工作流模板吗？",
+  "Workflow template imported": "工作流模板已导入",
+  "Workflow template exported": "工作流模板已导出",
+  "Invalid workflow template": "工作流模板无效",
+  "Unsupported workflow template version": "不支持该工作流模板版本",
+  "Template workflow is unavailable: {workflow}": "模板中的工作流不可用：{workflow}",
+  "Template parameter is unavailable: --{parameter}": "模板中的参数不可用：--{parameter}",
+  "Invalid template value for --{parameter}": "参数 --{parameter} 的模板值无效",
+  "The Agent response no longer matches the current workflow": "Agent 返回的参数已不属于当前工作流",
+  "Agent updated {count} parameters": "Agent 已填写 {count} 个参数",
   Validate: "验证",
   Run: "运行",
   "Select a workflow to configure its parameters.": "选择工作流以配置参数。",
+  "Input & output": "输入与输出",
+  Quantification: "定量",
+  "Normalization & correction": "归一化与校正",
+  "Imputation & differential expression": "缺失值填补与差异表达",
+  Runtime: "运行资源",
+  Filtering: "过滤",
+  "Normalization & aggregation": "归一化与聚合",
+  "Internal reference scaling": "内部参照缩放（IRS）",
+  "Absolute abundance": "绝对丰度",
+  "QC & runtime": "质控与运行资源",
+  "Column mapping & export": "列映射与导出",
+  "Batch correction": "批次校正",
+  "Tissue atlas": "组织图谱",
+  Visualization: "可视化",
+  Reports: "报告",
+  Embedding: "降维",
+  "Plots & contrasts": "图表与对比",
+  Contrasts: "对比",
+  "Thresholds & highlights": "阈值与高亮",
+  Parameters: "参数",
+  Required: "必填",
+  "Input file type": "输入文件类型",
+  "IRS reference type": "IRS 参照选择方式",
+  "Feature-level QPX input for protein quantification; also supplies protein-group assignments for spectral-count.": "用于蛋白定量的 feature-level QPX 输入；同时为 spectral-count 提供 protein-group 归属。",
+  "Feature-level MSstats input for protein quantification; requires SDRF metadata.": "用于蛋白定量的 feature-level MSstats 输入；需要 SDRF 元数据。",
   ASSISTANT: "助手",
   Optional: "可选",
   Mode: "模式",
@@ -107,6 +160,10 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   "Ask about this workspace or ask Agent to help with an analysis": "询问当前工作区，或让 Agent 协助分析",
   Send: "发送",
   "Working…": "处理中…",
+  Thinking: "正在思考",
+  "Thinking…": "正在思考…",
+  "Thought process": "思考中",
+  "Request failed": "请求失败",
   Runs: "运行记录",
   Logs: "日志",
   "No runs yet.": "暂无运行记录。",
@@ -142,12 +199,6 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   "Maximum input context per model request.": "单次模型请求允许的最大输入上下文。",
   "Maximum tokens generated in one model response.": "单次模型响应允许生成的最大 token 数。",
   "Supported models use the closest available level; other models may ignore this setting.": "支持思考配置的模型会使用最接近的可用等级；其他模型可能忽略此设置。",
-  Off: "关闭",
-  Minimal: "最低",
-  Low: "低",
-  Medium: "中",
-  High: "高",
-  XHigh: "极高",
   "Test service": "点击测试服务",
   "Testing connection…": "正在测试连接…",
   Save: "保存",
@@ -220,6 +271,11 @@ const state = {
   project: null,
   folderPath: null,
   folderParent: null,
+  workflowTemplateMode: null,
+  workflowTemplateDirectory: ".",
+  workflowTemplateParent: null,
+  workflowTemplateEntries: [],
+  workflowTemplateSelected: null,
   commands: [],
   selectedCommand: null,
   runs: [],
@@ -235,6 +291,7 @@ const state = {
   agentBusy: false,
   agentAbort: null,
   pendingApproval: null,
+  systemMemory: null,
   threads: { ask: crypto.randomUUID(), agent: crypto.randomUUID() },
   language: savedLanguage(),
   appearance: savedAppearance(),
@@ -294,6 +351,7 @@ function translateInterface(language, persist = true) {
   renderProviderState();
   setAgentBusy(state.agentBusy);
   if (state.pendingApproval) renderApproval(state.pendingApproval.record);
+  renderSystemMemory();
   renderBottom();
 }
 
@@ -333,6 +391,66 @@ function toast(message, error = false) {
 
 function menuItems(menu) {
   return [...menu.querySelectorAll('[role="menuitem"]:not([disabled]), [role="menuitemradio"]:not([disabled])')];
+}
+
+function closeParameterSelectors({ restoreFocus = false } = {}) {
+  const openSelector = document.querySelector(".parameter-selector.open");
+  const stateKey = openSelector?.dataset.parameterSelector;
+  document.querySelectorAll(".parameter-selector.open").forEach((selector) => {
+    selector.classList.remove("open");
+    selector.querySelector(".parameter-selector-trigger")?.setAttribute("aria-expanded", "false");
+    const menu = selector.querySelector(".parameter-selector-menu");
+    if (menu) menu.hidden = true;
+    selector.querySelectorAll(".parameter-selector-option").forEach((option) => {
+      option.tabIndex = -1;
+    });
+  });
+  if (!restoreFocus || !stateKey) return;
+  const visibleSelector = [...document.querySelectorAll(".parameter-selector")]
+    .find((selector) => selector.dataset.parameterSelector === stateKey
+      && !selector.closest(".form-field")?.hidden);
+  visibleSelector?.querySelector(".parameter-selector-trigger")?.focus();
+}
+
+function openParameterSelector(selector, focusOption = false) {
+  const trigger = selector.querySelector(".parameter-selector-trigger");
+  const menu = selector.querySelector(".parameter-selector-menu");
+  if (trigger.disabled) return;
+  closeMenus();
+  selector.classList.add("open");
+  trigger.setAttribute("aria-expanded", "true");
+  menu.hidden = false;
+  const bounds = trigger.getBoundingClientRect();
+  menu.style.minWidth = `${Math.max(136, bounds.width)}px`;
+  const maximumLeft = Math.max(6, window.innerWidth - menu.offsetWidth - 6);
+  menu.style.left = `${Math.min(Math.max(6, bounds.left), maximumLeft)}px`;
+  const below = bounds.bottom + 4;
+  menu.style.top = `${below + menu.offsetHeight <= window.innerHeight - 6
+    ? below
+    : Math.max(6, bounds.top - menu.offsetHeight - 4)}px`;
+  if (!focusOption) return;
+  const options = [...menu.querySelectorAll(".parameter-selector-option")];
+  const selected = options.find((option) => option.getAttribute("aria-selected") === "true") || options[0];
+  options.forEach((option) => { option.tabIndex = option === selected ? 0 : -1; });
+  selected?.focus();
+}
+
+function navigateParameterSelector(event, selector) {
+  const options = [...selector.querySelectorAll(".parameter-selector-option")];
+  const current = options.indexOf(document.activeElement);
+  if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    let next = event.key === "Home" ? 0 : options.length - 1;
+    if (event.key === "ArrowDown") next = (current + 1) % options.length;
+    if (event.key === "ArrowUp") next = (current - 1 + options.length) % options.length;
+    options.forEach((option, index) => { option.tabIndex = index === next ? 0 : -1; });
+    options[next]?.focus();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closeParameterSelectors({ restoreFocus: true });
+  } else if (event.key === "Tab") {
+    closeParameterSelectors();
+  }
 }
 
 let submenuCloseTimer = null;
@@ -381,6 +499,7 @@ function scheduleSubmenuClose() {
 
 function closeMenus({ restoreFocus = false } = {}) {
   const activeTrigger = document.querySelector(".menu-trigger.active");
+  closeParameterSelectors();
   closeAssistantModeMenu();
   closeSubmenus();
   document.querySelectorAll(".menu-popover.open").forEach((menu) => {
@@ -488,6 +607,8 @@ function updateActionStates() {
   setActionDisabled("refresh-files", !state.project);
   setActionDisabled("collapse-folders", !state.project);
   setActionDisabled("close-project", !state.project || workspaceLocked);
+  setActionDisabled("import-workflow-template", !state.project);
+  setActionDisabled("export-workflow-template", !canConfigure);
   setActionDisabled("validate-command", !canConfigure);
   setActionDisabled("run-command", !canConfigure || Boolean(state.activeRunId));
   setActionDisabled("cancel-run", !state.activeRunId);
@@ -620,7 +741,9 @@ async function openStoredConversation(summary) {
   selectAssistantMode(thread.mode);
   resetAssistantConversation();
   thread.conversation.forEach((message) => {
-    if (["user", "assistant"].includes(message.role)) {
+    if (message.role === "reasoning") {
+      appendAssistantReasoning(message.text);
+    } else if (["user", "assistant"].includes(message.role)) {
       appendAssistantMessage(message.role, message.text);
     }
   });
@@ -665,8 +788,151 @@ function appendAssistantMessage(role, text) {
   body.append(paragraph);
   article.append(body);
   messages.append(article);
+  if (role === "assistant" && text) void renderAssistantMarkdown(body, text);
   messages.scrollTop = messages.scrollHeight;
   return paragraph;
+}
+
+function appendAssistantThinking() {
+  const messages = byId("assistant-messages");
+  const article = document.createElement("article");
+  article.className = "assistant-message assistant assistant-thinking";
+  article.setAttribute("role", "status");
+  setTranslatedAttribute(article, "aria-label", "Thinking…");
+  const body = document.createElement("div");
+  body.className = "message-body";
+  const label = document.createElement("span");
+  label.className = "assistant-thinking-label";
+  setTranslatedText(label, "Thinking");
+  const dots = document.createElement("span");
+  dots.className = "assistant-thinking-dots";
+  dots.setAttribute("aria-hidden", "true");
+  for (let index = 0; index < 3; index += 1) {
+    const dot = document.createElement("span");
+    dot.className = "assistant-thinking-dot";
+    dots.append(dot);
+  }
+  body.append(label, dots);
+  article.append(body);
+  messages.append(article);
+  messages.scrollTop = messages.scrollHeight;
+  return article;
+}
+
+function clearAssistantThinking(stream) {
+  stream.thinking?.remove();
+  stream.thinking = null;
+}
+
+function appendAssistantReasoning(text = "", active = false) {
+  const messages = byId("assistant-messages");
+  const article = document.createElement("article");
+  article.className = "assistant-message assistant assistant-reasoning";
+  const details = document.createElement("details");
+  details.className = "assistant-reasoning-details";
+  details.classList.toggle("active", active);
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  setTranslatedText(label, active ? "Thinking…" : "Thought process");
+  const content = document.createElement("div");
+  content.className = "assistant-reasoning-content";
+  content.textContent = text;
+  summary.append(label);
+  details.append(summary, content);
+  article.append(details);
+  messages.append(article);
+  messages.scrollTop = messages.scrollHeight;
+  return { details, label, content };
+}
+
+function reasoningMessage(stream, event) {
+  if (!stream.reasoning.has(event.messageId)) {
+    stream.reasoning.set(event.messageId, appendAssistantReasoning("", true));
+  }
+  return stream.reasoning.get(event.messageId);
+}
+
+function finishReasoning(stream, event) {
+  const reasoning = stream.reasoning.get(event.messageId);
+  if (!reasoning) return;
+  reasoning.details.classList.remove("active");
+  setTranslatedText(reasoning.label, "Thought process");
+}
+
+function appendAssistantError(error) {
+  const messages = byId("assistant-messages");
+  const article = document.createElement("article");
+  article.className = "assistant-message assistant assistant-error";
+  article.setAttribute("role", "alert");
+  const body = document.createElement("div");
+  body.className = "message-body";
+  const title = document.createElement("strong");
+  title.className = "assistant-error-title";
+  setTranslatedText(title, "Request failed");
+  const detail = document.createElement("p");
+  detail.className = "assistant-error-detail";
+  detail.textContent = error?.message || String(error);
+  body.append(title, detail);
+  article.append(body);
+  messages.append(article);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function formatMemorySize(bytes) {
+  const gibibytes = bytes / (1024 ** 3);
+  return `${gibibytes.toFixed(gibibytes >= 100 ? 0 : 1)} GiB`;
+}
+
+function renderSystemMemory() {
+  const indicator = byId("system-memory");
+  const memory = state.systemMemory;
+  if (!memory) {
+    indicator.style.setProperty("--memory-percent", "0");
+    indicator.setAttribute("aria-valuenow", "0");
+    setTranslatedAttribute(indicator, "aria-label", "System memory");
+    indicator.title = translate("System memory");
+    indicator.classList.add("unavailable");
+    return;
+  }
+  const percent = Math.min(100, Math.max(0, Number(memory.percent) || 0));
+  const label = translate("System memory: {percent}% ({used} / {total})", {
+    percent: percent.toFixed(1),
+    used: formatMemorySize(memory.used_bytes),
+    total: formatMemorySize(memory.total_bytes),
+  });
+  indicator.style.setProperty("--memory-percent", String(percent));
+  indicator.setAttribute("aria-valuenow", percent.toFixed(1));
+  indicator.setAttribute("aria-label", label);
+  indicator.title = label;
+  indicator.classList.remove("unavailable");
+}
+
+async function refreshSystemMemory() {
+  try {
+    state.systemMemory = (await api("/api/system")).memory;
+  } catch (_) {
+    state.systemMemory = null;
+  }
+  renderSystemMemory();
+}
+
+async function renderAssistantMarkdown(body, text) {
+  try {
+    const rendered = await api("/api/agent/markdown", {
+      method: "POST",
+      headers: originHeaders(),
+      body: JSON.stringify({ text }),
+    });
+    if (!body.isConnected) return;
+    body.innerHTML = rendered.html;
+    body.classList.add("markdown-body");
+    body.querySelectorAll("a").forEach((link) => {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    });
+  } catch (_) {
+    // Plain text remains readable if local Markdown rendering is unavailable.
+  }
 }
 
 function renderProviderState() {
@@ -699,6 +965,28 @@ function optionalNumber(id) {
   return input.value === "" ? null : input.valueAsNumber;
 }
 
+function providerThinkingLevel() {
+  const selected = byId("provider-thinking-level").value;
+  if (selected !== "custom") return selected || null;
+  return byId("provider-thinking-custom").value.trim().toLowerCase() || null;
+}
+
+function updateProviderThinkingControl() {
+  const input = byId("provider-thinking-custom");
+  const custom = byId("provider-thinking-level").value === "custom";
+  input.hidden = !custom;
+  input.disabled = !custom;
+  input.required = custom;
+}
+
+function restoreProviderThinkingLevel(level) {
+  const normalized = level || "";
+  const builtin = BUILTIN_THINKING_LEVELS.has(normalized);
+  byId("provider-thinking-level").value = builtin ? normalized : "custom";
+  byId("provider-thinking-custom").value = builtin ? "" : normalized;
+  updateProviderThinkingControl();
+}
+
 function providerPayload() {
   const apiKey = byId("provider-api-key").value.trim();
   const baseUrl = byId("provider-base-url").value.trim();
@@ -709,7 +997,7 @@ function providerPayload() {
     base_url: baseUrl || null,
     context_tokens: optionalNumber("provider-context-tokens"),
     max_output_tokens: optionalNumber("provider-max-output-tokens"),
-    thinking_level: byId("provider-thinking-level").value || null,
+    thinking_level: providerThinkingLevel(),
     persist: byId("provider-persist").checked,
   };
 }
@@ -755,7 +1043,7 @@ async function openProviderDialog() {
   byId("provider-api-key").value = summary?.api_key || "";
   byId("provider-context-tokens").value = summary?.context_tokens ?? "";
   byId("provider-max-output-tokens").value = summary?.max_output_tokens ?? "";
-  byId("provider-thinking-level").value = summary?.thinking_level || "";
+  restoreProviderThinkingLevel(summary?.thinking_level);
   byId("provider-persist").checked = Boolean(summary?.persistent);
   byId("provider-advanced").open = false;
   setProviderKeyVisibility(false);
@@ -835,9 +1123,28 @@ function newAgentBody(
     messages: message ? [{ id: crypto.randomUUID(), role: "user", content: message }] : [],
     tools: [],
     context: [],
-    forwardedProps: { mode, datasetId, projectId: state.projectId },
+    forwardedProps: {
+      mode,
+      datasetId,
+      projectId: state.projectId,
+      formState: agentWorkflowFormState(),
+    },
     resume,
   };
+}
+
+function agentWorkflowFormState() {
+  if (!state.selectedCommand) return null;
+  const parameters = {};
+  byId("command-form").querySelectorAll(".argument-control").forEach((control) => {
+    try {
+      const value = argumentTemplateValue(control);
+      if (value !== null) parameters[control.dataset.flag] = value;
+    } catch (_) {
+      // Keep an unfinished field local until the user completes it.
+    }
+  });
+  return { workflow: [...state.selectedCommand.path], parameters };
 }
 
 function streamMessage(stream, event) {
@@ -998,14 +1305,42 @@ async function decideApproval(approved) {
   }
 }
 
-async function handleAgentEvent(event, stream, mode) {
-  if (event.type === "TEXT_MESSAGE_START") streamMessage(stream, event);
+function handleReasoningEvent(event, stream) {
+  if (event.type === "REASONING_MESSAGE_START") {
+    clearAssistantThinking(stream);
+    reasoningMessage(stream, event);
+  }
+  if (event.type === "REASONING_MESSAGE_CONTENT") {
+    clearAssistantThinking(stream);
+    const reasoning = reasoningMessage(stream, event);
+    reasoning.content.textContent += event.delta;
+    const messages = reasoning.details.closest(".assistant-messages");
+    messages?.scrollTo(0, messages.scrollHeight);
+  }
+  if (["REASONING_MESSAGE_END", "REASONING_END"].includes(event.type)) {
+    finishReasoning(stream, event);
+  }
+}
+
+async function handleTextEvent(event, stream) {
+  if (event.type === "TEXT_MESSAGE_START") {
+    clearAssistantThinking(stream);
+    streamMessage(stream, event);
+  }
   if (event.type === "TEXT_MESSAGE_CONTENT") {
+    clearAssistantThinking(stream);
     const paragraph = streamMessage(stream, event);
     paragraph.textContent += event.delta;
     const messages = paragraph.closest(".assistant-messages");
     messages?.scrollTo(0, messages.scrollHeight);
   }
+  if (event.type === "TEXT_MESSAGE_END") {
+    const paragraph = streamMessage(stream, event);
+    await renderAssistantMarkdown(paragraph.parentElement, paragraph.textContent);
+  }
+}
+
+function handleToolEvent(event, stream) {
   if (event.type === "TOOL_CALL_START") {
     stream.tools.set(event.toolCallId, { name: event.toolCallName, args: "" });
   }
@@ -1013,6 +1348,30 @@ async function handleAgentEvent(event, stream, mode) {
     const tool = stream.tools.get(event.toolCallId);
     if (tool) tool.args += event.delta;
   }
+  if (event.type === "TOOL_CALL_RESULT") {
+    const tool = stream.tools.get(event.toolCallId);
+    if (tool?.name === "fill_workflow_parameters"
+        && !stream.appliedTools.has(event.toolCallId)) {
+      let result = event.content;
+      if (typeof result === "string") {
+        try {
+          result = JSON.parse(result);
+        } catch (_) {
+          result = null;
+        }
+      }
+      if (result?.type === "workflow_parameter_patch") {
+        applyWorkflowParameterPatch(result);
+        stream.appliedTools.add(event.toolCallId);
+      }
+    }
+  }
+}
+
+async function handleAgentEvent(event, stream, mode) {
+  handleReasoningEvent(event, stream);
+  await handleTextEvent(event, stream);
+  handleToolEvent(event, stream);
   if (event.type === "RUN_ERROR") throw new Error(event.message || translate("Assistant run failed"));
   if (event.type === "RUN_FINISHED" && event.outcome?.type === "interrupt") {
     const [interrupt] = event.outcome.interrupts || [];
@@ -1021,8 +1380,15 @@ async function handleAgentEvent(event, stream, mode) {
   }
 }
 
-async function consumeAgentStream(response, mode) {
-  const stream = { buffer: "", messages: new Map(), tools: new Map() };
+async function consumeAgentStream(response, mode, thinking) {
+  const stream = {
+    buffer: "",
+    messages: new Map(),
+    reasoning: new Map(),
+    tools: new Map(),
+    appliedTools: new Set(),
+    thinking,
+  };
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   while (true) {
@@ -1045,6 +1411,7 @@ async function runAgentRequest(body, mode) {
   state.agentAbort?.abort();
   state.agentAbort = new AbortController();
   setAgentBusy(true);
+  const thinking = appendAssistantThinking();
   try {
     const response = await fetch("/api/agent/run", {
       method: "POST",
@@ -1057,8 +1424,13 @@ async function runAgentRequest(body, mode) {
       try { detail = (await response.json()).detail || detail; } catch (_) { /* status is enough */ }
       throw new Error(detail);
     }
-    await consumeAgentStream(response, mode);
+    await consumeAgentStream(response, mode, thinking);
+  } catch (error) {
+    if (error?.name !== "AbortError") appendAssistantError(error);
+    if (error && typeof error === "object") error.assistantDisplayed = true;
+    throw error;
   } finally {
+    thinking.remove();
     state.agentAbort = null;
     setAgentBusy(false);
   }
@@ -1083,6 +1455,7 @@ async function refreshProject() {
     state.agentAbort?.abort();
     if (byId("approval-dialog").open) byId("approval-dialog").close();
     if (byId("conversation-dialog").open) byId("conversation-dialog").close();
+    if (byId("workflow-template-dialog").open) byId("workflow-template-dialog").close();
     state.projectId = projectId;
     state.dataset = null;
     state.pendingApproval = null;
@@ -1135,7 +1508,13 @@ async function loadFolders(path = null) {
 
 async function openFolderDialog() {
   closeMenus();
-  await loadFolders(state.project?.root || null);
+  const projectRoot = state.project?.root || null;
+  try {
+    await loadFolders(projectRoot);
+  } catch (error) {
+    if (!projectRoot) throw error;
+    await loadFolders();
+  }
   byId("folder-dialog").showModal();
 }
 
@@ -1307,13 +1686,28 @@ async function refreshCommands() {
   state.selectedCommand = null;
   const catalog = byId("command-catalog");
   catalog.replaceChildren();
+  const categories = new Map();
   state.commands.forEach((command, index) => {
+    const category = command.category || "Workflow";
+    let actions = categories.get(category);
+    if (!actions) {
+      const group = document.createElement("section");
+      group.className = "command-family";
+      const label = document.createElement("span");
+      label.className = "command-family-label";
+      setTranslatedText(label, category);
+      actions = document.createElement("div");
+      actions.className = "command-family-actions";
+      group.append(label, actions);
+      catalog.append(group);
+      categories.set(category, actions);
+    }
     const button = document.createElement("button");
     button.className = "command-card";
-    button.textContent = command.path.join(" ");
+    button.textContent = command.display_name;
     button.title = command.help || "";
     button.addEventListener("click", () => selectCommand(index));
-    catalog.append(button);
+    actions.append(button);
   });
   updateActionStates();
 }
@@ -1332,19 +1726,86 @@ function renderCommandForm(command) {
   form.classList.remove("empty-state");
   form.removeAttribute("data-i18n");
   form.replaceChildren();
-  command.flags.filter((flag) => !flag.global).forEach((flag) => {
-    const field = document.createElement("div");
-    field.className = "form-field";
-    const heading = document.createElement("span");
-    heading.className = "field-heading";
-    heading.textContent = `--${flag.long || flag.id}${flag.required ? " *" : ""}`;
-    const control = buildArgumentControl(flag);
-    const help = document.createElement("small");
-    if (flag.help) help.textContent = flag.help;
-    else setValueHint(help, flag);
-    field.append(heading, control, help);
-    form.append(field);
+  const flags = command.flags.filter((flag) => !flag.global && !flag.studio_hidden);
+  const flagsById = new Map(flags.map((flag) => [flag.id, flag]));
+  parameterGroups(command, flags).forEach((group) => {
+    form.append(buildParameterGroup(group, flagsById));
   });
+  configureConditionalParameters(command, form);
+}
+
+function parameterGroups(command, flags) {
+  const groups = command.presentation?.groups;
+  if (groups?.length) return groups;
+  return [{
+    id: "parameters",
+    title: "Parameters",
+    flags: flags.map((flag) => flag.id),
+    common: flags.map((flag) => flag.id),
+  }];
+}
+
+function buildParameterGroup(group, flagsById) {
+  const section = document.createElement("section");
+  section.className = "parameter-group";
+  section.dataset.group = group.id;
+  const heading = document.createElement("h3");
+  heading.className = "parameter-group-title";
+  setTranslatedText(heading, group.title);
+  section.append(heading);
+
+  const commonIds = new Set(group.common || []);
+  const flags = group.flags.map((id) => flagsById.get(id)).filter(Boolean);
+  const common = flags.filter((flag) => flag.required || commonIds.has(flag.id));
+  const advanced = flags.filter((flag) => !flag.required && !commonIds.has(flag.id));
+  if (common.length) {
+    const primary = buildParameterFields(common);
+    primary.classList.add("parameter-primary");
+    section.append(primary);
+  }
+  if (advanced.length) section.append(buildAdvancedParameters(advanced));
+  return section;
+}
+
+function buildParameterFields(flags) {
+  const fields = document.createElement("div");
+  fields.className = "parameter-fields";
+  flags.forEach((flag) => fields.append(buildArgumentField(flag)));
+  return fields;
+}
+
+function buildAdvancedParameters(flags) {
+  const details = document.createElement("details");
+  details.className = "parameter-advanced";
+  const summary = document.createElement("summary");
+  setTranslatedText(summary, "Advanced");
+  details.append(summary, buildParameterFields(flags));
+  return details;
+}
+
+function buildArgumentField(flag) {
+  const field = document.createElement("div");
+  field.className = "form-field";
+  field.dataset.flag = flag.long || flag.id;
+  const heading = document.createElement("span");
+  heading.className = "field-heading";
+  renderFieldHeading(heading, flag.long || flag.id, Boolean(flag.required));
+  const control = buildArgumentControl(flag);
+  const help = document.createElement("small");
+  if (flag.help) help.textContent = flag.help;
+  else setValueHint(help, flag);
+  field.append(heading, control, help);
+  return field;
+}
+
+function renderFieldHeading(heading, flag, requirement) {
+  const parameterSelector = heading.querySelector(".parameter-selector");
+  heading.replaceChildren(parameterSelector || document.createTextNode(`--${flag}`));
+  if (!requirement) return;
+  const label = document.createElement("span");
+  label.className = "required-label";
+  setTranslatedText(label, requirement === true ? "Required" : requirement);
+  heading.append(label);
 }
 
 function buildArgumentControl(flag) {
@@ -1354,13 +1815,21 @@ function buildArgumentControl(flag) {
   control.dataset.flag = flag.long || flag.id;
   control.dataset.boolean = String(arity.max === 0);
   control.dataset.required = String(Boolean(flag.required));
+  control.dataset.schemaRequired = String(Boolean(flag.required));
   control.dataset.repeat = String(Boolean(flag.repeat));
   control.dataset.valueCount = String(arity.max || arity.min || 0);
+  control.dataset.defaultValue = flag.default?.[0] || "";
   if (arity.max === 0) {
+    const checkboxControl = document.createElement("span");
+    checkboxControl.className = "boolean-checkbox";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.setAttribute("aria-label", `--${control.dataset.flag}`);
-    control.append(checkbox);
+    const mark = document.createElement("span");
+    mark.className = "boolean-checkbox-mark";
+    mark.setAttribute("aria-hidden", "true");
+    checkboxControl.append(checkbox, mark);
+    control.append(checkboxControl);
     return control;
   }
   addValueRow(control, flag);
@@ -1422,7 +1891,426 @@ function buildValueInput(flag, index) {
   }
   input.dataset.value = "";
   input.setAttribute("aria-label", `--${flag.long || flag.id} ${name}`);
+  input.setAttribute("aria-required", String(Boolean(flag.required)));
   return input;
+}
+
+function configureConditionalParameters(command, form) {
+  const path = command.path.join(" ");
+  form.oninput = null;
+  form.onchange = null;
+  form.onclick = null;
+  let update;
+  if (path === "quantify features2proteins") {
+    configureFeatures2ProteinsInputSelector(form);
+    update = () => updateFeatures2ProteinsParameters(form);
+  } else if (path === "quantify features2peptides") {
+    configureFeatures2PeptidesIrsSelector(form);
+    update = () => updateFeatures2PeptidesParameters(form);
+  } else if (path === "quantify peptides2protein") {
+    update = () => updatePeptides2ProteinParameters(form);
+  } else if (path === "plot de") {
+    update = () => updateDifferentialExpressionPlotParameters(form);
+  } else {
+    return;
+  }
+  form.oninput = update;
+  form.onchange = update;
+  form.onclick = (event) => {
+    if (event.target.closest(".add-value, .remove-value")) update();
+  };
+  update();
+}
+
+function updateDifferentialExpressionPlotParameters(form) {
+  const volcano = argumentControlValue(form, "volcano") === "true";
+  const heatmap = argumentControlValue(form, "heatmap") === "true";
+  setConditionalFields(form, ["sdrf"], heatmap, true);
+  setArgumentFieldRequired(form, "sdrf", heatmap);
+  setConditionalFields(form, ["highlight-protein"], volcano);
+  updateAdvancedVisibility(form);
+}
+
+function configureFeatures2ProteinsInputSelector(form) {
+  configureAlternativeParameterSelector(
+    form,
+    ["parquet", "msstats"],
+    "featureInputType",
+    "Input file type",
+  );
+  const helpByFlag = {
+    parquet: "Feature-level QPX input for protein quantification; also supplies protein-group assignments for spectral-count.",
+    msstats: "Feature-level MSstats input for protein quantification; requires SDRF metadata.",
+  };
+  Object.entries(helpByFlag).forEach(([flag, help]) => {
+    const field = [...form.querySelectorAll(".form-field")]
+      .find((candidate) => candidate.dataset.flag === flag);
+    if (field) setTranslatedText(field.querySelector("small"), help);
+  });
+}
+
+function configureFeatures2PeptidesIrsSelector(form) {
+  configureAlternativeParameterSelector(
+    form,
+    ["irs-channel", "irs-autodetect-regex"],
+    "peptideIrsType",
+    "IRS reference type",
+  );
+}
+
+function configureAlternativeParameterSelector(form, flags, stateKey, label) {
+  const importedType = flags.find((flag) => argumentControlValue(form, flag));
+  if (!form.querySelector(`[data-parameter-selector="${stateKey}"]`)) {
+    flags.forEach((flag) => {
+      const field = [...form.querySelectorAll(".form-field")]
+        .find((candidate) => candidate.dataset.flag === flag);
+      if (!field) return;
+      const selector = document.createElement("span");
+      selector.className = "parameter-selector";
+      selector.dataset.parameterSelector = stateKey;
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "parameter-selector-trigger";
+      trigger.setAttribute("aria-haspopup", "listbox");
+      trigger.setAttribute("aria-expanded", "false");
+      setTranslatedAttribute(trigger, "aria-label", label);
+      const valueLabel = document.createElement("span");
+      valueLabel.className = "parameter-selector-value";
+      const chevron = document.createElement("span");
+      chevron.className = "parameter-selector-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      trigger.append(valueLabel, chevron);
+      const menu = document.createElement("span");
+      menu.className = "parameter-selector-menu";
+      menu.id = `parameter-selector-${stateKey}-${flag}`;
+      menu.hidden = true;
+      menu.setAttribute("role", "listbox");
+      setTranslatedAttribute(menu, "aria-label", label);
+      trigger.setAttribute("aria-controls", menu.id);
+      flags.forEach((value) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "parameter-selector-option";
+        option.dataset.value = value;
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", "false");
+        option.tabIndex = -1;
+        option.textContent = `--${value}`;
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
+          setAlternativeParameter(form, flags, stateKey, value);
+          form.dispatchEvent(new Event("change", { bubbles: true }));
+          closeParameterSelectors({ restoreFocus: true });
+        });
+        menu.append(option);
+      });
+      trigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (selector.classList.contains("open")) closeParameterSelectors();
+        else openParameterSelector(selector);
+      });
+      trigger.addEventListener("keydown", (event) => {
+        if (!["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        openParameterSelector(selector, true);
+      });
+      menu.addEventListener("keydown", (event) => navigateParameterSelector(event, selector));
+      selector.append(trigger, menu);
+      field.querySelector(".field-heading").replaceChildren(selector);
+    });
+  }
+  setAlternativeParameter(
+    form,
+    flags,
+    stateKey,
+    importedType || form.dataset[stateKey] || flags[0],
+  );
+}
+
+function setAlternativeParameter(form, flags, stateKey, selected) {
+  form.dataset[stateKey] = selected;
+  flags.forEach((flag) => {
+    const field = [...form.querySelectorAll(".form-field")]
+      .find((candidate) => candidate.dataset.flag === flag);
+    if (!field) return;
+    const active = flag === selected;
+    const control = field.querySelector(".argument-control");
+    if (!active) clearArgumentControl(control);
+    control.querySelectorAll("input, select, button").forEach((element) => {
+      element.disabled = !active;
+    });
+    field.hidden = !active;
+    const selector = field.querySelector(`[data-parameter-selector="${stateKey}"]`);
+    selector.querySelector(".parameter-selector-value").textContent = `--${selected}`;
+    selector.querySelectorAll(".parameter-selector-option").forEach((option) => {
+      option.setAttribute("aria-selected", String(option.dataset.value === selected));
+    });
+  });
+}
+
+function updateFeatures2ProteinsParameters(form) {
+  const quantMethod = argumentControlValue(form, "quant-method", true).toLowerCase();
+  updateFeatures2ProteinsQuantification(form, quantMethod);
+  updateFeatures2ProteinsCorrections(form, quantMethod);
+  updateFeatures2ProteinsDownstream(form, quantMethod);
+  updateFeatures2ProteinsRequirements(form, quantMethod);
+  updateAdvancedVisibility(form);
+}
+
+function updateFeatures2ProteinsQuantification(form, quantMethod) {
+  const pibaq = quantMethod === "pibaq";
+  const ratio = quantMethod === "ratio";
+  const spectralCount = quantMethod === "spectral-count";
+  const qpxOnly = ratio || spectralCount;
+  if (qpxOnly) {
+    setAlternativeParameter(
+      form,
+      ["parquet", "msstats"],
+      "featureInputType",
+      "parquet",
+    );
+  }
+  form.querySelectorAll('[data-parameter-selector="featureInputType"]').forEach((selector) => {
+    selector.querySelector(".parameter-selector-trigger").disabled = qpxOnly;
+    selector.classList.toggle("disabled", qpxOnly);
+    if (qpxOnly && selector.classList.contains("open")) closeParameterSelectors();
+  });
+  setConditionalFields(form, ["fasta", "pibaq-enzyme"], pibaq, true);
+  setConditionalFields(form, [
+    "pibaq-max-aa",
+    "pibaq-min-shared",
+    "pibaq-families",
+    "pibaq-min-anchors",
+  ], pibaq);
+  setArgumentFieldRequired(form, "fasta", pibaq);
+  setConditionalFields(form, ["min-unique"], !pibaq);
+  setConditionalFields(form, ["psm"], spectralCount);
+  setConditionalFields(form, ["ratio-fraction-merge"], ratio);
+  setConditionalFields(form, ["directlfq-min-nonan"], quantMethod === "directlfq");
+  setConditionalFields(form, ["export-ions"], quantMethod === "directlfq");
+  setConditionalFields(
+    form,
+    ["export-peptides"],
+    !["directlfq", "ratio", "spectral-count"].includes(quantMethod),
+  );
+  setConditionalFields(
+    form,
+    ["directlfq-num-samples-quadratic"],
+    ["directlfq", "maxlfq"].includes(quantMethod),
+  );
+  setConditionalFields(
+    form,
+    ["normalization-proteins"],
+    !["directlfq", "ratio", "peptide-count", "spectral-count"].includes(quantMethod),
+  );
+  setConditionalFields(
+    form,
+    ["run-normalization", "sample-normalization"],
+    !["directlfq", "ratio", "peptide-count", "spectral-count"].includes(quantMethod),
+  );
+}
+
+function updateFeatures2ProteinsCorrections(form, quantMethod) {
+  const ratio = quantMethod === "ratio";
+  const batchCorrection = argumentControlValue(form, "batch-correction") === "true";
+  const batchMethod = argumentControlValue(form, "batch-method", true).toLowerCase() || "sample-prefix";
+  const hasBatchCovariate = Boolean(argumentControlValue(form, "batch-covariate"));
+  setConditionalFields(form, ["batch-method", "batch-covariate"], batchCorrection, true);
+  setConditionalFields(form, ["batch-column"], batchCorrection && batchMethod === "column", true);
+  setArgumentFieldRequired(form, "batch-column", batchCorrection && batchMethod === "column");
+  setConditionalFields(form, ["batch-nonparametric", "batch-mean-only", "batch-ref"], batchCorrection);
+
+  const irsAvailable = !["ratio", "peptide-count", "spectral-count"].includes(quantMethod);
+  const irs = irsAvailable && argumentControlValue(form, "irs") === "true";
+  setConditionalFields(form, ["irs"], irsAvailable);
+  setConditionalFields(form, ["irs-reference-sample", "irs-reference-regex"], ratio || irs, true);
+  setConditionalFields(form, ["irs-sdrf-column", "irs-sdrf-value"], irs, true);
+  setConditionalFields(form, ["irs-stat", "irs-remove-reference"], irs);
+}
+
+function updateFeatures2ProteinsDownstream(form, quantMethod) {
+  const imputeMethod = argumentControlValue(form, "impute-method").toLowerCase();
+  setConditionalFields(form, ["impute-quantile"], ["mindet", "minprob"].includes(imputeMethod), true);
+  setConditionalFields(form, ["impute-shift", "impute-scale"], imputeMethod === "minprob", true);
+  setConditionalFields(form, ["impute-n-neighbors"], ["knn", "seqknn"].includes(imputeMethod), true);
+
+  const differentialExpression = Boolean(
+    argumentControlValue(form, "de-contrast") || argumentControlValue(form, "de-contrast-file"),
+  );
+  setConditionalFields(form, ["de-method", "de-log2fc", "de-fdr", "de-output"], differentialExpression, true);
+  setConditionalFields(form, ["de-effect-size-gate"], differentialExpression);
+  const deMethod = argumentControlValue(form, "de-method", true).toLowerCase() || "auto";
+  const effectiveDeMethod = deMethod === "auto"
+    ? (quantMethod === "directlfq" ? "deqms" : "limrots")
+    : deMethod;
+  setConditionalFields(
+    form,
+    ["de-fdr-method"],
+    differentialExpression && !["limrots", "rots"].includes(effectiveDeMethod),
+  );
+  setConditionalFields(
+    form,
+    ["de-ensemble-method", "de-ensemble-min-k"],
+    differentialExpression && deMethod === "ensemble",
+  );
+}
+
+function updateFeatures2ProteinsRequirements(form, quantMethod) {
+  const spectralCount = quantMethod === "spectral-count";
+  const qpxOnly = quantMethod === "ratio" || spectralCount;
+  const inputType = form.dataset.featureInputType || "parquet";
+  const hasMsstats = inputType === "msstats";
+  const sampleNormalization = argumentControlValue(form, "sample-normalization", true).toLowerCase();
+  const batchCorrection = argumentControlValue(form, "batch-correction") === "true";
+  const batchMethod = argumentControlValue(form, "batch-method", true).toLowerCase() || "sample-prefix";
+  const hasBatchCovariate = Boolean(argumentControlValue(form, "batch-covariate"));
+  const differentialExpression = Boolean(
+    argumentControlValue(form, "de-contrast") || argumentControlValue(form, "de-contrast-file"),
+  );
+  const requiresSdrf = hasMsstats
+    || qpxOnly
+    || argumentControlValue(form, "irs") === "true"
+    || Boolean(argumentControlValue(form, "coverage-threshold"))
+    || Boolean(argumentControlValue(form, "min-sample-correlation"))
+    || differentialExpression
+    || sampleNormalization === "condition-median"
+    || (batchCorrection && (batchMethod === "column" || hasBatchCovariate));
+
+  setArgumentFieldRequired(form, "parquet", inputType === "parquet");
+  setArgumentFieldRequired(form, "msstats", hasMsstats);
+  setArgumentFieldRequired(form, "psm", spectralCount);
+  setArgumentFieldRequired(form, "sdrf", requiresSdrf);
+  setArgumentFieldRequired(form, "de-output", differentialExpression);
+}
+
+function updateFeatures2PeptidesParameters(form) {
+  setArgumentFieldRequired(form, "parquet", true);
+  setArgumentFieldRequired(form, "output", true);
+  const skipNormalization = argumentControlValue(form, "skip-normalization") === "true";
+  setArgumentFieldsEnabled(form, ["run-normalization", "sample-normalization"], !skipNormalization);
+  const sampleNormalization = argumentControlValue(form, "sample-normalization", true).toLowerCase();
+  const irsAutodetect = argumentControlValue(form, "irs-autodetect-regex");
+  setArgumentFieldRequired(
+    form,
+    "sdrf",
+    Boolean(irsAutodetect) || sampleNormalization === "condition-median",
+  );
+  const irs = Boolean(
+    argumentControlValue(form, "irs-channel") || argumentControlValue(form, "irs-autodetect-regex"),
+  );
+  setConditionalFields(form, ["irs-stat", "irs-scope"], irs);
+  updateAdvancedVisibility(form);
+}
+
+function updatePeptides2ProteinParameters(form) {
+  const quantMethod = argumentControlValue(form, "quant-method", true).toLowerCase();
+  const pibaq = quantMethod === "pibaq";
+  setConditionalFields(form, ["fasta", "enzyme"], pibaq, true);
+  setArgumentFieldRequired(form, "fasta", pibaq);
+  setConditionalFields(form, [
+    "min-aa",
+    "max-aa",
+    "families",
+    "min-shared",
+    "min-anchors",
+    "high-anchor-threshold",
+  ], pibaq);
+  setConditionalFields(form, ["tpa"], pibaq);
+  const tpa = pibaq && argumentControlValue(form, "tpa") === "true";
+  setConditionalFields(form, ["ruler"], tpa);
+  const ruler = tpa && argumentControlValue(form, "ruler") === "true";
+  setConditionalFields(form, ["ploidy", "organism", "cpc"], ruler);
+  setConditionalFields(form, ["qc-report"], pibaq);
+  setConditionalFields(form, ["threads"], ["directlfq", "maxlfq"].includes(quantMethod));
+  setConditionalFields(form, ["directlfq-min-nonan"], quantMethod === "directlfq");
+  updateAdvancedVisibility(form);
+}
+
+function argumentControlValue(form, flag, useDefault = false) {
+  const control = [...form.querySelectorAll(".argument-control")]
+    .find((candidate) => candidate.dataset.flag === flag);
+  if (!control) return "";
+  if (control.dataset.boolean === "true") {
+    return control.querySelector('input[type="checkbox"]')?.checked ? "true" : "";
+  }
+  const value = [...control.querySelectorAll("[data-value]")]
+    .map((input) => input.value.trim())
+    .find(Boolean);
+  return value || (useDefault ? control.dataset.defaultValue : "") || "";
+}
+
+function setConditionalFields(form, flags, visible, promote = false) {
+  flags.forEach((flag) => {
+    const field = [...form.querySelectorAll(".form-field")]
+      .find((candidate) => candidate.dataset.flag === flag);
+    if (!field) return;
+    if (visible && promote) promoteParameterField(field);
+    const control = field.querySelector(".argument-control");
+    if (!visible) clearArgumentControl(control);
+    control.querySelectorAll("input, select, button").forEach((element) => {
+      element.disabled = !visible;
+    });
+    field.hidden = !visible;
+  });
+}
+
+function setArgumentFieldsEnabled(form, flags, enabled) {
+  flags.forEach((flag) => {
+    const field = [...form.querySelectorAll(".form-field")]
+      .find((candidate) => candidate.dataset.flag === flag);
+    if (!field) return;
+    const control = field.querySelector(".argument-control");
+    if (!enabled) clearArgumentControl(control);
+    control.querySelectorAll("input, select, button").forEach((element) => {
+      element.disabled = !enabled;
+    });
+  });
+}
+
+function setArgumentFieldRequired(form, flag, required) {
+  const field = [...form.querySelectorAll(".form-field")]
+    .find((candidate) => candidate.dataset.flag === flag);
+  if (!field) return;
+  const control = field.querySelector(".argument-control");
+  const effective = required || control.dataset.schemaRequired === "true";
+  control.dataset.required = String(effective);
+  control.querySelectorAll("[data-value]").forEach((input) => {
+    input.setAttribute("aria-required", String(effective));
+  });
+  renderFieldHeading(field.querySelector(".field-heading"), control.dataset.flag, effective);
+}
+
+function promoteParameterField(field) {
+  const section = field.closest(".parameter-group");
+  const primary = [...section.children]
+    .find((child) => child.classList.contains("parameter-primary"));
+  if (primary && field.parentElement !== primary) primary.append(field);
+}
+
+function clearArgumentControl(control) {
+  control.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.checked = false;
+  });
+  control.querySelectorAll("[data-value]").forEach((input) => {
+    input.value = "";
+  });
+  [...control.querySelectorAll(".value-row")].slice(1).forEach((row) => row.remove());
+}
+
+function updateAdvancedVisibility(form) {
+  form.querySelectorAll(".parameter-advanced").forEach((details) => {
+    const visible = [...details.querySelectorAll(".form-field")].some((field) => !field.hidden);
+    details.hidden = !visible;
+    if (!visible) details.open = false;
+  });
+  form.querySelectorAll(".parameter-group").forEach((section) => {
+    const fields = [...section.querySelectorAll(".form-field")];
+    const visible = fields.some((field) => !field.hidden);
+    const required = fields.some(
+      (field) => field.querySelector(".argument-control")?.dataset.required === "true",
+    );
+    section.hidden = !visible && !required;
+  });
 }
 
 function setValueHint(element, flag) {
@@ -1464,6 +2352,335 @@ function commandArgv() {
     }
   });
   return argv;
+}
+
+function workflowTemplateParameters() {
+  const parameters = {};
+  byId("command-form").querySelectorAll(".argument-control").forEach((control) => {
+    const value = argumentTemplateValue(control);
+    if (value !== null) parameters[control.dataset.flag] = value;
+  });
+  return parameters;
+}
+
+function argumentTemplateValue(control) {
+  if (control.dataset.boolean === "true") {
+    return control.querySelector('input[type="checkbox"]')?.checked ? true : null;
+  }
+  const rows = [...control.querySelectorAll(".value-row")].map((row) =>
+    [...row.querySelectorAll("[data-value]")].map((input) => input.value.trim()),
+  ).filter((values) => values.some(Boolean));
+  const incomplete = rows.find((values) => values.some((value) => !value));
+  if (incomplete) {
+    throw new Error(translate("{option} requires {count} values", {
+      option: `--${control.dataset.flag}`,
+      count: incomplete.length,
+    }));
+  }
+  if (!rows.length) return null;
+  const repeated = control.dataset.repeat === "true";
+  const singleValue = Number(control.dataset.valueCount) === 1;
+  if (singleValue) return repeated ? rows.map(([value]) => value) : rows[0][0];
+  return repeated ? rows : rows[0];
+}
+
+function currentWorkflowTemplate() {
+  if (!state.selectedCommand) throw new Error(translate("Select a workflow first"));
+  return {
+    $schemaVersion: WORKFLOW_TEMPLATE_SCHEMA_VERSION,
+    workflow: [...state.selectedCommand.path],
+    parameters: workflowTemplateParameters(),
+  };
+}
+
+function workflowTemplatePath(directory, name) {
+  return directory === "." ? name : `${directory}/${name}`;
+}
+
+function workflowTemplateDirectoryLabel(directory) {
+  if (directory === ".") return state.project.root;
+  return `${state.project.root.replace(/[\\/]$/, "")}/${directory}`;
+}
+
+function updateWorkflowTemplateConfirm() {
+  const confirm = byId("workflow-template-confirm");
+  confirm.disabled = state.workflowTemplateMode === "import"
+    ? !state.workflowTemplateSelected
+    : !byId("workflow-template-name").value.trim();
+}
+
+function renderWorkflowTemplateEntries() {
+  const list = byId("workflow-template-list");
+  list.replaceChildren();
+  const entries = state.workflowTemplateEntries.filter(
+    (entry) => entry.kind === "directory" || entry.name.toLowerCase().endsWith(".json"),
+  );
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    setTranslatedText(empty, "No JSON templates in this folder.");
+    list.append(empty);
+    return;
+  }
+  entries.forEach((entry) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "workflow-template-row";
+    row.dataset.path = entry.path;
+    const icon = createFileIcon(entry.kind === "directory"
+      ? { icon: "folder", tone: "folder" }
+      : filePresentation(entry.name));
+    const name = document.createElement("span");
+    name.textContent = entry.name;
+    row.append(icon, name);
+    if (entry.kind === "directory") {
+      row.classList.add("directory");
+      row.addEventListener("click", () => loadWorkflowTemplateDirectory(entry.path).catch(reportError));
+    } else {
+      row.setAttribute("aria-pressed", String(entry.path === state.workflowTemplateSelected));
+      row.addEventListener("click", () => selectWorkflowTemplateFile(entry));
+    }
+    list.append(row);
+  });
+}
+
+function selectWorkflowTemplateFile(entry) {
+  state.workflowTemplateSelected = entry.path;
+  byId("workflow-template-name").value = entry.name;
+  byId("workflow-template-list").querySelectorAll(".workflow-template-row:not(.directory)")
+    .forEach((row) => row.setAttribute("aria-pressed", String(row.dataset.path === entry.path)));
+  updateWorkflowTemplateConfirm();
+}
+
+async function loadWorkflowTemplateDirectory(path = ".") {
+  const payload = await api(`/api/files?path=${encodeURIComponent(path)}`);
+  state.workflowTemplateDirectory = payload.path;
+  state.workflowTemplateParent = payload.parent;
+  state.workflowTemplateEntries = payload.entries;
+  state.workflowTemplateSelected = null;
+  byId("workflow-template-parent").disabled = payload.parent === null;
+  byId("workflow-template-current").value = workflowTemplateDirectoryLabel(payload.path);
+  if (state.workflowTemplateMode === "import") byId("workflow-template-name").value = "";
+  renderWorkflowTemplateEntries();
+  updateWorkflowTemplateConfirm();
+}
+
+async function openWorkflowTemplateDialog(mode) {
+  if (!state.project) throw new Error(translate("Open a folder first"));
+  if (mode === "export" && !state.selectedCommand) {
+    throw new Error(translate("Select a workflow first"));
+  }
+  state.workflowTemplateMode = mode;
+  const importing = mode === "import";
+  const name = byId("workflow-template-name");
+  name.readOnly = importing;
+  name.value = importing ? "" : `mokume-${state.selectedCommand.path.join("-")}-template.json`;
+  setTranslatedAttribute(name, "placeholder", importing
+    ? "Select a JSON template"
+    : "Enter a JSON file name");
+  setTranslatedText(byId("workflow-template-title"), importing
+    ? "Import workflow template"
+    : "Export workflow template");
+  setTranslatedText(byId("workflow-template-confirm"), importing
+    ? "Import from workspace"
+    : "Save to workspace");
+  await loadWorkflowTemplateDirectory(".");
+  byId("workflow-template-dialog").showModal();
+  if (!importing) name.select();
+}
+
+async function submitWorkflowTemplate(event) {
+  event.preventDefault();
+  if (state.workflowTemplateMode === "import") {
+    const path = state.workflowTemplateSelected;
+    if (!path) return;
+    const payload = await api(`/api/workflow-template?path=${encodeURIComponent(path)}`);
+    applyWorkflowTemplate(payload.template);
+    byId("workflow-template-dialog").close();
+    toast(translate("Workflow template imported"));
+    return;
+  }
+  const name = byId("workflow-template-name").value.trim();
+  if (!name.toLowerCase().endsWith(".json") || name.includes("/") || name.includes("\\")) {
+    throw new Error(translate("Template file name must end with .json"));
+  }
+  const path = workflowTemplatePath(state.workflowTemplateDirectory, name);
+  const exists = state.workflowTemplateEntries.some(
+    (entry) => entry.kind === "file" && entry.path === path,
+  );
+  if (exists && !window.confirm(translate("Replace the existing workflow template?"))) return;
+  await api("/api/workflow-template", {
+    method: "PUT",
+    headers: originHeaders(),
+    body: JSON.stringify({
+      path,
+      overwrite: exists,
+      template: currentWorkflowTemplate(),
+    }),
+  });
+  byId("workflow-template-dialog").close();
+  await refreshFiles();
+  toast(translate("Workflow template exported"));
+}
+
+function applyWorkflowTemplate(template) {
+  if (!template || typeof template !== "object" || Array.isArray(template)) {
+    throw new Error(translate("Invalid workflow template"));
+  }
+  if (template.$schemaVersion !== WORKFLOW_TEMPLATE_SCHEMA_VERSION) {
+    throw new Error(translate("Unsupported workflow template version"));
+  }
+  if (!Array.isArray(template.workflow) || !template.workflow.length
+      || !template.workflow.every((part) => typeof part === "string")) {
+    throw new Error(translate("Invalid workflow template"));
+  }
+  if (!template.parameters || typeof template.parameters !== "object"
+      || Array.isArray(template.parameters)) {
+    throw new Error(translate("Invalid workflow template"));
+  }
+  const workflow = template.workflow.join(" ");
+  const commandIndex = state.commands.findIndex((command) => command.path.join(" ") === workflow);
+  if (commandIndex < 0) {
+    throw new Error(translate("Template workflow is unavailable: {workflow}", { workflow }));
+  }
+  const command = state.commands[commandIndex];
+  const flags = new Map(command.flags
+    .filter((flag) => !flag.global && !flag.studio_hidden)
+    .map((flag) => [flag.long || flag.id, flag]));
+  const values = new Map();
+  Object.entries(template.parameters).forEach(([parameter, value]) => {
+    const flag = flags.get(parameter);
+    if (!flag) {
+      throw new Error(translate("Template parameter is unavailable: --{parameter}", { parameter }));
+    }
+    values.set(parameter, normalizeTemplateParameter(flag, value));
+  });
+  selectCommand(commandIndex);
+  const form = byId("command-form");
+  form.querySelectorAll(".argument-control").forEach(clearArgumentControl);
+  values.forEach((value, parameter) => {
+    const control = [...form.querySelectorAll(".argument-control")]
+      .find((candidate) => candidate.dataset.flag === parameter);
+    fillTemplateControl(control, flags.get(parameter), value);
+  });
+  configureConditionalParameters(command, form);
+}
+
+function applyWorkflowParameterPatch(patch) {
+  if (!patch || patch.type !== "workflow_parameter_patch"
+      || !Array.isArray(patch.workflow)
+      || !patch.parameters || typeof patch.parameters !== "object"
+      || Array.isArray(patch.parameters)) {
+    throw new Error(translate("Invalid workflow template"));
+  }
+  const workflow = patch.workflow.join(" ");
+  if (!state.selectedCommand
+      || state.selectedCommand.path.join(" ") !== workflow) {
+    throw new Error(translate("The Agent response no longer matches the current workflow"));
+  }
+  const command = state.selectedCommand;
+  const flags = new Map(command.flags
+    .filter((flag) => !flag.global && !flag.studio_hidden)
+    .map((flag) => [flag.long || flag.id, flag]));
+  const flagsById = new Map(command.flags.map((flag) => [flag.id, flag]));
+  const values = new Map();
+  Object.entries(patch.parameters).forEach(([parameter, value]) => {
+    const flag = flags.get(parameter);
+    if (!flag) {
+      throw new Error(translate("Template parameter is unavailable: --{parameter}", { parameter }));
+    }
+    values.set(parameter, value === null ? null : normalizeTemplateParameter(flag, value));
+  });
+  const form = byId("command-form");
+  const controlFor = (parameter) => [...form.querySelectorAll(".argument-control")]
+    .find((candidate) => candidate.dataset.flag === parameter);
+  values.forEach((_value, parameter) => clearArgumentControl(controlFor(parameter)));
+  values.forEach((value, parameter) => {
+    if (value === null || value === false) return;
+    const flag = flags.get(parameter);
+    (flag.conflicts || []).forEach((conflict) => {
+      const conflictFlag = flagsById.get(conflict) || flags.get(conflict);
+      if (!conflictFlag) return;
+      const conflictName = conflictFlag.long || conflictFlag.id;
+      if (!values.has(conflictName)) clearArgumentControl(controlFor(conflictName));
+    });
+  });
+  values.forEach((value, parameter) => {
+    if (value !== null) fillTemplateControl(controlFor(parameter), flags.get(parameter), value);
+  });
+  configureConditionalParameters(command, form);
+  const changedFields = [...values.keys()].map((parameter) =>
+    [...form.querySelectorAll(".form-field")]
+      .find((field) => field.dataset.flag === parameter),
+  ).filter(Boolean);
+  highlightAgentFields(changedFields);
+  toast(translate("Agent updated {count} parameters", { count: changedFields.length }));
+}
+
+function highlightAgentFields(fields) {
+  window.clearTimeout(highlightAgentFields.timer);
+  document.querySelectorAll(".form-field.agent-filled")
+    .forEach((field) => field.classList.remove("agent-filled"));
+  fields.forEach((field) => {
+    field.closest(".parameter-advanced")?.setAttribute("open", "");
+    field.classList.add("agent-filled");
+  });
+  fields.find((field) => !field.hidden)?.scrollIntoView({ block: "nearest" });
+  highlightAgentFields.timer = window.setTimeout(() => {
+    fields.forEach((field) => field.classList.remove("agent-filled"));
+  }, 3200);
+}
+
+function normalizeTemplateParameter(flag, value) {
+  const parameter = flag.long || flag.id;
+  const count = Number(flag.value_arity?.max || flag.value_arity?.min || 0);
+  if (count === 0) {
+    if (typeof value !== "boolean") throw invalidTemplateValue(parameter);
+    return value;
+  }
+  let rows;
+  if (count === 1) {
+    const values = flag.repeat && Array.isArray(value) ? value : [value];
+    rows = values.map((item) => [templateScalar(item, parameter)]);
+  } else {
+    const values = flag.repeat ? value : [value];
+    if (!Array.isArray(values)) throw invalidTemplateValue(parameter);
+    rows = values.map((row) => {
+      if (!Array.isArray(row) || row.length !== count) throw invalidTemplateValue(parameter);
+      return row.map((item) => templateScalar(item, parameter));
+    });
+  }
+  const choices = flag.possible_values || [];
+  if (choices.length && rows.some(([item]) => !choices.includes(item))) {
+    throw invalidTemplateValue(parameter);
+  }
+  return rows;
+}
+
+function templateScalar(value, parameter) {
+  if (!(["string", "number"].includes(typeof value))) throw invalidTemplateValue(parameter);
+  const text = String(value).trim();
+  if (!text) throw invalidTemplateValue(parameter);
+  return text;
+}
+
+function invalidTemplateValue(parameter) {
+  return new Error(translate("Invalid template value for --{parameter}", { parameter }));
+}
+
+function fillTemplateControl(control, flag, value) {
+  if (control.dataset.boolean === "true") {
+    control.querySelector('input[type="checkbox"]').checked = value;
+    return;
+  }
+  value.forEach((values, index) => {
+    if (index > 0) addValueRow(control, flag, true);
+    const row = control.querySelectorAll(".value-row")[index];
+    [...row.querySelectorAll("[data-value]")].forEach((input, valueIndex) => {
+      input.value = values[valueIndex];
+      if (!input.value) throw invalidTemplateValue(control.dataset.flag);
+    });
+  });
 }
 
 async function validateCommand() {
@@ -1816,6 +3033,8 @@ async function performAction(action) {
       await api("/api/studio/exit", { method: "POST", headers: originHeaders() });
       document.body.textContent = translate("Mokume Studio is stopping. You can close this tab.");
     },
+    "import-workflow-template": async () => openWorkflowTemplateDialog("import"),
+    "export-workflow-template": async () => openWorkflowTemplateDialog("export"),
     "validate-command": validateCommand,
     "run-command": runCommand,
     "cancel-run": cancelRun,
@@ -1838,6 +3057,7 @@ async function performAction(action) {
 }
 
 function reportError(error) {
+  if (error?.assistantDisplayed) return;
   toast(error.message || String(error), true);
 }
 
@@ -1886,9 +3106,12 @@ function bindMenuEvents() {
   document.addEventListener("click", () => closeMenus());
   document.addEventListener("focusin", (event) => {
     const activeTrigger = document.querySelector(".menu-trigger.active");
-    const insideMenu = event.target.closest?.(".menu-popover, .submenu-popover, .assistant-mode-control");
+    const insideMenu = event.target.closest?.(".menu-popover, .submenu-popover, .assistant-mode-control, .parameter-selector");
     if (!insideMenu && event.target !== activeTrigger) closeMenus();
   });
+  document.querySelector(".workflow-panel").addEventListener("scroll", () => {
+    closeParameterSelectors();
+  }, { passive: true });
   window.addEventListener("resize", () => {
     closeMenus();
     document.querySelector(".workspace").classList.remove("sidebar-mobile-visible", "assistant-mobile-visible");
@@ -1990,10 +3213,26 @@ function bindEvents() {
   document.querySelectorAll("[data-bottom-tab]").forEach((button) => button.addEventListener("click", () => showBottomTab(button.dataset.bottomTab)));
   byId("folder-parent").addEventListener("click", () => loadFolders(state.folderParent).catch(reportError));
   byId("select-folder").addEventListener("click", () => selectFolder().catch(reportError));
+  byId("workflow-template-parent").addEventListener("click", () => {
+    loadWorkflowTemplateDirectory(state.workflowTemplateParent).catch(reportError);
+  });
+  byId("workflow-template-name").addEventListener("input", () => {
+    state.workflowTemplateSelected = null;
+    byId("workflow-template-list").querySelectorAll(".workflow-template-row:not(.directory)")
+      .forEach((row) => row.setAttribute("aria-pressed", "false"));
+    updateWorkflowTemplateConfirm();
+  });
+  byId("workflow-template-form").addEventListener("submit", (event) => {
+    submitWorkflowTemplate(event).catch(reportError);
+  });
   byId("provider-form").addEventListener("submit", (event) => saveProvider(event).catch(reportError));
   byId("provider-form").addEventListener("input", resetProviderTestFeedback);
   byId("provider-form").addEventListener("change", resetProviderTestFeedback);
   byId("provider-persist").addEventListener("change", renderProviderKeyNote);
+  byId("provider-thinking-level").addEventListener("change", updateProviderThinkingControl);
+  byId("provider-thinking-custom").addEventListener("input", (event) => {
+    event.target.value = event.target.value.toLowerCase();
+  });
   byId("test-provider").addEventListener("click", () => testProviderConnection());
   byId("toggle-provider-key").addEventListener("click", () => {
     setProviderKeyVisibility(byId("provider-api-key").classList.contains("secret-masked"));
@@ -2039,10 +3278,11 @@ async function boot() {
   state.version = session.version;
   state.provider = session.ai_provider;
   bindEvents();
-  await Promise.all([refreshProject(), refreshRuns(), refreshArtifacts()]);
+  await Promise.all([refreshProject(), refreshRuns(), refreshArtifacts(), refreshSystemMemory()]);
   renderProviderState();
   await restorePendingApproval();
   renderBottom();
+  window.setInterval(() => void refreshSystemMemory(), SYSTEM_MEMORY_REFRESH_MS);
 }
 
 boot().catch(reportError);

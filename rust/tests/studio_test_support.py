@@ -102,3 +102,52 @@ async def offline_ask(client, project_path: Path, monkeypatch):
         headers={**headers, "Accept": "text/event-stream"},
     )
     return response, headers, project_id
+
+
+def assert_theme_and_layout_scripts(script_text: str, stylesheet_text: str) -> None:
+    """Check the frontend behavior and layout hooks used by Studio."""
+    assert 'const LANGUAGE_STORAGE_KEY = "mokume:language"' in script_text
+    assert 'const APPEARANCE_STORAGE_KEY = "mokume:appearance"' in script_text
+    assert "document.documentElement.lang = state.language" in script_text
+    assert "document.documentElement.dataset.theme" in script_text
+    assert ':root[data-theme="light"]' in stylesheet_text
+    assert ".form-field[hidden] { display: none; }" in stylesheet_text
+    assert "async function renderAssistantMarkdown" in script_text
+    assert "function appendAssistantThinking" in script_text
+    assert "clearAssistantThinking(stream)" in script_text
+    assert ".assistant-thinking-dot" in stylesheet_text
+    assert "function appendAssistantReasoning" in script_text
+    assert 'event.type === "REASONING_MESSAGE_CONTENT"' in script_text
+    assert ".assistant-reasoning-details" in stylesheet_text
+    assert ".assistant-reasoning-details summary::before" not in stylesheet_text
+    assert "function appendAssistantError" in script_text
+    assert "error.assistantDisplayed = true" in script_text
+    assert ".assistant-error .message-body" in stylesheet_text
+    assert 'event.type === "TEXT_MESSAGE_END"' in script_text
+    assert ".markdown-body table" in stylesheet_text
+    assert (
+        ".markdown-body li > strong:first-child { white-space: nowrap; }"
+        in stylesheet_text
+    )
+    assert ".markdown-body :not(pre) > code" in stylesheet_text
+    assert "async function refreshSystemMemory" in script_text
+    assert "SYSTEM_MEMORY_REFRESH_MS = 5000" in script_text
+    assert ".system-memory-value" in stylesheet_text
+    assert "padding-bottom: 2px;" in stylesheet_text
+    assert "function providerThinkingLevel" in script_text
+    assert "function restoreProviderThinkingLevel" in script_text
+    assert 'value === "custom"' in script_text
+    assert ".composer-context { display: flex; flex: 1 1 0;" in stylesheet_text
+    assert ".composer-actions .assistant-model-button" in stylesheet_text
+    assert "flex: 1 1 0; min-width: 0; max-width: 180px;" in stylesheet_text
+    assert "function openSubmenu" in script_text
+    assert (
+        'trigger.addEventListener("mouseenter", () => openSubmenu(trigger))'
+        in script_text
+    )
+    assert 'menu.addEventListener("mouseenter", cancelSubmenuClose)' in script_text
+    assert "const PANEL_SIZE_LIMITS" in script_text
+    assert "function bindPanelResizers" in script_text
+    assert 'handle.addEventListener("pointerdown"' in script_text
+    assert "max-width: min(420px, calc(100vw - 36px));" in stylesheet_text
+    assert "overflow-wrap: anywhere; word-break: break-word;" in stylesheet_text
