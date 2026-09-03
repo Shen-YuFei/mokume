@@ -2,6 +2,7 @@ const ACTIVE_RUN_STATUSES = new Set(["queued", "starting", "running", "cancellin
 const WORKFLOW_TEMPLATE_SCHEMA_VERSION = 1;
 const LANGUAGE_STORAGE_KEY = "mokume:language";
 const APPEARANCE_STORAGE_KEY = "mokume:appearance";
+const QUEUE_STORAGE_PREFIX = "mokume:queue:";
 const SYSTEM_DARK_QUERY = window.matchMedia("(prefers-color-scheme: dark)");
 const DEFAULT_PANEL_SIZES = Object.freeze({ sidebar: 235, assistant: 350, bottom: 188 });
 const PANEL_SIZE_LIMITS = Object.freeze({
@@ -98,6 +99,7 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   "Configure analysis": "配置分析",
   "Import template": "导入模板",
   "Export template": "导出模板",
+  "Add to queue": "加入队列",
   "Import workflow template": "导入工作流模板",
   "Export workflow template": "导出工作流模板",
   "Close workflow template": "关闭工作流模板",
@@ -165,7 +167,9 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   "Thought process": "思考中",
   "Request failed": "请求失败",
   Runs: "运行记录",
+  Queue: "队列",
   Logs: "日志",
+  "QC summary": "QC 摘要",
   "No runs yet.": "暂无运行记录。",
   PROJECT: "项目",
   "Parent folder": "上级文件夹",
@@ -240,6 +244,147 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   "Cancelled run {id}": "已取消运行 {id}",
   "No log events yet.": "暂无日志事件。",
   "No artifacts yet.": "暂无产物。",
+  PREFLIGHT: "运行前检查",
+  "Review analysis": "审核分析",
+  "Close analysis review": "关闭分析审核",
+  Close: "关闭",
+  "Run now": "立即运行",
+  "Ready to run": "可以运行",
+  "Resolve the highlighted checks before running": "请先处理高亮检查项",
+  "Inputs & outputs": "输入与输出",
+  "Workflow contract": "工作流约束",
+  "Resource availability": "资源可用性",
+  "Parameters and dependencies are valid": "参数与依赖关系有效",
+  "Estimated resources are currently available": "当前可用资源满足估算",
+  "Input is readable": "输入可读取",
+  "Output path is available": "输出路径可用",
+  "Output already exists": "输出已存在",
+  "File type is unusual for this parameter": "此参数的文件类型不常见",
+  "SDRF reference samples": "SDRF 参照样本",
+  "No default IRS reference samples were detected": "未检测到默认 IRS 参照样本",
+  "Column is available": "列可用",
+  "Required column was not found": "未找到必需列",
+  "Resource estimate": "资源估算",
+  "Planned workflow": "计划步骤",
+  "SDRF sample mapping": "SDRF 样本映射",
+  "No SDRF was selected for this workflow.": "此工作流未选择 SDRF。",
+  "Showing {shown} of {total} rows": "显示 {shown}/{total} 行",
+  "Estimate only": "仅为估算",
+  "Configured memory": "已配置内存",
+  "Suggested peak memory": "建议峰值内存",
+  "Suggested free disk": "建议可用磁盘",
+  Threads: "线程",
+  Input: "输入",
+  Output: "输出",
+  Status: "状态",
+  Sample: "样本",
+  Condition: "条件",
+  Batch: "批次",
+  Replicate: "重复",
+  Plex: "Plex",
+  Label: "标记",
+  Reference: "参照",
+  Yes: "是",
+  No: "否",
+  ok: "通过",
+  warning: "警告",
+  error: "错误",
+  read: "读取",
+  filter: "过滤",
+  aggregate: "聚合",
+  normalize: "归一化",
+  correct: "校正",
+  impute: "缺失值填补",
+  differential: "差异分析",
+  embed: "降维",
+  visualize: "可视化",
+  analyze: "分析",
+  export: "导出",
+  "RUN DETAILS": "运行详情",
+  "Run details": "运行详情",
+  "Close run details": "关闭运行详情",
+  "Select for comparison": "选择用于比较",
+  "Load parameters": "载入参数",
+  "Copy command": "复制命令",
+  "Prepare rerun": "准备重新运行",
+  "Execution progress": "执行进度",
+  "Scientific plan": "科学流程",
+  "Parameters & provenance": "参数与来源记录",
+  "Run artifacts": "运行产物",
+  "Run logs": "运行日志",
+  "No logs were written.": "未写入日志。",
+  "Run directory is unavailable.": "运行目录不可用。",
+  "Command copied": "命令已复制",
+  "Parameters loaded": "参数已载入",
+  "Parameters loaded. Review output paths before running again.": "参数已载入；再次运行前请检查输出路径。",
+  "COMPARISON": "比较",
+  "Run comparison": "运行比较",
+  "Close run comparison": "关闭运行比较",
+  "Compare selected": "比较所选运行",
+  "Select exactly two runs to compare": "请选择恰好两个运行进行比较",
+  "Parameter": "参数",
+  "Run A": "运行 A",
+  "Run B": "运行 B",
+  "No parameter differences.": "参数没有差异。",
+  "No queued analyses.": "队列中暂无分析。",
+  "Queue progress": "队列进度",
+  "Move up": "上移",
+  "Move down": "下移",
+  "Cancel queued item": "取消队列项",
+  "Clear finished": "清除已完成项",
+  "Added to queue": "已加入队列",
+  "A queued analysis already writes to this output": "队列中已有分析写入相同输出",
+  "No completed run with QC is selected.": "尚未选择带 QC 的已完成运行。",
+  "QC is available after a successful run": "运行成功后可查看 QC",
+  "No tabular quantification artifact was produced": "未生成可汇总的定量表格产物",
+  "Entities": "实体数",
+  "Samples": "样本数",
+  "Missing values": "缺失值",
+  "Median CV": "CV 中位数",
+  "Log2 intensity": "Log2 强度",
+  "Sample correlation": "样本相关性",
+  "PCA variance": "PCA 方差解释度",
+  "Potential outliers": "潜在异常样本",
+  "No outliers detected": "未检测到异常样本",
+  "Normalization comparison unavailable": "无归一化前后对照",
+  "Open detailed report": "打开详细报告",
+  "Created": "创建时间",
+  "Started": "开始时间",
+  "Finished": "结束时间",
+  "Duration": "耗时",
+  "Workflow": "工作流",
+  "Software": "软件",
+  "Input hashes": "输入文件哈希",
+  "Artifact hashes": "产物哈希",
+  "Canonical command": "标准命令",
+  "Available memory": "可用内存",
+  "Available disk": "可用磁盘",
+  "Read & verify inputs": "读取并校验输入",
+  "Run configured workflow": "执行已配置工作流",
+  "Collect outputs": "收集输出",
+  "Publish provenance": "发布来源记录",
+  "Previous run changes": "与上一次运行的差异",
+  "No changes from the previous run.": "与上一次运行没有差异。",
+  "Proteins": "蛋白数",
+  "Peptides": "肽段数",
+  "Features": "Feature 数",
+  "Lowest-correlation sample": "相关性最低样本",
+  "PC1 / PC2": "PC1 / PC2",
+  "Normalization": "归一化",
+  "Methods": "方法",
+  "Primary QC artifact": "主要 QC 产物",
+  "Input files": "输入文件",
+  "Output files": "输出文件",
+  "No input hashes were recorded.": "未记录输入文件哈希。",
+  "No artifacts were recorded.": "未记录产物。",
+  "Standard parameters": "标准参数",
+  "stdout": "标准输出",
+  "stderr": "标准错误",
+  "Not started": "尚未开始",
+  "In progress": "进行中",
+  "This workflow did not emit a matched pre-normalization matrix": "此工作流没有生成可配对的归一化前矩阵",
+  "Queue runs while Studio is open and resumes after a refresh.": "队列会在 Studio 打开时依次运行，刷新后可继续。",
+  "Comparison includes canonical workflow parameters.": "比较内容为标准工作流参数。",
   "Mokume Studio is stopping. You can close this tab.": "Mokume Studio 正在停止，可以关闭此标签页。",
   "A local, Rust-backed proteomics analysis workspace.": "基于 Rust 的本地蛋白质组分析工作区。",
   queued: "等待中",
@@ -250,6 +395,7 @@ const CHINESE_TRANSLATIONS = Object.freeze({
   failed: "失败",
   cancelled: "已取消",
   interrupted: "已中断",
+  pending: "待运行",
   approved: "已批准",
   rejected: "已拒绝",
   consumed: "已使用",
@@ -296,6 +442,13 @@ const state = {
   language: savedLanguage(),
   appearance: savedAppearance(),
   panelSizes: { ...DEFAULT_PANEL_SIZES },
+  commandReview: null,
+  selectedRunDetails: null,
+  runComparisonDetails: null,
+  qcDetails: null,
+  compareRunIds: new Set(),
+  batchQueue: [],
+  queueBusy: false,
 };
 
 const byId = (id) => document.getElementById(id);
@@ -352,6 +505,9 @@ function translateInterface(language, persist = true) {
   setAgentBusy(state.agentBusy);
   if (state.pendingApproval) renderApproval(state.pendingApproval.record);
   renderSystemMemory();
+  if (byId("command-review-dialog")?.open) renderCommandReview();
+  if (byId("run-details-dialog")?.open) renderRunDetails();
+  if (byId("run-compare-dialog")?.open) renderRunComparison();
   renderBottom();
 }
 
@@ -610,6 +766,7 @@ function updateActionStates() {
   setActionDisabled("import-workflow-template", !state.project);
   setActionDisabled("export-workflow-template", !canConfigure);
   setActionDisabled("validate-command", !canConfigure);
+  setActionDisabled("queue-command", !canConfigure);
   setActionDisabled("run-command", !canConfigure || Boolean(state.activeRunId));
   setActionDisabled("cancel-run", !state.activeRunId);
   setActionDisabled("exit-studio", Boolean(state.activeRunId));
@@ -845,15 +1002,34 @@ function appendAssistantReasoning(text = "", active = false) {
   return { details, label, content };
 }
 
-function reasoningMessage(stream, event) {
-  if (!stream.reasoning.has(event.messageId)) {
-    stream.reasoning.set(event.messageId, appendAssistantReasoning("", true));
-  }
-  return stream.reasoning.get(event.messageId);
+function adjacentAssistantReasoning() {
+  const article = byId("assistant-messages").lastElementChild;
+  if (!article?.classList.contains("assistant-reasoning")) return null;
+  const details = article.querySelector(".assistant-reasoning-details");
+  const label = details?.querySelector("summary span");
+  const content = details?.querySelector(".assistant-reasoning-content");
+  return details && label && content ? { details, label, content } : null;
 }
 
-function finishReasoning(stream, event) {
-  const reasoning = stream.reasoning.get(event.messageId);
+function reasoningMessage(stream, event) {
+  if (!stream.reasoning) {
+    stream.reasoning = adjacentAssistantReasoning()
+      || appendAssistantReasoning("", true);
+  }
+  if (event.messageId && !stream.reasoningMessageIds.has(event.messageId)) {
+    if (stream.reasoning.content.textContent
+        && !stream.reasoning.content.textContent.endsWith("\n")) {
+      stream.reasoning.content.textContent += "\n";
+    }
+    stream.reasoningMessageIds.add(event.messageId);
+  }
+  stream.reasoning.details.classList.add("active");
+  setTranslatedText(stream.reasoning.label, "Thinking…");
+  return stream.reasoning;
+}
+
+function finishReasoning(stream) {
+  const reasoning = stream.reasoning;
   if (!reasoning) return;
   reasoning.details.classList.remove("active");
   setTranslatedText(reasoning.label, "Thought process");
@@ -1318,7 +1494,7 @@ function handleReasoningEvent(event, stream) {
     messages?.scrollTo(0, messages.scrollHeight);
   }
   if (["REASONING_MESSAGE_END", "REASONING_END"].includes(event.type)) {
-    finishReasoning(stream, event);
+    finishReasoning(stream);
   }
 }
 
@@ -1384,7 +1560,8 @@ async function consumeAgentStream(response, mode, thinking) {
   const stream = {
     buffer: "",
     messages: new Map(),
-    reasoning: new Map(),
+    reasoning: null,
+    reasoningMessageIds: new Set(),
     tools: new Map(),
     appliedTools: new Set(),
     thinking,
@@ -1456,9 +1633,18 @@ async function refreshProject() {
     if (byId("approval-dialog").open) byId("approval-dialog").close();
     if (byId("conversation-dialog").open) byId("conversation-dialog").close();
     if (byId("workflow-template-dialog").open) byId("workflow-template-dialog").close();
+    if (byId("command-review-dialog").open) byId("command-review-dialog").close();
+    if (byId("run-details-dialog").open) byId("run-details-dialog").close();
+    if (byId("run-compare-dialog").open) byId("run-compare-dialog").close();
     state.projectId = projectId;
     state.dataset = null;
     state.pendingApproval = null;
+    state.commandReview = null;
+    state.selectedRunDetails = null;
+    state.runComparisonDetails = null;
+    state.qcDetails = null;
+    state.compareRunIds.clear();
+    state.batchQueue = loadBatchQueue(projectId);
     state.threads = threadsForProject(state.projectId);
     resetAssistantConversation();
   }
@@ -2324,8 +2510,18 @@ function setValueHint(element, flag) {
   else element.textContent = hint;
 }
 
+const NUMERIC_VALUE_FLAGS = new Set([
+  "impute-shift",
+  "impute-scale",
+  "filter-min-intensity",
+  "filter-cv-threshold",
+  "cpc",
+]);
+
 function numericValue(flag) {
-  return (flag.value_names || []).some((name) => ["N", "VALUE", "FRACTION", "CORRELATION"].includes(name));
+  const names = flag.value_names || [];
+  return names.some((name) => ["N", "FRACTION", "CORRELATION"].includes(name))
+    || (names.includes("VALUE") && NUMERIC_VALUE_FLAGS.has(flag.long || flag.id));
 }
 
 function commandArgv() {
@@ -2683,30 +2879,361 @@ function fillTemplateControl(control, flag, value) {
   });
 }
 
-async function validateCommand() {
-  const payload = await api("/api/commands/validate", {
+async function requestCommandReview() {
+  return api("/api/commands/review", {
     method: "POST",
     headers: originHeaders(),
     body: JSON.stringify({ argv: commandArgv() }),
   });
-  showBottomTab("logs");
-  state.logs.push(translate("Validated: {command}", { command: payload.argv.join(" ") }));
-  renderBottom();
-  toast(translate("Parameters are valid"));
-  return payload.argv;
+}
+
+async function openCommandReview(intent = "validate") {
+  const review = await requestCommandReview();
+  state.commandReview = { ...review, intent };
+  renderCommandReview();
+  byId("command-review-dialog").showModal();
+}
+
+async function validateCommand() {
+  await openCommandReview("validate");
 }
 
 async function runCommand() {
-  const argv = await validateCommand();
+  await openCommandReview("run");
+}
+
+async function queueCommand() {
+  await openCommandReview("queue");
+}
+
+function workbenchSection(title) {
+  const section = document.createElement("section");
+  section.className = "workbench-section";
+  const heading = document.createElement("h3");
+  setTranslatedText(heading, title);
+  section.append(heading);
+  return section;
+}
+
+function translatedElement(tag, className, text, values = {}) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  setTranslatedText(element, text, values);
+  return element;
+}
+
+function renderCommandReview() {
+  const review = state.commandReview;
+  const content = byId("command-review-content");
+  content.replaceChildren();
+  if (!review) return;
+  content.append(
+    reviewHeadline(review),
+    reviewChecksSection(review),
+    reviewPathsSection(review),
+    reviewResourcesSection(review),
+    workflowStepsSection(review.planned_steps),
+  );
+  if (review.sdrf) content.append(sdrfSection(review.sdrf));
+  const canSubmit = review.valid && !state.activeRunId;
+  byId("review-run").disabled = !canSubmit;
+  byId("review-queue").disabled = !review.valid;
+}
+
+function reviewHeadline(review) {
+  const headline = document.createElement("div");
+  headline.className = `review-headline ${review.valid ? "ok" : "error"}`;
+  const title = translatedElement("strong", "", review.valid
+    ? "Ready to run"
+    : "Resolve the highlighted checks before running");
+  const command = document.createElement("code");
+  command.textContent = review.command;
+  headline.append(title, command);
+  return headline;
+}
+
+function reviewChecksSection(review) {
+  const section = workbenchSection("Status");
+  const list = document.createElement("div");
+  list.className = "review-checks";
+  review.checks.forEach((check) => {
+    const row = document.createElement(check.parameter ? "button" : "div");
+    row.className = `review-check ${check.status}`;
+    if (check.parameter) {
+      row.type = "button";
+      row.addEventListener("click", () => focusWorkflowParameter(check.parameter));
+    }
+    const marker = document.createElement("span");
+    marker.className = "review-check-marker";
+    const text = document.createElement("span");
+    const label = document.createElement("strong");
+    label.textContent = translate(check.label);
+    const message = document.createElement("small");
+    message.textContent = translate(check.message);
+    text.append(label, message);
+    row.append(marker, text);
+    list.append(row);
+  });
+  section.append(list);
+  return section;
+}
+
+function reviewPathsSection(review) {
+  const section = workbenchSection("Inputs & outputs");
+  const list = document.createElement("div");
+  list.className = "review-paths";
+  [...review.inputs.map((item) => ["Input", item]), ...review.outputs.map((item) => ["Output", item])]
+    .forEach(([kind, item]) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = `review-path ${item.status}`;
+      row.addEventListener("click", () => focusWorkflowParameter(item.parameter));
+      const type = translatedElement("span", "review-path-kind", kind);
+      const body = document.createElement("span");
+      const option = document.createElement("strong");
+      option.textContent = `--${item.parameter}`;
+      const path = document.createElement("code");
+      path.textContent = item.path;
+      body.append(option, path);
+      const size = document.createElement("span");
+      size.textContent = item.size_bytes === null ? "—" : formatBytes(item.size_bytes);
+      row.append(type, body, size);
+      list.append(row);
+    });
+  if (!list.children.length) list.append(translatedElement("p", "empty-state", "No artifacts yet."));
+  section.append(list);
+  return section;
+}
+
+function reviewResourcesSection(review) {
+  const section = workbenchSection("Resource estimate");
+  const grid = document.createElement("dl");
+  grid.className = "metric-grid compact";
+  appendMetric(grid, "Threads", String(review.resources.threads));
+  appendMetric(grid, "Configured memory", review.resources.configured_memory || "—");
+  appendMetric(grid, "Suggested peak memory", formatBytes(review.resources.suggested_peak_memory_bytes));
+  appendMetric(grid, "Available memory", formatBytes(review.resources.available_memory_bytes));
+  appendMetric(grid, "Suggested free disk", formatBytes(review.resources.suggested_free_disk_bytes));
+  appendMetric(grid, "Available disk", formatBytes(review.resources.free_disk_bytes));
+  section.append(grid, translatedElement("small", "estimate-note", "Estimate only"));
+  return section;
+}
+
+function workflowStepsSection(steps, title = "Planned workflow") {
+  const section = workbenchSection(title);
+  const list = document.createElement("ol");
+  list.className = "planned-steps";
+  (steps || []).forEach((step) => list.append(translatedElement("li", "", step)));
+  section.append(list);
+  return section;
+}
+
+function sdrfSection(sdrf) {
+  const section = workbenchSection("SDRF sample mapping");
+  if (!sdrf.rows?.length) {
+    const message = document.createElement("p");
+    message.className = "empty-state";
+    message.textContent = sdrf.issues?.join("; ") || translate("No SDRF was selected for this workflow.");
+    section.append(message);
+    return section;
+  }
+  const mapping = document.createElement("div");
+  mapping.className = "sdrf-column-map";
+  Object.entries(sdrf.columns || {}).forEach(([name, column]) => {
+    const chip = document.createElement("span");
+    chip.textContent = `${translate(titleCase(name.replaceAll("_", " ")))}: ${column || "—"}`;
+    mapping.append(chip);
+  });
+  const table = document.createElement("table");
+  table.className = "workbench-table";
+  const headers = ["Sample", "Condition", "Batch", "Replicate", "Plex", "Label", "Reference"];
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headers.forEach((label) => headRow.append(translatedElement("th", "", label)));
+  head.append(headRow);
+  const body = document.createElement("tbody");
+  sdrf.rows.forEach((row) => {
+    const line = document.createElement("tr");
+    [row.sample, row.condition, row.batch, row.replicate, row.plex, row.label,
+      translate(row.reference ? "Yes" : "No")].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value || "—";
+      line.append(cell);
+    });
+    body.append(line);
+  });
+  table.append(head, body);
+  const note = translatedElement("small", "estimate-note", "Showing {shown} of {total} rows", {
+    shown: sdrf.rows.length,
+    total: sdrf.row_count,
+  });
+  section.append(mapping, table, note);
+  if (sdrf.issues?.length) {
+    const issues = document.createElement("ul");
+    issues.className = "review-issues";
+    sdrf.issues.forEach((issue) => {
+      const item = document.createElement("li");
+      item.textContent = issue;
+      issues.append(item);
+    });
+    section.append(issues);
+  }
+  return section;
+}
+
+function titleCase(value) {
+  return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function focusWorkflowParameter(parameter) {
+  byId("command-review-dialog").close();
+  const field = [...byId("command-form").querySelectorAll(".form-field")]
+    .find((candidate) => candidate.dataset.flag === parameter);
+  if (!field) return;
+  field.closest(".parameter-advanced")?.setAttribute("open", "");
+  field.classList.add("review-target");
+  field.scrollIntoView({ behavior: "smooth", block: "center" });
+  field.querySelector("input, select, button")?.focus();
+  window.setTimeout(() => field.classList.remove("review-target"), 2400);
+}
+
+async function submitReviewedRun() {
+  const review = state.commandReview;
+  if (!review?.valid) return;
   const payload = await api("/api/runs", {
     method: "POST",
     headers: originHeaders(),
-    body: JSON.stringify({ argv }),
+    body: JSON.stringify({ argv: review.argv }),
   });
+  byId("command-review-dialog").close();
   state.activeRunId = payload.id;
   toast(translate("Run {id} queued", { id: payload.id }));
   await refreshRuns();
   showBottomTab("runs");
+}
+
+function queueStorageKey(projectId = state.projectId) {
+  return projectId ? `${QUEUE_STORAGE_PREFIX}${projectId}` : null;
+}
+
+function loadBatchQueue(projectId) {
+  const key = queueStorageKey(projectId);
+  if (!key) return [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(saved) ? saved.filter(validQueueItem) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function validQueueItem(item) {
+  return item && typeof item.id === "string" && Array.isArray(item.argv)
+    && ["pending", "queued", "starting", "running", "cancelling", "succeeded", "failed", "cancelled", "interrupted"].includes(item.status);
+}
+
+function saveBatchQueue() {
+  const key = queueStorageKey();
+  if (key) localStorage.setItem(key, JSON.stringify(state.batchQueue));
+}
+
+function queueOutputConflict(review) {
+  const outputs = new Set(review.outputs.map((item) => item.path));
+  return state.batchQueue.some((item) => ["pending", "queued", "starting", "running", "cancelling"].includes(item.status)
+    && (item.outputs || []).some((path) => outputs.has(path)));
+}
+
+async function addReviewedToQueue() {
+  const review = state.commandReview;
+  if (!review?.valid) return;
+  if (queueOutputConflict(review)) throw new Error(translate("A queued analysis already writes to this output"));
+  state.batchQueue.push({
+    id: crypto.randomUUID(),
+    argv: review.argv,
+    command: review.command,
+    workflow: review.display_name,
+    outputs: review.outputs.map((item) => item.path),
+    status: "pending",
+    runId: null,
+    error: null,
+    createdAt: new Date().toISOString(),
+  });
+  saveBatchQueue();
+  byId("command-review-dialog").close();
+  showBottomTab("queue");
+  toast(translate("Added to queue"));
+  await processBatchQueue();
+}
+
+function syncBatchQueue() {
+  const runs = new Map(state.runs.map((run) => [run.id, run]));
+  let changed = false;
+  state.batchQueue.forEach((item) => {
+    if (!item.runId) return;
+    const run = runs.get(item.runId);
+    if (run && item.status !== run.status) {
+      item.status = run.status;
+      item.error = run.error;
+      changed = true;
+    }
+  });
+  if (changed) saveBatchQueue();
+}
+
+async function processBatchQueue() {
+  if (!state.project || state.queueBusy || state.activeRunId) return;
+  const item = state.batchQueue.find((candidate) => candidate.status === "pending");
+  if (!item) return;
+  state.queueBusy = true;
+  try {
+    const run = await api("/api/runs", {
+      method: "POST",
+      headers: originHeaders(),
+      body: JSON.stringify({ argv: item.argv }),
+    });
+    item.status = run.status;
+    item.runId = run.id;
+    state.activeRunId = run.id;
+  } catch (error) {
+    item.status = "failed";
+    item.error = error.message || String(error);
+  } finally {
+    state.queueBusy = false;
+    saveBatchQueue();
+    if (state.bottomTab === "queue") renderBottom();
+  }
+  await refreshRuns();
+  if (!state.activeRunId) window.setTimeout(() => void processBatchQueue(), 0);
+}
+
+function moveQueueItem(id, direction) {
+  const index = state.batchQueue.findIndex((item) => item.id === id);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= state.batchQueue.length) return;
+  if (state.batchQueue[index].status !== "pending" || state.batchQueue[target].status !== "pending") return;
+  [state.batchQueue[index], state.batchQueue[target]] = [state.batchQueue[target], state.batchQueue[index]];
+  saveBatchQueue();
+  renderBottom();
+}
+
+async function cancelQueueItem(id) {
+  const item = state.batchQueue.find((candidate) => candidate.id === id);
+  if (!item) return;
+  if (item.runId && ACTIVE_RUN_STATUSES.has(item.status)) {
+    await api(`/api/runs/${encodeURIComponent(item.runId)}/cancel`, {
+      method: "POST",
+      headers: originHeaders(),
+    });
+  }
+  item.status = "cancelled";
+  saveBatchQueue();
+  await refreshRuns();
+}
+
+function clearFinishedQueueItems() {
+  state.batchQueue = state.batchQueue.filter((item) => ["pending", "running", "starting", "queued"].includes(item.status));
+  saveBatchQueue();
+  renderBottom();
 }
 
 async function refreshRuns() {
@@ -2714,9 +3241,11 @@ async function refreshRuns() {
   state.runs = payload.runs;
   const active = state.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status)) || null;
   state.activeRunId = active?.id || null;
+  syncBatchQueue();
   connectRunEvents(active?.id || null);
   updateActionStates();
-  if (state.bottomTab === "runs") renderBottom();
+  if (["runs", "queue"].includes(state.bottomTab)) renderBottom();
+  if (!state.activeRunId) window.setTimeout(() => void processBatchQueue(), 0);
 }
 
 function connectRunEvents(runId) {
@@ -2734,6 +3263,9 @@ function connectRunEvents(runId) {
     if (state.bottomTab === "logs") renderBottom();
   });
   source.addEventListener("artifact", () => refreshArtifacts().catch(reportError));
+  source.addEventListener("stage", () => {
+    if (state.selectedRunDetails?.run?.id === runId) refreshOpenRunDetails(runId).catch(reportError);
+  });
   source.addEventListener("status", (event) => {
     const payload = JSON.parse(event.data);
     if (!ACTIVE_RUN_STATUSES.has(payload.status)) {
@@ -2741,7 +3273,10 @@ function connectRunEvents(runId) {
       state.eventSource = null;
       state.eventRunId = null;
     }
-    refreshRuns().catch(reportError);
+    refreshRuns().then(() => {
+      if (payload.status === "succeeded") return showCompletedRunQc(runId);
+      return null;
+    }).catch(reportError);
   });
 }
 
@@ -2767,14 +3302,20 @@ function renderBottom() {
   content.removeAttribute("data-i18n");
   content.replaceChildren();
   if (state.bottomTab === "runs") {
-    content.textContent = state.runs.length
-      ? state.runs.map((run) => `${translate(run.status).padEnd(12)} ${run.command}  ${run.id}`).join("\n")
-      : translate("No runs yet.");
+    renderRunList(content);
+    return;
+  }
+  if (state.bottomTab === "queue") {
+    renderQueue(content);
     return;
   }
   if (state.bottomTab === "logs") {
     content.textContent = state.logs.length ? state.logs.join("\n") : translate("No log events yet.");
     content.scrollTop = content.scrollHeight;
+    return;
+  }
+  if (state.bottomTab === "qc") {
+    renderQcPanel(content, state.qcDetails?.qc);
     return;
   }
   if (!state.artifacts.length) {
@@ -2792,6 +3333,649 @@ function renderBottom() {
   });
 }
 
+function renderRunList(content) {
+  if (!state.runs.length) {
+    content.append(translatedElement("p", "empty-state", "No runs yet."));
+    return;
+  }
+  const toolbar = document.createElement("div");
+  toolbar.className = "bottom-toolbar";
+  const compare = translatedElement("button", "", "Compare selected");
+  compare.type = "button";
+  compare.disabled = state.compareRunIds.size !== 2;
+  compare.addEventListener("click", () => openRunComparison().catch(reportError));
+  toolbar.append(compare);
+  const list = document.createElement("div");
+  list.className = "run-list";
+  state.runs.forEach((run) => list.append(runListRow(run)));
+  content.append(toolbar, list);
+}
+
+function runListRow(run) {
+  const row = document.createElement("div");
+  row.className = "run-row";
+  const compare = document.createElement("input");
+  compare.type = "checkbox";
+  compare.checked = state.compareRunIds.has(run.id);
+  compare.setAttribute("aria-label", translate("Select for comparison"));
+  compare.addEventListener("change", () => toggleRunComparison(run.id, compare));
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "run-open";
+  open.addEventListener("click", () => openRunDetails(run.id).catch(reportError));
+  const statusBadge = translatedElement("span", `status-badge ${run.status}`, run.status);
+  const command = document.createElement("strong");
+  command.textContent = run.command;
+  const meta = document.createElement("span");
+  meta.textContent = `${formatDate(run.created_at)} · ${shortRunId(run.id)} · ${formatRunDuration(run)}`;
+  open.append(statusBadge, command, meta);
+  row.append(compare, open, miniRunProgress(run));
+  return row;
+}
+
+function miniRunProgress(run) {
+  const bar = document.createElement("span");
+  bar.className = `mini-run-progress ${run.status}`;
+  for (let index = 0; index < 4; index += 1) bar.append(document.createElement("i"));
+  return bar;
+}
+
+function toggleRunComparison(runId, checkbox) {
+  if (checkbox.checked && state.compareRunIds.size >= 2) {
+    checkbox.checked = false;
+    toast(translate("Select exactly two runs to compare"), true);
+    return;
+  }
+  if (checkbox.checked) state.compareRunIds.add(runId);
+  else state.compareRunIds.delete(runId);
+  renderBottom();
+}
+
+function renderQueue(content) {
+  if (!state.batchQueue.length) {
+    content.append(translatedElement("p", "empty-state", "No queued analyses."));
+    return;
+  }
+  const complete = state.batchQueue.filter((item) => !["pending", "queued", "starting", "running"].includes(item.status)).length;
+  const toolbar = document.createElement("div");
+  toolbar.className = "bottom-toolbar queue-summary";
+  const label = translatedElement("span", "", "Queue progress");
+  const progress = document.createElement("progress");
+  progress.max = state.batchQueue.length;
+  progress.value = complete;
+  const count = document.createElement("span");
+  count.textContent = `${complete}/${state.batchQueue.length}`;
+  const clear = translatedElement("button", "", "Clear finished");
+  clear.type = "button";
+  clear.addEventListener("click", clearFinishedQueueItems);
+  toolbar.append(label, progress, count, clear);
+  const list = document.createElement("div");
+  list.className = "queue-list";
+  state.batchQueue.forEach((item, index) => list.append(queueListRow(item, index)));
+  const note = translatedElement(
+    "small",
+    "queue-note",
+    "Queue runs while Studio is open and resumes after a refresh.",
+  );
+  content.append(toolbar, note, list);
+}
+
+function queueListRow(item, index) {
+  const row = document.createElement("div");
+  row.className = "queue-row";
+  const statusBadge = translatedElement("span", `status-badge ${item.status}`, item.status);
+  const text = document.createElement("span");
+  const name = document.createElement("strong");
+  name.textContent = item.workflow;
+  const detail = document.createElement("small");
+  detail.textContent = item.error || item.command;
+  text.append(name, detail);
+  const actions = document.createElement("span");
+  actions.className = "queue-actions";
+  actions.append(
+    queueActionButton("↑", "Move up", () => moveQueueItem(item.id, -1), index === 0 || item.status !== "pending"),
+    queueActionButton("↓", "Move down", () => moveQueueItem(item.id, 1), index === state.batchQueue.length - 1 || item.status !== "pending"),
+    queueActionButton("×", "Cancel queued item", () => cancelQueueItem(item.id).catch(reportError), !["pending", "queued", "starting", "running"].includes(item.status)),
+  );
+  row.append(statusBadge, text, actions);
+  return row;
+}
+
+function queueActionButton(text, label, handler, disabled) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = text;
+  button.title = translate(label);
+  button.setAttribute("aria-label", translate(label));
+  button.disabled = disabled;
+  button.addEventListener("click", handler);
+  return button;
+}
+
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let amount = bytes;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 || amount >= 100 ? 0 : amount >= 10 ? 1 : 2;
+  return `${amount.toFixed(digits)} ${units[unit]}`;
+}
+
+function appendMetric(list, label, value) {
+  const term = translatedElement("dt", "", label);
+  const description = document.createElement("dd");
+  description.textContent = value ?? "—";
+  list.append(term, description);
+}
+
+function appendQcMetric(list, label, value) {
+  const card = document.createElement("div");
+  const term = translatedElement("dt", "", label);
+  const description = document.createElement("dd");
+  description.textContent = value ?? "—";
+  card.append(term, description);
+  list.append(card);
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(state.language === "zh-CN" ? "zh-CN" : "en", {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(date);
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(Number(seconds))) return "—";
+  const total = Math.max(0, Number(seconds));
+  if (total < 1) return `${Math.round(total * 1000)} ms`;
+  if (total < 60) return `${total.toFixed(total < 10 ? 1 : 0)} s`;
+  const minutes = Math.floor(total / 60);
+  const remainder = Math.round(total % 60);
+  return `${minutes} min ${remainder} s`;
+}
+
+function formatRunDuration(run) {
+  if (!run.started_at) return translate("Not started");
+  if (!run.finished_at) return translate("In progress");
+  const seconds = (new Date(run.finished_at) - new Date(run.started_at)) / 1000;
+  return formatDuration(seconds);
+}
+
+function shortRunId(runId) {
+  return String(runId || "").slice(0, 8);
+}
+
+async function openRunDetails(runId) {
+  const details = await api(`/api/runs/${encodeURIComponent(runId)}/details`);
+  const index = state.runs.findIndex((run) => run.id === runId);
+  const previousRecord = index >= 0 ? state.runs[index + 1] : null;
+  let previous = null;
+  if (previousRecord) {
+    try {
+      previous = await api(`/api/runs/${encodeURIComponent(previousRecord.id)}/details`);
+    } catch (_) {
+      previous = null;
+    }
+  }
+  state.selectedRunDetails = { ...details, previous };
+  renderRunDetails();
+  const dialog = byId("run-details-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+async function refreshOpenRunDetails(runId) {
+  if (state.selectedRunDetails?.run?.id !== runId) return;
+  const details = await api(`/api/runs/${encodeURIComponent(runId)}/details`);
+  state.selectedRunDetails = { ...details, previous: state.selectedRunDetails.previous || null };
+  renderRunDetails();
+}
+
+function renderRunDetails() {
+  const details = state.selectedRunDetails;
+  const content = byId("run-details-content");
+  content.replaceChildren();
+  if (!details) return;
+  byId("run-details-title").removeAttribute("data-i18n");
+  byId("run-details-title").textContent = `${translate("Run details")} · ${shortRunId(details.run.id)}`;
+  content.append(runOverview(details), executionStageSection(details), workflowStepsSection(
+    details.planned_steps,
+    "Scientific plan",
+  ));
+  const qc = workbenchSection("QC summary");
+  const qcBody = document.createElement("div");
+  renderQcPanel(qcBody, details.qc);
+  qc.append(qcBody);
+  content.append(qc, runArtifactSection(details), runProvenanceSection(details));
+  if (details.previous) content.append(previousRunSection(details, details.previous));
+  content.append(runLogsSection(details.logs));
+  const selected = state.compareRunIds.has(details.run.id);
+  byId("run-compare-choice").checked = selected;
+  byId("run-load-parameters").disabled = !details.template;
+  byId("run-rerun").disabled = !details.template || Boolean(state.activeRunId);
+}
+
+function runOverview(details) {
+  const wrapper = document.createElement("section");
+  wrapper.className = "run-overview";
+  const heading = document.createElement("div");
+  heading.className = "run-overview-heading";
+  const badge = translatedElement("span", `status-badge ${details.run.status}`, details.run.status);
+  const workflow = document.createElement("strong");
+  workflow.textContent = details.template?.workflow?.join(" ") || details.run.argv.join(" ");
+  heading.append(badge, workflow);
+  const command = document.createElement("code");
+  command.textContent = details.command;
+  const metrics = document.createElement("dl");
+  metrics.className = "metric-grid compact";
+  appendMetric(metrics, "Created", formatDate(details.run.created_at));
+  appendMetric(metrics, "Started", formatDate(details.run.started_at));
+  appendMetric(metrics, "Finished", formatDate(details.run.finished_at));
+  appendMetric(metrics, "Duration", details.duration_seconds === null
+    ? formatRunDuration(details.run)
+    : formatDuration(details.duration_seconds));
+  wrapper.append(heading, command, metrics);
+  if (details.run.error) {
+    const error = document.createElement("p");
+    error.className = "run-error";
+    error.textContent = details.run.error;
+    wrapper.append(error);
+  }
+  return wrapper;
+}
+
+function executionStageSection(details) {
+  const section = workbenchSection("Execution progress");
+  const list = document.createElement("ol");
+  list.className = "stage-stepper";
+  (details.stages || []).forEach((stage) => {
+    const item = document.createElement("li");
+    item.className = `stage-step ${stage.status}`;
+    const marker = document.createElement("span");
+    marker.className = "stage-marker";
+    const text = document.createElement("span");
+    const label = translatedElement("strong", "", stage.label);
+    const meta = document.createElement("small");
+    meta.textContent = `${translate(stage.status)} · ${formatDuration(stage.elapsed_seconds)}`;
+    text.append(label, meta);
+    if (stage.error) {
+      const error = document.createElement("small");
+      error.className = "stage-error";
+      error.textContent = stage.error;
+      text.append(error);
+    }
+    item.append(marker, text);
+    list.append(item);
+  });
+  section.append(list);
+  return section;
+}
+
+function runArtifactSection(details) {
+  const section = workbenchSection("Run artifacts");
+  const list = document.createElement("div");
+  list.className = "detail-file-list";
+  if (!details.artifacts?.length) {
+    list.append(translatedElement("p", "empty-state", "No artifacts were recorded."));
+  }
+  (details.artifacts || []).forEach((artifact) => {
+    const link = document.createElement("a");
+    link.href = `/api/artifacts/${encodeURIComponent(artifact.id)}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    const path = document.createElement("code");
+    path.textContent = artifact.path;
+    const meta = document.createElement("small");
+    meta.textContent = `${formatBytes(artifact.size)} · sha256 ${artifact.sha256}`;
+    link.append(path, meta);
+    list.append(link);
+  });
+  section.append(list);
+  return section;
+}
+
+function runProvenanceSection(details) {
+  const section = workbenchSection("Parameters & provenance");
+  const provenance = details.provenance || {};
+  const software = document.createElement("dl");
+  software.className = "metric-grid compact";
+  appendMetric(software, "Software", provenance.mokume_version ? `Mokume ${provenance.mokume_version}` : "—");
+  appendMetric(software, "Python", provenance.python_version || "—");
+  appendMetric(software, "Platform", provenance.platform || "—");
+  appendMetric(software, "Canonical command", details.command);
+  section.append(software);
+  section.append(hashList("Input hashes", provenance.inputs || [], "input"));
+  section.append(hashList("Artifact hashes", provenance.artifacts || details.artifacts || [], "artifact"));
+  section.append(jsonDisclosure("Standard parameters", details.parameters || {}));
+  return section;
+}
+
+function hashList(title, records, kind) {
+  const block = document.createElement("div");
+  block.className = "hash-block";
+  block.append(translatedElement("h4", "", title));
+  const rows = [];
+  records.forEach((record) => {
+    if (record.sha256) rows.push([record.path || record.resolved_path, record.sha256]);
+    (record.entries || []).forEach((entry) => {
+      if (entry.sha256) rows.push([entry.path || entry.resolved_path, entry.sha256]);
+    });
+  });
+  if (!rows.length) {
+    block.append(translatedElement("p", "empty-state", kind === "input"
+      ? "No input hashes were recorded."
+      : "No artifacts were recorded."));
+    return block;
+  }
+  rows.forEach(([path, hash]) => {
+    const row = document.createElement("div");
+    row.className = "hash-row";
+    const name = document.createElement("code");
+    name.textContent = path || "—";
+    const digest = document.createElement("code");
+    digest.textContent = hash;
+    row.append(name, digest);
+    block.append(row);
+  });
+  return block;
+}
+
+function jsonDisclosure(title, payload) {
+  const details = document.createElement("details");
+  details.className = "json-disclosure";
+  const summary = translatedElement("summary", "", title);
+  const content = document.createElement("pre");
+  content.textContent = JSON.stringify(payload, null, 2);
+  details.append(summary, content);
+  return details;
+}
+
+function runLogsSection(logs) {
+  const section = workbenchSection("Run logs");
+  const entries = ["stdout", "stderr"].filter((name) => logs?.[name]?.length);
+  if (!entries.length) {
+    section.append(translatedElement("p", "empty-state", "No logs were written."));
+    return section;
+  }
+  entries.forEach((name) => {
+    const details = document.createElement("details");
+    details.className = "log-disclosure";
+    if (name === "stderr") details.open = true;
+    const summary = translatedElement("summary", "", name);
+    const content = document.createElement("pre");
+    content.textContent = logs[name].join("\n");
+    details.append(summary, content);
+    section.append(details);
+  });
+  return section;
+}
+
+function comparisonValues(details) {
+  const values = new Map();
+  values.set("$workflow", details.template?.workflow || details.run.argv.slice(0, 2));
+  Object.entries(details.template?.parameters || {}).forEach(([name, value]) => {
+    values.set(`--${name}`, value);
+  });
+  values.set("$mokume", details.provenance?.mokume_version || null);
+  values.set("$python", details.provenance?.python_version || null);
+  values.set("$inputs", (details.provenance?.inputs || []).map((item) => ({
+    path: item.path,
+    sha256: item.sha256,
+    entries: item.entries?.map((entry) => ({ path: entry.path, sha256: entry.sha256 })),
+  })));
+  values.set("$outputs", (details.artifacts || []).map((item) => ({
+    path: item.path,
+    sha256: item.sha256,
+  })));
+  return values;
+}
+
+function comparisonRows(first, second) {
+  const left = comparisonValues(first);
+  const right = comparisonValues(second);
+  return [...new Set([...left.keys(), ...right.keys()])].sort().flatMap((name) => {
+    const leftValue = left.has(name) ? left.get(name) : null;
+    const rightValue = right.has(name) ? right.get(name) : null;
+    return JSON.stringify(leftValue) === JSON.stringify(rightValue)
+      ? []
+      : [{ name, left: leftValue, right: rightValue }];
+  });
+}
+
+function comparisonLabel(name) {
+  const labels = {
+    $workflow: "Workflow",
+    $mokume: "Software",
+    $python: "Python",
+    $inputs: "Input files",
+    $outputs: "Output files",
+  };
+  return translate(labels[name] || name);
+}
+
+function comparisonValue(value) {
+  if (value === null || value === undefined) return "—";
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function comparisonTable(rows, leftLabel, rightLabel) {
+  if (!rows.length) return translatedElement("p", "empty-state", "No parameter differences.");
+  const table = document.createElement("table");
+  table.className = "workbench-table comparison-table";
+  const head = document.createElement("thead");
+  const header = document.createElement("tr");
+  ["Parameter", leftLabel, rightLabel].forEach((label, index) => {
+    const cell = document.createElement("th");
+    cell.textContent = index === 0 ? translate(label) : label;
+    header.append(cell);
+  });
+  head.append(header);
+  const body = document.createElement("tbody");
+  rows.forEach((row) => {
+    const line = document.createElement("tr");
+    const name = document.createElement("th");
+    name.scope = "row";
+    name.textContent = comparisonLabel(row.name);
+    const left = document.createElement("td");
+    const right = document.createElement("td");
+    left.textContent = comparisonValue(row.left);
+    right.textContent = comparisonValue(row.right);
+    line.append(name, left, right);
+    body.append(line);
+  });
+  table.append(head, body);
+  return table;
+}
+
+function previousRunSection(details, previous) {
+  const section = workbenchSection("Previous run changes");
+  const rows = comparisonRows(previous, details);
+  if (!rows.length) {
+    section.append(translatedElement("p", "empty-state", "No changes from the previous run."));
+    return section;
+  }
+  section.append(comparisonTable(rows, shortRunId(previous.run.id), shortRunId(details.run.id)));
+  return section;
+}
+
+function loadSelectedRunParameters() {
+  const details = state.selectedRunDetails;
+  if (!details?.template) return;
+  applyWorkflowTemplate(details.template);
+  byId("run-details-dialog").close();
+  toast(translate("Parameters loaded"));
+}
+
+async function copySelectedRunCommand() {
+  const command = state.selectedRunDetails?.command;
+  if (!command) return;
+  await navigator.clipboard.writeText(command);
+  toast(translate("Command copied"));
+}
+
+async function prepareSelectedRerun() {
+  const details = state.selectedRunDetails;
+  if (!details?.template) return;
+  applyWorkflowTemplate(details.template);
+  byId("run-details-dialog").close();
+  toast(translate("Parameters loaded. Review output paths before running again."));
+  await openCommandReview("run");
+}
+
+function updateSelectedRunComparison() {
+  const runId = state.selectedRunDetails?.run?.id;
+  if (!runId) return;
+  if (byId("run-compare-choice").checked) {
+    if (state.compareRunIds.size >= 2 && !state.compareRunIds.has(runId)) {
+      byId("run-compare-choice").checked = false;
+      toast(translate("Select exactly two runs to compare"), true);
+      return;
+    }
+    state.compareRunIds.add(runId);
+  } else {
+    state.compareRunIds.delete(runId);
+  }
+  if (state.bottomTab === "runs") renderBottom();
+}
+
+async function openRunComparison() {
+  if (state.compareRunIds.size !== 2) {
+    throw new Error(translate("Select exactly two runs to compare"));
+  }
+  state.runComparisonDetails = await Promise.all([...state.compareRunIds].map((runId) =>
+    api(`/api/runs/${encodeURIComponent(runId)}/details`),
+  ));
+  renderRunComparison();
+  byId("run-compare-dialog").showModal();
+}
+
+function renderRunComparison() {
+  const content = byId("run-compare-content");
+  content.replaceChildren();
+  if (!state.runComparisonDetails?.length) return;
+  const [first, second] = state.runComparisonDetails;
+  content.append(translatedElement("p", "estimate-note", "Comparison includes canonical workflow parameters."));
+  content.append(comparisonTable(
+    comparisonRows(first, second),
+    `${translate("Run A")} · ${shortRunId(first.run.id)}`,
+    `${translate("Run B")} · ${shortRunId(second.run.id)}`,
+  ));
+}
+
+async function loadLatestQc() {
+  const succeeded = state.runs.find((run) => run.status === "succeeded");
+  if (!succeeded) {
+    state.qcDetails = null;
+    if (state.bottomTab === "qc") renderBottom();
+    return;
+  }
+  state.qcDetails = await api(`/api/runs/${encodeURIComponent(succeeded.id)}/details`);
+  if (state.bottomTab === "qc") renderBottom();
+}
+
+async function showCompletedRunQc(runId) {
+  state.qcDetails = await api(`/api/runs/${encodeURIComponent(runId)}/details`);
+  showBottomTab("qc");
+}
+
+function renderQcPanel(container, qc) {
+  container.replaceChildren();
+  container.classList.add("qc-panel");
+  if (!qc?.available) {
+    const reason = qc?.reason || "No completed run with QC is selected.";
+    container.append(translatedElement("p", "empty-state", reason));
+    return;
+  }
+  const metrics = document.createElement("dl");
+  metrics.className = "qc-metrics";
+  appendQcMetric(metrics, "Samples", String(qc.sample_count));
+  Object.entries(qc.entity_counts || { [qc.entity_label]: qc.entity_count }).forEach(([label, count]) => {
+    appendQcMetric(metrics, titleCase(label), String(count));
+  });
+  appendQcMetric(metrics, "Missing values", `${qc.missing_percent}%`);
+  appendQcMetric(metrics, "Median CV", qc.median_cv_percent === null ? "—" : `${qc.median_cv_percent}%`);
+  const quartiles = qc.log2_intensity_quartiles || [];
+  appendQcMetric(metrics, "Log2 intensity", quartiles.length === 3
+    ? `Q1 ${quartiles[0]} · median ${quartiles[1]} · Q3 ${quartiles[2]}`
+    : "—");
+  container.append(metrics);
+
+  const diagnostics = document.createElement("div");
+  diagnostics.className = "qc-diagnostics";
+  diagnostics.append(qcDiagnostic(
+    "Sample correlation",
+    qc.correlation?.median === null ? "—" : String(qc.correlation?.median),
+    [
+      `${translate("Lowest-correlation sample")}: ${qc.correlation?.lowest_sample || "—"}`,
+      outlierText(qc.correlation?.outliers),
+    ],
+  ));
+  const variance = qc.pca?.variance_percent || [];
+  diagnostics.append(qcDiagnostic(
+    "PCA variance",
+    variance.length ? variance.map((value) => `${value}%`).join(" / ") : "—",
+    [`${translate("PC1 / PC2")}`, outlierText(qc.pca?.outliers)],
+  ));
+  diagnostics.append(normalizationCard(qc.normalization));
+  container.append(diagnostics);
+
+  const footer = document.createElement("div");
+  footer.className = "qc-footer";
+  const artifact = document.createElement("code");
+  artifact.textContent = `${translate("Primary QC artifact")}: ${qc.artifact_path}`;
+  footer.append(artifact);
+  (qc.reports || []).forEach((report) => {
+    const link = translatedElement("a", "", "Open detailed report");
+    link.href = `/api/artifacts/${encodeURIComponent(report.id)}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    footer.append(link);
+  });
+  container.append(footer);
+}
+
+function qcDiagnostic(title, value, notes) {
+  const card = document.createElement("article");
+  card.className = "qc-diagnostic";
+  card.append(translatedElement("h4", "", title));
+  const metric = document.createElement("strong");
+  metric.textContent = value;
+  card.append(metric);
+  notes.filter(Boolean).forEach((note) => {
+    const line = document.createElement("small");
+    line.textContent = note;
+    card.append(line);
+  });
+  return card;
+}
+
+function outlierText(outliers) {
+  return outliers?.length
+    ? `${translate("Potential outliers")}: ${outliers.join(", ")}`
+    : translate("No outliers detected");
+}
+
+function normalizationCard(normalization) {
+  const methods = Object.entries(normalization?.methods || {});
+  const card = qcDiagnostic(
+    "Normalization",
+    methods.length ? methods.map(([name, value]) => `${name}: ${value}`).join(" · ") : "—",
+    [],
+  );
+  const note = document.createElement("small");
+  note.className = "normalization-note";
+  note.textContent = translate(normalization?.message || "Normalization comparison unavailable");
+  card.append(note);
+  return card;
+}
+
 function showBottomTab(tab) {
   state.bottomTab = tab;
   byId("bottom-panel").classList.remove("collapsed");
@@ -2799,6 +3983,7 @@ function showBottomTab(tab) {
     button.classList.toggle("active", button.dataset.bottomTab === tab);
   });
   if (tab === "artifacts") refreshArtifacts().catch(reportError);
+  if (tab === "qc") loadLatestQc().catch(reportError);
   renderBottom();
   resizeWorkspace();
 }
@@ -3036,6 +4221,7 @@ async function performAction(action) {
     "import-workflow-template": async () => openWorkflowTemplateDialog("import"),
     "export-workflow-template": async () => openWorkflowTemplateDialog("export"),
     "validate-command": validateCommand,
+    "queue-command": queueCommand,
     "run-command": runCommand,
     "cancel-run": cancelRun,
     "show-runs": async () => {
@@ -3247,6 +4433,12 @@ function bindEvents() {
   });
   byId("approval-approve").addEventListener("click", () => decideApproval(true).catch(reportError));
   byId("approval-reject").addEventListener("click", () => decideApproval(false).catch(reportError));
+  byId("review-run").addEventListener("click", () => submitReviewedRun().catch(reportError));
+  byId("review-queue").addEventListener("click", () => addReviewedToQueue().catch(reportError));
+  byId("run-load-parameters").addEventListener("click", loadSelectedRunParameters);
+  byId("run-copy-command").addEventListener("click", () => copySelectedRunCommand().catch(reportError));
+  byId("run-rerun").addEventListener("click", () => prepareSelectedRerun().catch(reportError));
+  byId("run-compare-choice").addEventListener("change", updateSelectedRunComparison);
   document.addEventListener("keydown", keyboardShortcut);
 }
 
@@ -3279,6 +4471,7 @@ async function boot() {
   state.provider = session.ai_provider;
   bindEvents();
   await Promise.all([refreshProject(), refreshRuns(), refreshArtifacts(), refreshSystemMemory()]);
+  await processBatchQueue();
   renderProviderState();
   await restorePendingApproval();
   renderBottom();

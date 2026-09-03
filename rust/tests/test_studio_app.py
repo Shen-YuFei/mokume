@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import studio_test_support
 from studio_test_support import assert_theme_and_layout_scripts, make_studio_app
 
 from mokume.studio.models import JobSpec, RunStatus, utc_now
@@ -70,6 +71,11 @@ async def test_control_api_requires_session(studio_client):
     """Control-plane endpoints reject requests without a Studio session."""
     assert (await studio_client.get("/api/project")).status_code == 401
     assert (await studio_client.get("/api/commands")).status_code == 401
+
+
+async def test_static_assets_are_not_cached_between_local_updates(studio_client):
+    """A refresh must load the current frontend instead of stale JavaScript."""
+    await studio_test_support.assert_static_assets_not_cached(studio_client.app)
 
 
 async def test_mutation_requires_exact_origin_and_csrf(studio_client, tmp_path):
@@ -375,6 +381,7 @@ async def test_run_history_is_scoped_to_the_active_project(studio_client, tmp_pa
     assert opened_b.status_code == 200
     runs_b = await studio_client.get("/api/runs")
     assert runs_b.json() == {"runs": []}
+    assert (await studio_client.get("/api/artifacts")).json() == {"artifacts": []}
 
 
 async def test_state_restart_marks_active_runs_interrupted(tmp_path):
@@ -472,6 +479,12 @@ def _assert_branding_and_menus(page: str) -> None:
     assert 'id="workflow-template-file" type="file"' not in page
     assert 'id="workflow-template-current"' in page
     assert 'id="workflow-template-name" type="text"' in page
+    assert 'data-action="queue-command"' in page
+    assert 'data-bottom-tab="queue"' in page
+    assert 'data-bottom-tab="qc"' in page
+    assert 'id="command-review-dialog"' in page
+    assert 'id="run-details-dialog"' in page
+    assert 'id="run-compare-dialog"' in page
 
 
 def _assert_assistant_controls(page: str) -> None:
@@ -559,6 +572,11 @@ def _assert_workspace_scripts(script_text: str) -> None:
     assert "button.textContent = command.display_name" in script_text
     assert "function updateDifferentialExpressionPlotParameters" in script_text
     assert 'sampleNormalization === "condition-median"' in script_text
+    numeric_block = script_text.split("const NUMERIC_VALUE_FLAGS", maxsplit=1)[1].split(
+        "function commandArgv", maxsplit=1
+    )[0]
+    assert '"impute-shift"' in numeric_block
+    assert '"irs-sdrf-value"' not in numeric_block
     assert "URL.createObjectURL" not in script_text
 
 

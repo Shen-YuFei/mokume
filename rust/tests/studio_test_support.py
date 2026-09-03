@@ -104,20 +104,47 @@ async def offline_ask(client, project_path: Path, monkeypatch):
     return response, headers, project_id
 
 
+async def assert_static_assets_not_cached(app) -> None:
+    """Check that local refreshes load the current frontend assets."""
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/static/{asset}"
+    )
+    response = await route.endpoint("studio.js", _session=object())
+    assert response.headers["cache-control"] == "no-store"
+
+
 def assert_theme_and_layout_scripts(script_text: str, stylesheet_text: str) -> None:
     """Check the frontend behavior and layout hooks used by Studio."""
+    _assert_theme_scripts(script_text, stylesheet_text)
+    _assert_assistant_scripts(script_text, stylesheet_text)
+    _assert_workbench_scripts(script_text, stylesheet_text)
+
+
+def _assert_theme_scripts(script_text: str, stylesheet_text: str) -> None:
+    """Check persisted appearance and conditional-field hooks."""
     assert 'const LANGUAGE_STORAGE_KEY = "mokume:language"' in script_text
     assert 'const APPEARANCE_STORAGE_KEY = "mokume:appearance"' in script_text
     assert "document.documentElement.lang = state.language" in script_text
     assert "document.documentElement.dataset.theme" in script_text
     assert ':root[data-theme="light"]' in stylesheet_text
     assert ".form-field[hidden] { display: none; }" in stylesheet_text
+
+
+def _assert_assistant_scripts(script_text: str, stylesheet_text: str) -> None:
+    """Check assistant streaming, Markdown, and composer layout hooks."""
     assert "async function renderAssistantMarkdown" in script_text
     assert "function appendAssistantThinking" in script_text
     assert "clearAssistantThinking(stream)" in script_text
     assert ".assistant-thinking-dot" in stylesheet_text
     assert "function appendAssistantReasoning" in script_text
+    assert "function adjacentAssistantReasoning" in script_text
+    assert "adjacentAssistantReasoning()" in script_text
     assert 'event.type === "REASONING_MESSAGE_CONTENT"' in script_text
+    assert "reasoning: null" in script_text
+    assert "reasoningMessageIds: new Set()" in script_text
+    assert "stream.reasoningMessageIds.has(event.messageId)" in script_text
     assert ".assistant-reasoning-details" in stylesheet_text
     assert ".assistant-reasoning-details summary::before" not in stylesheet_text
     assert "function appendAssistantError" in script_text
@@ -126,10 +153,16 @@ def assert_theme_and_layout_scripts(script_text: str, stylesheet_text: str) -> N
     assert 'event.type === "TEXT_MESSAGE_END"' in script_text
     assert ".markdown-body table" in stylesheet_text
     assert (
-        ".markdown-body li > strong:first-child { white-space: nowrap; }"
+        ".assistant-messages { flex: 1; min-height: 0; overflow-x: hidden;"
+        in stylesheet_text
+    )
+    assert (
+        ".markdown-body li > strong:first-child { white-space: normal; }"
         in stylesheet_text
     )
     assert ".markdown-body :not(pre) > code" in stylesheet_text
+    assert ".markdown-body pre { max-width: 100%;" in stylesheet_text
+    assert "table-layout: fixed;" in stylesheet_text
     assert "async function refreshSystemMemory" in script_text
     assert "SYSTEM_MEMORY_REFRESH_MS = 5000" in script_text
     assert ".system-memory-value" in stylesheet_text
@@ -140,6 +173,10 @@ def assert_theme_and_layout_scripts(script_text: str, stylesheet_text: str) -> N
     assert ".composer-context { display: flex; flex: 1 1 0;" in stylesheet_text
     assert ".composer-actions .assistant-model-button" in stylesheet_text
     assert "flex: 1 1 0; min-width: 0; max-width: 180px;" in stylesheet_text
+
+
+def _assert_workbench_scripts(script_text: str, stylesheet_text: str) -> None:
+    """Check menu, panel, review, queue, and QC hooks."""
     assert "function openSubmenu" in script_text
     assert (
         'trigger.addEventListener("mouseenter", () => openSubmenu(trigger))'
@@ -151,3 +188,11 @@ def assert_theme_and_layout_scripts(script_text: str, stylesheet_text: str) -> N
     assert 'handle.addEventListener("pointerdown"' in script_text
     assert "max-width: min(420px, calc(100vw - 36px));" in stylesheet_text
     assert "overflow-wrap: anywhere; word-break: break-word;" in stylesheet_text
+    assert "async function openCommandReview" in script_text
+    assert "async function openRunDetails" in script_text
+    assert "function executionStageSection" in script_text
+    assert "async function openRunComparison" in script_text
+    assert "async function processBatchQueue" in script_text
+    assert "function renderQcPanel" in script_text
+    assert ".stage-stepper" in stylesheet_text
+    assert ".qc-metrics" in stylesheet_text
