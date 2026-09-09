@@ -4,12 +4,14 @@ mod polygamma;
 pub(crate) use polygamma::{digamma, tetragamma, trigamma};
 
 /// `1 / sqrt(2 * pi)`, the standard-normal pdf normalising constant.
+#[cfg(test)]
 const INV_SQRT_2PI: f64 = 0.398_942_280_401_432_7;
 /// `sqrt(2)`, used to map the normal cdf onto `erfc`.
 const SQRT2: f64 = std::f64::consts::SQRT_2;
 
 /// Standard-normal probability density `phi(x)`. Matches `scipy.stats.norm.pdf`.
-pub(crate) fn norm_pdf(x: f64) -> f64 {
+#[cfg(test)]
+fn norm_pdf(x: f64) -> f64 {
     INV_SQRT_2PI * (-0.5 * x * x).exp()
 }
 

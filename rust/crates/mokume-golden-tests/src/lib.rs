@@ -5811,65 +5811,130 @@ fn features2proteins_qrilc_imputation_matches_official_shared_draws() -> Result<
 // (f32-exact for these magnitudes). The log2 protein matrix is therefore a clean,
 // known matrix; the only thing the count vector changes is the deqms moderation.
 //
-// Oracle (captured verbatim from `conda run -n Bigbio python` on mokume's
-// `run_deqms(log2_matrix, A, B, ("groupA","groupB"), peptide_counts=counts)`,
-// where `counts = parquet.groupby("anchor_protein")["sequence"].nunique()`, on
-// the exact log2 matrix this Rust run produces; see scratchpad
-// deqms_pipeline_oracle.py). Tuple: (protein, log2FC, sca_t, sca_pvalue,
-// peptide_count). DEqMS is LOWESS-bounded, so sca_t is asserted at relative 6e-3
-// (the established mokume-stats tolerance) and the adj-p rank is asserted exactly.
-const DEQMS_PIPELINE_ORACLE: &[(&str, f64, f64, f64, usize)] = &[
-    ("PROT05", -1.0, -98.5279709372, 3.82786439473e-10, 8),
-    ("PROT09", -1.0, -52.9074128499, 1.16613161144e-08, 11),
-    ("PROT08", -1.0, -37.1125038157, 8.1589378105e-08, 7),
-    ("PROT07", 1.0, 30.7917066547, 2.26854357277e-07, 4),
-    ("PROT04", -1.0, -23.5060652956, 9.9169228319e-07, 5),
-    ("PROT10", 1.0, 19.3560071397, 2.85460418766e-06, 6),
-    ("PROT12", -1.0, -17.2840417306, 5.27452228571e-06, 15),
-    ("PROT02", 2.00906160978, 16.5837158474, 6.59733867016e-06, 2),
-    ("PROT01", -2.00048684329, -15.8911018093, 8.307394376e-06, 1),
-    ("PROT03", 0.0159106916777, 0.345686569053, 0.742412704892, 3),
+// Independent Bioconductor DEqMS 1.28.0, R 4.5.3: lmFit(log2(DEQMS_TARGETS),
+// ~0+group), contrast A-B, eBayes, then spectraCounteBayes(fit.method="loess")
+// with DEQMS_COUNTS. This uses the official Gaussian quadratic LOESS surface.
+// Tuple: (protein, log2FC, sca_t, sca_pvalue, BH, peptide_count).
+const DEQMS_PIPELINE_ORACLE: &[(&str, f64, f64, f64, f64, usize)] = &[
+    (
+        "PROT05",
+        -0.9999999999999982,
+        -108.63131358984134,
+        7.698724837040662e-12,
+        9.238469804448795e-11,
+        8,
+    ),
+    (
+        "PROT09",
+        -0.9999999999999991,
+        -46.95665067158488,
+        1.7828506851640617e-09,
+        1.0697104110984371e-08,
+        11,
+    ),
+    (
+        "PROT08",
+        -1.0000000000000018,
+        -38.775823269918334,
+        6.1630119736146325e-09,
+        2.465204789445853e-08,
+        7,
+    ),
+    (
+        "PROT07",
+        1.0,
+        27.540163305718362,
+        5.628612346975546e-08,
+        1.6885837040926637e-07,
+        4,
+    ),
+    (
+        "PROT04",
+        -1.0,
+        -22.113258859441515,
+        2.3127116090466298e-07,
+        5.550507861711912e-07,
+        5,
+    ),
+    (
+        "PROT10",
+        0.9999999999999964,
+        19.766239573248104,
+        4.7506527895102186e-07,
+        9.501305579020437e-07,
+        6,
+    ),
+    (
+        "PROT02",
+        2.0090616097754097,
+        17.05872587361833,
+        1.2179809565950436e-06,
+        2.0879673541629316e-06,
+        2,
+    ),
+    (
+        "PROT01",
+        -2.00048684328549,
+        -15.484844223525773,
+        2.2547414598780906e-06,
+        3.382112189817136e-06,
+        1,
+    ),
+    (
+        "PROT12",
+        -0.9999999999999982,
+        -8.951316476271492,
+        6.859950546907935e-05,
+        9.14660072921058e-05,
+        15,
+    ),
+    (
+        "PROT03",
+        0.015910691677653688,
+        0.35122920454352724,
+        0.7365233507722879,
+        0.8464084878151766,
+        3,
+    ),
     (
         "PROT06",
-        0.0917559508266,
-        0.274768056767,
-        0.793520719233,
+        0.09175595082658283,
+        0.29680367733269925,
+        0.775874447163912,
+        0.8464084878151766,
         13,
     ),
     (
         "PROT11",
-        -0.00166445565951,
-        -0.120709050091,
-        0.908209010135,
+        -0.0016644556595100113,
+        -0.12803767351565662,
+        0.9019896520332734,
+        0.9019896520332734,
         9,
     ),
 ];
 
-// The deqms adj-p rank above, in order. The count moderation reorders the middle
-// of the table relative to the all-ones limma fallback (which ranks
-// [..PROT01,PROT02,PROT12..]); the count path ranks [..PROT12,PROT02,PROT01..].
+// Full BH order from the independent count-moderated fit, including tied BH.
 const DEQMS_PIPELINE_RANK: &[&str] = &[
-    "PROT05", "PROT09", "PROT08", "PROT07", "PROT04", "PROT10", "PROT12", "PROT02", "PROT01",
+    "PROT05", "PROT09", "PROT08", "PROT07", "PROT04", "PROT10", "PROT02", "PROT01", "PROT12",
     "PROT03", "PROT06", "PROT11",
 ];
 
-// All-ones limma fallback sca_t (Python `run_deqms(..., peptide_counts=None)` on
-// the same matrix). Used ONLY to prove non-vacuity: the deqms-with-counts sca_t
-// must differ from this fallback by a large margin, so the test cannot be passed
-// by the old all-ones code path. Tuple: (protein, fallback_sca_t).
+// Independent limma eBayes t statistics on the same matrix. Used only to
+// verify that variable peptide counts exercise DEqMS rather than the fallback.
 const DEQMS_FALLBACK_SCA_T: &[(&str, f64)] = &[
-    ("PROT05", -65.11281129),
-    ("PROT09", -46.68051845),
-    ("PROT08", -33.8387029),
-    ("PROT07", 31.91915491),
-    ("PROT04", -22.73149498),
-    ("PROT10", 18.51554925),
-    ("PROT01", -17.31471545),
-    ("PROT02", 16.53307016),
-    ("PROT12", -16.76645805),
-    ("PROT03", 0.3754350973),
-    ("PROT06", 0.2646723684),
-    ("PROT11", -0.09359488618),
+    ("PROT05", -65.11281128871813),
+    ("PROT09", -46.680518447285614),
+    ("PROT08", -33.83870290280209),
+    ("PROT07", 31.919154914696882),
+    ("PROT04", -22.731494984546792),
+    ("PROT10", 18.515549252570654),
+    ("PROT02", 16.53307015530404),
+    ("PROT01", -17.31471545499555),
+    ("PROT12", -16.76645805143682),
+    ("PROT03", 0.375435097346578),
+    ("PROT06", 0.2646723684393925),
+    ("PROT11", -0.09359488617639883),
 ];
 
 #[test]
@@ -5925,21 +5990,20 @@ fn features2proteins_deqms_wires_per_protein_peptide_counts() -> Result<(), Box<
     Ok(())
 }
 
-/// Assert every protein row matches the count-aware Python deqms oracle. Field
+/// Assert every protein row matches independent official DEqMS. Field
 /// layout: ProteinName(0), log2FC(1), pvalue(2), adj_pvalue(3), sca_t(4),
 /// sca_pvalue(5), sca_adj_pvalue(6), mean_A(7), mean_B(8), n_a(9), n_b(10),
 /// peptide_count(11), log_pvalue(12), significance(13).
 fn assert_deqms_oracle_rows(table: &CsvTable) -> Result<(), Box<dyn Error>> {
-    for &(protein, log2fc, sca_t, sca_p, count) in DEQMS_PIPELINE_ORACLE {
+    for &(protein, log2fc, sca_t, sca_p, bh, count) in DEQMS_PIPELINE_ORACLE {
         let row = find_de_row(table, protein)?;
         // log2FC is the untouched limma coefficient: cell-exact (1e-9).
         assert_de_cell_abs(row, 1, log2fc, 1e-9, protein, "log2FC")?;
-        // sca_t / sca_pvalue: LOWESS-bounded relative 6e-3 (matches mokume-stats'
-        // deqms oracle tolerance), with an absolute floor so near-zero t / large p
-        // are not over-constrained.
-        assert_de_cell_rel(row, 4, sca_t, 6e-3, 1.0, protein, "sca_t")?;
-        assert_de_cell_rel(row, 5, sca_p, 6e-3, 1e-4, protein, "sca_pvalue")?;
-        // pvalue == sca_pvalue and adj_pvalue == sca_adj_pvalue, exactly as Python.
+        // Original official audit tolerances: relative 1e-6, absolute 1e-10.
+        assert_de_cell_rel(row, 4, sca_t, 1e-6, 1e-10, protein, "sca_t")?;
+        assert_de_cell_rel(row, 5, sca_p, 1e-6, 1e-10, protein, "sca_pvalue")?;
+        assert_de_cell_rel(row, 6, bh, 1e-6, 1e-10, protein, "sca_adj_pvalue")?;
+        // Public p-value columns must preserve the count-aware results.
         assert_de_columns_equal(row, 2, 5, protein, "pvalue==sca_pvalue")?;
         assert_de_columns_equal(row, 3, 6, protein, "adj_pvalue==sca_adj_pvalue")?;
         // The per-protein peptide_count is the exact unique-sequence count: this is
@@ -5955,7 +6019,7 @@ fn assert_deqms_oracle_rows(table: &CsvTable) -> Result<(), Box<dyn Error>> {
 }
 
 /// Assert the emitted adj-p rank matches the count-aware oracle exactly (the
-/// count moderation reorders the middle of the table vs the all-ones fallback).
+/// count moderation changes the statistics relative to the limma fallback).
 fn assert_deqms_rank(table: &CsvTable) -> Result<(), Box<dyn Error>> {
     let rank = table
         .rows
@@ -5968,14 +6032,14 @@ fn assert_deqms_rank(table: &CsvTable) -> Result<(), Box<dyn Error>> {
         .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(
         rank, DEQMS_PIPELINE_RANK,
-        "deqms adj-p rank must match the count-aware Python oracle"
+        "deqms adj-p rank must match the independent official oracle"
     );
     Ok(())
 }
 
 /// Non-vacuity: the emitted sca_t must differ materially from the all-ones limma
 /// fallback, proving the count path is genuinely exercised (the old all-ones code
-/// could not have produced these numbers). The worst mover (PROT05) shifts ~33.
+/// could not have produced these numbers). PROT05 shifts by more than 43.
 fn assert_deqms_differs_from_fallback(table: &CsvTable) -> Result<(), Box<dyn Error>> {
     let mut max_fallback_diff = 0.0_f64;
     for &(protein, fallback_t) in DEQMS_FALLBACK_SCA_T {
