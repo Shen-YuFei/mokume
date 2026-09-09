@@ -1,8 +1,8 @@
 //! ComBat batch correction.
 //!
-//! Port of `inmoose.pycombat.pycombat_norm` (the empirical-Bayes ComBat of
-//! Johnson, Li & Rabinovic 2007) as mokume invokes it through
-//! `postprocessing/batch_correction.py`. It covers the `ref_batch` (reference
+//! Parametric empirical-Bayes ComBat follows Bioconductor sva 3.58.0
+//! (`ComBat.R` and `helper.R`, Johnson, Li & Rabinovic 2007).
+//! It covers the `ref_batch` (reference
 //! batch left unmodified) and `mean_only` (additive effect only) options, plus:
 //!   - optional covariates (`covar_mod`), whose biological signal is preserved;
 //!   - both the parametric (`par_prior=true`) and non-parametric
@@ -18,10 +18,11 @@
 //! covariates are expanded to k-1 indicator columns before this module is
 //! called, avoiding an artificial ordering between categories.
 //!
-//! All reductions use population variance (`ddof = 0`), matching numpy. The
-//! parametric `it_sol` fixed-point uses the reference's relative-change stop at
-//! `1e-4`; the non-parametric path ports `int_eprior`'s deterministic numerical
-//! integration (no RNG, `O(features^2)` per batch).
+//! Parametric batch and prior variance estimates use sample variance; pooled
+//! residual variance uses the sample count as its divisor, as in sva's complete
+//! data path. `it_sol` uses sva's relative-change stop at `1e-4`.
+//! The non-parametric path retains the earlier inmoose `int_eprior` port and
+//! population-variance convention; it is not claimed to reproduce sva.
 
 /// `it_sol` relative-change convergence threshold (`conv` in the reference).
 const CONVERGENCE: f64 = 1e-4;
@@ -32,7 +33,7 @@ const MAX_ITERATIONS: usize = 1_000_000;
 /// `ref_batch` is a batch *label* (not an index); `mean_only` skips the
 /// multiplicative (variance) batch effect; `par_prior` selects the parametric
 /// empirical-Bayes prior (`true`, the inmoose default) versus the non-parametric
-/// `int_eprior` integration (`false`).
+/// `int_eprior` integration (`false`, the historical inmoose implementation).
 #[derive(Debug, Clone, Copy)]
 pub struct ComBatParams {
     pub ref_batch: Option<usize>,
@@ -81,10 +82,64 @@ pub fn combat_parametric(
 /// matching the `samples x covariates` layout mokume builds from the SDRF before
 /// handing it to `pycombat_norm(covar_mod=...)`. Returns the batch-corrected
 /// matrix in the feature x sample orientation. Batches are processed in
-/// ascending label order. The caller must ensure every batch has at least two
-/// samples and `batch.len()` equals the sample count; a degenerate input (fewer
-/// than two distinct batches, or an empty matrix) is returned unchanged.
+/// ascending label order. The caller must supply a finite rectangular matrix
+/// and an identifiable design. Parametric mode leaves features constant within
+/// any batch unchanged, drops redundant all-one covariates, and uses mean-only
+/// correction if a batch has one sample, following sva. Missing rows are handled
+/// by the pipeline before this call. An empty matrix or fewer than two batches
+/// is returned unchanged.
 pub fn combat(
+    data: &[Vec<f64>],
+    batch: &[usize],
+    covariates: Option<&[Vec<f64>]>,
+    params: ComBatParams,
+) -> Vec<Vec<f64>> {
+    if !params.par_prior || data.is_empty() || batch.is_empty() {
+        return combat_inner(data, batch, covariates, params);
+    }
+    let mut batches = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for (sample, &label) in batch.iter().enumerate() {
+        batches.entry(label).or_default().push(sample);
+    }
+    let params = ComBatParams {
+        mean_only: params.mean_only || batches.values().any(|samples| samples.len() == 1),
+        ..params
+    };
+    let kept = data
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            let constant = batches.values().any(|samples| {
+                samples.len() > 1 && samples.iter().all(|&s| row[s] == row[samples[0]])
+            });
+            (!constant).then_some(i)
+        })
+        .collect::<Vec<_>>();
+    let covariates = covariates.map(without_intercept);
+    if kept.len() == data.len() {
+        return combat_inner(data, batch, covariates.as_deref(), params);
+    }
+    let active = kept.iter().map(|&i| data[i].clone()).collect::<Vec<_>>();
+    let corrected = combat_inner(&active, batch, covariates.as_deref(), params);
+    let mut result = data.to_vec();
+    for (i, row) in kept.into_iter().zip(corrected) {
+        result[i] = row;
+    }
+    result
+}
+
+fn without_intercept(covariates: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let columns = covariates.first().map_or(0, Vec::len);
+    let kept = (0..columns)
+        .filter(|&c| !covariates.iter().all(|r| r.get(c) == Some(&1.0)))
+        .collect::<Vec<_>>();
+    covariates
+        .iter()
+        .map(|r| kept.iter().map(|&c| r[c]).collect())
+        .collect()
+}
+
+fn combat_inner(
     data: &[Vec<f64>],
     batch: &[usize],
     covariates: Option<&[Vec<f64>]>,
@@ -181,9 +236,10 @@ pub fn combat(
                     if params.mean_only {
                         1.0
                     } else {
-                        variance_pop(
+                        variance(
                             batches_ind[k].iter().map(|&n| s_data[g][n]),
                             gamma_hat[k][g],
+                            usize::from(params.par_prior),
                         )
                     }
                 })
@@ -196,7 +252,11 @@ pub fn combat(
     let mut delta_star = vec![vec![1.0; n_features]; n_batch];
     for k in 0..n_batch {
         let gamma_bar = mean(gamma_hat[k].iter().copied());
-        let t2 = variance_pop(gamma_hat[k].iter().copied(), gamma_bar);
+        let t2 = variance(
+            gamma_hat[k].iter().copied(),
+            gamma_bar,
+            usize::from(params.par_prior),
+        );
         if params.mean_only {
             // Closed-form additive effect (n = 1); multiplicative effect = 1.
             gamma_star[k] = (0..n_features)
@@ -545,7 +605,7 @@ fn solve_linear_system(a: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
 /// per-feature variances (`compute_prior` in the reference).
 fn inverse_gamma_prior(delta_hat: &[f64]) -> (f64, f64) {
     let m = mean(delta_hat.iter().copied());
-    let s2 = variance_pop(delta_hat.iter().copied(), m);
+    let s2 = variance(delta_hat.iter().copied(), m, 1);
     let a_prior = (2.0 * s2 + m * m) / s2;
     let b_prior = (m * s2 + m * m * m) / s2;
     (a_prior, b_prior)
@@ -599,8 +659,10 @@ fn it_sol(
 
         let change = (0..n_features)
             .map(|g| {
-                let gamma_change = (g_new[g] - g_old[g]).abs() / g_old[g].abs();
-                let delta_change = (d_new[g] - d_old[g]).abs() / d_old[g].abs();
+                // sva uses the signed old value in the denominator. Taking
+                // its absolute value changes the stopping iteration.
+                let gamma_change = (g_new[g] - g_old[g]).abs() / g_old[g];
+                let delta_change = (d_new[g] - d_old[g]).abs() / d_old[g];
                 gamma_change.max(delta_change)
             })
             .fold(0.0_f64, f64::max);
@@ -698,8 +760,8 @@ fn mean(values: impl Iterator<Item = f64>) -> f64 {
     }
 }
 
-/// Population variance (`ddof = 0`) about a precomputed mean.
-fn variance_pop(values: impl Iterator<Item = f64>, mean: f64) -> f64 {
+/// Variance about a precomputed mean; sva priors use `ddof=1`.
+fn variance(values: impl Iterator<Item = f64>, mean: f64, ddof: usize) -> f64 {
     let mut sum_sq = 0.0;
     let mut count = 0usize;
     for value in values {
@@ -707,10 +769,10 @@ fn variance_pop(values: impl Iterator<Item = f64>, mean: f64) -> f64 {
         sum_sq += deviation * deviation;
         count += 1;
     }
-    if count == 0 {
-        0.0
+    if count <= ddof {
+        f64::NAN
     } else {
-        sum_sq / count as f64
+        sum_sq / (count - ddof) as f64
     }
 }
 
@@ -718,66 +780,53 @@ fn variance_pop(values: impl Iterator<Item = f64>, mean: f64) -> f64 {
 mod tests {
     use super::{combat, combat_parametric, ComBatParams};
 
+    #[derive(serde::Deserialize)]
+    struct OfficialCase {
+        name: String,
+        data: Vec<Vec<f64>>,
+        batch: Vec<usize>,
+        covariates: Option<Vec<Vec<f64>>>,
+        mean_only: bool,
+        reference: Option<usize>,
+        expected: Vec<Vec<f64>>,
+    }
+
+    #[test]
+    fn matches_sva_3_58_0() -> Result<(), Box<dyn std::error::Error>> {
+        let cases: Vec<OfficialCase> =
+            serde_json::from_str(include_str!("../../tests/data/combat_sva_3_58_0.json"))?;
+        for case in cases {
+            let params = ComBatParams {
+                mean_only: case.mean_only,
+                ref_batch: case.reference,
+                par_prior: true,
+            };
+            let actual = match &case.covariates {
+                None => combat_parametric(&case.data, &case.batch, params),
+                Some(cov) => combat(&case.data, &case.batch, Some(cov), params),
+            };
+            assert_eq!(actual.len(), case.expected.len(), "{}", case.name);
+            for (i, (row, expected)) in actual.iter().zip(&case.expected).enumerate() {
+                assert_eq!(row.len(), expected.len());
+                for (j, (&a, &e)) in row.iter().zip(expected).enumerate() {
+                    assert!(
+                        (a - e).abs() <= 1e-9 + 1e-9 * e.abs(),
+                        "{}[{i},{j}]: {a} != {e}",
+                        case.name
+                    );
+                    if case.reference == Some(case.batch[j]) {
+                        assert_eq!(a, case.data[i][j], "reference batch changed");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     fn assert_close(actual: f64, expected: f64, tol: f64) {
         assert!(
             (actual - expected).abs() <= tol,
             "actual={actual} expected={expected}"
         );
-    }
-
-    // Oracle from inmoose `pycombat_norm` (parametric, no covariates): 4
-    // features x 6 samples, 2 batches of 3. Reference output captured by
-    // `conda run -n Bigbio python /tmp/combat_oracle.py`.
-    #[test]
-    fn matches_inmoose_pycombat_oracle() {
-        let data = vec![
-            vec![10.0, 11.0, 9.5, 20.0, 21.0, 19.0],
-            vec![5.0, 6.0, 4.0, 8.0, 7.5, 9.0],
-            vec![1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
-            vec![50.0, 52.0, 48.0, 30.0, 31.0, 29.0],
-        ];
-        let batch = [0, 0, 0, 1, 1, 1];
-        let corrected = combat_parametric(&data, &batch, ComBatParams::default());
-
-        let expected = [
-            [
-                14.864380299149872,
-                15.864215988028887,
-                14.364462454710365,
-                15.135873445153031,
-                16.131298305630697,
-                14.140448584675365,
-            ],
-            [
-                6.570_036_097_877_598,
-                7.530_315_584_683_231,
-                5.6097566110719645,
-                6.420_867_458_192_403,
-                5.896_843_353_383_13,
-                7.468_915_667_810_949,
-            ],
-            [
-                1.8221230342951276,
-                2.8335983703721137,
-                2.3278607023336204,
-                2.1750301068609867,
-                1.6832478972769493,
-                3.158594526029062,
-            ],
-            [
-                40.137_786_918_348_62,
-                42.01029911676347,
-                38.265_274_719_933_77,
-                39.880718344542714,
-                40.965961295069526,
-                38.795475394015895,
-            ],
-        ];
-        for (feature, expected_row) in expected.iter().enumerate() {
-            for (sample, &want) in expected_row.iter().enumerate() {
-                assert_close(corrected[feature][sample], want, 1e-6);
-            }
-        }
     }
 
     fn oracle_input() -> Vec<Vec<f64>> {
@@ -787,172 +836,6 @@ mod tests {
             vec![1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
             vec![50.0, 52.0, 48.0, 30.0, 31.0, 29.0],
         ]
-    }
-
-    // Reference batch 0: batch-0 columns are returned as the raw input, batch-1
-    // shifted onto batch 0. Oracle from `pycombat_norm(..., ref_batch=0)`.
-    #[test]
-    fn matches_inmoose_ref_batch_oracle() {
-        let data = oracle_input();
-        let batch = [0, 0, 0, 1, 1, 1];
-        let params = ComBatParams {
-            ref_batch: Some(0),
-            mean_only: false,
-            ..ComBatParams::default()
-        };
-        let corrected = combat_parametric(&data, &batch, params);
-        let expected = [
-            [
-                10.0,
-                11.0,
-                9.5,
-                10.19824941563275,
-                11.048785837051422,
-                9.347712994214078,
-            ],
-            [
-                5.0,
-                6.0,
-                4.0,
-                4.837155840740258,
-                4.340315404980416,
-                5.830836712259942,
-            ],
-            [
-                1.0,
-                2.0,
-                1.5,
-                1.3696047042858863,
-                0.9721857919446014,
-                2.164442528968456,
-            ],
-            [
-                50.0,
-                52.0,
-                48.0,
-                49.92144658970713,
-                50.972711406794325,
-                48.87018177261993,
-            ],
-        ];
-        for (feature, expected_row) in expected.iter().enumerate() {
-            for (sample, &want) in expected_row.iter().enumerate() {
-                assert_close(corrected[feature][sample], want, 1e-6);
-            }
-        }
-    }
-
-    // mean_only: multiplicative batch effect fixed at 1, additive effect from
-    // the closed-form shrinkage. Oracle from `pycombat_norm(..., mean_only=True)`.
-    #[test]
-    fn matches_inmoose_mean_only_oracle() {
-        let data = oracle_input();
-        let batch = [0, 0, 0, 1, 1, 1];
-        let params = ComBatParams {
-            ref_batch: None,
-            mean_only: true,
-            ..ComBatParams::default()
-        };
-        let corrected = combat_parametric(&data, &batch, params);
-        let expected = [
-            [
-                14.763385418186564,
-                15.763385418186564,
-                14.263385418186564,
-                15.236614581813432,
-                16.236614581813434,
-                14.236614581813432,
-            ],
-            [
-                6.545876060049075,
-                7.545876060049075,
-                5.545876060049075,
-                6.454123939950924,
-                5.954123939950924,
-                7.454123939950925,
-            ],
-            [
-                1.8171160603917724,
-                2.8171160603917724,
-                2.3171160603917724,
-                2.182883939608227,
-                1.6828839396082271,
-                3.182883939608227,
-            ],
-            [
-                40.3786752916639,
-                42.3786752916639,
-                38.3786752916639,
-                39.621_324_708_336_1,
-                40.621_324_708_336_1,
-                38.621_324_708_336_1,
-            ],
-        ];
-        for (feature, expected_row) in expected.iter().enumerate() {
-            for (sample, &want) in expected_row.iter().enumerate() {
-                assert_close(corrected[feature][sample], want, 1e-6);
-            }
-        }
-    }
-
-    // Covariate-aware standardization (parametric prior). One categorical
-    // covariate, sample-major (`samples x covariates`), values [0,1,0,1,0,1],
-    // exactly as mokume feeds `pycombat_norm(covar_mod=...)`. The covariate
-    // enters the patsy design as a single numeric column (integer codes are
-    // treated as continuous, the redundant intercept is dropped). Oracle from
-    // `pycombat_norm(..., covar_mod=[[0],[1],[0],[1],[0],[1]])`.
-    #[test]
-    fn matches_inmoose_covariate_oracle() {
-        let data = oracle_input();
-        let batch = [0, 0, 0, 1, 1, 1];
-        let covariates = vec![
-            vec![0.0],
-            vec![1.0],
-            vec![0.0],
-            vec![1.0],
-            vec![0.0],
-            vec![1.0],
-        ];
-        let corrected = combat(&data, &batch, Some(&covariates), ComBatParams::default());
-        let expected = [
-            [
-                14.880324738490788,
-                15.96298968871664,
-                14.343584760612632,
-                15.107684002440037,
-                16.054497868898974,
-                14.168468155058392,
-            ],
-            [
-                6.392477045131027,
-                7.376279455981547,
-                5.327686688533107,
-                6.668850019948931,
-                6.126252158939517,
-                7.6120528719363785,
-            ],
-            [
-                1.6610698901054048,
-                2.674853261167651,
-                2.2162033743543903,
-                2.351060726841906,
-                1.8228943013580798,
-                3.275950258885035,
-            ],
-            [
-                40.00325131995268,
-                42.06893034764898,
-                37.8981648756386,
-                40.01045716540908,
-                40.919729685609504,
-                39.06230143958027,
-            ],
-        ];
-        for (feature, expected_row) in expected.iter().enumerate() {
-            for (sample, &want) in expected_row.iter().enumerate() {
-                assert_close(corrected[feature][sample], want, 1e-9);
-            }
-        }
     }
 
     // Non-parametric prior (`par_prior=false`), no covariates: replaces the

@@ -1079,6 +1079,8 @@ dependencies = [
  "libm",
  "mokume-core",
  "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
