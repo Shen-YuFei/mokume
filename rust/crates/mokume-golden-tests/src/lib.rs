@@ -3109,11 +3109,11 @@ fn features2proteins_normalization_and_irs_match_synthetic_oracles() -> Result<(
     assert_numeric_cell_close(&loess, "P61", "sample-1", 20.0);
     assert_numeric_cell_close(&loess, "P62", "sample-2", 900.0);
 
-    // Hierarchical needs a pairwise overlap >= 10 rows; on this 3-row matrix the
-    // shift is 0.0 (identity), matching Python.
+    // directlfq 0.3.3 aligns the three paired rows; the median log2 ratio
+    // is log2(20), so sample-2 is divided by 20.
     let hierarchical = run_named_cross_distribution_normalization("hierarchical")?;
     assert_numeric_cell_close(&hierarchical, "P60", "sample-1", 10.0);
-    assert_numeric_cell_close(&hierarchical, "P61", "sample-2", 400.0);
+    assert_numeric_cell_close(&hierarchical, "P61", "sample-2", 20.0);
     assert_numeric_cell_close(&hierarchical, "P62", "sample-1", 30.0);
 
     // RLR (robust linear regression vs the per-row median) fits on all 6 rows,
@@ -3145,171 +3145,125 @@ fn features2proteins_normalization_and_irs_match_synthetic_oracles() -> Result<(
     Ok(())
 }
 
-/// Hierarchical (DirectLFQ-style) real-path parity. Two samples take the n==2
-/// branch: with a pairwise overlap of 12 (>= min_overlap 10) the shift is the
-/// real `median(sample-1) - median(sample-2)` over the overlap in log2 space
-/// (here -0.17581643490674992), not the zero-shift fallback. Pure medians and a
-/// single shift make this cell-exact at 1e-9. Oracle:
-/// `HierarchicalSampleNormalizer(num_samples_quadratic=50).fit_transform` on the
-/// log2 matrix, exponentiated back.
+/// Official directlfq 0.3.3 `NormalizationManagerSamples(..., 50)` on the
+/// log2 input matrix, exponentiated back. The shift is the median of paired
+/// differences, not the difference between the two column medians.
 #[test]
-fn features2proteins_hierarchical_real_path_matches_python_oracle() -> Result<(), Box<dyn Error>> {
+fn features2proteins_hierarchical_real_path_matches_directlfq() -> Result<(), Box<dyn Error>> {
     let hierarchical = run_sample_normalization_real_path("hierarchical")?;
-    assert_numeric_cell_close(&hierarchical, "P70", "sample-1", 1000.0);
-    assert_numeric_cell_close(&hierarchical, "P71", "sample-1", 1499.9999999999998);
-    assert_numeric_cell_close(&hierarchical, "P72", "sample-1", 2299.9999999999995);
-    assert_numeric_cell_close(&hierarchical, "P73", "sample-1", 3100.0000000000005);
-    assert_numeric_cell_close(&hierarchical, "P74", "sample-1", 4399.999999999999);
-    assert_numeric_cell_close(&hierarchical, "P75", "sample-1", 5999.999999999999);
-    assert_numeric_cell_close(&hierarchical, "P76", "sample-1", 8299.999999999996);
-    assert_numeric_cell_close(&hierarchical, "P77", "sample-1", 10999.999999999993);
-    assert_numeric_cell_close(&hierarchical, "P78", "sample-1", 14999.999999999993);
-    assert_numeric_cell_close(&hierarchical, "P79", "sample-1", 20999.999999999993);
-    assert_numeric_cell_close(&hierarchical, "P80", "sample-1", 29000.00000000001);
-    assert_numeric_cell_close(&hierarchical, "P81", "sample-1", 39999.99999999998);
-    assert_numeric_cell_close(&hierarchical, "P70", "sample-2", 1088.877667829437);
-    assert_numeric_cell_close(&hierarchical, "P71", "sample-2", 1425.278898540971);
-    assert_numeric_cell_close(&hierarchical, "P72", "sample-2", 2222.018655489339);
-    assert_numeric_cell_close(&hierarchical, "P73", "sample-2", 3496.80226660673);
-    assert_numeric_cell_close(&hierarchical, "P74", "sample-2", 4240.426039758544);
-    assert_numeric_cell_close(&hierarchical, "P75", "sample-2", 6285.391415926021);
-    assert_numeric_cell_close(&hierarchical, "P76", "sample-2", 7923.134249653228);
-    assert_numeric_cell_close(&hierarchical, "P77", "sample-2", 11242.883236938096);
-    assert_numeric_cell_close(&hierarchical, "P78", "sample-2", 15846.268499306456);
-    assert_numeric_cell_close(&hierarchical, "P79", "sample-2", 20626.707040996665);
-    assert_numeric_cell_close(&hierarchical, "P80", "sample-2", 30541.69068302079);
-    assert_numeric_cell_close(&hierarchical, "P81", "sample-2", 38951.72145080913);
+    let expected = [
+        [1000.0, 1086.7540826452525],
+        [1499.9999999999998, 1422.4992463893152],
+        [2299.9999999999995, 2217.6851605199845],
+        [3100.0000000000005, 3489.9826231290645],
+        [4399.999999999999, 4232.156142984357],
+        [5999.999999999999, 6273.133322586412],
+        [8299.999999999996, 7907.682146077251],
+        [10999.999999999993, 11220.956788288388],
+        [14999.999999999993, 15815.364292154502],
+        [20999.999999999993, 20586.47977693851],
+        [29000.00000000001, 30482.126708342446],
+        [39999.99999999998, 38875.75580194394],
+    ];
+    for (index, values) in expected.iter().enumerate() {
+        for (column, &value) in values.iter().enumerate() {
+            assert_numeric_cell_close(
+                &hierarchical,
+                SAMPLE_NORM_PROTEINS[index],
+                &format!("sample-{}", column + 1),
+                value,
+            );
+        }
+    }
     Ok(())
 }
 
-/// Hierarchical column-order parity. The four samples register in the order
-/// [c, a, d, b] (parquet/SDRF insertion) but Python's pivot orders columns by name
-/// [a, b, c, d]; the leaf order, the cluster anchor, and the cumulative shift
-/// chain all depend on that column order. This matrix is genuinely order-sensitive
-/// (name order anchors hsample-b at shift 0; insertion order would anchor
-/// hsample-c, moving every column), so the protein matrix only matches Python when
-/// the Rust hierarchical sorts its columns by sample NAME rather than by
-/// `SampleId`. This is the guard for that fix; the two-sample real-path test could
-/// not catch it because there name-sort and insertion order coincide. Oracle:
-/// `HierarchicalSampleNormalizer().fit_transform` on the name-sorted log2 matrix.
+/// The pipeline pivot orders sample names [a,b,c,d], independently of their
+/// registration order [c,a,d,b]. Official directlfq 0.3.3 expected values use
+/// that name-sorted matrix after f32 quantization at the QPX boundary.
 #[test]
 fn features2proteins_hierarchical_orders_columns_by_sample_name() -> Result<(), Box<dyn Error>> {
     let hierarchical = run_hier_order_real_path()?;
-    // Oracle values are computed from the f32-quantized intensities (the QPX
-    // parquet stores intensity as f32), so the comparison holds at 1e-9.
-    let oracle: [(&str, [(&str, f64); 4]); 12] = [
-        (
-            "H90",
-            [
-                ("hsample-a", 157.1363517371411),
-                ("hsample-b", 1346.5999755859382),
-                ("hsample-c", 1020.3879303023602),
-                ("hsample-d", 369.6212233109585),
-            ],
-        ),
-        (
-            "H91",
-            [
-                ("hsample-a", 235.7045276057116),
-                ("hsample-b", 2019.9000244140636),
-                ("hsample-c", 1530.5820017144852),
-                ("hsample-d", 554.4056136920551),
-            ],
-        ),
-        (
-            "H92",
-            [
-                ("hsample-a", 361.41360899542445),
-                ("hsample-b", 3097.199951171876),
-                ("hsample-c", 2346.9272420504276),
-                ("hsample-d", 850.1026051316876),
-            ],
-        ),
-        (
-            "H93",
-            [
-                ("hsample-a", 487.12269038513745),
-                ("hsample-b", 4174.499999999998),
-                ("hsample-c", 3163.185348412179),
-                ("hsample-d", 1145.7995965713192),
-            ],
-        ),
-        (
-            "H94",
-            [
-                ("hsample-a", 691.3999476434207),
-                ("hsample-b", 5924.999999999999),
-                ("hsample-c", 4489.724660160245),
-                ("hsample-d", 1626.333356986486),
-            ],
-        ),
-        (
-            "H95",
-            [
-                ("hsample-a", 942.8181104228464),
-                ("hsample-b", 8079.600097656255),
-                ("hsample-c", 6122.328006857941),
-                ("hsample-d", 2217.7273398657508),
-            ],
-        ),
-        (
-            "H96",
-            [
-                ("hsample-a", 1304.2317194182706),
-                ("hsample-b", 11176.7998046875),
-                ("hsample-c", 8469.25482386459),
-                ("hsample-d", 3067.882451500532),
-            ],
-        ),
-        (
-            "H97",
-            [
-                ("hsample-a", 1728.499869108551),
-                ("hsample-b", 14812.599609375),
-                ("hsample-c", 11224.267870891634),
-                ("hsample-d", 4065.833456420541),
-            ],
-        ),
-        (
-            "H98",
-            [
-                ("hsample-a", 2357.045276057115),
-                ("hsample-b", 20199.000000000004),
-                ("hsample-c", 15305.81959210108),
-                ("hsample-d", 5544.318349664374),
-            ],
-        ),
-        (
-            "H99",
-            [
-                ("hsample-a", 3299.8633864799617),
-                ("hsample-b", 28278.59960937499),
-                ("hsample-c", 21428.146748871448),
-                ("hsample-d", 7762.045689530126),
-            ],
-        ),
-        (
-            "H100",
-            [
-                ("hsample-a", 4556.954200377088),
-                ("hsample-b", 39051.39843749999),
-                ("hsample-c", 29591.251891465436),
-                ("hsample-d", 10719.015476017788),
-            ],
-        ),
-        (
-            "H101",
-            [
-                ("hsample-a", 6285.4540694856405),
-                ("hsample-b", 53864.000000000015),
-                ("hsample-c", 40815.518912269545),
-                ("hsample-d", 14784.848932438334),
-            ],
-        ),
+    let expected = [
+        [
+            460.00000000000017,
+            459.9999916601302,
+            459.99997084436984,
+            459.9999958080811,
+        ],
+        [
+            690.0000000000001,
+            690.00000833987,
+            690.0000041699354,
+            689.9673608833084,
+        ],
+        [
+            1058.0000000000002,
+            1058.0068153416473,
+            1058.0157123155623,
+            1057.9673734482278,
+        ],
+        [
+            1426.0000000000007,
+            1426.0136640427731,
+            1425.9921396892423,
+            1425.9673860131434,
+        ],
+        [
+            2024.0000000000002,
+            2023.9863359572244,
+            2024.0078811604344,
+            2023.999949718653,
+        ],
+        [
+            2760.0000000000005,
+            2760.00003335948,
+            2760.0000166797417,
+            2759.9999748484897,
+        ],
+        [
+            3818.0,
+            3818.0067653024266,
+            3818.0155373817815,
+            3818.032693546606,
+        ],
+        [
+            5059.999999999999,
+            5059.999866562081,
+            5059.999966708354,
+            5059.99995388889,
+        ],
+        [
+            6899.999999999999,
+            6899.999999999999,
+            6899.999850085835,
+            6899.999937121222,
+        ],
+        [
+            9660.0,
+            9659.999866562075,
+            9659.999483538526,
+            9659.9999119697,
+        ],
+        [
+            13339.999999999995,
+            13339.99946624832,
+            13340.00001674757,
+            13339.999878434359,
+        ],
+        [
+            18399.999999999996,
+            18399.999999999996,
+            18399.999600228894,
+            18399.999832323236,
+        ],
     ];
-    for (protein, samples) in oracle {
-        for (sample, expected) in samples {
-            assert_numeric_cell_close(&hierarchical, protein, sample, expected);
+    for (index, values) in expected.iter().enumerate() {
+        for (sample, &value) in ["hsample-a", "hsample-b", "hsample-c", "hsample-d"]
+            .iter()
+            .zip(values)
+        {
+            assert_numeric_cell_close(&hierarchical, HIER_ORDER_PROTEINS[index], sample, value);
         }
     }
     Ok(())
@@ -4078,7 +4032,7 @@ fn run_rlr_cross_distribution_normalization() -> Result<CsvTable, Box<dyn Error>
 /// `min_unique_peptides = 1` and Sum quantification the pipeline's (protein x
 /// sample) wide matrix equals these intensities exactly, so it is the same matrix
 /// the Python normalizers are fitted on. Twelve rows clears every fallback
-/// threshold (LOESS >=10 MA points, Hierarchical >=10 overlap), exercising
+/// threshold (including LOESS >=10 MA points), exercising
 /// the real shift/smoothing math.
 const SAMPLE_NORM_PEPTIDES: [&str; 12] = [
     "AAALEPK", "ACDEFGK", "ADEFGHK", "AEFGHIK", "AFGHIKR", "AGHIKLR", "AHIKLMR", "AIKLMNR",
@@ -4274,18 +4228,9 @@ fn run_center_real_path(method: &str) -> Result<CsvTable, Box<dyn Error>> {
     read_csv(&output)
 }
 
-// Four-sample hierarchical matrix whose sample REGISTRATION order (parquet/SDRF
-// insertion: run-c, run-a, run-d, run-b) differs from the lexicographic NAME
-// order (hsample-a..d). The hierarchical leaf order, the cluster anchor (shift 0),
-// and the shift propagation all depend on the column order, so this fixture is
-// order-sensitive: under the name order hsample-b anchors at shift 0, but under
-// the insertion order hsample-c would anchor instead, shifting every column by a
-// different amount. The protein matrix therefore only matches the Python oracle
-// when the Rust hierarchical sorts its columns by sample NAME (Python's
-// `pivot_table(columns=SAMPLE_ID)` order), not by `SampleId`. Twelve
-// single-peptide proteins clear the >=10 pairwise-overlap guard so the real
-// median-shift solver runs on every pair. Oracle:
-// `HierarchicalSampleNormalizer().fit_transform` on the name-sorted log2 matrix.
+// Four-sample fixture with registration order [c,a,d,b] and the pipeline's
+// lexical sample order [a,b,c,d]. Official expected values above were computed
+// by directlfq 0.3.3 on these f32-quantized intensities in lexical sample order.
 const HIER_ORDER_PROTEINS: [&str; 12] = [
     "H90", "H91", "H92", "H93", "H94", "H95", "H96", "H97", "H98", "H99", "H100", "H101",
 ];

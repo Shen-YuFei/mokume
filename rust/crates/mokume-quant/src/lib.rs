@@ -4,8 +4,8 @@ mod directlfq_aligned;
 mod maxlfq;
 
 pub use directlfq_aligned::{
-    direct_lfq_aligned, direct_lfq_aligned_with_ions, DirectLfqIon, DirectLfqNormalizedIon,
-    DirectLfqResult,
+    direct_lfq_aligned, direct_lfq_aligned_with_ions, sample_shifts as direct_lfq_sample_shifts,
+    DirectLfqIon, DirectLfqNormalizedIon, DirectLfqResult,
 };
 pub use maxlfq::{
     max_lfq, max_lfq_with_samples, solve_max_lfq, solve_max_lfq_with_stabilization, MaxLfqResult,

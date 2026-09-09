@@ -350,9 +350,12 @@ fn linear_to_log2(value: f64) -> f64 {
 /// Compute per-sample additive log2 shifts for the global normalization stage.
 /// `rows` is the ion x sample matrix; the returned vector has one shift per
 /// sample column. Mirrors `NormalizationManagerSamplesOnSelectedProteins`:
-/// quadratic clustering when `n_samples <= 50`, otherwise a 50-sample quadratic
-/// subset plus a linear shift of the remaining samples onto the subset median.
-fn sample_shifts(rows: &[Vec<f64>], n_samples: usize, quadratic_limit: usize) -> Vec<f64> {
+/// quadratic clustering up to `quadratic_limit`, otherwise that many samples
+/// plus a linear shift of the remaining samples onto the subset median.
+///
+/// Each row must have `n_samples` log2 values, with missing values encoded as
+/// NaN. `quadratic_limit` must be positive when `n_samples` is positive.
+pub fn sample_shifts(rows: &[Vec<f64>], n_samples: usize, quadratic_limit: usize) -> Vec<f64> {
     let mut sample_major = transpose(rows, n_samples);
     if n_samples <= quadratic_limit {
         let mut work = drop_na_columns(&sample_major);

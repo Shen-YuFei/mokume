@@ -2530,35 +2530,11 @@ fn apply_rlr_to_peptide_cells(
     }
 }
 
-/// TMM (Trimmed Mean of M-values) sample normalization, mirroring
-/// `TMMNormalizer(m_trim=0.3, a_trim=0.05, ref_sample=None, log_transform=False)`
-/// in `python/mokume/normalization/tmm.py`.
-///
-/// `stages.apply_tmm` (stages.py:1087-1093) runs the normalizer through
-/// `_apply_dataset_normalizer(..., log_space=False)` (stages.py:1011-1042),
-/// which pivots the peptide-level long table to the `(protein, canonical) x
-/// sample` wide matrix with `aggfunc="sum"` and passes it in as *raw linear*
-/// intensities (TMM does its own log2 internally, `log_transform=False`). So
-/// TMM operates on the SAME summed-canonical-peptide matrix the other dataset
-/// methods use, and returns linear intensities.
-///
-/// TMM produces a single per-sample scalar `norm_factor`, then divides every
-/// value in that sample's column by it (tmm.py:334-343 uses division). Because
-/// the factor is uniform across every peptide of a sample it commutes with the
-/// downstream canonical collapse `finalize` performs, so we divide the original
-/// peptidoform cells in place (NOT the canonical-summed values) and let
-/// `finalize` remain the sole canonical-collapse site. The canonical-summed wide
-/// matrix built below is used only to fit the factors, matching Python's pivot;
-/// scaling each peptidoform by the same factor then collapsing reproduces
-/// Python's melt-back cell-for-cell without a double collapse.
-///
-/// Determinism: the factor math (library sizes, reference selection via
-/// `np.percentile` linear interpolation, the double-trimmed weighted mean) is
-/// delegated to `mokume_normalization::tmm_norm_factors`, which does all work in
-/// `f64` and sorts with `f64::total_cmp`. To match pandas' pivoted column order
-/// (columns sorted by sample label), we order the wide-matrix columns by the
-/// sample's string name; this fixes the reference `idxmin` tie-break to the
-/// first sample in label order, exactly like pandas.
+/// Fit edgeR TMM factors on the canonical-peptide x sample linear matrix.
+/// Divide original peptidoforms by their sample's centered composition factor;
+/// the later canonical sum therefore commutes with this scaling. This is not
+/// edgeR CPM: the library-size normalization is used during factor fitting only.
+/// Sample names are sorted to preserve the pipeline pivot's reference tie-break.
 fn apply_tmm_to_peptide_cells(
     cells: &mut HashMap<CellKey, HashMap<PeptideId, f64>>,
     allowed_cells: &HashSet<CellKey>,
@@ -2663,8 +2639,7 @@ fn apply_tmm_to_peptide_cells(
         }
     }
 
-    // (5) Compute the per-sample rescaled factors (tmm.py:296-299) and divide
-    // every peptidoform in that sample by its factor (tmm.py:334-343).
+    // Compute centered edgeR factors and divide the original peptidoforms.
     //
     // TMM's factor is a single per-sample scalar, so it commutes with the
     // downstream sum/median canonical collapse that `finalize` performs. We
@@ -3045,74 +3020,15 @@ const LOESS_FRAC: f64 = 0.75;
 /// (`it=3`).
 const LOESS_ITERATIONS: usize = 3;
 
-/// DirectLFQ-style hierarchical sample normalization, mirroring
-/// `mokume.normalization.hierarchical.HierarchicalSampleNormalizer` exactly as
-/// the pipeline invokes it in `NormalizationStage.apply_hierarchical`.
-///
-/// `apply_hierarchical` builds the (protein, canonical) x sample wide matrix
-/// (`aggfunc="sum"`), replaces 0 with NaN, takes `np.log2`, fits/transforms with
-/// `HierarchicalSampleNormalizer(num_samples_quadratic=cfg.directlfq_num_samples_quadratic,
-/// selected_proteins=None)` (default `num_samples_quadratic = 50`,
-/// `distance_metric = MEDIAN`, `min_overlap = 10`), then `2 ** result`. So the
-/// outer wrap is `log_space = true`: we log2 the linear matrix, run the whole
-/// alignment in log2 space, and exponentiate on write-back. `selected_proteins`
-/// is always `None` in the pipeline call, so the protein filter is a no-op here.
-///
-/// Algorithm (per the Python class):
-///  1. Collapse each allowed cell's peptidoforms to canonical peptides by SUM via
-///     `peptide_to_canonical`; keep only strictly-positive finite sums and store
-///     their `log2`. Rows of the wide matrix are `(protein, canonical)`, columns
-///     are samples. Missing/non-positive cells become NaN (i.e. absent here).
-///  2. Order samples ascending by their resolved NAME string -> column index
-///     `0..n`. The Python pivot's column order is load-bearing because the
-///     distance-matrix indexing, `leaves_list`, and the cumulative linear-shift
-///     propagation (which sample anchors each cluster at shift 0) all depend on
-///     it; `pivot_table(columns=SAMPLE_ID)` produces lexicographically sorted
-///     sample columns, so the columns must be sorted by sample name here, NOT by
-///     `SampleId` (which is parquet-stream insertion order and does not match the
-///     pivot order on real data). `SampleId` breaks any name ties deterministically.
-///  3. Edge cases:
-///     - n == 0: nothing to do.
-///     - n == 1: shift 0.0.
-///     - n == 2: `shift = median(c0 over overlap) - median(c1 over overlap)` if
-///       the pairwise overlap count >= min_overlap, else 0.0; factors {c0:0, c1:shift}.
-///  4. n >= 3: pairwise distance matrix `D[i,j] = |median(log2 col i over i&j
-///     overlap) - median(...col j...)|` when overlap >= min_overlap, else +inf
-///     (MEDIAN metric). If all D are inf -> all shifts 0.0. Otherwise replace inf
-///     with `max_finite * 10`, run scipy `linkage(method="average")` (UPGMA via the
-///     nn-chain algorithm) + `leaves_list` to get `leaf_order`.
-///  5. Compute shifts in `leaf_order`:
-///     - n <= num_samples_quadratic: quadratic optimization. The Python
-///       `least_squares(method="lm")` minimizes
-///       `sum_{i<j, overlap>=min} w_ij * ((s_i - s_j) - md_ij)^2` with
-///       `w_ij = sqrt(overlap_ij)`, `md_ij = median(col_i over i&j) -
-///       median(col_j over i&j)`, `s_0` fixed at 0. Because the residuals are
-///       LINEAR in the shifts, this is a weighted linear least-squares whose unique
-///       minimizer (when the constraint graph is connected) is the normal-equations
-///       solution `(A^T W A) s = A^T W b`; LM converges to it (verified < 1e-15).
-///       If the normal matrix is singular (disconnected graph) -> fall back to the
-///       linear shifts, matching Python's "did not converge -> linear" path.
-///     - n > num_samples_quadratic: linear optimization. Walk `leaf_order`; each
-///       step `shift = median(prev over prev&curr) - median(curr over prev&curr)`
-///       if overlap >= min_overlap else 0.0; accumulate cumulatively.
-///  6. Write-back: for each allowed cell, `value <- 2 ** (log2(value) +
-///     shift[sample])`. Cells that were NaN/non-positive stay dropped.
-///
-/// Determinism: samples are sorted by `(name, SampleId)` to reproduce the Python
-/// pivot's lexicographic column order; per-row sample lists are sorted by
-/// `(value, row_id)` only for medians (order-independent); the nn-chain reads a
-/// dense condensed distance array indexed by sorted sample position; the
-/// post-merge `Z` is stably argsorted by distance then relabeled with union-find,
-/// exactly reproducing scipy. Verified bit-order-identical to scipy `leaves_list`
-/// on 92,573 exhaustive tie-heavy matrices (n=3..6) and 5,000 random matrices
-/// (n up to 40, ties injected): 0 mismatches.
+/// DirectLFQ sample normalization on canonical-peptide log2 profiles. Samples
+/// follow the pipeline pivot's name order; the shared DirectLFQ primitive picks
+/// pairs by variance, shifts by their median difference, and merges profiles.
 fn apply_hierarchical_to_peptide_cells(
     cells: &mut HashMap<CellKey, HashMap<PeptideId, f64>>,
     allowed_cells: &HashSet<CellKey>,
     peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
     sample_registry: &StringIdRegistry<SampleId>,
 ) {
-    const MIN_OVERLAP: usize = 10;
     const NUM_SAMPLES_QUADRATIC: usize = 50;
     // (No trimming in hierarchical normalization.)
 
@@ -3147,7 +3063,7 @@ fn apply_hierarchical_to_peptide_cells(
     // tie-break), matching the Python `pivot_table(columns=SAMPLE_ID)` column
     // order. `columns[idx]` maps each (protein, canonical) row to its log2 value
     // in sample `samples[idx]`. The ordering is load-bearing: it drives the
-    // distance-matrix indices, `leaves_list`, and the cumulative shift chain.
+    // pairwise distance indices, merge tie-breaking, and the anchor sample.
     let mut samples = log2_cells
         .keys()
         .map(|cell| cell.sample)
@@ -3185,8 +3101,8 @@ fn apply_hierarchical_to_peptide_cells(
         }
     }
 
-    // (3)+(4)+(5) Compute per-column log2 shifts.
-    let shifts = hierarchical_compute_shifts(&columns, MIN_OVERLAP, NUM_SAMPLES_QUADRATIC);
+    // Compute per-column log2 shifts with the official DirectLFQ algorithm.
+    let shifts = hierarchical_compute_shifts(&columns, NUM_SAMPLES_QUADRATIC);
 
     // (6) Write back: 2 ** (log2(value) + shift[sample]).
     for (cell, peptides) in cells {
@@ -3207,422 +3123,53 @@ fn apply_hierarchical_to_peptide_cells(
     }
 }
 
-/// Per-column log2 shift factors, returned in the same index order as `columns`.
-/// Mirrors `HierarchicalSampleNormalizer.fit` (`_compute_distance_matrix` +
-/// scipy clustering + `_compute_shifts`).
+/// Preserve the sparse pivot's feature order when using the shared DirectLFQ
+/// sample-alignment kernel. Missing canonical peptides remain NaN.
 fn hierarchical_compute_shifts(
     columns: &[HashMap<QuantilePeptideKey, f64>],
-    min_overlap: usize,
     num_samples_quadratic: usize,
 ) -> Vec<f64> {
-    let n = columns.len();
-    match n {
-        0 => return Vec::new(),
-        1 => return vec![0.0],
-        2 => {
-            // shift second column to match the first over their pairwise overlap.
-            let shift =
-                hierarchical_pair_median_diff(&columns[0], &columns[1], min_overlap).unwrap_or(0.0);
-            return vec![0.0, shift];
-        }
-        _ => {}
-    }
-
-    // (4) Pairwise distance matrix (MEDIAN metric): D[i][j] = |md_ij|, +inf when
-    // the overlap is below `min_overlap`. `md_ij` is the signed median difference.
-    let mut distance = vec![vec![0.0_f64; n]; n];
-    let mut all_inf = true;
-    let mut max_finite = f64::NEG_INFINITY;
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let value = match hierarchical_pair_median_diff(&columns[i], &columns[j], min_overlap) {
-                Some(diff) => {
-                    let absolute = diff.abs();
-                    if absolute.is_finite() {
-                        all_inf = false;
-                        max_finite = max_finite.max(absolute);
-                    }
-                    absolute
-                }
-                None => f64::INFINITY,
-            };
-            distance[i][j] = value;
-            distance[j][i] = value;
-        }
-    }
-    if all_inf {
-        // No overlapping values between any pair -> zero shifts.
-        return vec![0.0; n];
-    }
-
-    // Replace +inf with max_finite * 10 for clustering (matches the Python guard).
-    let inf_replacement = max_finite * 10.0;
-    for i in 0..n {
-        // `split_at_mut` borrows row `i` and each later row `j` simultaneously so
-        // both symmetric entries can be written without cloning.
-        let (head, tail) = distance.split_at_mut(i + 1);
-        let row_i = &mut head[i];
-        for (offset, row_j) in tail.iter_mut().enumerate() {
-            let j = i + 1 + offset;
-            if row_i[j].is_infinite() {
-                row_i[j] = inf_replacement;
-                row_j[i] = inf_replacement;
-            }
-        }
-    }
-
-    // scipy linkage(method="average") + leaves_list -> clustering order.
-    let leaf_order = hierarchical_leaf_order(&distance, n);
-
-    if n <= num_samples_quadratic {
-        hierarchical_shifts_quadratic(columns, &leaf_order, min_overlap, n)
-    } else {
-        hierarchical_shifts_linear(columns, &leaf_order, min_overlap, n)
-    }
-}
-
-/// Signed median difference between two columns over their shared rows, when the
-/// overlap count is at least `min_overlap`; otherwise `None`.
-/// `median(col_a over overlap) - median(col_b over overlap)` in log2 space.
-fn hierarchical_pair_median_diff(
-    column_a: &HashMap<QuantilePeptideKey, f64>,
-    column_b: &HashMap<QuantilePeptideKey, f64>,
-    min_overlap: usize,
-) -> Option<f64> {
-    let (small, large) = if column_a.len() <= column_b.len() {
-        (column_a, column_b)
-    } else {
-        (column_b, column_a)
-    };
-    let mut a_values = Vec::<f64>::new();
-    let mut b_values = Vec::<f64>::new();
-    for (key, &value_small) in small {
-        let Some(&value_large) = large.get(key) else {
-            continue;
-        };
-        if value_small.is_finite() && value_large.is_finite() {
-            if column_a.len() <= column_b.len() {
-                a_values.push(value_small);
-                b_values.push(value_large);
-            } else {
-                a_values.push(value_large);
-                b_values.push(value_small);
-            }
-        }
-    }
-    if a_values.len() < min_overlap {
-        return None;
-    }
-    let median_a = finite_median(&mut a_values)?;
-    let median_b = finite_median(&mut b_values)?;
-    Some(median_a - median_b)
-}
-
-/// Cumulative linear shifts along the clustering order (`_compute_shifts_linear`).
-fn hierarchical_shifts_linear(
-    columns: &[HashMap<QuantilePeptideKey, f64>],
-    leaf_order: &[usize],
-    min_overlap: usize,
-    n: usize,
-) -> Vec<f64> {
-    let mut shifts = vec![0.0_f64; n];
-    let mut cumulative = 0.0;
-    for window in leaf_order.windows(2) {
-        let previous = window[0];
-        let current = window[1];
-        let step =
-            hierarchical_pair_median_diff(&columns[previous], &columns[current], min_overlap)
-                .unwrap_or(0.0);
-        cumulative += step;
-        shifts[current] = cumulative;
-    }
-    shifts
-}
-
-/// Weighted least-squares shifts (`_compute_shifts_quadratic`). The first leaf is
-/// pinned at 0.0; the remaining shifts minimize
-/// `sum_{i<j, overlap>=min} overlap_ij * ((s_i - s_j) - md_ij)^2`. Because the
-/// residuals are linear in the shifts, the unique minimizer (connected graph) is
-/// the normal-equations solution. Falls back to the linear shifts when the normal
-/// matrix is singular (disconnected graph), matching Python's "did not converge".
-fn hierarchical_shifts_quadratic(
-    columns: &[HashMap<QuantilePeptideKey, f64>],
-    leaf_order: &[usize],
-    min_overlap: usize,
-    n: usize,
-) -> Vec<f64> {
-    // Reorder columns into clustering order: `ordered[k]` is column `leaf_order[k]`.
-    // Variable `k` in `1..n` is the free shift of leaf `k`; leaf 0 is fixed at 0.
-    let free = n - 1;
-    let mut normal = vec![vec![0.0_f64; free]; free];
-    let mut rhs = vec![0.0_f64; free];
-
-    // Each kept pair (p, q) with p < q (positions in `leaf_order`) contributes a
-    // residual sqrt(w) * ((s_p - s_q) - md). md is measured in leaf order: column
-    // leaf_order[p] minus column leaf_order[q].
-    let mut any_constraint = false;
-    for p in 0..n {
-        for q in (p + 1)..n {
-            let column_p = &columns[leaf_order[p]];
-            let column_q = &columns[leaf_order[q]];
-            // overlap count and median diff over shared rows.
-            let overlap = hierarchical_pair_overlap(column_p, column_q);
-            if overlap < min_overlap {
-                continue;
-            }
-            let Some(md) = hierarchical_pair_median_diff(column_p, column_q, min_overlap) else {
-                continue;
-            };
-            any_constraint = true;
-            let weight = overlap as f64; // sqrt(w)^2 cancels into the normal matrix.
-                                         // Coefficients of (s_p - s_q): +1 on variable (p-1) if p>0, -1 on (q-1).
-                                         // Variable index for leaf position `k` (k>=1) is `k-1`.
-            let mut coefficients = Vec::<(usize, f64)>::with_capacity(2);
-            if p >= 1 {
-                coefficients.push((p - 1, 1.0));
-            }
-            if q >= 1 {
-                coefficients.push((q - 1, -1.0));
-            }
-            for &(row_index, row_coeff) in &coefficients {
-                rhs[row_index] += weight * row_coeff * md;
-                for &(col_index, col_coeff) in &coefficients {
-                    normal[row_index][col_index] += weight * row_coeff * col_coeff;
-                }
-            }
-        }
-    }
-
-    if !any_constraint {
-        return hierarchical_shifts_linear(columns, leaf_order, min_overlap, n);
-    }
-
-    // Solve the symmetric system; on singularity fall back to linear shifts.
-    let Some(solution) = solve_symmetric_system(normal, rhs) else {
-        return hierarchical_shifts_linear(columns, leaf_order, min_overlap, n);
-    };
-
-    // Map leaf-order shifts back to original column indices.
-    let mut shifts = vec![0.0_f64; n];
-    for position in 1..n {
-        shifts[leaf_order[position]] = solution[position - 1];
-    }
-    shifts
-}
-
-/// Count of shared finite rows between two columns (overlap size).
-fn hierarchical_pair_overlap(
-    column_a: &HashMap<QuantilePeptideKey, f64>,
-    column_b: &HashMap<QuantilePeptideKey, f64>,
-) -> usize {
-    let (small, large) = if column_a.len() <= column_b.len() {
-        (column_a, column_b)
-    } else {
-        (column_b, column_a)
-    };
-    small
+    let mut keys = columns
         .iter()
-        .filter(|(key, value)| {
-            value.is_finite() && large.get(key).is_some_and(|other| other.is_finite())
+        .flat_map(|column| column.keys().copied())
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    keys.dedup();
+    let rows = keys
+        .iter()
+        .map(|key| {
+            columns
+                .iter()
+                .map(|column| column.get(key).copied().unwrap_or(f64::NAN))
+                .collect()
         })
-        .count()
+        .collect::<Vec<_>>();
+    hierarchical_sample_shifts(&rows, columns.len(), num_samples_quadratic)
 }
 
-/// Reproduce scipy `leaves_list(linkage(squareform(distance), method="average"))`.
-/// Runs the nn-chain UPGMA agglomeration on a condensed distance buffer, stably
-/// sorts the merges by distance, relabels with union-find, then pre-order
-/// traverses the dendrogram. Verified identical to scipy across 97k+ cases.
-fn hierarchical_leaf_order(distance: &[Vec<f64>], n: usize) -> Vec<usize> {
-    if n == 1 {
-        return vec![0];
-    }
-    // Condensed buffer: index(i, j) for i < j.
-    let condensed_index = |i: usize, j: usize| -> usize {
-        let (i, j) = if i < j { (i, j) } else { (j, i) };
-        n * i - (i * (i + 1)) / 2 + (j - i - 1)
-    };
-    let mut condensed = vec![0.0_f64; n * (n - 1) / 2];
-    for i in 0..n {
-        for j in (i + 1)..n {
-            condensed[condensed_index(i, j)] = distance[i][j];
+/// Upstream quadratic alignment masks samples with fewer than two observed
+/// features. Linear-to-reference samples are not subject to that masking.
+fn hierarchical_sample_shifts(
+    rows: &[Vec<f64>],
+    n_samples: usize,
+    quadratic_limit: usize,
+) -> Vec<f64> {
+    let mut shifts = mokume_quant::direct_lfq_sample_shifts(rows, n_samples, quadratic_limit);
+    let mut counts: Vec<_> = (0..n_samples)
+        .map(|sample| {
+            (
+                sample,
+                rows.iter().filter(|row| row[sample].is_finite()).count(),
+            )
+        })
+        .collect();
+    counts.sort_by(|(i, a), (j, b)| b.cmp(a).then(i.cmp(j)));
+    for (sample, count) in counts.into_iter().take(quadratic_limit) {
+        if count < 2 {
+            shifts[sample] = f64::NAN;
         }
     }
-
-    // nn-chain: each row of `merges` is (cluster_a, cluster_b, distance).
-    let mut size = vec![1usize; n];
-    let mut chain = vec![0usize; n];
-    let mut chain_length = 0usize;
-    let mut merges = Vec::<(usize, usize, f64)>::with_capacity(n - 1);
-
-    for _ in 0..(n - 1) {
-        if chain_length == 0 {
-            chain_length = 1;
-            for (index, &cluster_size) in size.iter().enumerate() {
-                if cluster_size > 0 {
-                    chain[0] = index;
-                    break;
-                }
-            }
-        }
-        let mut x;
-        let mut y = 0usize;
-        let mut current_min;
-        loop {
-            x = chain[chain_length - 1];
-            if chain_length > 1 {
-                y = chain[chain_length - 2];
-                current_min = condensed[condensed_index(x, y)];
-            } else {
-                current_min = f64::INFINITY;
-            }
-            for (index, &cluster_size) in size.iter().enumerate() {
-                if cluster_size == 0 || index == x {
-                    continue;
-                }
-                let candidate = condensed[condensed_index(x, index)];
-                if candidate < current_min {
-                    current_min = candidate;
-                    y = index;
-                }
-            }
-            if chain_length > 1 && y == chain[chain_length - 2] {
-                break;
-            }
-            chain[chain_length] = y;
-            chain_length += 1;
-        }
-        chain_length -= 2;
-        let (low, high) = if x > y { (y, x) } else { (x, y) };
-        let size_low = size[low];
-        let size_high = size[high];
-        merges.push((low, high, current_min));
-        // Average linkage Lance-Williams update onto `high`; deactivate `low`.
-        size[low] = 0;
-        size[high] = size_low + size_high;
-        let denominator = (size_low + size_high) as f64;
-        for index in 0..n {
-            if size[index] == 0 || index == high {
-                continue;
-            }
-            let distance_low = condensed[condensed_index(low, index)];
-            let distance_high = condensed[condensed_index(high, index)];
-            condensed[condensed_index(high, index)] =
-                (size_low as f64 * distance_low + size_high as f64 * distance_high) / denominator;
-        }
-    }
-
-    // Stable argsort of merges by distance (scipy uses a stable sort here).
-    let mut order = (0..merges.len()).collect::<Vec<usize>>();
-    order.sort_by(|&left, &right| {
-        merges[left]
-            .2
-            .total_cmp(&merges[right].2)
-            .then_with(|| left.cmp(&right))
-    });
-
-    // Union-find relabel: children stored as (left_child, right_child) per merged
-    // node id in `[n, 2n-2]`.
-    let mut parent = (0..(2 * n - 1)).collect::<Vec<usize>>();
-    let mut component_size = vec![1usize; 2 * n - 1];
-    let mut children = vec![(0usize, 0usize); n - 1];
-    let mut next_id = n;
-    let find = |parent: &mut Vec<usize>, mut node: usize| -> usize {
-        while parent[node] != node {
-            parent[node] = parent[parent[node]];
-            node = parent[node];
-        }
-        node
-    };
-    for (slot, &merge_index) in order.iter().enumerate() {
-        let (raw_a, raw_b, _) = merges[merge_index];
-        let root_a = find(&mut parent, raw_a);
-        let root_b = find(&mut parent, raw_b);
-        let (low, high) = if root_a < root_b {
-            (root_a, root_b)
-        } else {
-            (root_b, root_a)
-        };
-        children[slot] = (low, high);
-        component_size[next_id] = component_size[low] + component_size[high];
-        parent[low] = next_id;
-        parent[high] = next_id;
-        next_id += 1;
-    }
-
-    // Pre-order traversal from the root (id 2n-2), left child first.
-    let mut leaves = Vec::<usize>::with_capacity(n);
-    let mut stack = vec![2 * n - 2];
-    while let Some(node) = stack.pop() {
-        if node < n {
-            leaves.push(node);
-        } else {
-            let (left, right) = children[node - n];
-            // push right first so the left child is visited first on pop.
-            stack.push(right);
-            stack.push(left);
-        }
-    }
-    leaves
-}
-
-/// Solve the symmetric positive-(semi)definite linear system `matrix * x = rhs`
-/// via Gaussian elimination with partial pivoting. Returns `None` if the matrix
-/// is singular (used as the "did not converge" fall-back signal). Deterministic:
-/// pivot ties resolve to the lowest row index.
-fn solve_symmetric_system(mut matrix: Vec<Vec<f64>>, mut rhs: Vec<f64>) -> Option<Vec<f64>> {
-    let size = rhs.len();
-    if size == 0 {
-        return Some(Vec::new());
-    }
-    for column in 0..size {
-        // Partial pivot: largest |value| in this column at or below the diagonal.
-        let mut pivot_row = column;
-        let mut pivot_magnitude = matrix[column][column].abs();
-        for (offset, candidate) in matrix[column + 1..].iter().enumerate() {
-            let magnitude = candidate[column].abs();
-            if magnitude > pivot_magnitude {
-                pivot_magnitude = magnitude;
-                pivot_row = column + 1 + offset;
-            }
-        }
-        if pivot_magnitude <= 1e-12 {
-            return None;
-        }
-        if pivot_row != column {
-            matrix.swap(column, pivot_row);
-            rhs.swap(column, pivot_row);
-        }
-        // Eliminate below the pivot. `split_at_mut` lets us borrow the pivot row
-        // and a target row simultaneously without cloning.
-        let (upper, lower) = matrix.split_at_mut(column + 1);
-        let pivot = &upper[column];
-        let pivot_value = pivot[column];
-        for (offset, target) in lower.iter_mut().enumerate() {
-            let row = column + 1 + offset;
-            let factor = target[column] / pivot_value;
-            if factor == 0.0 {
-                continue;
-            }
-            for index in column..size {
-                target[index] -= factor * pivot[index];
-            }
-            rhs[row] -= factor * rhs[column];
-        }
-    }
-    // Back substitution.
-    let mut solution = vec![0.0_f64; size];
-    for row in (0..size).rev() {
-        let mut accumulator = rhs[row];
-        for column in (row + 1)..size {
-            accumulator -= matrix[row][column] * solution[column];
-        }
-        let diagonal = matrix[row][row];
-        if diagonal.abs() <= 1e-12 {
-            return None;
-        }
-        solution[row] = accumulator / diagonal;
-    }
-    Some(solution)
+    shifts
 }
 
 fn apply_quantile_to_lfq_traces(
@@ -3674,40 +3221,28 @@ fn quantile_normalized_assignments<K>(
 where
     K: Copy + Eq + Ord + std::hash::Hash,
 {
-    let mut by_sample = HashMap::<SampleId, Vec<(K, f64)>>::new();
+    let mut by_sample = std::collections::BTreeMap::<SampleId, Vec<(K, f64)>>::new();
+    let mut rows = HashSet::new();
     for (row, sample, intensity) in measurements {
+        rows.insert(row);
         if intensity.is_finite() {
             by_sample.entry(sample).or_default().push((row, intensity));
         }
     }
 
-    let mut grid_size = 0usize;
+    let grid_size = rows.len();
     for values in by_sample.values_mut() {
         values.sort_by(|left, right| {
             left.1
                 .total_cmp(&right.1)
                 .then_with(|| left.0.cmp(&right.0))
         });
-        grid_size = grid_size.max(values.len());
     }
     if grid_size == 0 {
         return HashMap::new();
     }
 
-    // Mean reference distribution on a uniform [0, 1] grid of `grid_size`
-    // points: reference[j] is the cross-sample mean of each column's quantile
-    // function evaluated at fraction j / (grid_size - 1).
-    let mut reference = vec![0.0; grid_size];
-    let column_count = by_sample.len();
-    for values in by_sample.values() {
-        let sorted = values.iter().map(|(_, value)| *value).collect::<Vec<_>>();
-        for (j, slot) in reference.iter_mut().enumerate() {
-            *slot += interpolate_sorted(&sorted, grid_fraction(j, grid_size));
-        }
-    }
-    for slot in &mut reference {
-        *slot /= column_count as f64;
-    }
+    let reference = quantile_target(&by_sample, grid_size);
 
     let mut assignments = HashMap::new();
     for (sample, values) in by_sample {
@@ -3715,7 +3250,7 @@ where
         let mut index = 0;
         while index < n {
             let mut end = index + 1;
-            while end < n && values[end].1.total_cmp(&values[index].1).is_eq() {
+            while end < n && values[end].1 == values[index].1 {
                 end += 1;
             }
             // 1-based average rank of the tie group, mapped to a [0, 1] fraction.
@@ -3733,6 +3268,24 @@ where
         }
     }
     assignments
+}
+
+/// The target grid has the original row count, including entirely missing rows.
+fn quantile_target<K>(
+    by_sample: &std::collections::BTreeMap<SampleId, Vec<(K, f64)>>,
+    grid_size: usize,
+) -> Vec<f64> {
+    let mut reference = vec![0.0; grid_size];
+    for values in by_sample.values() {
+        let sorted = values.iter().map(|(_, value)| *value).collect::<Vec<_>>();
+        for (j, slot) in reference.iter_mut().enumerate() {
+            *slot += interpolate_sorted(&sorted, grid_fraction(j, grid_size));
+        }
+    }
+    for slot in &mut reference {
+        *slot /= by_sample.len() as f64;
+    }
+    reference
 }
 
 /// Fraction in [0, 1] of the `j`-th point on a uniform grid of `size` points.

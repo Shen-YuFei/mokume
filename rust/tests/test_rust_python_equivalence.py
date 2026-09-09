@@ -1,4 +1,4 @@
-"""Rust <-> pure-Python equivalence for ``features2proteins``.
+"""Frozen compatibility and official TMM regressions for ``features2proteins``.
 
 The compiled Rust kernel (``mokume._mokume``) and the pure-Python pipeline are
 two implementations of the same protein-quantification contract. They share the
@@ -11,8 +11,8 @@ Instead we compare the Rust kernel's output against *frozen compatibility
 goldens* checked in beside the fixture. The goldens were produced by the
 pure-Python ``QuantificationPipeline(...).run()`` (float64); they pin accepted
 behavior for these covered paths without making Python authoritative. The Rust
-kernel computes in ``f32``, so values agree to ~1e-7 relative and we assert
-``rtol=1e-6``.
+kernel now preserves the input precision, while these compatibility tests retain
+their original ``rtol=1e-6`` and ``atol=1e-2`` thresholds.
 
 Regenerate the goldens only after an intentional shared-contract change that is
 meant to update both implementations, not after an isolated pure-Python change::
@@ -25,28 +25,23 @@ input=InputConfig(parquet='../rust/tests/example/feature_wide.parquet'), \
 quantification=QuantificationConfig(method='sum'))).run().to_csv(\
 '../rust/tests/example/feature_wide_sum_python.csv', index=False)"
 
-The TMM goldens (``feature_wide_{sum,median}_tmm_python.csv`` on the sparse
-fixture, ``feature_wide_dense_{sum,median}_tmm_python.csv`` on the dense one) are
-produced the same way but with
-``normalization=NormalizationConfig(sample_method='tmm')`` and, for the dense
-case, ``input=InputConfig(parquet='.../feature_wide_dense.parquet')``. The dense
-fixture packs 20 shared canonical peptides across every one of the 10 samples so
-each sample clears TMM's >=10-valid-feature guard, making TMM actually shift the
-output; the sparse ``feature_wide`` fixture has too few overlapping features, so
-TMM legitimately falls back to factor 1.0 in BOTH implementations. The sparse TMM
-golden still does NOT equal the un-normalized golden, though: selecting any
-dataset-normalization method routes the data through the peptidoform -> canonical
-collapse (aggfunc='sum'), which changes per-protein sums on this fixture. Because
-every sparse factor is 1.0, the sparse case pins only the guard/fallback + collapse
-path; active TMM rescaling is validated solely by the dense and multiform fixtures.
+TMM uses independent edgeR 4.8.2 oracles in ``fixtures/tmm_edger_4_8_2``.
+``provenance.json`` records input SHA256, the canonical-peptide input contract,
+official parameters and full-precision factors. The original Parquet intensities
+are collapsed by canonical peptide after the default protein/sample filtering;
+``edgeR::calcNormFactors(method="TMM")`` fits sample factors on this linear-scale
+matrix, with absent entries zero-filled only for fitting. Protein sum/median is
+then computed after division by the centered composition factors. This is not
+edgeR CPM normalization. Sparse factors must follow edgeR's pairwise support and
+global centering, which differ from the old Python >=10-valid-feature fallback.
 
 The ``feature_wide_multiform`` fixture is ``feature_wide_dense`` with a second
 peptidoform per canonical (``"<seq>(Oxidation)"``, intensity ``* 0.6 + 1000``),
 so every canonical carries two peptidoforms and the peptidoform -> canonical
 collapse actually merges rows (the 1:1 dense/sparse fixtures never do). Its
-goldens (``feature_wide_multiform_{median,sum}_tmm_python.csv`` and
-``feature_wide_multiform_median_rlr_python.csv``) are produced the same way with
-``normalization=NormalizationConfig(sample_method=...)``.
+TMM cases use the same independent edgeR construction. The RLR compatibility
+golden remains ``feature_wide_multiform_median_rlr_python.csv``, produced with
+``normalization=NormalizationConfig(sample_method='rlr')``.
 """
 
 from pathlib import Path
@@ -65,6 +60,7 @@ MULTIFORM_PARQUET = (
     REPO / "rust" / "tests" / "example" / "feature_wide_multiform.parquet"
 )
 GOLDEN_DIR = REPO / "rust" / "tests" / "example"
+EDGER_GOLDEN_DIR = REPO / "rust" / "tests" / "fixtures" / "tmm_edger_4_8_2"
 
 
 def _rust_features2proteins(
@@ -129,18 +125,18 @@ def test_rust_matches_python_golden(method, tmp_path):
     [
         ("sparse", FEATURE_PARQUET, "feature_wide"),
         ("dense", DENSE_PARQUET, "feature_wide_dense"),
+        ("multiform", MULTIFORM_PARQUET, "feature_wide_multiform"),
     ],
 )
-def test_rust_tmm_matches_python_golden(
+def test_rust_tmm_matches_edger_golden(
     method, fixture, parquet, golden_prefix, tmp_path
 ):
-    """Rust ``--sample-normalization tmm`` matches the pure-Python TMM golden.
+    """The full Rust pipeline matches edgeR factors plus protein aggregation.
 
-    Covers both the sparse fixture (where TMM falls back to factor 1.0 in both
-    kernels) and the dense fixture (where TMM genuinely rescales), so the test
-    pins the guard behaviour AND the active-normalization math.
+    Covers sparse pairwise support, dense rescaling, and multiple peptidoforms
+    per canonical peptide with both protein sum and median aggregation.
     """
-    golden_path = GOLDEN_DIR / f"{golden_prefix}_{method}_tmm_python.csv"
+    golden_path = EDGER_GOLDEN_DIR / f"{golden_prefix}_{method}_tmm_edger.csv"
     rust_df = _canonical(
         _rust_features2proteins(
             method,
@@ -149,21 +145,21 @@ def test_rust_tmm_matches_python_golden(
             sample_normalization="tmm",
         )
     )
-    py_df = _canonical(pd.read_csv(golden_path))
+    upstream_df = _canonical(pd.read_csv(golden_path, float_precision="round_trip"))
 
-    assert list(rust_df.index) == list(py_df.index), "protein sets differ"
-    assert list(rust_df.columns) == list(py_df.columns), "sample columns differ"
+    assert list(rust_df.index) == list(upstream_df.index), "protein sets differ"
+    assert list(rust_df.columns) == list(upstream_df.columns), "sample columns differ"
 
     rust_missing = rust_df.isna().to_numpy()
-    py_missing = py_df.isna().to_numpy()
-    assert np.array_equal(rust_missing, py_missing), "missing-value masks differ"
+    upstream_missing = upstream_df.isna().to_numpy()
+    assert np.array_equal(rust_missing, upstream_missing), "missing-value masks differ"
     common = ~rust_missing
     rust_vals = rust_df.to_numpy(dtype=float)[common]
-    py_vals = py_df.to_numpy(dtype=float)[common]
-    assert np.allclose(rust_vals, py_vals, rtol=1e-6, atol=1e-2), (
-        f"tmm/{fixture}/{method}: Rust output diverges from the pure-Python TMM "
-        f"golden beyond f32 tolerance "
-        f"(max abs diff {np.max(np.abs(rust_vals - py_vals)):.4g})"
+    upstream_vals = upstream_df.to_numpy(dtype=float)[common]
+    assert np.allclose(rust_vals, upstream_vals, rtol=1e-6, atol=1e-2), (
+        f"tmm/{fixture}/{method}: Rust output diverges from the edgeR 4.8.2 "
+        f"oracle beyond the original tolerance "
+        f"(max abs diff {np.max(np.abs(rust_vals - upstream_vals)):.4g})"
     )
 
 
@@ -173,7 +169,7 @@ def test_rust_tmm_is_not_a_noop_on_dense(method, tmp_path):
 
     Before the Rust TMM implementation, ``--sample-normalization tmm`` was
     silently equivalent to ``none``; this asserts the two now diverge on a
-    fixture whose samples clear TMM's >=10-valid-feature guard.
+    fixture whose samples share 20 canonical peptides.
     """
     none_df = _canonical(
         _rust_features2proteins(
@@ -210,8 +206,6 @@ def test_rust_tmm_is_not_a_noop_on_dense(method, tmp_path):
 @pytest.mark.parametrize(
     "quant, norm",
     [
-        ("median", "tmm"),
-        ("sum", "tmm"),
         ("median", "rlr"),
     ],
 )
@@ -225,9 +219,7 @@ def test_rust_matches_python_multiform_collapse(quant, norm, tmp_path):
     into the cells. ``feature_wide_multiform`` packs two peptidoforms per
     canonical, so the collapse actually merges rows.
 
-    This pins two invariants on that path: TMM scales the original peptidoforms
-    in place (its per-sample factor commutes with the sum/median collapse), and
-    the writeback family (``rlr`` here as the representative) stays correct when
+    This pins the writeback family (``rlr`` here as the representative) when
     ``finalize`` re-collapses the already-canonical values. A regression that
     reintroduced a double-collapse would diverge from the pure-Python golden.
     """
