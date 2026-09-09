@@ -47,6 +47,23 @@ def test_knowledge_resolution_prefers_explicit_then_environment_then_bundle(
     assert load_knowledge_graph(BUNDLED_KNOWLEDGE).fingerprint == bundled.fingerprint
 
 
+def test_bundled_knowledge_exposes_dataset_summaries_without_promoting_them() -> None:
+    """All benchmark datasets are searchable but never recommendation priors."""
+    graph = load_knowledge_graph(BUNDLED_KNOWLEDGE)
+    dataset = graph.datasets["dataset-PXD070151"]
+
+    assert len(graph.datasets) == 15
+    assert dataset.data_type == "TMT"
+    assert dataset.preset_eligible is False
+    assert dataset.benchmark["successful_candidates"] == 320
+    assert dataset.benchmark["failed_candidates"] == 0
+    assert dataset.held_out_evaluation is None
+    assert all(
+        record.id in graph.evidence
+        for record in graph.matching(SimpleNamespace(data_type="TMT"))
+    )
+
+
 def test_mcp_main_uses_bundle_and_accepts_explicit_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

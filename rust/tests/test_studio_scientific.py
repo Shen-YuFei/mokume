@@ -235,6 +235,38 @@ def test_knowledge_search_is_bounded_and_explanation_only(tmp_path):
     assert result["results"][0]["source"]["id"] == "spike-in-score-a-320"
 
 
+def test_knowledge_search_returns_exact_dataset_benchmark_summaries(tmp_path):
+    """Exact PXD searches expose traceable results without unrelated datasets."""
+    harness = _harness(tmp_path)
+    try:
+        excluded = harness.controller.search_knowledge("PXD070151")
+        evaluated = harness.controller.search_knowledge("PXD015261")
+    finally:
+        harness.manager.shutdown()
+
+    assert [item["id"] for item in excluded["results"]] == ["dataset-PXD070151"]
+    summary = excluded["results"][0]
+    assert summary["kind"] == "dataset_benchmark_summary"
+    assert summary["eligible_as_prior"] is False
+    assert summary["preset_eligible"] is False
+    assert summary["benchmark"]["successful_candidates"] == 320
+    assert summary["benchmark"]["failed_candidates"] == 0
+    assert summary["design"]["contrasts"][0]["ratio_type"] == "presence_absence"
+    assert summary["design"]["contrasts"][0]["expected_log2fc"] is None
+    assert summary["ground_truth"]["entity_count"] == 48
+    assert summary["held_out_evaluation"] is None
+    assert "benchmark_inputs" not in json.dumps(summary)
+
+    assert [item["id"] for item in evaluated["results"]] == [
+        "dataset-PXD015261",
+        "grid-tmt-preset",
+    ]
+    summary = evaluated["results"][0]
+    assert summary["preset_eligible"] is True
+    assert summary["held_out_evaluation"]["status"] == "evaluated"
+    assert summary["held_out_evaluation"]["selected_pipeline"]["de_method"] == "deqms"
+
+
 def test_real_unlabelled_workflow_is_unranked_and_traceable(tmp_path):
     """Run inspect, policy selection, approval, and unlabelled evaluation."""
     harness = _harness(tmp_path)

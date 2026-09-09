@@ -23,6 +23,7 @@ from mokume.agentic.contract import (
     is_supported_quantification,
     validate_config_values,
 )
+from mokume.agentic.dataset_knowledge import DatasetEvidence, load_dataset_evidence
 
 if TYPE_CHECKING:
     from mokume.agentic.profiler import DataProfile
@@ -182,6 +183,7 @@ class KnowledgeGraph:
     fingerprint: str
     sources: dict[str, SourceEnvelope]
     evidence: dict[str, EvidenceRecord]
+    datasets: dict[str, DatasetEvidence]
     edges: tuple[GraphEdge, ...]
 
     def matching(self, profile: DataProfile) -> list[EvidenceRecord]:
@@ -217,19 +219,54 @@ def _load_knowledge_graph(path: str) -> KnowledgeGraph:
         )
     sources = _parse_sources(raw["sources"], knowledge_path.parent)
     evidence = _parse_evidence(raw["evidence"], sources)
-    edges = tuple(
-        GraphEdge(record.id, "supported_by", record.source_id)
-        for record in evidence.values()
-    ) + tuple(
-        GraphEdge(record.id, "applies_to", record.applicability.data_type)
-        for record in evidence.values()
+    datasets = _parse_dataset_sources(sources, knowledge_path.parent)
+    edges = (
+        tuple(
+            GraphEdge(record.id, "supported_by", record.source_id)
+            for record in evidence.values()
+        )
+        + tuple(
+            GraphEdge(record.id, "applies_to", record.applicability.data_type)
+            for record in evidence.values()
+        )
+        + tuple(
+            GraphEdge(record.id, "supported_by", record.source_id)
+            for record in datasets.values()
+        )
+        + tuple(
+            GraphEdge(record.id, "applies_to", record.data_type)
+            for record in datasets.values()
+        )
     )
     return KnowledgeGraph(
         fingerprint=hashlib.sha256(content).hexdigest(),
         sources=sources,
         evidence=evidence,
+        datasets=datasets,
         edges=edges,
     )
+
+
+def _parse_dataset_sources(
+    sources: dict[str, SourceEnvelope], knowledge_root: Path
+) -> dict[str, DatasetEvidence]:
+    """Extract searchable summaries from validated benchmark artifacts."""
+    required = {
+        "benchmark_manifest.yaml",
+        "project_status.tsv",
+        "leave_one_dataset_out.tsv",
+    }
+    datasets: dict[str, DatasetEvidence] = {}
+    for source in sources.values():
+        if not required <= set(source.artifacts):
+            continue
+        source_root = (knowledge_root / source.locator).resolve()
+        parsed = load_dataset_evidence(source.id, source_root)
+        duplicates = set(datasets) & set(parsed)
+        if duplicates:
+            raise ValueError(f"Duplicate dataset evidence ids: {sorted(duplicates)}")
+        datasets.update(parsed)
+    return datasets
 
 
 def _parse_sources(

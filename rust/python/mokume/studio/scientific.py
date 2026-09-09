@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mokume.agentic.knowledge import EvidenceRecord, load_knowledge_graph
+from mokume.agentic.knowledge_search import matching_knowledge_records, method_key
 from mokume.studio.jobs import JobManager
 from mokume.studio.models import (
     JobOperation,
@@ -141,20 +142,21 @@ class ScientificController:
         method: str | None = None,
         limit: int = 5,
     ) -> dict[str, Any]:
-        """Search the validated bundled evidence without reading arbitrary files."""
+        """Search validated method evidence and dataset benchmark summaries."""
         (
             normalized_query,
             normalized_type,
             normalized_method,
             query_tokens,
-            method_key,
+            selected_method,
         ) = self._knowledge_search_filters(query, data_type, method, limit)
         results = []
-        for record in self._matching_knowledge_records(
-            query_tokens, normalized_type, method_key, limit
+        for record in matching_knowledge_records(
+            self.knowledge, query_tokens, normalized_type, selected_method, limit
         ):
             result = record.to_context_dict(self.knowledge.sources[record.source_id])
-            result["eligible_as_prior"] = record.eligible_as_prior
+            if isinstance(record, EvidenceRecord):
+                result["eligible_as_prior"] = record.eligible_as_prior
             results.append(result)
         return {
             "scope": "explanation_only",
@@ -194,36 +196,16 @@ class ScientificController:
         }
         if not query_tokens:
             raise ValueError("query must contain searchable text")
-        method_key = self._method_key(normalized_method) if normalized_method else None
-        if normalized_method and not method_key:
+        selected_method = method_key(normalized_method) if normalized_method else None
+        if normalized_method and not selected_method:
             raise ValueError("method must contain searchable text")
         return (
             normalized_query,
             normalized_type,
             normalized_method,
             query_tokens,
-            method_key,
+            selected_method,
         )
-
-    def _matching_knowledge_records(
-        self,
-        query_tokens: set[str],
-        data_type: str | None,
-        method_key: str | None,
-        limit: int,
-    ) -> list[EvidenceRecord]:
-        ranked: list[tuple[int, int, str, EvidenceRecord]] = []
-        for record in self.knowledge.evidence.values():
-            if data_type and record.applicability.data_type.upper() != data_type:
-                continue
-            if method_key and method_key not in self._record_method_keys(record):
-                continue
-            search_text = self._record_search_text(record)
-            score = sum(token in search_text for token in query_tokens)
-            if score:
-                ranked.append((-score, record.priority, record.id, record))
-        ranked.sort(key=lambda item: item[:3])
-        return [record for _, _, _, record in ranked[:limit]]
 
     @staticmethod
     def _search_value(value: str, name: str, maximum: int) -> str:
@@ -235,46 +217,6 @@ class ScientificController:
         if "\x00" in normalized or len(normalized) > maximum:
             raise ValueError(f"{name} is invalid or too long")
         return normalized
-
-    @staticmethod
-    def _method_key(value: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "", value.casefold())
-
-    def _record_method_keys(self, record: EvidenceRecord) -> set[str]:
-        values = [
-            record.pipeline.quantification,
-            record.pipeline.normalization,
-            record.pipeline.imputation,
-            record.pipeline.de_method,
-            record.pipeline.fdr_method,
-            record.pipeline.ensemble,
-            record.applicability.setting,
-            record.applicability.upstream_engine,
-        ]
-        return {self._method_key(str(value)) for value in values if value is not None}
-
-    def _record_search_text(self, record: EvidenceRecord) -> str:
-        source = self.knowledge.sources[record.source_id]
-        values = [
-            record.id,
-            record.source_id,
-            record.kind,
-            record.status,
-            record.confidence,
-            *record.applicability.to_dict().values(),
-            *record.pipeline.to_dict().values(),
-            *record.metrics.keys(),
-            *record.metrics.values(),
-            *record.limitations,
-            source.id,
-            source.kind,
-            source.title,
-            source.trust,
-            source.status,
-        ]
-        if record.reference_profile is not None:
-            values.extend(record.reference_profile.projects)
-        return " ".join(str(value).casefold() for value in values if value is not None)
 
     def prepare_evaluation(
         self,
