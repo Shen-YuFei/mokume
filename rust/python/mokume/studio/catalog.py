@@ -70,8 +70,8 @@ COMMAND_PRESENTATION: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {
                 "quant_method min_aa min_unique keep_contaminants fasta pibaq_enzyme "
                 "pibaq_max_aa pibaq_min_shared pibaq_families_yaml "
                 "pibaq_min_anchors directlfq_min_nonan "
-                "directlfq_num_samples_quadratic coverage_threshold "
-                "min_sample_correlation ratio_fraction_merge"
+                "directlfq_num_samples_quadratic maxlfq_min_ratio_count stabilize "
+                "coverage_threshold min_sample_correlation ratio_fraction_merge"
             ).split(),
             "common": ("quant_method",),
         },
@@ -196,6 +196,8 @@ COMMAND_PRESENTATION: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {
                 "min_aa",
                 "max_aa",
                 "directlfq_min_nonan",
+                "maxlfq_min_ratio_count",
+                "stabilize",
                 "families_yaml",
                 "min_shared",
                 "min_anchors",
