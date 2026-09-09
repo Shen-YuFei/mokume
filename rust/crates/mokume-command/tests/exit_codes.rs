@@ -61,6 +61,39 @@ P2,ALYAAEK,S1,A,500.0\n",
 }
 
 #[test]
+fn peptides2protein_maxlfq_command_applies_ratio_count() -> Result<(), Box<dyn std::error::Error>> {
+    let (_tempdir, root) = temp_root()?;
+    let peptides = root.join("peptides.csv");
+    let output = root.join("proteins.tsv");
+    write(
+        &peptides,
+        concat!(
+            "ProteinName,PeptideCanonical,SampleID,NormIntensity\n",
+            "P,PEPTIDEAK,S1,1\nP,PEPTIDEAK,S2,2\n",
+        ),
+    )?;
+    let args = [
+        "quantify",
+        "peptides2protein",
+        "--quant-method",
+        "maxlfq",
+        "--peptides",
+        path_str(&peptides)?,
+        "--output",
+        path_str(&output)?,
+        "--threads",
+        "1",
+        "--maxlfq-min-ratio-count",
+    ];
+    run(&[args.as_slice(), &["1"]].concat())?;
+    assert_eq!(std::fs::read_to_string(&output)?.lines().count(), 3);
+    run(&[args.as_slice(), &["2"]].concat())?;
+    assert_eq!(std::fs::read_to_string(&output)?.lines().count(), 1);
+    assert!(run(&[args.as_slice(), &["0"]].concat()).is_err());
+    Ok(())
+}
+
+#[test]
 fn correct_batches_command_writes_corrected_tsv() -> Result<(), Box<dyn std::error::Error>> {
     let (_tempdir, root) = temp_root()?;
     let input = root.join("input");
