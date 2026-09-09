@@ -72,6 +72,16 @@ pub(crate) struct Peptides2ProteinArgs {
     )]
     pub(crate) directlfq_min_nonan: Option<usize>,
 
+    #[arg(long = "maxlfq-min-ratio-count", value_name = "N", value_parser = parse_positive_usize,
+        help = "MaxLFQ only: minimum shared peptide species per sample pair [default: 2]")]
+    pub(crate) maxlfq_min_ratio_count: Option<usize>,
+
+    #[arg(
+        long,
+        help = "Enable large-ratio stabilization (MaxLFQ only; default: off)"
+    )]
+    pub(crate) stabilize: bool,
+
     #[arg(long = "families", value_name = "FILE")]
     pub(crate) families_yaml: Option<PathBuf>,
 

@@ -131,6 +131,16 @@ mean-center, rlr, loess, tmm]"
     )]
     directlfq_min_nonan: Option<usize>,
 
+    #[arg(long = "maxlfq-min-ratio-count", value_name = "N", value_parser = parse_positive_usize,
+        help = "MaxLFQ only: minimum shared peptide species per sample pair [default: 2]")]
+    maxlfq_min_ratio_count: Option<usize>,
+
+    #[arg(
+        long,
+        help = "Enable large-ratio stabilization (MaxLFQ only; default: off)"
+    )]
+    stabilize: bool,
+
     #[arg(
         long = "directlfq-num-samples-quadratic",
         value_name = "N",

@@ -372,17 +372,32 @@ impl Default for NormalizationConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MaxLfqConfig {
     pub ion_alignment: Option<String>,
-    /// Force the built-in MaxLFQ implementation instead of delegating to the
-    /// DirectLFQ-aligned path. Mirrors Python's `MaxLFQQuantification.force_builtin`:
-    /// Python delegates `--quant-method maxlfq` to DirectLFQ whenever the directlfq
-    /// package is installed (the default in the reference environment), and only
-    /// uses the built-in fallback when it is absent. The Rust DirectLFQ core is
-    /// always available, so the faithful default is to delegate; this flag exposes
-    /// the built-in fallback for testing and comparison.
+    /// Retained for configuration compatibility; MaxLFQ always uses its own solver.
     pub force_builtin: bool,
+    /// Minimum shared peptide species for each sample-pair ratio (Cox et al., Fig. 2).
+    #[serde(default = "default_maxlfq_min_ratio_count")]
+    pub min_ratio_count: usize,
+    /// Enable Cox et al. Eq. 5 large-ratio stabilization for low-overlap sample pairs.
+    #[serde(default)]
+    pub stabilize: bool,
+}
+
+fn default_maxlfq_min_ratio_count() -> usize {
+    2
+}
+
+impl Default for MaxLfqConfig {
+    fn default() -> Self {
+        Self {
+            ion_alignment: None,
+            force_builtin: false,
+            min_ratio_count: default_maxlfq_min_ratio_count(),
+            stabilize: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

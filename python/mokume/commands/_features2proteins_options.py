@@ -75,6 +75,12 @@ def _validate_pibaq_options(ctx: click.Context, quant_method: str) -> None:
 
 
 def _validate_directlfq_options(ctx: click.Context, quant_method: str) -> None:
+    if quant_method != "maxlfq" and ctx.params.get("stabilize", False):
+        raise click.UsageError("--stabilize requires --quant-method maxlfq")
+    if quant_method != "maxlfq" and _supplied(ctx, "maxlfq_min_ratio_count"):
+        raise click.UsageError(
+            "--maxlfq-min-ratio-count requires --quant-method maxlfq"
+        )
     if quant_method != "directlfq" and _supplied(
         ctx, "directlfq_cores", "directlfq_min_nonan", "export_ions"
     ):

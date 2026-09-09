@@ -136,12 +136,19 @@ fn validate_lfq_options(
             message: "--directlfq-min-nonan requires --quant-method directlfq".to_owned(),
         });
     }
-    if !matches!(method, QuantMethod::DirectLfq | QuantMethod::MaxLfq)
-        && args.directlfq_num_samples_quadratic.is_some()
-    {
+    if method != QuantMethod::DirectLfq && args.directlfq_num_samples_quadratic.is_some() {
         return Err(MokumeError::InvalidInput {
-            message: "--directlfq-num-samples-quadratic only applies to DirectLFQ/MaxLFQ"
-                .to_owned(),
+            message: "--directlfq-num-samples-quadratic only applies to DirectLFQ".to_owned(),
+        });
+    }
+    if method != QuantMethod::MaxLfq && args.maxlfq_min_ratio_count.is_some() {
+        return Err(MokumeError::InvalidInput {
+            message: "--maxlfq-min-ratio-count requires --quant-method maxlfq".to_owned(),
+        });
+    }
+    if method != QuantMethod::MaxLfq && args.stabilize {
+        return Err(MokumeError::InvalidInput {
+            message: "--stabilize requires --quant-method maxlfq".to_owned(),
         });
     }
     Ok(())
@@ -448,6 +455,8 @@ fn build_config(
         maxlfq: MaxLfqConfig {
             ion_alignment: None,
             force_builtin: false,
+            min_ratio_count: args.maxlfq_min_ratio_count.unwrap_or(2),
+            stabilize: args.stabilize,
         },
         pibaq: pibaq_config(args),
         directlfq: directlfq_config(args),

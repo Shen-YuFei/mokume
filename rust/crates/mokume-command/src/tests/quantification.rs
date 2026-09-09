@@ -5,6 +5,61 @@ use clap::Parser;
 use crate::{Cli, Commands, Features2ProteinsArgs, QuantifyCommands};
 
 #[test]
+fn stabilization_is_an_opt_in_maxlfq_feature_option() -> mokume_core::Result<()> {
+    let argv = [
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "-p",
+        "features.parquet",
+        "-o",
+        "proteins.csv",
+    ];
+    let config = features_to_proteins_args(Cli::parse_from(argv)).into_config()?;
+    assert!(!config.maxlfq.stabilize);
+    let config =
+        features_to_proteins_args(Cli::parse_from(argv.into_iter().chain(["--stabilize"])))
+            .into_config()?;
+    assert!(config.maxlfq.stabilize);
+    for method in ["directlfq", "sum", "pibaq", "top3"] {
+        let cli =
+            Cli::parse_from(
+                argv.into_iter()
+                    .chain(["--quant-method", method, "--stabilize"]),
+            );
+        let Err(error) = features_to_proteins_args(cli).into_config() else {
+            panic!("non-MaxLFQ method accepted --stabilize");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("--stabilize requires --quant-method maxlfq"),
+            "{error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn legacy_maxlfq_config_defaults_and_stabilization_roundtrip() -> Result<(), serde_json::Error> {
+    let config: mokume_core::MaxLfqConfig =
+        serde_json::from_str(r#"{"ion_alignment":null,"force_builtin":false}"#)?;
+    assert_eq!(config, mokume_core::MaxLfqConfig::default());
+    assert_eq!(config.min_ratio_count, 2);
+    assert!(!config.stabilize);
+    let enabled = mokume_core::MaxLfqConfig {
+        stabilize: true,
+        ..config
+    };
+    let json = serde_json::to_string(&enabled)?;
+    assert_eq!(
+        serde_json::from_str::<mokume_core::MaxLfqConfig>(&json)?,
+        enabled
+    );
+    Ok(())
+}
+
+#[test]
 fn parses_true_spectral_count_psm_input() {
     let cli = Cli::parse_from([
         "mokume",

@@ -7,7 +7,10 @@ pub use directlfq_aligned::{
     direct_lfq_aligned, direct_lfq_aligned_with_ions, DirectLfqIon, DirectLfqNormalizedIon,
     DirectLfqResult,
 };
-pub use maxlfq::{max_lfq, max_lfq_with_samples};
+pub use maxlfq::{
+    max_lfq, max_lfq_with_samples, solve_max_lfq, solve_max_lfq_with_stabilization, MaxLfqResult,
+    DEFAULT_MAXLFQ_MIN_RATIO_COUNT,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PeptideMeasurement {
@@ -63,7 +66,7 @@ mod tests {
     use mokume_core::{PeptideId, SampleId};
 
     #[test]
-    fn max_lfq_preserves_two_sample_ratio() {
+    fn max_lfq_preserves_two_sample_ratio() -> mokume_core::Result<()> {
         let measurements = vec![
             PeptideMeasurement {
                 peptide: PeptideId::new(0),
@@ -87,13 +90,14 @@ mod tests {
             },
         ];
 
-        let quantities = max_lfq(&measurements);
+        let quantities = max_lfq(&measurements)?;
         let sample_0 = value_for(&quantities, SampleId::new(0));
         let sample_1 = value_for(&quantities, SampleId::new(1));
 
         assert!((sample_0 - 500.0).abs() < 1e-6);
         assert!((sample_1 - 1000.0).abs() < 1e-6);
         assert!((sample_1 / sample_0 - 2.0).abs() < 1e-6);
+        Ok(())
     }
 
     fn value_for(quantities: &[(SampleId, f64)], sample: SampleId) -> f64 {

@@ -63,6 +63,8 @@ feature tables.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, pibaq, `top<N>`, sum, median, ratio, abd, intensity, peptide-count, spectral-count |
+| `--maxlfq-min-ratio-count` | `2` | Minimum shared peptide species per sample pair (MaxLFQ only) |
+| `--stabilize` | off | Enable overlap-dependent large-ratio stabilization (MaxLFQ only; may worsen some ratios) |
 | `-f/--fasta` | none | FASTA file (required for piBAQ) |
 | `-t/--threads` | auto | Shared Rust worker count for all methods, including DirectLFQ |
 | `--directlfq-min-nonan` | 1 | Min non-NaN values for DirectLFQ |
@@ -337,6 +339,8 @@ mokume quantify peptides2protein [OPTIONS]
 | `-p/--peptides` | required | Input peptide intensity file |
 | `-f/--fasta` | none | FASTA file (required for piBAQ) |
 | `--quant-method` | `pibaq` | Method: pibaq, `top<N>` (top3, top5, top10, ...), maxlfq, sum, directlfq |
+| `--maxlfq-min-ratio-count` | `2` | Minimum shared peptide species per sample pair (MaxLFQ only) |
+| `--stabilize` | off | Enable overlap-dependent large-ratio stabilization (MaxLFQ only; may worsen some ratios) |
 | `--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
 | `--normalize` | off | Normalize quantification values |
 | `--min-aa` | 7 | Min amino acid length |

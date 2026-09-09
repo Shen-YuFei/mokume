@@ -17,12 +17,9 @@
 //!     `ProteinName, SampleID, Intensity` plus `Condition` (when the input has
 //!     it) and `IntensityNorm` (when `--normalize` is set).
 //!
-//!   * `maxlfq` and `directlfq` roll the peptide matrix up with the DirectLFQ
-//!     estimator (canonical peptides as ions) via
-//!     `mokume_pipeline::run_lfq_from_peptides`, mirroring Python's
-//!     `DirectLFQQuantification`; `maxlfq` delegates to DirectLFQ with
-//!     `min_nonan = 2` (its `min_peptides`). The output is the same `Intensity`
-//!     long-format table, keeping only `> 0` rows (Python's `_parse_wide_output`).
+//!   * `maxlfq` uses pairwise peptide-species ratios and a least-squares protein
+//!     profile (Cox et al., Eq. 3). `directlfq` uses hierarchical alignment.
+//!     Both return the same positive-intensity long-format schema.
 //!
 //! piBAQ extras (P3) are computed as deterministic post-processing on the piBAQ
 //! result, wired into `--tpa`, `--ruler`, and `--normalize` (see the
@@ -53,10 +50,11 @@ use std::path::Path;
 
 use mokume_core::quant::parse_topn_from_method_name;
 use mokume_core::{MokumeError, Result};
-use mokume_io::read_peptide_parquet;
+use mokume_io::{read_peptide_parquet, read_peptide_parquet_with_species};
 use mokume_pipeline::{
-    run_lfq_from_peptides_with_threads, run_pibaq_from_peptides, LfqPeptideObservation,
-    PeptideObservation, PibaqDigest, PibaqFromPeptidesParams, PibaqProteinRow,
+    run_lfq_from_peptides_with_threads, run_maxlfq_from_peptides_with_threads,
+    run_pibaq_from_peptides, LfqPeptideObservation, PeptideObservation, PibaqDigest,
+    PibaqFromPeptidesParams, PibaqProteinRow,
 };
 
 use crate::Peptides2ProteinArgs;
@@ -143,6 +141,16 @@ fn validate_lfq_options(args: &Peptides2ProteinArgs, method: &str) -> Result<()>
             message: "--directlfq-min-nonan only applies to peptides2protein DirectLFQ".to_owned(),
         });
     }
+    if method != "maxlfq" && args.maxlfq_min_ratio_count.is_some() {
+        return Err(MokumeError::InvalidInput {
+            message: "--maxlfq-min-ratio-count only applies to peptides2protein MaxLFQ".to_owned(),
+        });
+    }
+    if method != "maxlfq" && args.stabilize {
+        return Err(MokumeError::InvalidInput {
+            message: "--stabilize requires --quant-method maxlfq".to_owned(),
+        });
+    }
     Ok(())
 }
 
@@ -193,12 +201,9 @@ pub(crate) fn validate_options(args: &Peptides2ProteinArgs) -> Result<()> {
 /// does not expose it, so it is fixed here too.
 const DIRECTLFQ_NUM_SAMPLES_QUADRATIC: usize = 50;
 
-/// DirectLFQ / MaxLFQ path: roll the peptide matrix up with the DirectLFQ
-/// estimator (Python's `DirectLFQQuantification`; `maxlfq` delegates to it with
-/// `min_nonan = 2`). Emits the same long-format table as the deterministic
-/// methods, keeping only `Intensity > 0` rows (Python's `_parse_wide_output`).
+/// Dispatch to the requested LFQ algorithm and emit positive long-format rows.
 fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<()> {
-    let table = load_peptide_table(&args.peptides)?;
+    let table = load_peptide_table_with_species(&args.peptides, method == "maxlfq")?;
     if !table.has_peptide {
         return Err(MokumeError::InvalidInput {
             message: format!(
@@ -206,14 +211,6 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
             ),
         });
     }
-
-    // Python's maxlfq delegates to DirectLFQ with min_nonan = 2 (its min_peptides);
-    // the directlfq method uses the configured --directlfq-min-nonan.
-    let min_nonan = if method == "maxlfq" {
-        2
-    } else {
-        args.directlfq_min_nonan.unwrap_or(1)
-    };
 
     let mut condition_by_sample: HashMap<String, String> = HashMap::new();
     let mut observations = Vec::with_capacity(table.rows.len());
@@ -229,19 +226,29 @@ fn run_lfq(args: &Peptides2ProteinArgs, method: &str, output: &Path) -> Result<(
         });
     }
 
-    let mut results: Vec<GenericRow> = run_lfq_from_peptides_with_threads(
-        &observations,
-        min_nonan,
-        DIRECTLFQ_NUM_SAMPLES_QUADRATIC,
-        args.threads,
-    )?
-    .into_iter()
-    .map(|row| GenericRow {
-        protein: row.protein,
-        sample: row.sample,
-        intensity: row.intensity,
-    })
-    .collect();
+    let quantified = if method == "maxlfq" {
+        run_maxlfq_from_peptides_with_threads(
+            &observations,
+            args.maxlfq_min_ratio_count.unwrap_or(2),
+            args.stabilize,
+            args.threads,
+        )?
+    } else {
+        run_lfq_from_peptides_with_threads(
+            &observations,
+            args.directlfq_min_nonan.unwrap_or(1),
+            DIRECTLFQ_NUM_SAMPLES_QUADRATIC,
+            args.threads,
+        )?
+    };
+    let mut results: Vec<GenericRow> = quantified
+        .into_iter()
+        .map(|row| GenericRow {
+            protein: row.protein,
+            sample: row.sample,
+            intensity: row.intensity,
+        })
+        .collect();
     results.sort_by(|left, right| {
         left.protein
             .cmp(&right.protein)
@@ -505,10 +512,14 @@ struct GenericRow {
 /// parquet magic bytes (`PAR1`) exactly like Python's `is_parquet`, so the same
 /// `--peptides` path resolves to the same loader regardless of file extension.
 fn load_peptide_table(path: &Path) -> Result<PeptideTable> {
+    load_peptide_table_with_species(path, false)
+}
+
+fn load_peptide_table_with_species(path: &Path, preserve_species: bool) -> Result<PeptideTable> {
     if looks_like_parquet(path)? {
-        load_peptide_table_parquet(path)
+        load_peptide_table_parquet(path, preserve_species)
     } else {
-        load_peptide_table_csv(path)
+        load_peptide_table_csv(path, preserve_species)
     }
 }
 
@@ -536,10 +547,17 @@ fn looks_like_parquet(path: &Path) -> Result<bool> {
 /// (`dropna` + `> 0`) and `"Empty"` condition default as the CSV path so both
 /// inputs yield identical [`PeptideTable`]s. Mirrors Python's `pd.read_parquet`
 /// followed by the generic / piBAQ numeric coercion.
-fn load_peptide_table_parquet(path: &Path) -> Result<PeptideTable> {
-    let raw = read_peptide_parquet(path)?;
+fn load_peptide_table_parquet(path: &Path, preserve_species: bool) -> Result<PeptideTable> {
+    let raw = if preserve_species {
+        read_peptide_parquet_with_species(path)?
+    } else {
+        read_peptide_parquet(path)?
+    };
     let mut rows = Vec::with_capacity(raw.rows.len());
     for row in raw.rows {
+        if preserve_species && row.peptide.as_deref().is_none_or(str::is_empty) {
+            continue;
+        }
         let Some(intensity) = row.intensity else {
             continue;
         };
@@ -571,7 +589,7 @@ fn load_peptide_table_parquet(path: &Path) -> Result<PeptideTable> {
 /// missing or non-positive intensity are dropped, matching the Python
 /// `dropna` + `> 0` filter applied on the piBAQ path and the implicit numeric
 /// coercion on the generic path.
-fn load_peptide_table_csv(path: &Path) -> Result<PeptideTable> {
+fn load_peptide_table_csv(path: &Path, preserve_species: bool) -> Result<PeptideTable> {
     let delimiter = if path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -600,32 +618,27 @@ fn load_peptide_table_csv(path: &Path) -> Result<PeptideTable> {
     let condition_index = optional_column_index(&headers, CONDITION);
     let peptide_index = optional_column_index(&headers, PEPTIDE_CANONICAL)
         .or_else(|| optional_column_index(&headers, PEPTIDE_SEQUENCE));
+    let species_indices = preserve_species
+        .then(|| {
+            optional_column_index(&headers, PEPTIDE_SEQUENCE)
+                .zip(optional_column_index(&headers, "PrecursorCharge"))
+        })
+        .flatten();
 
     let mut rows = Vec::new();
     for record in reader.records() {
         let record = record.map_err(|source| csv_error(path, source))?;
-        let raw_intensity = field(&record, intensity_index, path)?;
-        let trimmed = raw_intensity.trim();
-        if trimmed.is_empty() {
+        let Some(intensity) = positive_csv_intensity(&record, intensity_index, path)? else {
             continue;
-        }
-        let intensity = trimmed
-            .parse::<f64>()
-            .map_err(|_| MokumeError::InvalidInput {
-                message: format!("'{trimmed}' in column '{NORM_INTENSITY}' is not numeric"),
-            })?;
-        if !intensity.is_finite() || intensity <= 0.0 {
-            continue;
-        }
+        };
         let condition = condition_index
             .map(|index| field(&record, index, path))
             .transpose()?
             .map_or_else(|| "Empty".to_owned(), ToOwned::to_owned);
-        let peptide = peptide_index
-            .map(|index| field(&record, index, path))
-            .transpose()?
-            .unwrap_or("")
-            .to_owned();
+        let peptide = csv_peptide_id(&record, path, peptide_index, species_indices)?;
+        if preserve_species && peptide.is_empty() {
+            continue;
+        }
         rows.push(PeptideRow {
             protein: field(&record, protein_index, path)?.to_owned(),
             sample: field(&record, sample_index, path)?.to_owned(),
@@ -640,6 +653,51 @@ fn load_peptide_table_csv(path: &Path) -> Result<PeptideTable> {
         has_condition: condition_index.is_some(),
         has_peptide: peptide_index.is_some(),
     })
+}
+
+fn positive_csv_intensity(
+    record: &csv::StringRecord,
+    index: usize,
+    path: &Path,
+) -> Result<Option<f64>> {
+    let raw = field(record, index, path)?.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let intensity = raw.parse::<f64>().map_err(|_| MokumeError::InvalidInput {
+        message: format!("'{raw}' in column '{NORM_INTENSITY}' is not numeric"),
+    })?;
+    Ok((intensity.is_finite() && intensity > 0.0).then_some(intensity))
+}
+
+fn csv_peptide_id(
+    record: &csv::StringRecord,
+    path: &Path,
+    peptide_index: Option<usize>,
+    species_indices: Option<(usize, usize)>,
+) -> Result<String> {
+    if let Some((sequence, charge)) = species_indices {
+        let sequence = field(record, sequence, path)?;
+        let charge = field(record, charge, path)?;
+        if sequence.is_empty() || charge.is_empty() {
+            return Ok(String::new());
+        }
+        let charge = charge
+            .parse::<f64>()
+            .map_err(|_| MokumeError::InvalidInput {
+                message: "PrecursorCharge must be numeric".to_owned(),
+            })?;
+        if !charge.is_finite() || charge <= 0.0 || charge.fract() != 0.0 {
+            return Ok(String::new());
+        }
+        Ok(format!("{sequence}|z{charge}"))
+    } else {
+        Ok(peptide_index
+            .map(|index| field(record, index, path))
+            .transpose()?
+            .unwrap_or("")
+            .to_owned())
+    }
 }
 
 /// Write the piBAQ long-format output (tab-separated, matching Python). Columns
@@ -1195,6 +1253,8 @@ P3,THIDPECK,S1,A,900.0\n";
             qc_report: None,
             threads: None,
             directlfq_min_nonan: None,
+            maxlfq_min_ratio_count: None,
+            stabilize: false,
             families_yaml: None,
             min_shared: 2,
             min_anchors: 1,
@@ -1741,9 +1801,79 @@ P3,THIDPECK,S1,A,900.0\n";
     }
 
     #[test]
+    fn peptides2protein_maxlfq_preserves_species_and_ratio_count() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("maxlfq-species")?;
+        let peptides = dir.join("peptides.csv");
+        let output = dir.join("proteins.tsv");
+        write_file(
+            &peptides,
+            concat!(
+            "ProteinName,PeptideCanonical,PeptideSequence,PrecursorCharge,SampleID,NormIntensity\n",
+            "P,PEPTIDEAK,PEPTIDEAK,2,S1,1\nP,PEPTIDEAK,PEPTIDEAK,3,S1,1\n",
+            "P,ANOTHERAK,ANOTHERAK,2,S1,1\nP,PEPTIDEAK,PEPTIDEAK,2,S2,1\n",
+            "P,PEPTIDEAK,PEPTIDEAK,3,S2,9\nP,ANOTHERAK,ANOTHERAK,2,S2,3\n",
+            "P,INVALID,INVALID,NaN,S1,1000\nP,INVALID,INVALID,NaN,S2,1000\n",
+            "P,INVALID,INVALID,0,S1,1000\nP,INVALID,INVALID,0,S2,1000\n",
+        ),
+        )?;
+        let mut args = base_args(&peptides, &output);
+        args.quant_method = "maxlfq".to_owned();
+        args.threads = Some(1);
+        run_peptides_to_protein_with_digest(&args, None)?;
+        let (_, rows) = read_table(&output)?;
+        assert_eq!(rows.len(), 2);
+        for (row, expected) in rows.iter().zip([4.0_f64, 12.0]) {
+            assert!((row[2].parse::<f64>()? - expected).abs() < 1e-12);
+        }
+        args.maxlfq_min_ratio_count = Some(4);
+        run_peptides_to_protein_with_digest(&args, None)?;
+        assert!(read_table(&output)?.1.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn peptides2protein_stabilization_changes_only_maxlfq_low_overlap() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("maxlfq-stabilize")?;
+        let peptides = dir.join("peptides.csv");
+        let output = dir.join("proteins.tsv");
+        let mut csv = String::from("ProteinName,PeptideCanonical,SampleID,NormIntensity\n");
+        for i in 0..20 {
+            csv.push_str(&format!("P,PEPTIDE{i},S1,10\n"));
+            if i < 2 {
+                csv.push_str(&format!("P,PEPTIDE{i},S2,1\n"));
+            }
+        }
+        write_file(&peptides, &csv)?;
+        let mut args = base_args(&peptides, &output);
+        args.quant_method = "maxlfq".to_owned();
+        args.threads = Some(1);
+        for (enabled, ratio) in [(false, 10.0), (true, 100.0)] {
+            args.stabilize = enabled;
+            run_peptides_to_protein_with_digest(&args, None)?;
+            let (_, rows) = read_table(&output)?;
+            let actual = rows[0][2].parse::<f64>()? / rows[1][2].parse::<f64>()?;
+            assert!((actual - ratio).abs() < 1e-10);
+        }
+        for method in ["directlfq", "sum", "pibaq", "top3"] {
+            args.quant_method = method.to_owned();
+            args.threads = None;
+            let Err(error) = run_peptides_to_protein_with_digest(&args, None) else {
+                panic!("non-MaxLFQ method accepted --stabilize");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains("--stabilize requires --quant-method maxlfq"),
+                "{error}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn peptides2protein_runs_lfq_methods() -> TestResult<()> {
-        // maxlfq and directlfq both roll the peptide matrix up via the DirectLFQ
-        // estimator and write the long-format `Intensity` table.
+        // Both solvers emit long-format intensities deterministically across
+        // worker counts, while retaining their distinct algorithms.
         let (_tempdir, dir) = temp_dir("lfq")?;
         let peptides = dir.join("peptides.csv");
         write_file(&peptides, PEPTIDES_CSV)?;

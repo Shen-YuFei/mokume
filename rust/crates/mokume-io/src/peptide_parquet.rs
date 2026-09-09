@@ -19,8 +19,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, DictionaryArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    LargeStringArray, StringArray, StringDictionaryBuilder,
+    Array, ArrayRef, DictionaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
+    Int64Array, Int8Array, LargeStringArray, StringArray, StringDictionaryBuilder,
 };
 use arrow::datatypes::{
     ArrowDictionaryKeyType, DataType, Field, Int16Type, Int32Type, Int8Type, Schema,
@@ -93,6 +93,16 @@ pub struct RawPeptideTable {
 /// is read from `Float32` / `Float64` / `Int32` / `Int64` (or a numeric string,
 /// matching Python's `astype(float)`); null cells become `None`.
 pub fn read_peptide_parquet(path: &Path) -> Result<RawPeptideTable> {
+    read_peptide_parquet_impl(path, false)
+}
+
+/// Preserve modification and charge when both species columns are available.
+/// Canonical-only matrices retain their supplied peptide identifiers.
+pub fn read_peptide_parquet_with_species(path: &Path) -> Result<RawPeptideTable> {
+    read_peptide_parquet_impl(path, true)
+}
+
+fn read_peptide_parquet_impl(path: &Path, preserve_species: bool) -> Result<RawPeptideTable> {
     let file = File::open(path).map_err(|source| MokumeError::Io {
         path: path.to_path_buf(),
         source,
@@ -106,6 +116,12 @@ pub fn read_peptide_parquet(path: &Path) -> Result<RawPeptideTable> {
     let intensity_index = require_column(&schema, &[NORM_INTENSITY])?;
     let condition_index = find_column(&schema, &[CONDITION]);
     let peptide_index = find_column(&schema, &[PEPTIDE_CANONICAL, PEPTIDE_SEQUENCE]);
+    let species_indices = preserve_species
+        .then(|| {
+            find_column(&schema, &[PEPTIDE_SEQUENCE])
+                .zip(find_column(&schema, &["PrecursorCharge"]))
+        })
+        .flatten();
     let has_condition = condition_index.is_some();
     let has_peptide = peptide_index.is_some();
 
@@ -120,16 +136,12 @@ pub fn read_peptide_parquet(path: &Path) -> Result<RawPeptideTable> {
         let sample = batch.column(sample_index).as_ref();
         let intensity = batch.column(intensity_index).as_ref();
         let condition = condition_index.map(|index| batch.column(index).as_ref());
-        let peptide = peptide_index.map(|index| batch.column(index).as_ref());
 
         for row in 0..batch.num_rows() {
             rows.push(RawPeptideRow {
                 protein: string_value(protein, row, PROTEIN_NAME)?.unwrap_or_default(),
                 sample: string_value(sample, row, SAMPLE_ID)?.unwrap_or_default(),
-                peptide: match peptide {
-                    Some(array) => string_value(array, row, PEPTIDE_CANONICAL)?,
-                    None => None,
-                },
+                peptide: parquet_peptide_id(&batch, row, peptide_index, species_indices)?,
                 condition: match condition {
                     Some(array) => string_value(array, row, CONDITION)?,
                     None => None,
@@ -144,6 +156,31 @@ pub fn read_peptide_parquet(path: &Path) -> Result<RawPeptideTable> {
         has_condition,
         has_peptide,
     })
+}
+
+fn parquet_peptide_id(
+    batch: &RecordBatch,
+    row: usize,
+    peptide_index: Option<usize>,
+    species_indices: Option<(usize, usize)>,
+) -> Result<Option<String>> {
+    if let Some((sequence, charge)) = species_indices {
+        Ok(
+            string_value(batch.column(sequence).as_ref(), row, PEPTIDE_SEQUENCE)?
+                .zip(f64_value(
+                    batch.column(charge).as_ref(),
+                    row,
+                    "PrecursorCharge",
+                )?)
+                .filter(|(_, charge)| charge.is_finite() && *charge > 0.0 && charge.fract() == 0.0)
+                .map(|(sequence, charge)| format!("{sequence}|z{charge}")),
+        )
+    } else {
+        peptide_index
+            .map(|index| string_value(batch.column(index).as_ref(), row, PEPTIDE_CANONICAL))
+            .transpose()
+            .map(Option::flatten)
+    }
 }
 
 /// Resolve the first present column among `candidates`, returning its index.
@@ -243,6 +280,12 @@ fn f64_value(array: &dyn Array, row: usize, column: &str) -> Result<Option<f64>>
             downcast::<Float32Array>(array, column)?.value(row),
         ))),
         DataType::Float64 => Ok(Some(downcast::<Float64Array>(array, column)?.value(row))),
+        DataType::Int8 => Ok(Some(f64::from(
+            downcast::<Int8Array>(array, column)?.value(row),
+        ))),
+        DataType::Int16 => Ok(Some(f64::from(
+            downcast::<Int16Array>(array, column)?.value(row),
+        ))),
         DataType::Int32 => Ok(Some(f64::from(
             downcast::<Int32Array>(array, column)?.value(row),
         ))),
@@ -574,6 +617,7 @@ mod tests {
         write_peptide_parquet(&path, &rows, false)?;
 
         let table = read_peptide_parquet(&path)?;
+        assert_eq!(read_peptide_parquet_with_species(&path)?, table);
         assert!(table.has_condition);
         assert!(table.has_peptide);
         assert_eq!(
@@ -628,6 +672,50 @@ mod tests {
                 condition: Some("A".to_owned()),
                 intensity: Some(300.0),
             }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_peptide_species_retains_modifications_and_int16_charge() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("species.parquet");
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("ProteinName", DataType::Utf8, false),
+            Field::new("SampleID", DataType::Utf8, false),
+            Field::new("NormIntensity", DataType::Float64, false),
+            Field::new("PeptideCanonical", DataType::Utf8, false),
+            Field::new("PeptideSequence", DataType::Utf8, false),
+            Field::new("PrecursorCharge", DataType::Int16, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(StringArray::from(vec!["P", "P", "P"])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["S1", "S1", "S2"])),
+                Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0])),
+                Arc::new(StringArray::from(vec!["PEPTIDEK", "PEPTIDEK", "PEPTIDEK"])),
+                Arc::new(StringArray::from(vec![
+                    "PEPTIDEK",
+                    "PEP[UNIMOD:35]TIDEK",
+                    "PEPTIDEK",
+                ])),
+                Arc::new(Int16Array::from(vec![Some(2), Some(3), None])),
+            ],
+        )?;
+        let mut writer = ArrowWriter::try_new(File::create(&path)?, schema, None)?;
+        writer.write(&batch)?;
+        writer.close()?;
+        let species = read_peptide_parquet_with_species(&path)?;
+        assert_eq!(species.rows[0].peptide.as_deref(), Some("PEPTIDEK|z2"));
+        assert_eq!(
+            species.rows[1].peptide.as_deref(),
+            Some("PEP[UNIMOD:35]TIDEK|z3")
+        );
+        assert_eq!(species.rows[2].peptide, None);
+        assert_eq!(
+            read_peptide_parquet(&path)?.rows[1].peptide.as_deref(),
+            Some("PEPTIDEK")
         );
         Ok(())
     }

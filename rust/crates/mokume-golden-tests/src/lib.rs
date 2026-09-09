@@ -2777,18 +2777,13 @@ fn features2proteins_lfq_methods_match_synthetic_oracles() -> Result<(), Box<dyn
     assert_numeric_cell_close(&directlfq, "P6", "sample-1", 500.0);
     assert_numeric_cell_close(&directlfq, "P6", "sample-2", 500.0);
 
-    // Python's `--quant-method maxlfq` delegates to DirectLFQ whenever the
-    // directlfq package is installed (the default in the reference environment),
-    // so its default output equals the directlfq output. Confirmed empirically:
-    // Python maxlfq and directlfq both yield [500.0, 500.0] on this dataset, while
-    // the built-in fallback (directlfq absent) yields [500.0, 1000.0]. The Rust
-    // port routes maxlfq through the parity-verified DirectLFQ-aligned solver.
+    // Cox Eq. 3 preserves the shared 2x peptide ratio. With external
+    // normalization disabled, total input intensity is 1500 => [500, 1000].
     let maxlfq = run_lfq_quantification(QuantMethod::MaxLfq)?;
     assert_numeric_cell_close(&maxlfq, "P6", "sample-1", 500.0);
-    assert_numeric_cell_close(&maxlfq, "P6", "sample-2", 500.0);
+    assert_numeric_cell_close(&maxlfq, "P6", "sample-2", 1000.0);
 
-    // The built-in MaxLFQ fallback (force_builtin) reproduces Python's not-installed
-    // path: [500.0, 1000.0] on the same matrix.
+    // The legacy flag is a no-op: neither path delegates to DirectLFQ.
     let maxlfq_builtin = run_lfq_quantification_builtin_maxlfq()?;
     assert_numeric_cell_close(&maxlfq_builtin, "P6", "sample-1", 500.0);
     assert_numeric_cell_close(&maxlfq_builtin, "P6", "sample-2", 1000.0);
@@ -2796,20 +2791,16 @@ fn features2proteins_lfq_methods_match_synthetic_oracles() -> Result<(), Box<dyn
 }
 
 #[test]
-fn features2proteins_maxlfq_maxes_contextual_ions_then_sums_canonical_peptides(
-) -> Result<(), Box<dyn Error>> {
-    // Python's loader first keeps the maximum intensity for each
-    // (peptidoform, charge, sample, condition, biological-replicate) ion, then
-    // sums those contextual ions into the canonical peptide. For sample-1 this
-    // yields PEPTIDEK = max(100, 80) + 20 + 40 = 160 and ANOTHERK = 30;
-    // sample-2 is exactly 2x. The delegated DirectLFQ solver normalizes that 2x
-    // sample shift to [190, 190], while the forced built-in solver returns the
-    // unnormalized canonical totals [190, 380].
+fn features2proteins_maxlfq_preserves_species_after_contextual_maxima() -> Result<(), Box<dyn Error>>
+{
+    // Keep contextual maxima, then sum repeated observations of each species:
+    // sample-1 has intensities [120, 40, 30], sample-2 is exactly 2x.
+    // Cox's profile-total rescaling therefore gives [190, 380].
     let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let parquet = root.join("maxlfq_dup.features.parquet");
     let sdrf = root.join("maxlfq_dup.sdrf.tsv");
-    let delegated_output = root.join("maxlfq_dup.delegated.csv");
+    let default_output = root.join("maxlfq_dup.default.csv");
     let builtin_output = root.join("maxlfq_dup.builtin.csv");
 
     write_qpx_rows(
@@ -2840,12 +2831,12 @@ fn features2proteins_maxlfq_maxes_contextual_ions_then_sums_canonical_peptides(
         ),
     )?;
 
-    let mut config = default_sum_config(parquet, sdrf, delegated_output.clone());
+    let mut config = default_sum_config(parquet, sdrf, default_output.clone());
     config.quantification = QuantMethod::MaxLfq;
     run_features_to_proteins(&config)?;
-    let delegated = read_csv(&delegated_output)?;
-    assert_numeric_cell_close(&delegated, "P6", "sample-1", 190.0);
-    assert_numeric_cell_close(&delegated, "P6", "sample-2", 190.0);
+    let default = read_csv(&default_output)?;
+    assert_numeric_cell_close(&default, "P6", "sample-1", 190.0);
+    assert_numeric_cell_close(&default, "P6", "sample-2", 380.0);
 
     config.output.protein_matrix = builtin_output.clone();
     config.maxlfq.force_builtin = true;
@@ -2857,8 +2848,77 @@ fn features2proteins_maxlfq_maxes_contextual_ions_then_sums_canonical_peptides(
 }
 
 #[test]
-fn features2proteins_delegated_maxlfq_is_invariant_to_feature_order() -> Result<(), Box<dyn Error>>
-{
+fn features2proteins_maxlfq_keeps_charge_specific_ratios() -> Result<(), Box<dyn Error>> {
+    let (_tempdir, root) = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("species.features.parquet");
+    let sdrf = root.join("species.sdrf.tsv");
+    let output = root.join("species.proteins.csv");
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new_with_charge("PEPTIDEAK", "run1.raw", 1.0, 2, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEAK", "run1.raw", 1.0, 3, &["P6"]),
+            QpxRow::new("ANOTHERAK", "run1.raw", 1.0, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEAK", "run2.raw", 1.0, 2, &["P6"]),
+            QpxRow::new_with_charge("PEPTIDEAK", "run2.raw", 9.0, 3, &["P6"]),
+            QpxRow::new("ANOTHERAK", "run2.raw", 3.0, &["P6"]),
+        ],
+    )?;
+    write_synthetic_sdrf(&sdrf)?;
+    let mut config = default_sum_config(parquet, sdrf, output.clone());
+    config.quantification = QuantMethod::MaxLfq;
+    run_features_to_proteins(&config)?;
+    let table = read_csv(&output)?;
+    // Three species ratios (1, 9, 3) imply 3-fold change with total 16.
+    assert_numeric_cell_close(&table, "P6", "sample-1", 4.0);
+    assert_numeric_cell_close(&table, "P6", "sample-2", 12.0);
+    Ok(())
+}
+
+#[test]
+fn features2proteins_maxlfq_stabilization_is_opt_in() -> Result<(), Box<dyn Error>> {
+    let (_tempdir, root) = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("stabilization.features.parquet");
+    let sdrf = root.join("stabilization.sdrf.tsv");
+    let output = root.join("stabilization.proteins.csv");
+    let sequences = (0..20)
+        .map(|i| format!("{}K", "A".repeat(i + 7)))
+        .collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    for (i, sequence) in sequences.iter().enumerate() {
+        rows.push(QpxRow::new(sequence, "run1.raw", 10.0, &["P6"]));
+        if i < 2 {
+            rows.push(QpxRow::new(sequence, "run2.raw", 1.0, &["P6"]));
+        }
+    }
+    write_qpx_rows(&parquet, &rows)?;
+    write_synthetic_sdrf(&sdrf)?;
+    let mut config = default_sum_config(parquet, sdrf, output.clone());
+    config.quantification = QuantMethod::MaxLfq;
+    for (enabled, first, second) in [(false, 2020.0 / 11.0, 202.0 / 11.0), (true, 200.0, 2.0)] {
+        config.maxlfq.stabilize = enabled;
+        run_features_to_proteins(&config)?;
+        let table = read_csv(&output)?;
+        assert_numeric_cell_close(&table, "P6", "sample-1", first);
+        assert_numeric_cell_close(&table, "P6", "sample-2", second);
+    }
+    config.quantification = QuantMethod::Sum;
+    let Err(error) = run_features_to_proteins(&config) else {
+        panic!("sum quantification accepted --stabilize");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("--stabilize requires --quant-method maxlfq"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn features2proteins_maxlfq_is_invariant_to_feature_order() -> Result<(), Box<dyn Error>> {
     let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;
     let forward_parquet = root.join("maxlfq_order.forward.features.parquet");
@@ -3797,9 +3857,7 @@ fn run_lfq_quantification(quantification: QuantMethod) -> Result<CsvTable, Box<d
     read_csv(&output)
 }
 
-/// Same dataset as `run_lfq_quantification`, but forces the built-in MaxLFQ
-/// fallback (Python's directlfq-not-installed path) instead of delegating to the
-/// DirectLFQ-aligned solver.
+/// The compatibility flag must not select a different quantification algorithm.
 fn run_lfq_quantification_builtin_maxlfq() -> Result<CsvTable, Box<dyn Error>> {
     let (_tempdir, root) = temp_root()?;
     create_dir_all(&root)?;

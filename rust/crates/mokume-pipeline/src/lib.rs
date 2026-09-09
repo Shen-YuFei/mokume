@@ -24,8 +24,8 @@ use mokume_normalization::{
     SampleNormalizationMethod,
 };
 use mokume_quant::{
-    direct_lfq_aligned, direct_lfq_aligned_with_ions, max_lfq_with_samples, DirectLfqIon,
-    DirectLfqNormalizedIon, PeptideMeasurement,
+    direct_lfq_aligned, direct_lfq_aligned_with_ions, solve_max_lfq_with_stabilization,
+    DirectLfqIon, DirectLfqNormalizedIon, PeptideMeasurement,
 };
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
@@ -34,6 +34,7 @@ use tracing::{info, warn};
 mod de;
 pub mod filters;
 mod matrix;
+mod maxlfq;
 mod memory;
 mod spectral_count;
 mod threading;
@@ -42,11 +43,8 @@ use memory::MemoryPlan;
 
 pub use de::{differential_expression_matrix, MatrixDifferentialExpressionResults};
 pub use matrix::{impute_matrix, normalize_matrix};
+pub use maxlfq::run_maxlfq_from_peptides_with_threads;
 
-/// `min_nonan` used when `--quant-method maxlfq` delegates to the DirectLFQ-aligned
-/// solver. Matches Python's maxlfq delegation, which uses 2 (the streaming path
-/// hardcodes `min_nonan=2`; the class path passes `min_peptides`, default 2).
-const MAXLFQ_DIRECTLFQ_MIN_NONAN: usize = 2;
 const DEFAULT_REFERENCE_REGEX: &str = "pool|powder|ref|reference|bridge";
 const MIN_SAMPLE_CORRELATION_OVERLAP: usize = 3;
 
@@ -353,6 +351,7 @@ impl FeatureToProteinState {
             sample,
             peptide,
             canonical: canonical_peptide,
+            species: base_peptide,
             intensity,
             ion_name: &feature.sequence,
             sample_name: &sample_name,
@@ -526,7 +525,7 @@ impl FeatureToProteinState {
         mut self,
         min_unique_peptides: usize,
         dataset_normalization: Option<SampleNormalizationMethod>,
-    ) -> ProteinMatrix {
+    ) -> Result<ProteinMatrix> {
         let allowed_cells = self.allowed_cells(min_unique_peptides);
         // Per-protein unique-canonical-peptide counts for the DEqMS DE path,
         // captured BEFORE the `min_unique_peptides` cell filter so they mirror
@@ -560,16 +559,16 @@ impl FeatureToProteinState {
             collapse_mapping,
             &self.canonical_peptides,
             &self.samples,
-        );
+        )?;
         let allowed_proteins = values.protein_ids();
-        ProteinMatrix {
+        Ok(ProteinMatrix {
             proteins: self.proteins,
             samples: self.samples,
             allowed_proteins,
             excluded_samples: HashSet::new(),
             peptide_counts,
             values,
-        }
+        })
     }
 
     /// Union the canonical-peptide sets across all of a protein's (protein,
@@ -1095,17 +1094,14 @@ enum FeatureAggregation {
     },
     Lfq {
         method: QuantMethod,
-        /// Whether this LFQ aggregation feeds the DirectLFQ-aligned solver.
-        /// True for `QuantMethod::DirectLfq`, and for `QuantMethod::MaxLfq` unless
-        /// the built-in fallback is forced (mirrors Python delegating maxlfq to
-        /// DirectLFQ when the package is installed). When false, the built-in
-        /// MaxLFQ solver runs on `traces`.
+        /// DirectLFQ alone performs hierarchical sample/ion alignment.
         route_to_directlfq: bool,
+        maxlfq_min_ratio_count: usize,
+        stabilize: bool,
         directlfq_min_nonan: usize,
         directlfq_num_samples_quadratic: usize,
-        /// MaxLFQ input: max intensity per contextual peptidoform ion, collapsed
-        /// to canonical peptide only after every feature row has been observed.
-        /// DirectLFQ uses the same feature-to-ion contract.
+        /// Contextual ion maxima. MaxLFQ preserves modification and charge;
+        /// DirectLFQ collapses them into canonical peptide traces.
         traces: MaxLfqFeatureAggregation,
         /// Populated only when DirectLFQ ion export runs before matrix
         /// materialization, avoiding a second solver pass.
@@ -1117,7 +1113,8 @@ enum FeatureAggregation {
 struct MaxLfqFeatureAggregation {
     ion_cells: HashMap<CellKey, HashMap<PeptideId, f64>>,
     ion_to_canonical: HashMap<PeptideId, PeptideId>,
-    canonical_traces: HashMap<PeptideCellKey, f64>,
+    ion_to_species: HashMap<PeptideId, PeptideId>,
+    peptide_traces: HashMap<PeptideCellKey, f64>,
 }
 
 #[derive(Debug)]
@@ -1246,6 +1243,7 @@ struct AggregationMeasurement<'a> {
     sample: SampleId,
     peptide: PeptideId,
     canonical: PeptideId,
+    species: PeptideId,
     intensity: f64,
     ion_name: &'a str,
     sample_name: &'a str,
@@ -1287,27 +1285,16 @@ impl FeatureAggregation {
                     cells: HashMap::new(),
                 })
             }
-            QuantMethod::MaxLfq | QuantMethod::DirectLfq => {
-                let route_to_directlfq = config.quantification == QuantMethod::DirectLfq
-                    || (!config.maxlfq.force_builtin
-                        && dataset_sample_normalization_method(config)?.is_none());
-                // Python's maxlfq delegation uses min_nonan=2 (the streaming path
-                // hardcodes it; the class path passes min_peptides, default 2),
-                // whereas the directlfq method keeps its own config default.
-                let directlfq_min_nonan = if config.quantification == QuantMethod::MaxLfq {
-                    MAXLFQ_DIRECTLFQ_MIN_NONAN
-                } else {
-                    config.directlfq.min_nonan
-                };
-                Ok(Self::Lfq {
-                    method: config.quantification,
-                    route_to_directlfq,
-                    directlfq_min_nonan,
-                    directlfq_num_samples_quadratic: config.directlfq.num_samples_quadratic,
-                    traces: MaxLfqFeatureAggregation::default(),
-                    cached_directlfq_values: None,
-                })
-            }
+            QuantMethod::MaxLfq | QuantMethod::DirectLfq => Ok(Self::Lfq {
+                method: config.quantification,
+                route_to_directlfq: config.quantification == QuantMethod::DirectLfq,
+                maxlfq_min_ratio_count: config.maxlfq.min_ratio_count,
+                stabilize: config.maxlfq.stabilize,
+                directlfq_min_nonan: config.directlfq.min_nonan,
+                directlfq_num_samples_quadratic: config.directlfq.num_samples_quadratic,
+                traces: MaxLfqFeatureAggregation::default(),
+                cached_directlfq_values: None,
+            }),
         }
     }
 
@@ -1347,9 +1334,8 @@ impl FeatureAggregation {
             | Self::PeptideCount(_)
             | Self::TopN { .. }
             | Self::Pibaq(_) => true,
-            // Built-in MaxLFQ runs dataset normalization on its peptide traces;
-            // the DirectLFQ-aligned path (DirectLFQ, or delegated MaxLFQ) does its
-            // own internal sample normalization, so mokume must not apply another.
+            // MaxLFQ uses explicitly configured normalization on peptide species.
+            // DirectLFQ performs its own internal sample normalization.
             Self::Lfq {
                 route_to_directlfq, ..
             } => !route_to_directlfq,
@@ -1494,8 +1480,8 @@ impl FeatureAggregation {
         peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
         canonical_peptides: &StringIdRegistry<PeptideId>,
         samples: &StringIdRegistry<SampleId>,
-    ) -> ProteinValues {
-        match self {
+    ) -> Result<ProteinValues> {
+        Ok(match self {
             Self::Sum(cells) => ProteinValues::Cells(
                 cells
                     .into_iter()
@@ -1596,54 +1582,77 @@ impl FeatureAggregation {
                 };
                 ProteinValues::Rows(values)
             }
-            Self::Lfq { traces, .. } => {
-                let traces = traces.into_canonical_traces();
-                let (peptide_to_lexical, _) = lexical_id_remap(canonical_peptides);
-                let mut samples = allowed_cells
-                    .iter()
-                    .map(|cell| cell.sample)
-                    .collect::<Vec<_>>();
-                samples.sort_by_key(|sample| sample.get());
-                samples.dedup();
-
-                let mut grouped = HashMap::<ProteinId, Vec<PeptideMeasurement>>::new();
-                for (key, intensity) in traces {
-                    let cell = CellKey {
-                        protein: key.protein,
-                        sample: key.sample,
-                    };
-                    if allowed_cells.contains(&cell) {
-                        grouped
-                            .entry(key.protein)
-                            .or_default()
-                            .push(PeptideMeasurement {
-                                peptide: peptide_to_lexical
-                                    .get(&key.peptide)
-                                    .copied()
-                                    .unwrap_or(key.peptide),
-                                sample: key.sample,
-                                intensity,
-                            });
-                    }
-                }
-
-                ProteinValues::Rows(
-                    grouped
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                        .into_par_iter()
-                        .map(|(protein, measurements)| {
-                            (protein, max_lfq_with_samples(&measurements, &samples))
-                        })
-                        .collect(),
-                )
-            }
-        }
+            Self::Lfq {
+                traces,
+                maxlfq_min_ratio_count,
+                stabilize,
+                ..
+            } => traces.into_protein_values(
+                allowed_cells,
+                proteins,
+                samples,
+                maxlfq_min_ratio_count,
+                stabilize,
+            )?,
+        })
     }
 }
 
 impl MaxLfqFeatureAggregation {
+    fn into_protein_values(
+        self,
+        allowed_cells: &HashSet<CellKey>,
+        proteins: &StringIdRegistry<ProteinId>,
+        samples: &StringIdRegistry<SampleId>,
+        min_ratio_count: usize,
+        stabilize: bool,
+    ) -> Result<ProteinValues> {
+        let traces = self.into_species_traces();
+        let mut sample_ids = allowed_cells
+            .iter()
+            .map(|cell| cell.sample)
+            .collect::<Vec<_>>();
+        sample_ids.sort_by(|left, right| samples.resolve(*left).cmp(&samples.resolve(*right)));
+        sample_ids.dedup();
+        let mut grouped = HashMap::<ProteinId, Vec<PeptideMeasurement>>::new();
+        for (key, intensity) in traces {
+            let cell = CellKey {
+                protein: key.protein,
+                sample: key.sample,
+            };
+            if allowed_cells.contains(&cell) {
+                grouped
+                    .entry(key.protein)
+                    .or_default()
+                    .push(PeptideMeasurement {
+                        peptide: key.peptide,
+                        sample: key.sample,
+                        intensity,
+                    });
+            }
+        }
+        let rows = grouped.into_iter().collect::<Vec<_>>().into_par_iter()
+            .map(|(protein, measurements)| {
+                let result = solve_max_lfq_with_stabilization(&measurements, &sample_ids, min_ratio_count, stabilize)?;
+                if result.components.len() > 1 {
+                    warn!(protein = ?proteins.resolve(protein), components = result.components.len(),
+                        "MaxLFQ sample graph is disconnected; between-component ratios are not identifiable");
+                }
+                Ok((protein, result.intensities.into_iter().filter(|(_, x)| *x > 0.0).collect::<Vec<_>>(), result.stabilized_pairs))
+            }).collect::<Result<Vec<_>>>()?;
+        maxlfq::log_stabilization(min_ratio_count, stabilize, rows.iter().map(|row| row.2));
+        Ok(ProteinValues::Rows(
+            rows.into_iter()
+                .map(|(protein, values, _)| (protein, values))
+                .filter(|(_, values)| !values.is_empty())
+                .collect(),
+        ))
+    }
+
     fn push(&mut self, measurement: AggregationMeasurement<'_>) {
+        self.ion_to_species
+            .entry(measurement.peptide)
+            .or_insert(measurement.species);
         self.ion_to_canonical
             .entry(measurement.peptide)
             .or_insert(measurement.canonical);
@@ -1658,14 +1667,19 @@ impl MaxLfqFeatureAggregation {
         );
     }
 
-    fn collapse_ions(&mut self) {
+    fn collapse_ions(&mut self, preserve_species: bool) {
         let mut cells = std::mem::take(&mut self.ion_cells)
             .into_iter()
             .collect::<Vec<_>>();
         cells.sort_by_key(|(cell, _)| (cell.protein.get(), cell.sample.get()));
+        let mapping = if preserve_species {
+            &self.ion_to_species
+        } else {
+            &self.ion_to_canonical
+        };
         for (cell, peptides) in cells {
-            for (canonical, intensity) in collapse_to_canonical(peptides, &self.ion_to_canonical) {
-                self.canonical_traces.insert(
+            for (canonical, intensity) in collapse_to_canonical(peptides, mapping) {
+                self.peptide_traces.insert(
                     PeptideCellKey {
                         protein: cell.protein,
                         sample: cell.sample,
@@ -1678,17 +1692,22 @@ impl MaxLfqFeatureAggregation {
     }
 
     fn apply_quantile_normalization(&mut self, allowed_cells: &HashSet<CellKey>) {
-        self.collapse_ions();
-        apply_quantile_to_lfq_traces(&mut self.canonical_traces, allowed_cells);
+        self.collapse_ions(true);
+        apply_quantile_to_lfq_traces(&mut self.peptide_traces, allowed_cells);
     }
 
-    fn into_canonical_traces(mut self) -> HashMap<PeptideCellKey, f64> {
-        self.collapse_ions();
-        self.canonical_traces
+    fn into_peptide_traces(mut self) -> HashMap<PeptideCellKey, f64> {
+        self.collapse_ions(false);
+        self.peptide_traces
+    }
+
+    fn into_species_traces(mut self) -> HashMap<PeptideCellKey, f64> {
+        self.collapse_ions(true);
+        self.peptide_traces
     }
 
     fn into_directlfq_sums(self) -> HashMap<DirectLfqCellKey, f64> {
-        self.into_canonical_traces()
+        self.into_peptide_traces()
             .into_iter()
             .map(|(key, intensity)| {
                 (
@@ -1705,7 +1724,7 @@ impl MaxLfqFeatureAggregation {
 
     fn directlfq_sums(&self) -> HashMap<DirectLfqCellKey, f64> {
         let mut sums = self
-            .canonical_traces
+            .peptide_traces
             .iter()
             .map(|(key, intensity)| {
                 (
@@ -4890,11 +4909,8 @@ pub struct LfqProteinIntensity {
 
 /// Roll a peptide-level table up to per-protein intensities inside an explicitly
 /// sized Rayon worker pool with the DirectLFQ estimator (canonical peptides as
-/// ions) -- the engine behind
-/// `quantify peptides2protein --quant-method directlfq` and `--quant-method maxlfq`. mokume's
-/// `MaxLFQQuantification` delegates to DirectLFQ when the package is available
-/// (`min_nonan = 2`, its `min_peptides`); the `directlfq` method uses its own
-/// `min_nonan`. `num_samples_quadratic` is DirectLFQ's global-stage knob (the
+/// ions), used by `quantify peptides2protein --quant-method directlfq`.
+/// `num_samples_quadratic` is DirectLFQ's global-stage knob (the
 /// directlfq default is 50). `None` retains the configured global pool. Only
 /// intensities `> 0` are returned, matching Python's `_parse_wide_output`.
 pub fn run_lfq_from_peptides_with_threads(
@@ -5349,7 +5365,7 @@ fn run_features_to_proteins_inner(
         PeptideExportOptions::default(),
         dataset_normalization,
     )?;
-    let matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
+    let matrix = state.into_matrix(min_unique_peptides, dataset_normalization)?;
     memory.check("protein matrix materialization")?;
     finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix)
 }
@@ -6362,6 +6378,17 @@ fn dataset_sample_normalization_method(
 }
 
 fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> {
+    if config.maxlfq.stabilize && config.quantification != QuantMethod::MaxLfq {
+        return Err(invalid_input("--stabilize requires --quant-method maxlfq"));
+    }
+    if config.maxlfq.min_ratio_count == 0 {
+        return Err(invalid_input("MaxLFQ minimum ratio count must be positive"));
+    }
+    if config.maxlfq.min_ratio_count != 2 && config.quantification != QuantMethod::MaxLfq {
+        return Err(invalid_input(
+            "--maxlfq-min-ratio-count only applies to MaxLFQ",
+        ));
+    }
     validate_feature_input(config)?;
     if let Some(sdrf) = &config.input.sdrf {
         if !sdrf.exists() {
@@ -6389,13 +6416,10 @@ fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()>
         ));
     }
     if config.directlfq.num_samples_quadratic != 50
-        && !matches!(
-            config.quantification,
-            QuantMethod::DirectLfq | QuantMethod::MaxLfq
-        )
+        && config.quantification != QuantMethod::DirectLfq
     {
         return Err(invalid_input(
-            "--directlfq-num-samples-quadratic only applies to DirectLFQ/MaxLFQ",
+            "--directlfq-num-samples-quadratic only applies to DirectLFQ",
         ));
     }
     if let Some(fasta) = &config.input.fasta {
@@ -11144,7 +11168,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         method: super::QuantMethod,
         directlfq_sums: std::collections::HashMap<super::DirectLfqCellKey, f64>,
     ) -> super::FeatureAggregation {
-        let canonical_traces = directlfq_sums
+        let peptide_traces = directlfq_sums
             .into_iter()
             .map(|(key, intensity)| {
                 (
@@ -11159,11 +11183,13 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             .collect();
         super::FeatureAggregation::Lfq {
             method,
-            route_to_directlfq: true,
+            route_to_directlfq: method == super::QuantMethod::DirectLfq,
+            maxlfq_min_ratio_count: 2,
+            stabilize: false,
             directlfq_min_nonan: 1,
             directlfq_num_samples_quadratic: 50,
             traces: super::MaxLfqFeatureAggregation {
-                canonical_traces,
+                peptide_traces,
                 ..super::MaxLfqFeatureAggregation::default()
             },
             cached_directlfq_values: None,
@@ -11235,24 +11261,24 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     fn lfq_fixture_protein_ids(
         method: super::QuantMethod,
         fixture: &LfqMinUniqueFixture,
-    ) -> HashSet<ProteinId> {
+    ) -> mokume_core::Result<HashSet<ProteinId>> {
         let mut proteins = StringIdRegistry::<ProteinId>::new();
-        lfq_aggregation(method, fixture.sums.clone())
+        Ok(lfq_aggregation(method, fixture.sums.clone())
             .finalize(
                 &fixture.allowed_cells,
                 &mut proteins,
                 &HashMap::new(),
                 &fixture.canonical_peptides,
                 &StringIdRegistry::<SampleId>::new(),
-            )
-            .protein_ids()
+            )?
+            .protein_ids())
     }
 
     #[test]
-    fn lfq_min_unique_gate_is_per_cell_for_both_methods() {
+    fn lfq_min_unique_gate_is_per_cell_for_both_methods() -> mokume_core::Result<()> {
         let fixture = lfq_min_unique_fixture();
-        let max_proteins = lfq_fixture_protein_ids(super::QuantMethod::MaxLfq, &fixture);
-        let direct_proteins = lfq_fixture_protein_ids(super::QuantMethod::DirectLfq, &fixture);
+        let max_proteins = lfq_fixture_protein_ids(super::QuantMethod::MaxLfq, &fixture)?;
+        let direct_proteins = lfq_fixture_protein_ids(super::QuantMethod::DirectLfq, &fixture)?;
 
         assert!(
             max_proteins.contains(&fixture.dense),
@@ -11267,6 +11293,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             !direct_proteins.contains(&fixture.scattered),
             "DirectLFQ applies the same per-cell unique-peptide gate"
         );
+        Ok(())
     }
 
     // Lock the monoisotopic molecular weight against the pyOpenMS
