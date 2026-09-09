@@ -173,7 +173,7 @@ pub fn differential_expression_matrix(
                 &prepared, config,
             )?)),
             DeMethod::Member(method) => Ok(MatrixDifferentialExpressionResults::Standard(
-                run_member(method, &prepared, config),
+                run_member(method, &prepared, config)?,
             )),
         }
     })
@@ -343,7 +343,7 @@ fn run_one_contrast(
         )?)),
         DeMethod::Member(method) => Ok(MatrixDifferentialExpressionResults::Standard(run_member(
             method, &prepared, config,
-        ))),
+        )?)),
     }
 }
 
@@ -364,9 +364,9 @@ fn run_member(
     method: MemberMethod,
     prepared: &Prepared<'_>,
     config: &DifferentialExpressionConfig,
-) -> Vec<DeResult> {
-    let results = run_method_bh(method, prepared, config);
-    finalize_member_results(method, results, config)
+) -> Result<Vec<DeResult>> {
+    let results = run_method_bh(method, prepared, config)?;
+    Ok(finalize_member_results(method, results, config))
 }
 
 fn finalize_member_results(
@@ -374,7 +374,8 @@ fn finalize_member_results(
     mut results: Vec<DeResult>,
     config: &DifferentialExpressionConfig,
 ) -> Vec<DeResult> {
-    // LimROTS and ROTS preserve their own permutation FDR. All other methods
+    // LimROTS preserves official BH.pvalue; ROTS preserves its permutation FDR.
+    // All other methods
     // apply the configured correction over the raw p-values.
     if !matches!(method, MemberMethod::Limrots | MemberMethod::Rots) {
         if is_ihw(config) {
@@ -395,12 +396,12 @@ fn run_method_bh(
     method: MemberMethod,
     prepared: &Prepared<'_>,
     config: &DifferentialExpressionConfig,
-) -> Vec<DeResult> {
+) -> Result<Vec<DeResult>> {
     let (proteins, rows, n_a, n_b) = (prepared.proteins, prepared.rows, prepared.n_a, prepared.n_b);
     let (fdr, log2fc) = (config.fdr_threshold, config.log2fc_threshold);
-    match method {
+    Ok(match method {
         MemberMethod::Rots => rots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
-        MemberMethod::Limrots => limrots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
+        MemberMethod::Limrots => limrots_two_group(proteins, rows, n_a, n_b, fdr, log2fc)?,
         MemberMethod::Proda => proda_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
         MemberMethod::Deqms => {
             // Per-protein unique-canonical-peptide counts captured at ingest,
@@ -423,7 +424,7 @@ fn run_method_bh(
             )
         }
         MemberMethod::Limma => limma_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
-    }
+    })
 }
 
 /// IHW uses 5 covariate bins, matching mokume's `_ihw_correction(..., n_bins=5)`
@@ -572,7 +573,7 @@ fn run_ensemble(
     let mut members: Vec<(String, Vec<DeResult>)> = Vec::new();
     for name in validated_ensemble_member_names(config)? {
         let method = parse_ensemble_method(&name)?;
-        let result = run_member(method, prepared, config);
+        let result = run_member(method, prepared, config)?;
         // Python only adds members whose result is non-empty.
         if !result.is_empty() {
             members.push((name, result));
@@ -2028,71 +2029,68 @@ mod tests {
         Ok(())
     }
 
-    // LimROTS log2FC is `beta` = the full-data eBayes contrast coefficient
-    // (mean_A - mean_B, the SAME sign convention as limma, the OPPOSITE of rots),
-    // so P1 (low in A, high in B) is -2.0 here. Captured from limrots' full-data
-    // eBayes on log2(RAW) (see scratchpad limrots oracle). Deterministic and
-    // cell-exact regardless of the RNG.
-    const EXPECTED_LIMROTS_LOG2FC: &[(&str, f64)] = &[
-        ("P1", -2.0004868432854863),
-        ("P2", 2.0090616097754097),
-        ("P3", 0.015910691677655464),
-        ("P4", -1.0),
-        ("P5", -1.0),
-        ("P6", 0.09175595082658106),
-    ];
-
-    // Pipeline wiring test for `--de-method limrots`. LimROTS is a faithful
-    // RNG-based port (fixed internal PRNG), so its permutation p-values are
-    // deterministic run-to-run but NOT bit-matched to Python (Python is itself
-    // seed-unstable). This test asserts the structural contract that IS
-    // deterministic:
-    //   (1) the limrots-specific header (a single `t_stat` extra column, no
-    //       AveExpr/B, no peptide_count);
-    //   (2) log2FC cell-exact vs Python (the deterministic full-data eBayes beta,
-    //       in limrots' mean_A - mean_B convention);
-    //   (3) every pvalue/adj_pvalue in [0,1] and the rows sorted by adj_pvalue;
-    //   (4) the t_stat (== d_stat) column is finite.
-    // The deterministic LimROTS helpers (d_stat / boot_ebayes reorder /
-    // p-value counting / s2_post) are covered cell-by-cell in mokume-stats'
-    // limrots unit tests.
     #[test]
-    fn de_dispatcher_limrots_wires_tstat_column_and_log2fc() -> TestResult<()> {
-        let (_tempdir, dir) = temp_dir("oracle-limrots")?;
+    fn de_dispatcher_limrots_rejects_empty_official_search_grid() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("limrots-empty-grid")?;
         let output = dir.join("de_results.csv");
-        let matrix = fixture_matrix()?;
-        let sdrf = fixture_sdrf()?;
-
-        run_differential_expression(&matrix, Some(&sdrf), &de_config(&output, "limrots"), false)?;
-
-        let text = std::fs::read_to_string(&output)?;
-        let mut lines = text.lines();
-        let header = lines.next().ok_or("missing header")?;
-        // limrots header: a single t_stat column between adj_pvalue and the means.
-        assert_eq!(
-            header,
-            "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,mean_groupA,mean_groupB,n_a,n_b,significance"
+        let result = run_differential_expression(
+            &fixture_matrix()?,
+            Some(&fixture_sdrf()?),
+            &de_config(&output, "limrots"),
+            false,
         );
+        let error = result.err().ok_or("expected LimROTS search-grid error")?;
+        assert!(error.to_string().contains("empty search grid"));
+        assert!(
+            !output.exists(),
+            "failed analysis must not write a result table"
+        );
+        Ok(())
+    }
 
-        let mut rows: HashMap<String, Vec<String>> = HashMap::new();
-        let mut order: Vec<String> = Vec::new();
-        for line in lines {
-            let fields = line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>();
-            let protein = fields.first().ok_or("empty row")?.clone();
-            order.push(protein.clone());
-            rows.insert(protein, fields);
+    #[test]
+    fn matrix_limrots_preserves_ids_and_signed_fold_changes() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("limrots-valid-grid")?;
+        let proteins = (1..=60).map(|i| format!("P{i:03}")).collect::<Vec<_>>();
+        let log_rows = (1..=60)
+            .map(|i| {
+                (1..=8)
+                    .map(|j| {
+                        let (i, j) = (i as f64, j as f64);
+                        20.0 + i / 100.0
+                            + (i * 0.21).sin().exp()
+                                * ((i * j * 0.31).sin() + 0.3 * (i * j * 0.47).cos())
+                            + if j <= 4.0 {
+                                (i - 1.0) * 3.0 / 59.0
+                            } else {
+                                0.0
+                            }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let values = log_rows
+            .iter()
+            .map(|r| r.iter().map(|v| v.exp2()).collect())
+            .collect::<Vec<_>>();
+        let config = de_config(&dir.join("unused.csv"), "limrots");
+        let output =
+            differential_expression_matrix(&proteins, &values, 4, 4, None, &config, Some(4))?;
+        let super::MatrixDifferentialExpressionResults::Standard(results) = output else {
+            return Err("expected standard LimROTS results".into());
+        };
+        assert_eq!(results.len(), proteins.len());
+        for result in results {
+            let i = proteins
+                .iter()
+                .position(|p| p == &result.protein)
+                .ok_or("unknown protein")?;
+            let expected = log_rows[i][..4].iter().sum::<f64>() / 4.0
+                - log_rows[i][4..].iter().sum::<f64>() / 4.0;
+            assert!((result.log2_fold_change - expected).abs() < 1e-12);
+            assert!(result.t_statistic >= 0.0);
+            assert!((0.0..=1.0).contains(&result.p_value));
         }
-        assert_eq!(rows.len(), EXPECTED_LIMROTS_LOG2FC.len(), "row count");
-
-        // The limrots field layout matches rots (single extra column at index 4),
-        // so the rots row assertions apply unchanged.
-        for &(protein, log2fc) in EXPECTED_LIMROTS_LOG2FC {
-            let fields = rows
-                .get(protein)
-                .ok_or_else(|| format!("missing {protein}"))?;
-            assert_rots_row(fields, protein, log2fc)?;
-        }
-        assert_rots_sorted_by_adj_pvalue(&order, &rows)?;
         Ok(())
     }
 

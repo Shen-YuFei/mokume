@@ -28,7 +28,9 @@ pub use effect_size::{estimate_effect_size_gate, EffectSizeGateMethod};
 pub use ensemble::{combine_de_results, EnsembleResult};
 pub use ihw::ihw_correction;
 use limma::run_limma;
-pub use limrots::limrots_two_group;
+pub use limrots::{
+    limrots_two_group, limrots_two_group_with_options, LimRotsOptions, LimRotsOutput,
+};
 use proda::proda_run;
 pub use rots::rots_two_group;
 
