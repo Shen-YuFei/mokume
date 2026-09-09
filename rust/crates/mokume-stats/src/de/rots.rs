@@ -98,11 +98,11 @@ impl SplitMix64 {
             return 0;
         }
         let bound64 = bound as u64;
-        // Reject the top `2^64 mod bound` values so the remainder is uniform.
+        // The accepted half-open interval contains a multiple of bound values.
         let zone = u64::MAX - (u64::MAX % bound64);
         loop {
             let candidate = self.next_u64();
-            if candidate <= zone {
+            if candidate < zone {
                 return (candidate % bound64) as usize;
             }
         }
@@ -707,6 +707,17 @@ mod tests {
     use crate::de::{Significance, DEFAULT_FDR_THRESHOLD, DEFAULT_LOG2FC_THRESHOLD};
 
     const TOL: f64 = 1e-9;
+
+    #[test]
+    fn bounded_rng_rejects_the_exclusive_upper_boundary() {
+        // This seed first produces the rejection boundary for bound=10.
+        // Accepting it would add an extra zero to the uniform remainder set.
+        let seed = 8_187_556_910_047_604_162;
+        let mut probe = SplitMix64::new(seed);
+        assert_eq!(probe.next_u64(), 18_446_744_073_709_551_610);
+        assert_eq!(probe.next_u64() % 10, 3);
+        assert_eq!(SplitMix64::new(seed).next_below(10), 3);
+    }
 
     fn assert_close(actual: f64, expected: f64, label: &str) {
         assert!(
