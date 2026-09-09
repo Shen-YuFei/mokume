@@ -3413,18 +3413,12 @@ fn features2proteins_deterministic_imputation_methods_match_synthetic_oracles(
 ) -> Result<(), Box<dyn Error>> {
     let minprob = run_imputation_quantification("minprob", |config| {
         config.imputation.quantile = 0.0;
-        config.imputation.shift = 1.0;
-        config.imputation.scale = 0.0;
     })?;
-    // Imputation runs in log2 space (matching the Python pipeline). Python's
-    // MinProb is stochastic (draws ~ N(mu, sd)), so cell-exact cross-language
-    // parity is not applicable; Rust deterministically fills the distribution
-    // mean mu = q_low - shift*sd. With quantile=0, shift=1, scale=0 (sd floored
-    // to 0.1): fill = 2**(min(log2 observed) - 0.1) = observed_min * 2**-0.1.
-    let shift = 2.0f64.powf(-0.1);
-    assert_numeric_cell_close(&minprob, "P31", "sample-2", 20.0 * shift);
-    assert_numeric_cell_close(&minprob, "P32", "sample-1", 10.0 * shift);
-    assert_numeric_cell_close(&minprob, "P32", "sample-3", 30.0 * shift);
+    // imputeLCMD 2.1 with shared seed-42 standard-normal draws. The public
+    // method is stochastic; this pins its fitted SD and pipeline log/exp scale.
+    assert_numeric_cell_close(&minprob, "P31", "sample-2", 2.0f64.powf(2.8123942601584764));
+    assert_numeric_cell_close(&minprob, "P32", "sample-1", 2.0f64.powf(2.6070930014911515));
+    assert_numeric_cell_close(&minprob, "P32", "sample-3", 2.0f64.powf(3.4811671996414963));
 
     // mean/median/constant are Rust-only extras (no Python counterpart). In
     // log2 space mean becomes the geometric mean and constant fills 2**0 = 1.
@@ -4560,29 +4554,8 @@ where
     let sdrf = root.join(format!("{method}.sdrf.tsv"));
     let output = root.join(format!("{method}.protein.csv"));
 
-    write_qpx_rows(
-        &parquet,
-        &[
-            QpxRow::new("PEPTIDEAK", "imp1.raw", 5.0, &["P30"]),
-            QpxRow::new("APEPTIDECK", "imp1.raw", 5.0, &["P30"]),
-            QpxRow::new("PEPTIDEAK", "imp2.raw", 10.0, &["P30"]),
-            QpxRow::new("APEPTIDECK", "imp2.raw", 10.0, &["P30"]),
-            QpxRow::new("PEPTIDEAK", "imp3.raw", 15.0, &["P30"]),
-            QpxRow::new("APEPTIDECK", "imp3.raw", 15.0, &["P30"]),
-            QpxRow::new("QASTVWK", "imp1.raw", 50.0, &["P31"]),
-            QpxRow::new("GHILMVK", "imp1.raw", 50.0, &["P31"]),
-            QpxRow::new("QASTVWK", "imp3.raw", 150.0, &["P31"]),
-            QpxRow::new("GHILMVK", "imp3.raw", 150.0, &["P31"]),
-            QpxRow::new("THIDPEAK", "imp2.raw", 100.0, &["P32"]),
-            QpxRow::new("ATHIDPECK", "imp2.raw", 100.0, &["P32"]),
-            QpxRow::new("ALWAYSAK", "imp1.raw", 500.0, &["P33"]),
-            QpxRow::new("BALWAYSCK", "imp1.raw", 500.0, &["P33"]),
-            QpxRow::new("ALWAYSAK", "imp2.raw", 500.0, &["P33"]),
-            QpxRow::new("BALWAYSCK", "imp2.raw", 500.0, &["P33"]),
-            QpxRow::new("ALWAYSAK", "imp3.raw", 500.0, &["P33"]),
-            QpxRow::new("BALWAYSCK", "imp3.raw", 500.0, &["P33"]),
-        ],
-    )?;
+    let rows = imputation_qpx_rows(method);
+    write_qpx_rows(&parquet, &rows)?;
     write_imputation_sdrf(&sdrf)?;
 
     let mut config = default_sum_config(parquet, sdrf, output.clone());
@@ -4595,6 +4568,40 @@ where
     run_features_to_proteins(&config)?;
 
     read_csv(&output)
+}
+
+fn imputation_qpx_rows(method: &str) -> Vec<QpxRow<'static>> {
+    let mut rows = vec![
+        QpxRow::new("PEPTIDEAK", "imp1.raw", 5.0, &["P30"]),
+        QpxRow::new("APEPTIDECK", "imp1.raw", 5.0, &["P30"]),
+        QpxRow::new("PEPTIDEAK", "imp2.raw", 10.0, &["P30"]),
+        QpxRow::new("APEPTIDECK", "imp2.raw", 10.0, &["P30"]),
+        QpxRow::new("PEPTIDEAK", "imp3.raw", 15.0, &["P30"]),
+        QpxRow::new("APEPTIDECK", "imp3.raw", 15.0, &["P30"]),
+        QpxRow::new("QASTVWK", "imp1.raw", 50.0, &["P31"]),
+        QpxRow::new("GHILMVK", "imp1.raw", 50.0, &["P31"]),
+        QpxRow::new("QASTVWK", "imp3.raw", 150.0, &["P31"]),
+        QpxRow::new("GHILMVK", "imp3.raw", 150.0, &["P31"]),
+        QpxRow::new("THIDPEAK", "imp2.raw", 100.0, &["P32"]),
+        QpxRow::new("ATHIDPECK", "imp2.raw", 100.0, &["P32"]),
+        QpxRow::new("ALWAYSAK", "imp1.raw", 500.0, &["P33"]),
+        QpxRow::new("BALWAYSCK", "imp1.raw", 500.0, &["P33"]),
+        QpxRow::new("ALWAYSAK", "imp2.raw", 500.0, &["P33"]),
+        QpxRow::new("BALWAYSCK", "imp2.raw", 500.0, &["P33"]),
+        QpxRow::new("ALWAYSAK", "imp3.raw", 500.0, &["P33"]),
+        QpxRow::new("BALWAYSCK", "imp3.raw", 500.0, &["P33"]),
+    ];
+    if method == "impseqrob" {
+        rows.extend([
+            QpxRow::new("NTERMPEPK", "imp1.raw", 20.0, &["P34"]),
+            QpxRow::new("CTERMPEPK", "imp1.raw", 20.0, &["P34"]),
+            QpxRow::new("NTERMPEPK", "imp2.raw", 200.0, &["P34"]),
+            QpxRow::new("CTERMPEPK", "imp2.raw", 200.0, &["P34"]),
+            QpxRow::new("NTERMPEPK", "imp3.raw", 200.0, &["P34"]),
+            QpxRow::new("CTERMPEPK", "imp3.raw", 200.0, &["P34"]),
+        ]);
+    }
+    rows
 }
 
 fn run_seqknn_quantification() -> Result<CsvTable, Box<dyn Error>> {
@@ -5650,31 +5657,14 @@ fn temp_root() -> Result<(tempfile::TempDir, PathBuf), Box<dyn Error>> {
     Ok((directory, path))
 }
 
-// impSeq: with only 2 complete rows (P30, P33) < max(2, p=3), the algorithm
-// takes the column-mean fallback, so each missing log2 cell is the mean of its
-// column's finite log2 values -> the geometric mean of the column's observed
-// raw values after 2**. Deterministic, matching the Python reference.
+// rrcovNA 0.5-3: two complete rows trigger covariance + 0.01 I,
+// followed by sequential conditional means, not column-mean imputation.
 #[test]
 fn features2proteins_impseq_imputation_matches_synthetic_oracle() -> Result<(), Box<dyn Error>> {
     let impseq = run_imputation_quantification("impseq", |_| {})?;
-    assert_numeric_cell_close(
-        &impseq,
-        "P32",
-        "sample-1",
-        (10.0_f64 * 100.0 * 1000.0).powf(1.0 / 3.0),
-    );
-    assert_numeric_cell_close(
-        &impseq,
-        "P31",
-        "sample-2",
-        (20.0_f64 * 200.0 * 1000.0).powf(1.0 / 3.0),
-    );
-    assert_numeric_cell_close(
-        &impseq,
-        "P32",
-        "sample-3",
-        (30.0_f64 * 300.0 * 1000.0).powf(1.0 / 3.0),
-    );
+    assert_numeric_cell_close(&impseq, "P32", "sample-1", 2.0f64.powf(7.102566092730076));
+    assert_numeric_cell_close(&impseq, "P31", "sample-2", 2.0f64.powf(7.468237752931963));
+    assert_numeric_cell_close(&impseq, "P32", "sample-3", 2.0f64.powf(8.053970647172795));
     assert_numeric_cell_close(&impseq, "P31", "sample-1", 100.0);
     assert_numeric_cell_close(&impseq, "P32", "sample-2", 200.0);
     Ok(())
@@ -5682,7 +5672,7 @@ fn features2proteins_impseq_imputation_matches_synthetic_oracle() -> Result<(), 
 
 // GMS is stochastic in Python (GMM + random draw), so cell-exact cross-language
 // parity is not applicable. The Rust port deterministically fills the lower
-// mixture component's mean (like MinProb). For this 3-observations-per-column
+// mixture component's mean. For this 3-observations-per-column
 // matrix the lower component collapses onto the minimum observation, and every
 // fill lies in [min_observed, geometric_mean_observed].
 #[test]
@@ -5744,9 +5734,8 @@ fn assert_gms_in_band(table: &CsvTable, protein: &str, sample: &str, lower: f64,
     );
 }
 
-// BPCA (Bayesian PCA EM) is deterministic in Python (numpy svd/inv/cov only, no
-// RNG). On this 4x3 matrix k = min(2, min(4,3)-1) = 2 so the full EM branch
-// runs; oracle from the Python reference (impute_bpca on log2, then 2**).
+// pcaMethods 2.2.0 pca(method="bpca", nPcs=2, maxSteps=100,
+// threshold=1e-4, center=TRUE, scale="none") on the log2 matrix.
 #[test]
 fn features2proteins_bpca_imputation_matches_synthetic_oracle() -> Result<(), Box<dyn Error>> {
     let table = run_imputation_quantification("bpca", |_| {})?;
@@ -5758,64 +5747,52 @@ fn features2proteins_bpca_imputation_matches_synthetic_oracle() -> Result<(), Bo
     Ok(())
 }
 
-// impSeqRob (robust sequential) is deterministic. On this matrix (2 complete
-// rows < ceil(p/alpha)=4) the conditional-MVN pre-impute branch fills both
-// incomplete rows; oracle from the Python reference (impute_impseqrob on log2,
-// then 2**).
+// rrcovNA 0.5-3 / norm 1.0-11.1, with a third complete row so the
+// initialized support leaves one row for the official sequential loop.
 #[test]
 fn features2proteins_impseqrob_imputation_matches_synthetic_oracle() -> Result<(), Box<dyn Error>> {
     let table = run_imputation_quantification("impseqrob", |_| {})?;
-    assert_numeric_cell_close(&table, "P31", "sample-2", 2.0f64.powf(7.569660028762611));
-    assert_numeric_cell_close(&table, "P32", "sample-1", 2.0f64.powf(6.967599172815016));
-    assert_numeric_cell_close(&table, "P32", "sample-3", 2.0f64.powf(7.947008510825019));
+    assert_imputation_log2_close(&table, "P31", "sample-2", 8.058466477798845);
+    assert_imputation_log2_close(&table, "P32", "sample-1", 6.209673798985398);
+    assert_imputation_log2_close(&table, "P32", "sample-3", 7.844203324508301);
     assert_numeric_cell_close(&table, "P30", "sample-1", 10.0);
     assert_numeric_cell_close(&table, "P33", "sample-2", 1000.0);
     Ok(())
 }
 
-// QRILC is stochastic in Python (truncated-normal draw). The Rust port fills the
-// deterministic center mu_imp = trunc - sd_obs (trunc = min observed, sd ddof=1
-// floored to 0.1), like MinProb/GMS. Oracle = 2**(log2-space center); every fill
-// lies at or below the column minimum (left-censored tail).
-#[test]
-fn features2proteins_qrilc_imputation_matches_stochastic_oracle_property(
-) -> Result<(), Box<dyn Error>> {
-    let qrilc = run_imputation_quantification("qrilc", |_| {})?;
-    assert_numeric_cell_close(
-        &qrilc,
-        "P32",
-        "sample-1",
-        2.0f64.powf(-4.440892098500626e-16),
-    );
-    assert_numeric_cell_close(&qrilc, "P31", "sample-2", 2.0f64.powf(1.4852731095132246));
-    assert_numeric_cell_close(&qrilc, "P32", "sample-3", 2.0f64.powf(2.336395795637601));
-    assert_qrilc_below_min(&qrilc, "P32", "sample-1", 10.0);
-    assert_qrilc_below_min(&qrilc, "P31", "sample-2", 20.0);
-    assert_qrilc_below_min(&qrilc, "P32", "sample-3", 30.0);
-    Ok(())
-}
-
-fn assert_qrilc_below_min(table: &CsvTable, protein: &str, sample: &str, min_observed: f64) {
-    let Some(sample_index) = table.headers.iter().position(|header| header == sample) else {
-        panic!("sample column is missing: {sample}");
+// Use the same predeclared log2 atol as the imputation-crate official fixtures.
+fn assert_imputation_log2_close(table: &CsvTable, protein: &str, sample: &str, expected: f64) {
+    let Some(column) = table.headers.iter().position(|header| header == sample) else {
+        panic!("missing sample {sample}");
     };
     let Some(row) = table
         .rows
         .iter()
-        .find(|row| row.first().is_some_and(|value| value == protein))
+        .find(|row| row.first().is_some_and(|id| id == protein))
     else {
-        panic!("protein row is missing: {protein}");
+        panic!("missing protein {protein}");
     };
-    let Some(cell) = row.get(sample_index) else {
-        panic!("sample column {sample} is missing from row {protein}");
+    let Ok(actual) = row[column].parse::<f64>() else {
+        panic!("nonnumeric abundance");
     };
-    let Ok(actual) = cell.parse::<f64>() else {
-        panic!("numeric cell is not a valid float: {cell}");
-    };
+    let error = (actual.log2() - expected).abs();
     assert!(
-        actual > 0.0 && actual <= min_observed + 1e-9,
-        "QRILC fill {actual} for {protein}@{sample} not in (0, min_observed={min_observed}]"
+        error <= 1e-8,
+        "{protein}/{sample}: absolute log2 error {error}"
     );
+}
+
+// imputeLCMD 2.1 QRILC with shared seed-42 uniforms. Its fitted truncation
+// limit may exceed the observed minimum; the old minimum-SD oracle was wrong.
+#[test]
+fn features2proteins_qrilc_imputation_matches_official_shared_draws() -> Result<(), Box<dyn Error>>
+{
+    let qrilc = run_imputation_quantification("qrilc", |_| {})?;
+    assert_numeric_cell_close(&qrilc, "P32", "sample-1", 2.0f64.powf(1.6186427548835307));
+    assert_numeric_cell_close(&qrilc, "P31", "sample-2", 2.0f64.powf(4.730141539459813));
+    assert_numeric_cell_close(&qrilc, "P32", "sample-3", 2.0f64.powf(3.7726840325126347));
+    assert_numeric_cell_close(&qrilc, "P30", "sample-1", 10.0);
+    Ok(())
 }
 
 // ===========================================================================

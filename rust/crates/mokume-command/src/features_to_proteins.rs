@@ -256,6 +256,7 @@ mean-center, rlr, loess, tmm]"
 
     #[arg(
         long = "impute-shift",
+        hide = true,
         value_name = "VALUE",
         value_parser = parse_finite_f64
     )]
@@ -263,6 +264,7 @@ mean-center, rlr, loess, tmm]"
 
     #[arg(
         long = "impute-scale",
+        hide = true,
         value_name = "VALUE",
         value_parser = parse_nonnegative_f64
     )]
@@ -274,6 +276,12 @@ mean-center, rlr, loess, tmm]"
         value_parser = parse_positive_usize
     )]
     impute_n_neighbors: Option<usize>,
+
+    #[arg(long = "impute-seed", value_name = "N")]
+    impute_seed: Option<u64>,
+
+    #[arg(long = "impute-tune-sigma", value_name = "VALUE", value_parser = parse_nonnegative_f64)]
+    impute_tune_sigma: Option<f64>,
 
     #[arg(
         long = "de-contrast",

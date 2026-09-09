@@ -1013,6 +1013,7 @@ dependencies = [
 name = "mokume-imputation"
 version = "0.2.0"
 dependencies = [
+ "libm",
  "mokume-core",
 ]
 

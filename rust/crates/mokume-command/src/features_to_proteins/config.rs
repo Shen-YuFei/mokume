@@ -5,8 +5,11 @@ use mokume_core::{
     RuntimeConfig,
 };
 
+mod imputation;
+
 use super::Features2ProteinsArgs;
 use crate::parsers::{DeLog2FcArg, QuantMethodArg, DEFAULT_TOPN_PEPTIDES};
+use imputation::resolve_imputation;
 
 struct QuantificationOptions {
     method: QuantMethod,
@@ -281,55 +284,6 @@ fn resolve_ratio(
             .clone()
             .unwrap_or_else(|| "mean".to_owned()),
     })
-}
-
-fn resolve_imputation(args: &Features2ProteinsArgs) -> mokume_core::Result<ImputationConfig> {
-    let tuning_supplied = args.impute_quantile.is_some()
-        || args.impute_shift.is_some()
-        || args.impute_scale.is_some()
-        || args.impute_n_neighbors.is_some();
-    if tuning_supplied && args.impute_method.is_none() {
-        return Err(MokumeError::InvalidInput {
-            message: "imputation tuning options require --impute-method".to_owned(),
-        });
-    }
-    let method = args
-        .impute_method
-        .clone()
-        .map_or_else(|| "none".to_owned(), |value| value.replace('-', "_"));
-    let enabled = args.impute_method.is_some();
-    validate_imputation_method(args, &method)?;
-    Ok(ImputationConfig {
-        enabled,
-        method,
-        quantile: args.impute_quantile.unwrap_or(0.01),
-        shift: args.impute_shift.unwrap_or(1.6),
-        scale: args.impute_scale.unwrap_or(0.3),
-        n_neighbors: args.impute_n_neighbors.unwrap_or(5),
-    })
-}
-
-fn validate_imputation_method(
-    args: &Features2ProteinsArgs,
-    method: &str,
-) -> mokume_core::Result<()> {
-    let method = method.to_ascii_lowercase();
-    if args.impute_quantile.is_some() && !matches!(method.as_str(), "mindet" | "minprob") {
-        return Err(MokumeError::InvalidInput {
-            message: "--impute-quantile only applies to mindet/minprob".to_owned(),
-        });
-    }
-    if (args.impute_shift.is_some() || args.impute_scale.is_some()) && method != "minprob" {
-        return Err(MokumeError::InvalidInput {
-            message: "--impute-shift/--impute-scale only apply to minprob".to_owned(),
-        });
-    }
-    if args.impute_n_neighbors.is_some() && !matches!(method.as_str(), "knn" | "seqknn") {
-        return Err(MokumeError::InvalidInput {
-            message: "--impute-n-neighbors only applies to knn/seqknn".to_owned(),
-        });
-    }
-    Ok(())
 }
 
 fn resolve_differential_expression(

@@ -247,6 +247,8 @@ fn impute_matrix_py(
         shift: options.shift,
         scale: options.scale,
         n_neighbors: options.n_neighbors,
+        seed: options.seed,
+        tune_sigma: options.tune_sigma,
     };
     let imputed =
         py.detach(move || mokume_pipeline::impute_matrix(&matrix, &config, options.threads));
@@ -260,11 +262,14 @@ struct ImputationOptions {
     shift: f64,
     scale: f64,
     n_neighbors: usize,
+    seed: u64,
+    tune_sigma: f64,
     threads: Option<usize>,
     quantile_supplied: bool,
     shift_supplied: bool,
     scale_supplied: bool,
     n_neighbors_supplied: bool,
+    stochastic_supplied: bool,
 }
 
 impl ImputationOptions {
@@ -274,11 +279,14 @@ impl ImputationOptions {
             shift: 1.6,
             scale: 0.3,
             n_neighbors: 5,
+            seed: 42,
+            tune_sigma: 1.0,
             threads: None,
             quantile_supplied: false,
             shift_supplied: false,
             scale_supplied: false,
             n_neighbors_supplied: false,
+            stochastic_supplied: false,
         };
         let Some(options) = options else {
             return Ok(parsed);
@@ -302,6 +310,14 @@ impl ImputationOptions {
                     parsed.n_neighbors = value.extract()?;
                     parsed.n_neighbors_supplied = true;
                 }
+                "seed" => {
+                    parsed.seed = value.extract()?;
+                    parsed.stochastic_supplied = true;
+                }
+                "tune_sigma" => {
+                    parsed.tune_sigma = value.extract()?;
+                    parsed.stochastic_supplied = true;
+                }
                 "threads" => parsed.threads = value.extract()?,
                 _ => {
                     return Err(PyTypeError::new_err(format!(
@@ -320,9 +336,14 @@ impl ImputationOptions {
                 "`quantile` only applies to mindet/minprob imputation",
             ));
         }
-        if (self.shift_supplied || self.scale_supplied) && method != "minprob" {
+        if self.shift_supplied || self.scale_supplied {
             return Err(PyTypeError::new_err(
-                "`shift` and `scale` only apply to minprob imputation",
+                "MinProb now follows imputeLCMD; use `tune_sigma` instead of legacy `shift`/`scale`",
+            ));
+        }
+        if self.stochastic_supplied && !matches!(method.as_str(), "minprob" | "qrilc") {
+            return Err(PyTypeError::new_err(
+                "`seed` and `tune_sigma` only apply to minprob/qrilc imputation",
             ));
         }
         if self.n_neighbors_supplied && !matches!(method.as_str(), "knn" | "seqknn") {

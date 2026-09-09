@@ -513,6 +513,19 @@ pub struct ImputationConfig {
     pub shift: f64,
     pub scale: f64,
     pub n_neighbors: usize,
+    /// Seed for stochastic imputation (cross-language random streams may differ).
+    #[serde(default = "default_imputation_seed")]
+    pub seed: u64,
+    /// Official imputeLCMD tune.sigma for QRILC and MinProb.
+    #[serde(default = "default_imputation_tune_sigma")]
+    pub tune_sigma: f64,
+}
+
+fn default_imputation_seed() -> u64 {
+    42
+}
+fn default_imputation_tune_sigma() -> f64 {
+    1.0
 }
 
 impl Default for ImputationConfig {
@@ -524,6 +537,8 @@ impl Default for ImputationConfig {
             shift: 1.6,
             scale: 0.3,
             n_neighbors: 5,
+            seed: default_imputation_seed(),
+            tune_sigma: default_imputation_tune_sigma(),
         }
     }
 }

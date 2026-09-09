@@ -221,7 +221,12 @@ def correct_batches(**kwargs):
 
 
 def impute_matrix(values, method, **options):
-    """Run matrix-level Rust imputation without QPX I/O."""
+    """Run matrix-level Rust imputation without QPX I/O.
+
+    MinProb and QRILC accept ``seed`` (42) and ``tune_sigma`` (1.0).
+    Their random streams differ from R; MinProb's former ``shift``/``scale``
+    options are rejected because they described a different imputation model.
+    """
     return _impute_matrix(values, method, options or None)
 
 

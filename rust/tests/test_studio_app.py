@@ -575,7 +575,7 @@ def _assert_workspace_scripts(script_text: str) -> None:
     numeric_block = script_text.split("const NUMERIC_VALUE_FLAGS", maxsplit=1)[1].split(
         "function commandArgv", maxsplit=1
     )[0]
-    assert '"impute-shift"' in numeric_block
+    assert '"impute-tune-sigma"' in numeric_block
     assert '"irs-sdrf-value"' not in numeric_block
     assert "URL.createObjectURL" not in script_text
 

@@ -2317,7 +2317,7 @@ function updateFeatures2ProteinsCorrections(form, quantMethod) {
 function updateFeatures2ProteinsDownstream(form, quantMethod) {
   const imputeMethod = argumentControlValue(form, "impute-method").toLowerCase();
   setConditionalFields(form, ["impute-quantile"], ["mindet", "minprob"].includes(imputeMethod), true);
-  setConditionalFields(form, ["impute-shift", "impute-scale"], imputeMethod === "minprob", true);
+  setConditionalFields(form, ["impute-seed", "impute-tune-sigma"], ["minprob", "qrilc"].includes(imputeMethod), true);
   setConditionalFields(form, ["impute-n-neighbors"], ["knn", "seqknn"].includes(imputeMethod), true);
 
   const differentialExpression = Boolean(
@@ -2511,8 +2511,7 @@ function setValueHint(element, flag) {
 }
 
 const NUMERIC_VALUE_FLAGS = new Set([
-  "impute-shift",
-  "impute-scale",
+  "impute-tune-sigma",
   "filter-min-intensity",
   "filter-cv-threshold",
   "cpc",
