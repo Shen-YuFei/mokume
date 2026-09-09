@@ -366,27 +366,27 @@ fn run_member(
     config: &DifferentialExpressionConfig,
 ) -> Result<Vec<DeResult>> {
     let results = run_method_bh(method, prepared, config)?;
-    Ok(finalize_member_results(method, results, config))
+    finalize_member_results(method, results, config)
 }
 
 fn finalize_member_results(
     method: MemberMethod,
     mut results: Vec<DeResult>,
     config: &DifferentialExpressionConfig,
-) -> Vec<DeResult> {
-    // LimROTS preserves official BH.pvalue; ROTS preserves its permutation FDR.
+) -> Result<Vec<DeResult>> {
+    // LimROTS preserves official BH.pvalue; ROTS preserves BH-adjusted permutation p-values.
     // All other methods
     // apply the configured correction over the raw p-values.
     if !matches!(method, MemberMethod::Limrots | MemberMethod::Rots) {
         if is_ihw(config) {
-            apply_ihw(&mut results, config);
+            apply_ihw(&mut results, config)?;
         } else if let Some(adaptive_method) = adaptive_fdr_method(config) {
             apply_adaptive_fdr(&mut results, adaptive_method, config);
         }
     }
     let gate = resolved_effect_size_gate(&results, config);
     classify_and_sort(&mut results, gate, config);
-    results
+    Ok(results)
 }
 
 /// Run one single-method DE test with its built-in Benjamini-Hochberg
@@ -427,9 +427,8 @@ fn run_method_bh(
     })
 }
 
-/// IHW uses 5 covariate bins, matching mokume's `_ihw_correction(..., n_bins=5)`
-/// default (differential_expression.py:393).
-const IHW_N_BINS: usize = 5;
+/// Use the official IHW automatic bin-count rule (one bin below 3000 tests).
+const IHW_N_BINS: usize = 0;
 
 /// Whether the configured FDR method is IHW (case-insensitive, trimmed),
 /// matching mokume's `self.fdr_method = config["fdr_method"].lower()` and the
@@ -452,21 +451,22 @@ fn adaptive_fdr_method(config: &DifferentialExpressionConfig) -> Option<Adaptive
 /// The covariate is the per-protein row-mean of the two `mean_<cond>` columns
 /// (`_ihw_covariate`, differential_expression.py:328-330): mokume's
 /// `de_df[mean_cols].mean(axis=1)` skips NaN, so a protein observed in only one
-/// group uses that group's mean; both-NaN yields a NaN covariate (excluded from
-/// binning by `ihw_correction`). The fallback to `n_a + n_b`
+/// group uses that group's mean; a tested protein with no finite covariate is
+/// rejected by IHW instead of being silently excluded. The fallback to `n_a + n_b`
 /// (differential_expression.py:331-332) cannot trigger here because the
 /// two-group methods always emit both mean columns.
-fn apply_ihw(results: &mut [DeResult], config: &DifferentialExpressionConfig) {
+fn apply_ihw(results: &mut [DeResult], config: &DifferentialExpressionConfig) -> Result<()> {
     if results.is_empty() {
-        return;
+        return Ok(());
     }
     let pvalues: Vec<f64> = results.iter().map(|row| row.p_value).collect();
     let covariate: Vec<f64> = results.iter().map(ihw_covariate).collect();
-    let adjusted = ihw_correction(&pvalues, &covariate, config.fdr_threshold, IHW_N_BINS);
+    let adjusted = ihw_correction(&pvalues, &covariate, config.fdr_threshold, IHW_N_BINS)?;
 
     for (row, &adj_p_value) in results.iter_mut().zip(&adjusted) {
         row.adj_p_value = adj_p_value;
     }
+    Ok(())
 }
 
 fn apply_adaptive_fdr(
@@ -1505,7 +1505,7 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_fdr_and_auto_gate_are_wired_into_member_finalization() {
+    fn adaptive_fdr_and_auto_gate_are_wired_into_member_finalization() -> mokume_core::Result<()> {
         let mut pvalues = (0..900)
             .map(|index| (index as f64 + 0.5) / 900.0)
             .collect::<Vec<_>>();
@@ -1544,10 +1544,10 @@ mod tests {
             effect_size_gate: Some("mixture".to_string()),
             ..DifferentialExpressionConfig::default()
         };
-        let bky = finalize_member_results(MemberMethod::Limma, rows.clone(), &bky_config);
+        let bky = finalize_member_results(MemberMethod::Limma, rows.clone(), &bky_config)?;
         assert_eq!(bky.iter().filter(|row| row.adj_p_value < 0.05).count(), 168);
 
-        let finalized = finalize_member_results(MemberMethod::Limma, rows, &storey_config);
+        let finalized = finalize_member_results(MemberMethod::Limma, rows, &storey_config)?;
         assert_eq!(
             finalized
                 .iter()
@@ -1561,6 +1561,7 @@ mod tests {
         assert!(finalized
             .iter()
             .all(|row| { row.significance != Significance::Up || row.log2_fold_change < 0.5 }));
+        Ok(())
     }
 
     #[test]

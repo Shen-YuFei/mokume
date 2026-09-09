@@ -1,6 +1,6 @@
 //! ComBat batch correction.
 //!
-//! Parametric empirical-Bayes ComBat follows Bioconductor sva 3.58.0
+//! Parametric and non-parametric empirical-Bayes ComBat follow Bioconductor sva 3.58.0
 //! (`ComBat.R` and `helper.R`, Johnson, Li & Rabinovic 2007).
 //! It covers the `ref_batch` (reference
 //! batch left unmodified) and `mean_only` (additive effect only) options, plus:
@@ -21,8 +21,9 @@
 //! Parametric batch and prior variance estimates use sample variance; pooled
 //! residual variance uses the sample count as its divisor, as in sva's complete
 //! data path. `it_sol` uses sva's relative-change stop at `1e-4`.
-//! The non-parametric path retains the earlier inmoose `int_eprior` port and
-//! population-variance convention; it is not claimed to reproduce sva.
+//! Non-parametric integration uses the same sample variance and likelihood
+//! evaluation as sva, including an undefined (`NaN`) posterior when every
+//! likelihood underflows. It does not replace zero likelihoods with a floor.
 
 /// `it_sol` relative-change convergence threshold (`conv` in the reference).
 const CONVERGENCE: f64 = 1e-4;
@@ -32,8 +33,8 @@ const MAX_ITERATIONS: usize = 1_000_000;
 /// Options for [`combat`], mirroring the `pycombat_norm` kwargs mokume exposes.
 /// `ref_batch` is a batch *label* (not an index); `mean_only` skips the
 /// multiplicative (variance) batch effect; `par_prior` selects the parametric
-/// empirical-Bayes prior (`true`, the inmoose default) versus the non-parametric
-/// `int_eprior` integration (`false`, the historical inmoose implementation).
+/// empirical-Bayes prior (`true`) versus sva's non-parametric integration
+/// (`false`).
 #[derive(Debug, Clone, Copy)]
 pub struct ComBatParams {
     pub ref_batch: Option<usize>,
@@ -83,7 +84,7 @@ pub fn combat_parametric(
 /// handing it to `pycombat_norm(covar_mod=...)`. Returns the batch-corrected
 /// matrix in the feature x sample orientation. Batches are processed in
 /// ascending label order. The caller must supply a finite rectangular matrix
-/// and an identifiable design. Parametric mode leaves features constant within
+/// and an identifiable design. Both modes leave features constant within
 /// any batch unchanged, drops redundant all-one covariates, and uses mean-only
 /// correction if a batch has one sample, following sva. Missing rows are handled
 /// by the pipeline before this call. An empty matrix or fewer than two batches
@@ -94,7 +95,7 @@ pub fn combat(
     covariates: Option<&[Vec<f64>]>,
     params: ComBatParams,
 ) -> Vec<Vec<f64>> {
-    if !params.par_prior || data.is_empty() || batch.is_empty() {
+    if data.is_empty() || batch.is_empty() {
         return combat_inner(data, batch, covariates, params);
     }
     let mut batches = std::collections::BTreeMap::<_, Vec<_>>::new();
@@ -239,7 +240,7 @@ fn combat_inner(
                         variance(
                             batches_ind[k].iter().map(|&n| s_data[g][n]),
                             gamma_hat[k][g],
-                            usize::from(params.par_prior),
+                            1,
                         )
                     }
                 })
@@ -252,12 +253,8 @@ fn combat_inner(
     let mut delta_star = vec![vec![1.0; n_features]; n_batch];
     for k in 0..n_batch {
         let gamma_bar = mean(gamma_hat[k].iter().copied());
-        let t2 = variance(
-            gamma_hat[k].iter().copied(),
-            gamma_bar,
-            usize::from(params.par_prior),
-        );
-        if params.mean_only {
+        let t2 = variance(gamma_hat[k].iter().copied(), gamma_bar, 1);
+        if params.mean_only && params.par_prior {
             // Closed-form additive effect (n = 1); multiplicative effect = 1.
             gamma_star[k] = (0..n_features)
                 .map(|g| (t2 * gamma_hat[k][g] + gamma_bar) / (t2 + 1.0))
@@ -686,8 +683,7 @@ fn it_sol(
 /// estimates, and `sum2[k] = sum_j (x_j - g_k)^2`, the likelihood weight is
 /// `LH[k] = (1 / (pi * 2 d_k))^(n/2) * exp(-sum2[k] / (2 d_k))`. The posterior
 /// means are `sum(g LH) / sum(LH)` and `sum(d LH) / sum(LH)`. NaN weights are
-/// zeroed (`np.nan_to_num`); if every weight underflows to zero they are reset
-/// to `exp(-745)` (the reference's underflow guard) so the ratio stays defined.
+/// zeroed as in sva; all-zero likelihoods yield undefined posterior estimates.
 fn int_eprior(
     s_data: &[Vec<f64>],
     samples: &[usize],
@@ -718,24 +714,14 @@ fn int_eprior(
                 })
                 .sum::<f64>();
             let mut weight =
-                (1.0 / (std::f64::consts::PI * two_d_k)).powf(half_n) * (-sum_sq / two_d_k).exp();
+                (1.0 / (std::f64::consts::PI * two_d_k).powf(half_n)) * (-sum_sq / two_d_k).exp();
             if weight.is_nan() {
-                // np.nan_to_num: NaN -> 0.0.
+                // sva's LH[LH == "NaN"] = 0.
                 weight = 0.0;
             }
             weights.push((gamma_hat[k], delta_hat[k], weight));
         }
 
-        let total: f64 = weights.iter().map(|&(_, _, w)| w).sum();
-        if total == 0.0 {
-            // Reference underflow guard: every zero weight becomes exp(-745).
-            let floor = (-745.0_f64).exp();
-            for entry in &mut weights {
-                if entry.2 == 0.0 {
-                    entry.2 = floor;
-                }
-            }
-        }
         let denom: f64 = weights.iter().map(|&(_, _, w)| w).sum();
         let g_num: f64 = weights.iter().map(|&(g, _, w)| g * w).sum();
         let d_num: f64 = weights.iter().map(|&(_, d, w)| d * w).sum();
@@ -822,73 +808,51 @@ mod tests {
         }
         Ok(())
     }
-    fn assert_close(actual: f64, expected: f64, tol: f64) {
-        assert!(
-            (actual - expected).abs() <= tol,
-            "actual={actual} expected={expected}"
-        );
+    #[derive(serde::Deserialize)]
+    struct NonparametricFixtures {
+        cases: Vec<OfficialCase>,
     }
 
-    fn oracle_input() -> Vec<Vec<f64>> {
-        vec![
-            vec![10.0, 11.0, 9.5, 20.0, 21.0, 19.0],
-            vec![5.0, 6.0, 4.0, 8.0, 7.5, 9.0],
-            vec![1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
-            vec![50.0, 52.0, 48.0, 30.0, 31.0, 29.0],
-        ]
-    }
-
-    // Non-parametric prior (`par_prior=false`), no covariates: replaces the
-    // `it_sol` fixed-point with the deterministic `int_eprior` integration.
-    // Oracle from `pycombat_norm(..., par_prior=False)`.
     #[test]
-    fn matches_inmoose_nonparametric_oracle() {
-        let data = oracle_input();
-        let batch = [0, 0, 0, 1, 1, 1];
-        let params = ComBatParams {
-            ref_batch: None,
-            mean_only: false,
-            par_prior: false,
-        };
-        let corrected = combat(&data, &batch, None, params);
-        let expected = [
-            [
-                11.9691855098242,
-                12.85894203082681,
-                11.524307249322895,
-                18.267871372322563,
-                19.113025751618693,
-                17.42271699302643,
-            ],
-            [
-                6.02218632450599,
-                7.313180773241795,
-                4.731191875770184,
-                6.809831239944923,
-                6.387254112580213,
-                7.6549854946743405,
-            ],
-            [
-                2.1690285772457,
-                3.0587850982483094,
-                2.6139068377470047,
-                1.7718155933606998,
-                1.1893332208499905,
-                2.936780338382118,
-            ],
-            [
-                51.40103502432606,
-                53.180548066331276,
-                49.62152198232084,
-                29.823293554358948,
-                30.668447809087468,
-                28.978139299630435,
-            ],
-        ];
-        for (feature, expected_row) in expected.iter().enumerate() {
-            for (sample, &want) in expected_row.iter().enumerate() {
-                assert_close(corrected[feature][sample], want, 1e-9);
+    fn nonparametric_matches_sva_3_58_0() -> Result<(), Box<dyn std::error::Error>> {
+        let fixtures: NonparametricFixtures = serde_json::from_str(include_str!(
+            "../../tests/data/combat_nonparametric_sva_3_58_0.json"
+        ))?;
+        for case in fixtures.cases {
+            let actual = combat(
+                &case.data,
+                &case.batch,
+                case.covariates.as_deref(),
+                ComBatParams {
+                    par_prior: false,
+                    mean_only: case.mean_only,
+                    ref_batch: case.reference,
+                },
+            );
+            assert_eq!(actual.len(), case.expected.len(), "{}", case.name);
+            for (i, (row, expected)) in actual.iter().zip(&case.expected).enumerate() {
+                assert_eq!(row.len(), expected.len(), "{}[{i}]", case.name);
+                for (j, (&a, &e)) in row.iter().zip(expected).enumerate() {
+                    assert!(
+                        (a - e).abs() <= 1e-9 + 1e-9 * e.abs(),
+                        "{}[{i},{j}]: {a} != {e}",
+                        case.name
+                    );
+                }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn nonparametric_likelihood_underflow_stays_undefined() {
+        // sva:::int.eprior(matrix(0, 2, 1000), c(0,0), c(2,2)) returns NaN.
+        let (gamma, delta) = super::int_eprior(
+            &vec![vec![0.0; 1000]; 2],
+            &(0..1000).collect::<Vec<_>>(),
+            &[0.0, 0.0],
+            &[2.0, 2.0],
+        );
+        assert!(gamma.iter().chain(&delta).all(|v| v.is_nan()));
     }
 }

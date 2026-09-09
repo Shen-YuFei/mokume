@@ -26,7 +26,7 @@ pub use correct::{adaptive_adjust, AdaptiveFdrMethod, AppliedFdrMethod};
 pub use deqms::deqms_two_group;
 pub use effect_size::{estimate_effect_size_gate, EffectSizeGateMethod};
 pub use ensemble::{combine_de_results, EnsembleResult};
-pub use ihw::ihw_correction;
+pub use ihw::{ihw_correction, ihw_with_options, IhwOptions, IhwResult};
 use limma::run_limma;
 pub use limrots::{
     limrots_two_group, limrots_two_group_with_options, LimRotsOptions, LimRotsOutput,
