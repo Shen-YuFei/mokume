@@ -91,7 +91,9 @@ class IRSNormalizer:
                 raise ValueError(
                     f"Reference samples {refs} not found in protein matrix columns"
                 )
-            ref_data = intensity_matrix[ref_cols]
+            # Non-positive intensities are missing: additive methods such as
+            # DirectLFQ store a missing cell as 0.
+            ref_data = intensity_matrix[ref_cols].where(intensity_matrix[ref_cols] > 0)
             if self.stat == "median":
                 plex_ref_intensity[plex] = ref_data.median(axis=1)
             else:
