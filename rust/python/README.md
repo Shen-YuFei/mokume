@@ -23,6 +23,7 @@ pip install mokume              # compute kernel + Python API
 pip install "mokume[analysis]"  # + plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]" # + per-dataset tissue proteome analysis
 pip install "mokume[plugin]"    # + local MCP service
+pip install "mokume[studio]"    # + local browser workbench and optional AI
 pip install "mokume[all]"       # everything
 ```
 

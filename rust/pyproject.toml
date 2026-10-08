@@ -87,6 +87,23 @@ plugin = [
     "scikit-learn",
     "statsmodels>=0.13",
 ]
+studio = [
+    "numpy",
+    "pandas",
+    "PyYAML>=6.0",
+    "scipy",
+    "scikit-learn",
+    "statsmodels>=0.13",
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "markdown-it-py>=4,<5",
+    "platformdirs",
+    "psutil",
+    "httpx[socks]",
+    "pydantic-ai-slim[ag-ui,openai,anthropic,google]>=2.36,<3",
+    "ag-ui-protocol>=0.1.19,<1",
+]
 all = [
     "numpy",
     "pandas",
@@ -105,6 +122,15 @@ all = [
     "PyYAML>=6.0",
     "mcp>=1.23,<2",
     "statsmodels>=0.13",
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "markdown-it-py>=4,<5",
+    "platformdirs",
+    "psutil",
+    "httpx[socks]",
+    "pydantic-ai-slim[ag-ui,openai,anthropic,google]>=2.36,<3",
+    "ag-ui-protocol>=0.1.19,<1",
 ]
 
 [tool.maturin]

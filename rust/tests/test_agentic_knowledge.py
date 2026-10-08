@@ -1,4 +1,4 @@
-"""Knowledge-location contracts of the Plugin runtime."""
+"""Knowledge-location contracts shared by Studio and Plugin runtimes."""
 
 from __future__ import annotations
 

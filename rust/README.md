@@ -36,11 +36,12 @@ pip install mokume
 
 pyOpenMS and its numpy, pandas, and matplotlib dependencies are installed with
 the base wheel so piBAQ can use every protease in the runtime catalog. Optional
-analysis, tissue-map, and Plugin stacks remain extras:
+analysis, tissue-map, Studio, and Plugin stacks remain extras:
 
 ```bash
 pip install "mokume[analysis]"   # plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]"  # tissue-map + AnnData export
+pip install "mokume[studio]"     # local web workbench with optional AI
 pip install "mokume[plugin]"     # local MCP service for the Mokume Plugin
 pip install "mokume[all]"        # everything above
 ```
@@ -50,6 +51,11 @@ Mokume and the optional Plugin/MCP workflow require Python 3.10 or newer.
 The wheel also installs the `mokume` console command. A conda/mamba environment
 is provided in `environment.yaml`. See
 [Installation](https://github.com/bigbio/mokume/blob/main/docs/installation.md) for details.
+
+Launch the optional local workbench with `mokume studio` or bind an exact port
+with `mokume studio --port 9000`, then choose **File > Open Folder** in the
+browser. Native workflows do not require an AI provider. See the
+[Mokume Studio guide](https://github.com/bigbio/mokume/blob/main/docs/user-guide/studio.md).
 
 ## Quick start
 
@@ -145,9 +151,12 @@ computation work. For the full design and maintenance policy, see
 [Architecture](https://github.com/bigbio/mokume/blob/main/docs/architecture.md) and
 [Maintenance scope](https://github.com/bigbio/mokume/blob/main/docs/maintenance-scope.md).
 
-The installable Mokume Plugin calls the deterministic profile, policy, and
-evaluation services, and uses the model and credentials owned by Codex or
-Claude Code. See the [Mokume Plugin guide](https://github.com/bigbio/mokume/blob/main/docs/user-guide/agentic-plugin.md).
+The optional Studio and installable Mokume Plugin both call the same
+deterministic profile, policy, and evaluation services. Studio uses a
+session-local provider by default and offers explicit Studio-level persistence;
+the Plugin instead uses the model and credentials owned by Codex or Claude Code. See the
+[Mokume Studio guide](https://github.com/bigbio/mokume/blob/main/docs/user-guide/studio.md) and
+[Mokume Plugin guide](https://github.com/bigbio/mokume/blob/main/docs/user-guide/agentic-plugin.md).
 
 ## Example
 

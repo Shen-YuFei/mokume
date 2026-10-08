@@ -66,6 +66,19 @@ mokume uses optional dependencies for the periphery commands:
     AdaTiSS tissue-specificity scoring, embeddings, and atlas plots (scanpy,
     anndata, umap-learn, combat, matplotlib, seaborn, pyarrow).
 
+=== "Mokume Studio"
+
+    ```bash
+    pip install "mokume[studio]"
+    mokume studio
+    ```
+
+    Installs the loopback-only local web workbench, including workflow forms,
+    run history, logs, artifacts, and the optional Ask/Agent assistant. Native
+    workflows do not require an AI provider. Studio accepts `--port PORT` and
+    `--no-browser`; choose the project with **File > Open Folder** after launch.
+    Continue with the [Studio guide](user-guide/studio.md).
+
 === "Mokume Plugin"
 
     ```bash
@@ -84,7 +97,7 @@ mokume uses optional dependencies for the periphery commands:
     pip install mokume[all]
     ```
 
-    Installs all optional periphery and local MCP dependencies.
+    Installs all optional periphery, Studio, and local MCP dependencies.
 
 ## From Source
 
@@ -124,7 +137,7 @@ pip install ./rust
 ## Requirements
 
 - Python >= 3.10 for the Rust-backed ``mokume`` distribution, ``mokume-py``,
-  and the optional Plugin/MCP workflow
+  and the optional Studio and Plugin/MCP workflows
 - Both distributions declare pyOpenMS as a base dependency. In the default
   Rust-backed wheel, piBAQ reads every protease registered by the installed
   runtime, digests the FASTA in Python, and passes the complete theoretical-

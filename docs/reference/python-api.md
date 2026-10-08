@@ -249,6 +249,7 @@ periphery command you run:
 pip install mokume                 # compute kernel + Python API
 pip install "mokume[analysis]"     # + plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]"    # + per-dataset tissue proteome analysis
+pip install "mokume[studio]"       # + local browser workbench and optional AI
 pip install "mokume[plugin]"       # + local MCP service for the Mokume Plugin
 pip install "mokume[all]"          # everything
 ```
@@ -262,7 +263,15 @@ pip install "mokume[all]"          # everything
 | `mokume.tissuemap` | `tissuemap` | scanpy, anndata, umap-learn, combat, matplotlib, seaborn, pyarrow |
 | `mokume.qc_report` / `mokume.workflow_comparison` | `analysis` | numpy, pandas, scipy, scikit-learn |
 | `mokume.impute` | `analysis` | numpy, pandas, scipy, scikit-learn |
+| `mokume studio` | `studio` | FastAPI, Uvicorn, Jinja, Pydantic AI, AG-UI, HTTPX, platformdirs, numpy, pandas, scipy, scikit-learn, statsmodels, PyYAML |
 | Mokume Plugin MCP service | `plugin` | mcp, numpy, pandas, scipy, scikit-learn, statsmodels, PyYAML |
 
 The exact dependency lists are declared in `pyproject.toml`. DirectLFQ and ComBat
 are native Rust, while pyOpenMS-backed digestion is part of the base piBAQ path.
+
+!!! note "Choose the AI interface"
+    [Mokume Studio](../user-guide/studio.md) can use a provider configured for
+    the current local server process or explicitly persisted in Mokume's
+    `mokume-studio-providers.json`. The
+    [Mokume Plugin](../user-guide/agentic-plugin.md) instead uses the model and
+    credentials already owned by its agent host.
