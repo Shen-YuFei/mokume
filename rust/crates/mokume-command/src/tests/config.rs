@@ -221,6 +221,8 @@ fn parses_adaptive_de_options() {
         "auto",
         "--de-fdr-method",
         "storey",
+        "--de-output",
+        "de.csv",
     ]);
     let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
@@ -245,10 +247,14 @@ fn explicit_effect_size_method_uses_numeric_threshold_as_fallback() {
         "input.parquet",
         "-o",
         "protein.csv",
+        "-s",
+        "input.sdrf.tsv",
         "--de-log2fc",
         "0.25",
         "--de-effect-size-gate",
         "null-quantile",
+        "--de-output",
+        "de.csv",
     ]);
     let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
@@ -308,6 +314,31 @@ fn native_msstats_input_requires_sdrf() {
 }
 
 #[test]
+fn condition_median_sample_normalization_requires_sdrf() {
+    let cli = Cli::parse_from([
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "--parquet",
+        "input.parquet",
+        "--output",
+        "protein.csv",
+        "--sample-normalization",
+        "condition-median",
+    ]);
+    let args = features_to_proteins_args(cli);
+
+    let Err(error) = args.into_config() else {
+        panic!("condition-median without SDRF should fail");
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "invalid input: conditionmedian sample normalization requires --sdrf option"
+    );
+}
+
+#[test]
 fn zero_impute_method_enables_imputation() {
     let cli = Cli::parse_from([
         "mokume",
@@ -344,6 +375,10 @@ fn repeated_de_ensemble_methods_preserve_members() {
         "limma",
         "--de-ensemble-method",
         "deqms",
+        "-s",
+        "input.sdrf.tsv",
+        "--de-output",
+        "de.csv",
     ]);
     let args = features_to_proteins_args(cli);
     let Ok(config) = args.into_config() else {
@@ -388,6 +423,8 @@ fn repeatable_reference_sample_preserves_commas() {
         "input.parquet",
         "-o",
         "protein.csv",
+        "-s",
+        "input.sdrf.tsv",
         "--irs",
         "--irs-reference-sample",
         "Pool, batch A",
@@ -423,6 +460,45 @@ fn rejects_removed_plural_reference_sample_option() {
     };
 
     assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+#[test]
+fn rejects_option_combinations_before_running() {
+    const SDRF_DE: &str = "-p in.parquet -s s.tsv --de-contrast A B --de-output de.csv";
+    let cases = [
+        ("--msstats in.csv -s s.tsv --quant-method ratio", "Ratio quantification requires PSM-level QPX input"),
+        ("-p in.parquet -s s.tsv --normalization-proteins np.txt --sample-normalization quantile", "--normalization-proteins requires globalmedian or conditionmedian"),
+        ("-p in.parquet --quant-method pibaq", "piBAQ quantification requires --fasta option"),
+        ("-p in.parquet --pibaq-max-aa 30", "piBAQ FASTA/digestion options require --quant-method pibaq"),
+        ("-p in.parquet --quant-method ratio", "Ratio quantification requires --sdrf option"),
+        ("-p in.parquet --quant-method directlfq --run-normalization median", "directlfq manages normalization internally"),
+        ("-p in.parquet -s s.tsv --batch-correction --batch-method column", "Batch correction with method 'column' requires --batch-column option"),
+        ("-p in.parquet -s s.tsv --batch-correction --batch-column batch", "--batch-column requires --batch-method column"),
+        ("-p in.parquet --batch-correction --batch-covariate sex", "Batch correction with --batch-column or --batch-covariate requires --sdrf option"),
+        ("-p in.parquet --quant-method directlfq --export-peptides peptides.csv", "export-peptides is not supported by directlfq quantification"),
+        ("-p in.parquet --irs", "IRS options require --sdrf option"),
+        ("-p in.parquet --coverage-threshold 0.5", "coverage-threshold requires --sdrf option"),
+        ("-p in.parquet --de-contrast A B --de-output de.csv", "differential expression requires an SDRF file (--sdrf)"),
+        ("-p in.parquet -s s.tsv --de-contrast A B", "differential expression requires --de-output"),
+        (&format!("{SDRF_DE} --de-method limma --de-ensemble-method deqms"), "--de-ensemble-method only applies to --de-method ensemble"),
+        (&format!("{SDRF_DE} --de-method rots --de-fdr-method ihw"), "--de-fdr-method does not apply to rots"),
+    ];
+    for (options, expected) in cases {
+        let argv = [
+            "mokume",
+            "quantify",
+            "features2proteins",
+            "-o",
+            "protein.csv",
+        ]
+        .into_iter()
+        .chain(options.split_whitespace());
+        let args = features_to_proteins_args(Cli::parse_from(argv));
+        let Err(error) = args.into_config() else {
+            panic!("{options} was accepted");
+        };
+        assert!(error.to_string().contains(expected), "{options}: {error}");
+    }
 }
 
 fn features_to_proteins_args(cli: Cli) -> Box<Features2ProteinsArgs> {
