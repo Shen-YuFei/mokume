@@ -24,8 +24,8 @@ Commands:
   quantify            Build peptide and protein expression matrices
   correct-batches     Correct batch effects in protein quantification output
   tissuemap           Build a tissue proteome atlas [requires: mokume[tissuemap]]
-  plot                Render PCA, t-SNE, and DE plots [requires: mokume[plotting]]
-  interactive-report  Build a DE HTML report [requires: mokume[reports]]
+  plot                Render PCA, t-SNE, and DE plots [requires: mokume[analysis]]
+  interactive-report  Build a DE HTML report [requires: mokume[analysis]]
   help                Print root or command-specific help
 
 Global options:
