@@ -1,0 +1,1277 @@
+sources:
+  - id: opdea-2024
+    kind: peer_reviewed_benchmark
+    title: Evaluating differential expression methods for proteomics data
+    locator: https://www.nature.com/articles/s41467-024-47899-w
+    captured_at: '2026-08-18'
+    trust: peer_reviewed
+    status: published
+    artifacts: {}
+  - id: spike-in-mokumebench
+    kind: cross_dataset_ground_truth_benchmark
+    title: Mokume spike-in Grid benchmark (mokumebench, 81 datasets, 31 studies)
+    locator: sources/spike-in-mokumebench
+    captured_at: '2026-10-09'
+    trust: locally_reproduced_ground_truth
+    status: benchmark_candidates_not_published
+    artifacts:
+      datasets.yaml: 3aaaeaf40e9d1be31ce8b00c407cda25eb0d0b3b2830ed5b731e5cdff88cfec9
+evidence:
+  - id: grid-lfq-preset
+    source_id: spike-in-mokumebench
+    kind: setting_preset
+    status: candidate_for_review
+    confidence: moderate
+    priority: 10
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: quantms_LFQ_DDA
+      upstream_engine: null
+      quantification: null
+    reference_profile:
+      projects: [PXD000279, PXD001385, PXD001819, PXD002099, PXD002370, PXD003841__DigLiq, PXD003841__Stack,
+        PXD003841__TG, PXD003881, PXD006447, PXD007683_LFQ, PXD009815, PXD014777, PXD018408_DDA, PXD019777_DDA__1H25_T10_H,
+        PXD019777_DDA__1H25_T10_L, PXD019777_DDA__1H25_T10_M, PXD019777_DDA__1H25_T20_L, PXD019777_DDA__1H25_T20_M,
+        PXD019777_DDA__1H25_T5_H, PXD019777_DDA__1H25_T5_L, PXD019777_DDA__1H25_T5_M, PXD019777_DDA__1H_T10_H,
+        PXD019777_DDA__2H_T10_H, PXD021425, PXD027800, PXD028735, PXD030780, PXD044981_DDA, PXD056598_DDA__A_evo_ex_DDA_PYE1,
+        PXD056598_DDA__A_ulti_ex_DDA_PYE1, PXD056598_DDA__B_ulti_HFX_DDA_PYE1, PXD056598_DDA__B_ulti_HF_DDA_PYE1,
+        PXD056598_DDA__D_ulti_ecl_DDA_PYE1, PXD056598_DDA__E_ulti_lumos_DDA_PYE1, PXD056598_DDA__F_Vanq_ecl_DDA_PYE1,
+        PXD056598_DDA__G_ulti_ex_DDA_PYE1, PXD056598_DDA__H_ulti_ecl_DDA_PYE1, PXD056598_DDA__H_ulti_ex_DDA_PYE1]
+      n_proteins: [621, 6557]
+      n_samples: [6, 24]
+      missing_rate: [0.098615, 0.475022]
+    pipeline:
+      quantification: directlfq
+      normalization: none
+      imputation: minprob
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 18
+      datasets: 39
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 310
+      mean_study_deficit: 0.0633
+      median_study_deficit: 0.0454
+      iqr_study_deficit: 0.036
+      near_best: 0.01
+      near_best_rate: 0.1111
+      top_fraction: 0.05
+      top_rate: 0.2222
+      mean_score_a: 0.8128
+      mean_coverage: 0.6858
+      overall_best_config: directlfq|none|minprob|half|deqms
+      lodo_unit: study
+      lodo_folds: 18
+      lodo_folds_selecting_preset: 11
+      lodo_near_best_rate: 0.0556
+      mean_lodo_regret: 0.069782
+      max_lodo_regret: 0.222098
+      mean_lodo_rank_spearman: 0.486
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
+      - Quantification is frozen when the workflow starts from a protein matrix.
+      - Many configurations fall within the study-bootstrap interval of this preset, and on held-out studies
+        it was rarely within 0.01 of the best deficit.
+      - DirectLFQ normalizes samples internally; where many proteins change in one direction (PXD000279),
+        maxlfq or DirectLFQ without sample normalization (mokume --directlfq-no-sample-normalization)
+        scored far higher.
+      - Imputation choice matters for UPS spike-ins with few changing proteins (PXD001819, PXD002099).
+  - id: grid-lfq-directlfq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: moderate
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: quantms_LFQ_DDA
+      upstream_engine: null
+      quantification: directlfq
+    reference_profile:
+      projects: [PXD000279, PXD001385, PXD001819, PXD002099, PXD002370, PXD003841__DigLiq, PXD003841__Stack,
+        PXD003841__TG, PXD003881, PXD006447, PXD007683_LFQ, PXD009815, PXD014777, PXD018408_DDA, PXD019777_DDA__1H25_T10_H,
+        PXD019777_DDA__1H25_T10_L, PXD019777_DDA__1H25_T10_M, PXD019777_DDA__1H25_T20_L, PXD019777_DDA__1H25_T20_M,
+        PXD019777_DDA__1H25_T5_H, PXD019777_DDA__1H25_T5_L, PXD019777_DDA__1H25_T5_M, PXD019777_DDA__1H_T10_H,
+        PXD019777_DDA__2H_T10_H, PXD021425, PXD027800, PXD028735, PXD030780, PXD044981_DDA, PXD056598_DDA__A_evo_ex_DDA_PYE1,
+        PXD056598_DDA__A_ulti_ex_DDA_PYE1, PXD056598_DDA__B_ulti_HFX_DDA_PYE1, PXD056598_DDA__B_ulti_HF_DDA_PYE1,
+        PXD056598_DDA__D_ulti_ecl_DDA_PYE1, PXD056598_DDA__E_ulti_lumos_DDA_PYE1, PXD056598_DDA__F_Vanq_ecl_DDA_PYE1,
+        PXD056598_DDA__G_ulti_ex_DDA_PYE1, PXD056598_DDA__H_ulti_ecl_DDA_PYE1, PXD056598_DDA__H_ulti_ex_DDA_PYE1]
+      n_proteins: [621, 6557]
+      n_samples: [6, 24]
+      missing_rate: [0.098615, 0.475022]
+    pipeline:
+      quantification: directlfq
+      normalization: none
+      imputation: minprob
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 18
+      datasets: 39
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0633
+      median_study_deficit: 0.0454
+      iqr_study_deficit: 0.036
+      near_best: 0.01
+      near_best_rate: 0.2222
+      top_fraction: 0.05
+      top_rate: 0.0556
+      mean_score_a: 0.8128
+      mean_coverage: 0.6858
+      overall_best_config: directlfq|none|minprob|half|deqms
+      lodo_unit: study
+      lodo_folds: 18
+      lodo_folds_selecting_preset: 11
+      lodo_near_best_rate: 0.0556
+      mean_lodo_regret: 0.050756
+      max_lodo_regret: 0.158632
+      mean_lodo_rank_spearman: 0.255
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
+      - Applies only to protein matrices quantified with directlfq; near-best, top and held-out rates
+        compare only directlfq configurations.
+      - seqknn imputation scored as well as minprob.
+      - DirectLFQ normalizes samples internally; where many proteins change in one direction (PXD000279),
+        DirectLFQ without sample normalization (mokume --directlfq-no-sample-normalization) scored far
+        higher.
+  - id: grid-lfq-maxlfq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: moderate
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: quantms_LFQ_DDA
+      upstream_engine: null
+      quantification: maxlfq
+    reference_profile:
+      projects: [PXD000279, PXD001385, PXD001819, PXD002099, PXD002370, PXD003841__DigLiq, PXD003841__Stack,
+        PXD003841__TG, PXD003881, PXD006447, PXD007683_LFQ, PXD009815, PXD014777, PXD018408_DDA, PXD019777_DDA__1H25_T10_H,
+        PXD019777_DDA__1H25_T10_L, PXD019777_DDA__1H25_T10_M, PXD019777_DDA__1H25_T20_L, PXD019777_DDA__1H25_T20_M,
+        PXD019777_DDA__1H25_T5_H, PXD019777_DDA__1H25_T5_L, PXD019777_DDA__1H25_T5_M, PXD019777_DDA__1H_T10_H,
+        PXD019777_DDA__2H_T10_H, PXD021425, PXD027800, PXD028735, PXD030780, PXD044981_DDA, PXD056598_DDA__A_evo_ex_DDA_PYE1,
+        PXD056598_DDA__A_ulti_ex_DDA_PYE1, PXD056598_DDA__B_ulti_HFX_DDA_PYE1, PXD056598_DDA__B_ulti_HF_DDA_PYE1,
+        PXD056598_DDA__D_ulti_ecl_DDA_PYE1, PXD056598_DDA__E_ulti_lumos_DDA_PYE1, PXD056598_DDA__F_Vanq_ecl_DDA_PYE1,
+        PXD056598_DDA__G_ulti_ex_DDA_PYE1, PXD056598_DDA__H_ulti_ecl_DDA_PYE1, PXD056598_DDA__H_ulti_ex_DDA_PYE1]
+      n_proteins: [610, 6526]
+      n_samples: [6, 24]
+      missing_rate: [0.098339, 0.462745]
+    pipeline:
+      quantification: maxlfq
+      normalization: none
+      imputation: seqknn
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 18
+      datasets: 39
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0674
+      median_study_deficit: 0.0517
+      iqr_study_deficit: 0.0409
+      near_best: 0.01
+      near_best_rate: 0.2778
+      top_fraction: 0.05
+      top_rate: 0.2222
+      mean_score_a: 0.8057
+      mean_coverage: 0.6762
+      overall_best_config: directlfq|none|minprob|half|deqms
+      lodo_unit: study
+      lodo_folds: 18
+      lodo_folds_selecting_preset: 17
+      lodo_near_best_rate: 0.2778
+      mean_lodo_regret: 0.050892
+      max_lodo_regret: 0.287541
+      mean_lodo_rank_spearman: 0.175
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
+      - Applies only to protein matrices quantified with maxlfq; near-best, top and held-out rates compare
+        only maxlfq configurations.
+      - knn imputation came second; median normalization lowered the scores.
+  - id: grid-lfq-pibaq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: quantms_LFQ_DDA
+      upstream_engine: null
+      quantification: pibaq
+    reference_profile:
+      projects: [PXD000279, PXD001385, PXD001819, PXD002099, PXD002370, PXD003841__DigLiq, PXD003841__Stack,
+        PXD003841__TG, PXD003881, PXD006447, PXD007683_LFQ, PXD009815, PXD014777, PXD018408_DDA, PXD019777_DDA__1H25_T10_H,
+        PXD019777_DDA__1H25_T10_L, PXD019777_DDA__1H25_T10_M, PXD019777_DDA__1H25_T20_L, PXD019777_DDA__1H25_T20_M,
+        PXD019777_DDA__1H25_T5_H, PXD019777_DDA__1H25_T5_L, PXD019777_DDA__1H25_T5_M, PXD019777_DDA__1H_T10_H,
+        PXD019777_DDA__2H_T10_H, PXD021425, PXD027800, PXD028735, PXD030780, PXD044981_DDA, PXD056598_DDA__A_evo_ex_DDA_PYE1,
+        PXD056598_DDA__A_ulti_ex_DDA_PYE1, PXD056598_DDA__B_ulti_HFX_DDA_PYE1, PXD056598_DDA__B_ulti_HF_DDA_PYE1,
+        PXD056598_DDA__D_ulti_ecl_DDA_PYE1, PXD056598_DDA__E_ulti_lumos_DDA_PYE1, PXD056598_DDA__F_Vanq_ecl_DDA_PYE1,
+        PXD056598_DDA__G_ulti_ex_DDA_PYE1, PXD056598_DDA__H_ulti_ecl_DDA_PYE1, PXD056598_DDA__H_ulti_ex_DDA_PYE1]
+      n_proteins: [863, 9272]
+      n_samples: [6, 24]
+      missing_rate: [0.07683, 0.481664]
+    pipeline:
+      quantification: pibaq
+      normalization: median
+      imputation: seqknn
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 18
+      datasets: 39
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.1172
+      median_study_deficit: 0.0913
+      iqr_study_deficit: 0.0779
+      near_best: 0.01
+      near_best_rate: 0.2778
+      top_fraction: 0.05
+      top_rate: 0.0556
+      mean_score_a: 0.7644
+      mean_coverage: 0.9925
+      overall_best_config: directlfq|none|minprob|half|deqms
+      lodo_unit: study
+      lodo_folds: 18
+      lodo_folds_selecting_preset: 13
+      lodo_near_best_rate: 0.1667
+      mean_lodo_regret: 0.054804
+      max_lodo_regret: 0.195482
+      mean_lodo_rank_spearman: 0.313
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
+      - Applies only to protein matrices quantified with pibaq; near-best, top and held-out rates compare
+        only pibaq configurations.
+      - piBAQ matrices scored well below DirectLFQ and MaxLFQ matrices.
+      - Median normalization and no normalization scored almost the same.
+  - id: grid-lfq-sum-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: quantms_LFQ_DDA
+      upstream_engine: null
+      quantification: sum
+    reference_profile:
+      projects: [PXD000279, PXD001385, PXD001819, PXD002099, PXD002370, PXD003841__DigLiq, PXD003841__Stack,
+        PXD003841__TG, PXD003881, PXD006447, PXD007683_LFQ, PXD009815, PXD014777, PXD018408_DDA, PXD019777_DDA__1H25_T10_H,
+        PXD019777_DDA__1H25_T10_L, PXD019777_DDA__1H25_T10_M, PXD019777_DDA__1H25_T20_L, PXD019777_DDA__1H25_T20_M,
+        PXD019777_DDA__1H25_T5_H, PXD019777_DDA__1H25_T5_L, PXD019777_DDA__1H25_T5_M, PXD019777_DDA__1H_T10_H,
+        PXD019777_DDA__2H_T10_H, PXD021425, PXD027800, PXD028735, PXD030780, PXD044981_DDA, PXD056598_DDA__A_evo_ex_DDA_PYE1,
+        PXD056598_DDA__A_ulti_ex_DDA_PYE1, PXD056598_DDA__B_ulti_HFX_DDA_PYE1, PXD056598_DDA__B_ulti_HF_DDA_PYE1,
+        PXD056598_DDA__D_ulti_ecl_DDA_PYE1, PXD056598_DDA__E_ulti_lumos_DDA_PYE1, PXD056598_DDA__F_Vanq_ecl_DDA_PYE1,
+        PXD056598_DDA__G_ulti_ex_DDA_PYE1, PXD056598_DDA__H_ulti_ecl_DDA_PYE1, PXD056598_DDA__H_ulti_ex_DDA_PYE1]
+      n_proteins: [657, 6876]
+      n_samples: [6, 24]
+      missing_rate: [0.124348, 0.561861]
+    pipeline:
+      quantification: sum
+      normalization: median
+      imputation: minprob
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 18
+      datasets: 39
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.1075
+      median_study_deficit: 0.0799
+      iqr_study_deficit: 0.075
+      near_best: 0.01
+      near_best_rate: 0.0556
+      top_fraction: 0.05
+      top_rate: 0.0
+      mean_score_a: 0.7718
+      mean_coverage: 0.7346
+      overall_best_config: directlfq|none|minprob|half|deqms
+      lodo_unit: study
+      lodo_folds: 18
+      lodo_folds_selecting_preset: 14
+      lodo_near_best_rate: 0.0556
+      mean_lodo_regret: 0.060653
+      max_lodo_regret: 0.246218
+      mean_lodo_rank_spearman: 0.197
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
+      - Applies only to protein matrices quantified with sum; near-best, top and held-out rates compare
+        only sum configurations.
+      - Sum matrices scored well below DirectLFQ and MaxLFQ matrices.
+      - Median normalization improved the scores.
+  - id: grid-lfq-top3-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: quantms_LFQ_DDA
+      upstream_engine: null
+      quantification: top3
+    reference_profile:
+      projects: [PXD000279, PXD001385, PXD001819, PXD002099, PXD002370, PXD003841__DigLiq, PXD003841__Stack,
+        PXD003841__TG, PXD003881, PXD006447, PXD007683_LFQ, PXD009815, PXD014777, PXD018408_DDA, PXD019777_DDA__1H25_T10_H,
+        PXD019777_DDA__1H25_T10_L, PXD019777_DDA__1H25_T10_M, PXD019777_DDA__1H25_T20_L, PXD019777_DDA__1H25_T20_M,
+        PXD019777_DDA__1H25_T5_H, PXD019777_DDA__1H25_T5_L, PXD019777_DDA__1H25_T5_M, PXD019777_DDA__1H_T10_H,
+        PXD019777_DDA__2H_T10_H, PXD021425, PXD027800, PXD028735, PXD030780, PXD044981_DDA, PXD056598_DDA__A_evo_ex_DDA_PYE1,
+        PXD056598_DDA__A_ulti_ex_DDA_PYE1, PXD056598_DDA__B_ulti_HFX_DDA_PYE1, PXD056598_DDA__B_ulti_HF_DDA_PYE1,
+        PXD056598_DDA__D_ulti_ecl_DDA_PYE1, PXD056598_DDA__E_ulti_lumos_DDA_PYE1, PXD056598_DDA__F_Vanq_ecl_DDA_PYE1,
+        PXD056598_DDA__G_ulti_ex_DDA_PYE1, PXD056598_DDA__H_ulti_ecl_DDA_PYE1, PXD056598_DDA__H_ulti_ex_DDA_PYE1]
+      n_proteins: [657, 6876]
+      n_samples: [6, 24]
+      missing_rate: [0.124348, 0.561861]
+    pipeline:
+      quantification: top3
+      normalization: median
+      imputation: minprob
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 18
+      datasets: 39
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.1328
+      median_study_deficit: 0.1168
+      iqr_study_deficit: 0.0563
+      near_best: 0.01
+      near_best_rate: 0.1111
+      top_fraction: 0.05
+      top_rate: 0.0556
+      mean_score_a: 0.7492
+      mean_coverage: 0.7346
+      overall_best_config: directlfq|none|minprob|half|deqms
+      lodo_unit: study
+      lodo_folds: 18
+      lodo_folds_selecting_preset: 16
+      lodo_near_best_rate: 0.1111
+      mean_lodo_regret: 0.050142
+      max_lodo_regret: 0.257266
+      mean_lodo_rank_spearman: 0.224
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
+      - Applies only to protein matrices quantified with top3; near-best, top and held-out rates compare
+        only top3 configurations.
+      - Top3 matrices scored lowest of the five quantification methods.
+      - Median normalization improved the scores.
+  - id: grid-dia-preset
+    source_id: spike-in-mokumebench
+    kind: setting_preset
+    status: candidate_for_review
+    confidence: moderate
+    priority: 10
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: quantmsdiann_LFQ_DIA
+      upstream_engine: null
+      quantification: null
+    reference_profile:
+      projects: [PXD002952_HYE124__HYE124_TTOF5600_32fix, PXD002952_HYE124__HYE124_TTOF5600_64var, PXD002952_HYE124__HYE124_TTOF6600_32fix,
+        PXD002952_HYE124__HYE124_TTOF6600_64var, PXD002952_HYE110__HYE110_TTOF6600_32fix, PXD002952_HYE110__HYE110_TTOF6600_32var,
+        PXD002952_HYE110__HYE110_TTOF6600_64fix, PXD002952_HYE110__HYE110_TTOF6600_64var, PXD018408_DIA,
+        PXD019777_DIA, PXD022589, PXD026600, PXD036786__SWATH_0.5uL, PXD036786__SWATH_1uL, PXD036786__ZenoSWATH_0.5uL,
+        PXD036786__ZenoSWATH_1uL, PXD040205, PXD044981_DIA, PXD046444, PXD056598_DIA__A_evo_ex_DIA_PYE1,
+        PXD056598_DIA__A_ulti_ex_DIA_PYE1, PXD056598_DIA__B_ulti_HFX_DIA_PYE1, PXD056598_DIA__B_ulti_HF_DIA_PYE1,
+        PXD056598_DIA__D_Vanq_ex_DIA_PYE1, PXD056598_DIA__D_ulti_ecl_DIA_PYE1, PXD056598_DIA__E_ulti_lumos_DIA_PYE1,
+        PXD056598_DIA__G_ulti_ex_DIA_PYE1, PXD056598_DIA__H_ulti_ecl_DIA_PYE1, PXD056598_DIA__H_ulti_ex_DIA_PYE1,
+        PXD056598_DIA__I_nLC_ex_DIA_PYE1, PXD056832__HYEPept_Batch1, PXD056832__HYEPept_Batch2, PXD056832__HYEPept_Batch3,
+        PXD062685, PXD066672, PXD070049, PXD071205_TE__TE_15min_50ng, PXD071205_TE__TE_5min_50ng]
+      n_proteins: [2263, 15536]
+      n_samples: [6, 16]
+      missing_rate: [0.03068, 0.246267]
+    pipeline:
+      quantification: maxlfq
+      normalization: none
+      imputation: mindet
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 14
+      datasets: 38
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 310
+      mean_study_deficit: 0.037
+      median_study_deficit: 0.0366
+      iqr_study_deficit: 0.0193
+      near_best: 0.01
+      near_best_rate: 0.2143
+      top_fraction: 0.05
+      top_rate: 0.2857
+      mean_score_a: 0.8881
+      mean_coverage: 0.7139
+      overall_best_config: maxlfq|none|mindet|none|deqms
+      lodo_unit: study
+      lodo_folds: 14
+      lodo_folds_selecting_preset: 8
+      lodo_near_best_rate: 0.0
+      mean_lodo_regret: 0.038286
+      max_lodo_regret: 0.124137
+      mean_lodo_rank_spearman: 0.517
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
+      - Quantification is frozen when the workflow starts from a protein matrix.
+      - maxlfq and directlfq with mindet and DEqMS are tied within the bootstrap interval; OpDEA's DIA-NN
+        workflow (maxlfq, no normalization, mindet, limma) did as well on held-out studies.
+      - DirectLFQ's internal normalization hurt designs where many proteins change (PXD036786, PXD046444).
+  - id: grid-dia-directlfq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: moderate
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: quantmsdiann_LFQ_DIA
+      upstream_engine: null
+      quantification: directlfq
+    reference_profile:
+      projects: [PXD002952_HYE124__HYE124_TTOF5600_32fix, PXD002952_HYE124__HYE124_TTOF5600_64var, PXD002952_HYE124__HYE124_TTOF6600_32fix,
+        PXD002952_HYE124__HYE124_TTOF6600_64var, PXD002952_HYE110__HYE110_TTOF6600_32fix, PXD002952_HYE110__HYE110_TTOF6600_32var,
+        PXD002952_HYE110__HYE110_TTOF6600_64fix, PXD002952_HYE110__HYE110_TTOF6600_64var, PXD018408_DIA,
+        PXD019777_DIA, PXD022589, PXD026600, PXD036786__SWATH_0.5uL, PXD036786__SWATH_1uL, PXD036786__ZenoSWATH_0.5uL,
+        PXD036786__ZenoSWATH_1uL, PXD040205, PXD044981_DIA, PXD046444, PXD056598_DIA__A_evo_ex_DIA_PYE1,
+        PXD056598_DIA__A_ulti_ex_DIA_PYE1, PXD056598_DIA__B_ulti_HFX_DIA_PYE1, PXD056598_DIA__B_ulti_HF_DIA_PYE1,
+        PXD056598_DIA__D_Vanq_ex_DIA_PYE1, PXD056598_DIA__D_ulti_ecl_DIA_PYE1, PXD056598_DIA__E_ulti_lumos_DIA_PYE1,
+        PXD056598_DIA__G_ulti_ex_DIA_PYE1, PXD056598_DIA__H_ulti_ecl_DIA_PYE1, PXD056598_DIA__H_ulti_ex_DIA_PYE1,
+        PXD056598_DIA__I_nLC_ex_DIA_PYE1, PXD056832__HYEPept_Batch1, PXD056832__HYEPept_Batch2, PXD056832__HYEPept_Batch3,
+        PXD062685, PXD066672, PXD070049, PXD071205_TE__TE_15min_50ng, PXD071205_TE__TE_5min_50ng]
+      n_proteins: [2266, 15652]
+      n_samples: [6, 16]
+      missing_rate: [0.031154, 0.261076]
+    pipeline:
+      quantification: directlfq
+      normalization: none
+      imputation: mindet
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 14
+      datasets: 38
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0375
+      median_study_deficit: 0.0259
+      iqr_study_deficit: 0.0146
+      near_best: 0.01
+      near_best_rate: 0.5714
+      top_fraction: 0.05
+      top_rate: 0.2857
+      mean_score_a: 0.8912
+      mean_coverage: 0.7196
+      overall_best_config: maxlfq|none|mindet|none|deqms
+      lodo_unit: study
+      lodo_folds: 14
+      lodo_folds_selecting_preset: 13
+      lodo_near_best_rate: 0.5
+      mean_lodo_regret: 0.011194
+      max_lodo_regret: 0.028406
+      mean_lodo_rank_spearman: 0.335
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
+      - Applies only to protein matrices quantified with directlfq; near-best, top and held-out rates
+        compare only directlfq configurations.
+      - minprob imputation scored almost as well as mindet.
+      - DirectLFQ's internal normalization hurt designs where many proteins change (PXD036786, PXD046444).
+  - id: grid-dia-maxlfq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: moderate
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: quantmsdiann_LFQ_DIA
+      upstream_engine: null
+      quantification: maxlfq
+    reference_profile:
+      projects: [PXD002952_HYE124__HYE124_TTOF5600_32fix, PXD002952_HYE124__HYE124_TTOF5600_64var, PXD002952_HYE124__HYE124_TTOF6600_32fix,
+        PXD002952_HYE124__HYE124_TTOF6600_64var, PXD002952_HYE110__HYE110_TTOF6600_32fix, PXD002952_HYE110__HYE110_TTOF6600_32var,
+        PXD002952_HYE110__HYE110_TTOF6600_64fix, PXD002952_HYE110__HYE110_TTOF6600_64var, PXD018408_DIA,
+        PXD019777_DIA, PXD022589, PXD026600, PXD036786__SWATH_0.5uL, PXD036786__SWATH_1uL, PXD036786__ZenoSWATH_0.5uL,
+        PXD036786__ZenoSWATH_1uL, PXD040205, PXD044981_DIA, PXD046444, PXD056598_DIA__A_evo_ex_DIA_PYE1,
+        PXD056598_DIA__A_ulti_ex_DIA_PYE1, PXD056598_DIA__B_ulti_HFX_DIA_PYE1, PXD056598_DIA__B_ulti_HF_DIA_PYE1,
+        PXD056598_DIA__D_Vanq_ex_DIA_PYE1, PXD056598_DIA__D_ulti_ecl_DIA_PYE1, PXD056598_DIA__E_ulti_lumos_DIA_PYE1,
+        PXD056598_DIA__G_ulti_ex_DIA_PYE1, PXD056598_DIA__H_ulti_ecl_DIA_PYE1, PXD056598_DIA__H_ulti_ex_DIA_PYE1,
+        PXD056598_DIA__I_nLC_ex_DIA_PYE1, PXD056832__HYEPept_Batch1, PXD056832__HYEPept_Batch2, PXD056832__HYEPept_Batch3,
+        PXD062685, PXD066672, PXD070049, PXD071205_TE__TE_15min_50ng, PXD071205_TE__TE_5min_50ng]
+      n_proteins: [2263, 15536]
+      n_samples: [6, 16]
+      missing_rate: [0.03068, 0.246267]
+    pipeline:
+      quantification: maxlfq
+      normalization: none
+      imputation: mindet
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 14
+      datasets: 38
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.037
+      median_study_deficit: 0.0366
+      iqr_study_deficit: 0.0193
+      near_best: 0.01
+      near_best_rate: 0.6429
+      top_fraction: 0.05
+      top_rate: 0.1429
+      mean_score_a: 0.8881
+      mean_coverage: 0.7139
+      overall_best_config: maxlfq|none|mindet|none|deqms
+      lodo_unit: study
+      lodo_folds: 14
+      lodo_folds_selecting_preset: 13
+      lodo_near_best_rate: 0.5714
+      mean_lodo_regret: 0.014239
+      max_lodo_regret: 0.056135
+      mean_lodo_rank_spearman: 0.349
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
+      - Applies only to protein matrices quantified with maxlfq; near-best, top and held-out rates compare
+        only maxlfq configurations.
+      - minprob imputation scored almost as well as mindet; limma trailed DEqMS.
+  - id: grid-dia-pibaq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: quantmsdiann_LFQ_DIA
+      upstream_engine: null
+      quantification: pibaq
+    reference_profile:
+      projects: [PXD002952_HYE124__HYE124_TTOF5600_32fix, PXD002952_HYE124__HYE124_TTOF5600_64var, PXD002952_HYE124__HYE124_TTOF6600_32fix,
+        PXD002952_HYE124__HYE124_TTOF6600_64var, PXD002952_HYE110__HYE110_TTOF6600_32fix, PXD002952_HYE110__HYE110_TTOF6600_32var,
+        PXD002952_HYE110__HYE110_TTOF6600_64fix, PXD002952_HYE110__HYE110_TTOF6600_64var, PXD018408_DIA,
+        PXD019777_DIA, PXD022589, PXD026600, PXD036786__SWATH_0.5uL, PXD036786__SWATH_1uL, PXD036786__ZenoSWATH_0.5uL,
+        PXD036786__ZenoSWATH_1uL, PXD040205, PXD044981_DIA, PXD046444, PXD056598_DIA__A_evo_ex_DIA_PYE1,
+        PXD056598_DIA__A_ulti_ex_DIA_PYE1, PXD056598_DIA__B_ulti_HFX_DIA_PYE1, PXD056598_DIA__B_ulti_HF_DIA_PYE1,
+        PXD056598_DIA__D_Vanq_ex_DIA_PYE1, PXD056598_DIA__D_ulti_ecl_DIA_PYE1, PXD056598_DIA__E_ulti_lumos_DIA_PYE1,
+        PXD056598_DIA__G_ulti_ex_DIA_PYE1, PXD056598_DIA__H_ulti_ecl_DIA_PYE1, PXD056598_DIA__H_ulti_ex_DIA_PYE1,
+        PXD056598_DIA__I_nLC_ex_DIA_PYE1, PXD056832__HYEPept_Batch1, PXD056832__HYEPept_Batch2, PXD056832__HYEPept_Batch3,
+        PXD062685, PXD066672, PXD070049, PXD071205_TE__TE_15min_50ng, PXD071205_TE__TE_5min_50ng]
+      n_proteins: [2774, 21230]
+      n_samples: [6, 16]
+      missing_rate: [0.08089, 0.34764]
+    pipeline:
+      quantification: pibaq
+      normalization: none
+      imputation: mindet
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 14
+      datasets: 38
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0868
+      median_study_deficit: 0.0811
+      iqr_study_deficit: 0.0511
+      near_best: 0.01
+      near_best_rate: 0.2143
+      top_fraction: 0.05
+      top_rate: 0.0714
+      mean_score_a: 0.8441
+      mean_coverage: 0.9974
+      overall_best_config: maxlfq|none|mindet|none|deqms
+      lodo_unit: study
+      lodo_folds: 14
+      lodo_folds_selecting_preset: 13
+      lodo_near_best_rate: 0.2143
+      mean_lodo_regret: 0.037822
+      max_lodo_regret: 0.186302
+      mean_lodo_rank_spearman: 0.016
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
+      - Applies only to protein matrices quantified with pibaq; near-best, top and held-out rates compare
+        only pibaq configurations.
+      - The same normalization, imputation and DE method were best for every quantification method.
+      - piBAQ matrices scored well below DirectLFQ and MaxLFQ matrices.
+  - id: grid-dia-sum-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: quantmsdiann_LFQ_DIA
+      upstream_engine: null
+      quantification: sum
+    reference_profile:
+      projects: [PXD002952_HYE124__HYE124_TTOF5600_32fix, PXD002952_HYE124__HYE124_TTOF5600_64var, PXD002952_HYE124__HYE124_TTOF6600_32fix,
+        PXD002952_HYE124__HYE124_TTOF6600_64var, PXD002952_HYE110__HYE110_TTOF6600_32fix, PXD002952_HYE110__HYE110_TTOF6600_32var,
+        PXD002952_HYE110__HYE110_TTOF6600_64fix, PXD002952_HYE110__HYE110_TTOF6600_64var, PXD018408_DIA,
+        PXD019777_DIA, PXD022589, PXD026600, PXD036786__SWATH_0.5uL, PXD036786__SWATH_1uL, PXD036786__ZenoSWATH_0.5uL,
+        PXD036786__ZenoSWATH_1uL, PXD040205, PXD044981_DIA, PXD046444, PXD056598_DIA__A_evo_ex_DIA_PYE1,
+        PXD056598_DIA__A_ulti_ex_DIA_PYE1, PXD056598_DIA__B_ulti_HFX_DIA_PYE1, PXD056598_DIA__B_ulti_HF_DIA_PYE1,
+        PXD056598_DIA__D_Vanq_ex_DIA_PYE1, PXD056598_DIA__D_ulti_ecl_DIA_PYE1, PXD056598_DIA__E_ulti_lumos_DIA_PYE1,
+        PXD056598_DIA__G_ulti_ex_DIA_PYE1, PXD056598_DIA__H_ulti_ecl_DIA_PYE1, PXD056598_DIA__H_ulti_ex_DIA_PYE1,
+        PXD056598_DIA__I_nLC_ex_DIA_PYE1, PXD056832__HYEPept_Batch1, PXD056832__HYEPept_Batch2, PXD056832__HYEPept_Batch3,
+        PXD062685, PXD066672, PXD070049, PXD071205_TE__TE_15min_50ng, PXD071205_TE__TE_5min_50ng]
+      n_proteins: [2305, 16160]
+      n_samples: [6, 16]
+      missing_rate: [0.050962, 0.324217]
+    pipeline:
+      quantification: sum
+      normalization: none
+      imputation: mindet
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 14
+      datasets: 38
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0856
+      median_study_deficit: 0.0825
+      iqr_study_deficit: 0.0455
+      near_best: 0.01
+      near_best_rate: 0.2143
+      top_fraction: 0.05
+      top_rate: 0.0714
+      mean_score_a: 0.8419
+      mean_coverage: 0.7464
+      overall_best_config: maxlfq|none|mindet|none|deqms
+      lodo_unit: study
+      lodo_folds: 14
+      lodo_folds_selecting_preset: 13
+      lodo_near_best_rate: 0.2143
+      mean_lodo_regret: 0.036661
+      max_lodo_regret: 0.258246
+      mean_lodo_rank_spearman: 0.081
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
+      - Applies only to protein matrices quantified with sum; near-best, top and held-out rates compare
+        only sum configurations.
+      - The same normalization, imputation and DE method were best for every quantification method.
+      - Sum matrices scored well below DirectLFQ and MaxLFQ matrices.
+  - id: grid-dia-top3-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: quantmsdiann_LFQ_DIA
+      upstream_engine: null
+      quantification: top3
+    reference_profile:
+      projects: [PXD002952_HYE124__HYE124_TTOF5600_32fix, PXD002952_HYE124__HYE124_TTOF5600_64var, PXD002952_HYE124__HYE124_TTOF6600_32fix,
+        PXD002952_HYE124__HYE124_TTOF6600_64var, PXD002952_HYE110__HYE110_TTOF6600_32fix, PXD002952_HYE110__HYE110_TTOF6600_32var,
+        PXD002952_HYE110__HYE110_TTOF6600_64fix, PXD002952_HYE110__HYE110_TTOF6600_64var, PXD018408_DIA,
+        PXD019777_DIA, PXD022589, PXD026600, PXD036786__SWATH_0.5uL, PXD036786__SWATH_1uL, PXD036786__ZenoSWATH_0.5uL,
+        PXD036786__ZenoSWATH_1uL, PXD040205, PXD044981_DIA, PXD046444, PXD056598_DIA__A_evo_ex_DIA_PYE1,
+        PXD056598_DIA__A_ulti_ex_DIA_PYE1, PXD056598_DIA__B_ulti_HFX_DIA_PYE1, PXD056598_DIA__B_ulti_HF_DIA_PYE1,
+        PXD056598_DIA__D_Vanq_ex_DIA_PYE1, PXD056598_DIA__D_ulti_ecl_DIA_PYE1, PXD056598_DIA__E_ulti_lumos_DIA_PYE1,
+        PXD056598_DIA__G_ulti_ex_DIA_PYE1, PXD056598_DIA__H_ulti_ecl_DIA_PYE1, PXD056598_DIA__H_ulti_ex_DIA_PYE1,
+        PXD056598_DIA__I_nLC_ex_DIA_PYE1, PXD056832__HYEPept_Batch1, PXD056832__HYEPept_Batch2, PXD056832__HYEPept_Batch3,
+        PXD062685, PXD066672, PXD070049, PXD071205_TE__TE_15min_50ng, PXD071205_TE__TE_5min_50ng]
+      n_proteins: [2305, 16160]
+      n_samples: [6, 16]
+      missing_rate: [0.050962, 0.324217]
+    pipeline:
+      quantification: top3
+      normalization: none
+      imputation: mindet
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 14
+      datasets: 38
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.1101
+      median_study_deficit: 0.1094
+      iqr_study_deficit: 0.0506
+      near_best: 0.01
+      near_best_rate: 0.2143
+      top_fraction: 0.05
+      top_rate: 0.0714
+      mean_score_a: 0.8183
+      mean_coverage: 0.7464
+      overall_best_config: maxlfq|none|mindet|none|deqms
+      lodo_unit: study
+      lodo_folds: 14
+      lodo_folds_selecting_preset: 13
+      lodo_near_best_rate: 0.2143
+      mean_lodo_regret: 0.037364
+      max_lodo_regret: 0.268912
+      mean_lodo_rank_spearman: 0.085
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
+      - Applies only to protein matrices quantified with top3; near-best, top and held-out rates compare
+        only top3 configurations.
+      - The same normalization, imputation and DE method were best for every quantification method.
+      - Top3 matrices scored lowest of the five quantification methods.
+  - id: grid-tmt-preset
+    source_id: spike-in-mokumebench
+    kind: setting_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 10
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: quantms_TMT_DDA
+      upstream_engine: null
+      quantification: null
+    reference_profile:
+      projects: [PXD011691__BGS, PXD011691__FLI, PXD020815, PXD040449]
+      n_proteins: [4466, 5891]
+      n_samples: [4, 6]
+      missing_rate: [0.0, 0.002843]
+    pipeline:
+      quantification: directlfq
+      normalization: none
+      imputation: none
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 3
+      datasets: 4
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 310
+      mean_study_deficit: 0.0449
+      median_study_deficit: 0.0165
+      iqr_study_deficit: 0.0589
+      near_best: 0.01
+      near_best_rate: 0.6667
+      top_fraction: 0.05
+      top_rate: 0.6667
+      mean_score_a: 0.7542
+      mean_coverage: 0.7988
+      overall_best_config: directlfq|none|impseqrob|half|deqms
+      lodo_unit: study
+      lodo_folds: 3
+      lodo_folds_selecting_preset: 0
+      lodo_near_best_rate: 0.0
+      mean_lodo_regret: 0.092899
+      max_lodo_regret: 0.150022
+      mean_lodo_rank_spearman: 0.209
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
+      - Only three TMT studies were available for leave-one-study-out evaluation.
+      - TMT matrices have few missing values, so the imputation choice barely changes results; median
+        normalization lowered the scores.
+      - Quantification is frozen when the workflow starts from a protein matrix.
+      - Held-out transfer is weak; with PXD040449 held out, the two other studies selected maxlfq instead.
+  - id: grid-tmt-directlfq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: quantms_TMT_DDA
+      upstream_engine: null
+      quantification: directlfq
+    reference_profile:
+      projects: [PXD011691__BGS, PXD011691__FLI, PXD020815, PXD040449]
+      n_proteins: [4466, 5891]
+      n_samples: [4, 6]
+      missing_rate: [0.0, 0.002843]
+    pipeline:
+      quantification: directlfq
+      normalization: none
+      imputation: none
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 3
+      datasets: 4
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0449
+      median_study_deficit: 0.0165
+      iqr_study_deficit: 0.0589
+      near_best: 0.01
+      near_best_rate: 1.0
+      top_fraction: 0.05
+      top_rate: 0.3333
+      mean_score_a: 0.7542
+      mean_coverage: 0.7988
+      overall_best_config: directlfq|none|impseqrob|half|deqms
+      lodo_unit: study
+      lodo_folds: 3
+      lodo_folds_selecting_preset: 1
+      lodo_near_best_rate: 0.6667
+      mean_lodo_regret: 0.014858
+      max_lodo_regret: 0.040746
+      mean_lodo_rank_spearman: 0.824
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
+      - Only three TMT studies were available for leave-one-study-out evaluation.
+      - TMT matrices have few missing values, so the imputation choice barely changes results; median
+        normalization lowered the scores.
+      - Applies only to protein matrices quantified with directlfq; near-best, top and held-out rates
+        compare only directlfq configurations.
+  - id: grid-tmt-maxlfq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: quantms_TMT_DDA
+      upstream_engine: null
+      quantification: maxlfq
+    reference_profile:
+      projects: [PXD011691__BGS, PXD011691__FLI, PXD020815, PXD040449]
+      n_proteins: [4466, 5891]
+      n_samples: [4, 6]
+      missing_rate: [0.0, 0.002843]
+    pipeline:
+      quantification: maxlfq
+      normalization: none
+      imputation: none
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 3
+      datasets: 4
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0748
+      median_study_deficit: 0.0374
+      iqr_study_deficit: 0.0565
+      near_best: 0.01
+      near_best_rate: 0.6667
+      top_fraction: 0.05
+      top_rate: 0.3333
+      mean_score_a: 0.7044
+      mean_coverage: 0.7988
+      overall_best_config: directlfq|none|impseqrob|half|deqms
+      lodo_unit: study
+      lodo_folds: 3
+      lodo_folds_selecting_preset: 1
+      lodo_near_best_rate: 0.0
+      mean_lodo_regret: 0.041614
+      max_lodo_regret: 0.06071
+      mean_lodo_rank_spearman: 0.003
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
+      - Only three TMT studies were available for leave-one-study-out evaluation.
+      - TMT matrices have few missing values, so the imputation choice barely changes results; median
+        normalization lowered the scores.
+      - Applies only to protein matrices quantified with maxlfq; near-best, top and held-out rates compare
+        only maxlfq configurations.
+      - MaxLFQ matrices scored below DirectLFQ matrices.
+  - id: grid-tmt-pibaq-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: quantms_TMT_DDA
+      upstream_engine: null
+      quantification: pibaq
+    reference_profile:
+      projects: [PXD011691__BGS, PXD011691__FLI, PXD020815, PXD040449]
+      n_proteins: [5465, 6715]
+      n_samples: [4, 6]
+      missing_rate: [5.0e-05, 0.002652]
+    pipeline:
+      quantification: pibaq
+      normalization: none
+      imputation: none
+      de_method: limma
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 3
+      datasets: 4
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.077
+      median_study_deficit: 0.0822
+      iqr_study_deficit: 0.0614
+      near_best: 0.01
+      near_best_rate: 0.6667
+      top_fraction: 0.05
+      top_rate: 0.3333
+      mean_score_a: 0.714
+      mean_coverage: 0.9954
+      overall_best_config: directlfq|none|impseqrob|half|deqms
+      lodo_unit: study
+      lodo_folds: 3
+      lodo_folds_selecting_preset: 2
+      lodo_near_best_rate: 0.3333
+      mean_lodo_regret: 0.035041
+      max_lodo_regret: 0.064829
+      mean_lodo_rank_spearman: 0.117
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
+      - Only three TMT studies were available for leave-one-study-out evaluation.
+      - TMT matrices have few missing values, so the imputation choice barely changes results; median
+        normalization lowered the scores.
+      - Applies only to protein matrices quantified with pibaq; near-best, top and held-out rates compare
+        only pibaq configurations.
+      - piBAQ matrices scored below DirectLFQ matrices.
+      - limma scored clearly better than DEqMS for piBAQ matrices.
+  - id: grid-tmt-sum-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: quantms_TMT_DDA
+      upstream_engine: null
+      quantification: sum
+    reference_profile:
+      projects: [PXD011691__BGS, PXD011691__FLI, PXD020815, PXD040449]
+      n_proteins: [4466, 5895]
+      n_samples: [4, 6]
+      missing_rate: [0.0, 0.003435]
+    pipeline:
+      quantification: sum
+      normalization: none
+      imputation: knn
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 3
+      datasets: 4
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0821
+      median_study_deficit: 0.0756
+      iqr_study_deficit: 0.0512
+      near_best: 0.01
+      near_best_rate: 0.6667
+      top_fraction: 0.05
+      top_rate: 0.3333
+      mean_score_a: 0.6927
+      mean_coverage: 0.8003
+      overall_best_config: directlfq|none|impseqrob|half|deqms
+      lodo_unit: study
+      lodo_folds: 3
+      lodo_folds_selecting_preset: 2
+      lodo_near_best_rate: 0.3333
+      mean_lodo_regret: 0.026981
+      max_lodo_regret: 0.042081
+      mean_lodo_rank_spearman: 0.037
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
+      - Only three TMT studies were available for leave-one-study-out evaluation.
+      - TMT matrices have few missing values, so the imputation choice barely changes results; median
+        normalization lowered the scores.
+      - Applies only to protein matrices quantified with sum; near-best, top and held-out rates compare
+        only sum configurations.
+      - Sum matrices scored below DirectLFQ matrices.
+  - id: grid-tmt-top3-preset
+    source_id: spike-in-mokumebench
+    kind: quantification_preset
+    status: candidate_for_review
+    confidence: low
+    priority: 11
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: quantms_TMT_DDA
+      upstream_engine: null
+      quantification: top3
+    reference_profile:
+      projects: [PXD011691__BGS, PXD011691__FLI, PXD020815, PXD040449]
+      n_proteins: [4466, 5895]
+      n_samples: [4, 6]
+      missing_rate: [0.0, 0.003435]
+    pipeline:
+      quantification: top3
+      normalization: none
+      imputation: none
+      de_method: limma
+      fdr_method: bh
+      log2fc_threshold: 0.584963
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      studies: 3
+      datasets: 4
+      candidates_per_dataset: 744
+      service_candidates_per_dataset: 62
+      mean_study_deficit: 0.0916
+      median_study_deficit: 0.0743
+      iqr_study_deficit: 0.0321
+      near_best: 0.01
+      near_best_rate: 0.6667
+      top_fraction: 0.05
+      top_rate: 0.6667
+      mean_score_a: 0.6939
+      mean_coverage: 0.7988
+      overall_best_config: directlfq|none|impseqrob|half|deqms
+      lodo_unit: study
+      lodo_folds: 3
+      lodo_folds_selecting_preset: 2
+      lodo_near_best_rate: 0.3333
+      mean_lodo_regret: 0.020779
+      max_lodo_regret: 0.048
+      mean_lodo_rank_spearman: 0.037
+    limitations:
+      - Candidate preset has not been published as a Mokume default.
+      - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
+      - Only three TMT studies were available for leave-one-study-out evaluation.
+      - TMT matrices have few missing values, so the imputation choice barely changes results; median
+        normalization lowered the scores.
+      - Applies only to protein matrices quantified with top3; near-best, top and held-out rates compare
+        only top3 configurations.
+      - Top3 matrices scored lowest of the five quantification methods.
+      - limma scored better than DEqMS for top3 matrices.
+  - id: opdea-diann-dia
+    source_id: opdea-2024
+    kind: published_setting_reference
+    status: published
+    confidence: moderate
+    priority: 20
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: DIANN_DIA
+      upstream_engine: DIA-NN
+    pipeline:
+      quantification: null
+      normalization: none
+      imputation: mindet
+      de_method: limma
+      fdr_method: bh
+      log2fc_threshold: 0.5
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      NMCC005: 0.79
+      PAUC001: 0.767
+    limitations:
+      - Published setting may not transfer to a different upstream engine.
+      - The source extraction does not identify an equivalent Mokume quantification method.
+  - id: opdea-spectronaut-dia
+    source_id: opdea-2024
+    kind: published_setting_reference
+    status: published
+    confidence: moderate
+    priority: 21
+    eligible_as_prior: true
+    applicability:
+      data_type: DIA
+      setting: spt_DIA
+      upstream_engine: Spectronaut
+    pipeline:
+      quantification: null
+      normalization: none
+      imputation: mindet
+      de_method: rots
+      fdr_method: bh
+      log2fc_threshold: 0.5
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      NMCC005: 0.786
+      PAUC001: 0.743
+    limitations:
+      - Published setting may not transfer to a different upstream engine.
+      - The source extraction does not identify an equivalent Mokume quantification method.
+  - id: opdea-fragpipe-dda
+    source_id: opdea-2024
+    kind: published_setting_reference
+    status: published
+    confidence: moderate
+    priority: 20
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: FG_DDA
+      upstream_engine: FragPipe
+    pipeline:
+      quantification: null
+      normalization: none
+      imputation: missforest
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.5
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      NMCC005: 0.765
+      PAUC001: 0.713
+    limitations:
+      - Published setting may not transfer to a different upstream engine.
+      - The source extraction does not identify an equivalent Mokume quantification method.
+  - id: opdea-maxquant-dda
+    source_id: opdea-2024
+    kind: published_setting_reference
+    status: published
+    confidence: moderate
+    priority: 21
+    eligible_as_prior: true
+    applicability:
+      data_type: LFQ
+      setting: MQ_DDA
+      upstream_engine: MaxQuant
+    pipeline:
+      quantification: null
+      normalization: none
+      imputation: impseq
+      de_method: deqms
+      fdr_method: bh
+      log2fc_threshold: 0.5
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      NMCC005: 0.768
+      PAUC001: 0.719
+    limitations:
+      - Published setting may not transfer to a different upstream engine.
+      - The source extraction does not identify an equivalent Mokume quantification method.
+  - id: opdea-fragpipe-tmt
+    source_id: opdea-2024
+    kind: published_setting_reference
+    status: published
+    confidence: moderate
+    priority: 20
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: FG_TMT
+      upstream_engine: FragPipe
+    pipeline:
+      quantification: null
+      normalization: none
+      imputation: seqknn
+      de_method: limma
+      fdr_method: bh
+      log2fc_threshold: 0.5
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      NMCC005: 0.875
+      PAUC001: 0.809
+    limitations:
+      - Published setting may not transfer to a different upstream engine.
+      - The source extraction does not identify an equivalent Mokume quantification method.
+  - id: opdea-maxquant-tmt
+    source_id: opdea-2024
+    kind: published_setting_reference
+    status: published
+    confidence: moderate
+    priority: 21
+    eligible_as_prior: true
+    applicability:
+      data_type: TMT
+      setting: MQ_TMT
+      upstream_engine: MaxQuant
+    pipeline:
+      quantification: null
+      normalization: none
+      imputation: impseq
+      de_method: proda
+      fdr_method: bh
+      log2fc_threshold: 0.5
+      ensemble: none
+      ensemble_k: null
+    metrics:
+      NMCC005: 0.886
+      PAUC001: 0.818
+    limitations:
+      - The published rank-one workflow used an unsupported method; this is rank two.
+      - Published setting may not transfer to a different upstream engine.
+      - The source extraction does not identify an equivalent Mokume quantification method.
