@@ -72,11 +72,9 @@ that runtime's complete protease catalog and passes the theoretical peptide map
 into the Rust kernel. Extras select Mokume's additional periphery stacks:
 
 ```bash
-pip install "mokume[plotting]"   # t-SNE, DE plots, and piBAQ QC
-pip install "mokume[reports]"    # interactive HTML reports
+pip install "mokume[analysis]"   # plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]"  # tissue-specificity pipeline
-pip install "mokume[analysis]"   # QC, workflow comparison, and missforest
-pip install "mokume[agentic]"    # local MCP service used by the Mokume Plugin
+pip install "mokume[plugin]"     # local MCP service used by the Mokume Plugin
 pip install "mokume[all]"        # all Python periphery dependencies
 ```
 
@@ -269,7 +267,8 @@ not overwrite it. See [docs/concepts/differential-expression.md](docs/concepts/d
 The installable Mokume Plugin lets Codex or Claude Code inspect a protein
 matrix, bind traceable benchmark evidence, and evaluate bounded normalization,
 imputation, and differential-expression candidates through the Rust kernel.
-The host owns the model and credentials; Mokume contains no BYOK model client.
+For this Plugin path, the host owns the model and credentials; Mokume receives
+no host API key.
 Its bundled local MCP server starts automatically when the plugin is enabled.
 With ground truth it ranks the five Score A metrics by benchmark mean rank;
 without ground truth it reports
@@ -327,8 +326,8 @@ mokume is **Rust-first**:
 
 This scope covers the **computation implementations only**. The Python pipeline
 API and its shared post-processing, plotting, reporting, and TissueMap remain
-periphery. Agentic recommendation is maintained as a plugin over the default
-Rust-backed wheel, rather than as a second computation backend. Full policy:
+periphery. The installable Mokume Plugin is an interface over the default
+Rust-backed wheel, rather than an additional computation backend. Full policy:
 [docs/maintenance-scope.md](docs/maintenance-scope.md).
 
 ## Example: a tissue proteome atlas

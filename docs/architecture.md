@@ -105,17 +105,19 @@ the runtime digest is traceable.
 ## The Mokume Plugin
 
 Agentic recommendation is shipped as an installable host plugin under
-`plugins/mokume/`, not as a model client inside either computation package. The
-bundle contains one skill, automatic local MCP configuration, and a committed
-knowledge snapshot. Its MCP process is provided by `mokume[agentic]` in the
-default Rust-backed wheel.
+`plugins/mokume/`. The bundle contains one skill, automatic local MCP
+configuration, and a committed knowledge snapshot. Its MCP process is provided
+by `mokume[plugin]` in the default Rust-backed wheel. This path uses the model
+and credentials already owned by Codex or Claude Code.
 
 The host model reads the skill and calls `mokume.inspect_dataset` with a
 two-condition contrast to receive a contrast-scoped typed profile, deterministic
 diagnostics, compatible evidence, and a bounded generation contract. It returns
 an exact recommendation block to
 `mokume.evaluate_recommendation`, which validates the block before running the
-Rust matrix APIs. Mokume never receives the host's model API key.
+Rust matrix APIs. A third tool, `mokume.search_knowledge`, returns
+explanation-only benchmark evidence and dataset summaries. Mokume never receives
+the Plugin host's model API key.
 
 The scientific boundary is explicit: ground-truth datasets may be ranked with
 Score A; unlabelled datasets remain exploratory and have no winner. The plugin

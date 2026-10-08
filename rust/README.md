@@ -36,14 +36,12 @@ pip install mokume
 
 pyOpenMS and its numpy, pandas, and matplotlib dependencies are installed with
 the base wheel so piBAQ can use every protease in the runtime catalog. Optional
-plotting, reporting, tissue-map, and analysis stacks remain extras:
+analysis, tissue-map, and Plugin stacks remain extras:
 
 ```bash
-pip install "mokume[plotting]"   # matplotlib / seaborn figures
-pip install "mokume[reports]"    # interactive plotly QC reports
+pip install "mokume[analysis]"   # plots, reports, QC, comparison, and missforest
 pip install "mokume[tissuemap]"  # tissue-map + AnnData export
-pip install "mokume[analysis]"   # QC/comparison reports + missforest
-pip install "mokume[agentic]"    # local MCP service for the Mokume Plugin
+pip install "mokume[plugin]"     # local MCP service for the Mokume Plugin
 pip install "mokume[all]"        # everything above
 ```
 
@@ -147,10 +145,9 @@ computation work. For the full design and maintenance policy, see
 [Architecture](../docs/architecture.md) and
 [Maintenance scope](../docs/maintenance-scope.md).
 
-Agentic method recommendation is an installable plugin over this wheel. Its
-bundled local MCP configuration calls deterministic profile, policy, and
-evaluation services; the agent host owns the model and credentials. See the
-[Mokume Plugin guide](../docs/user-guide/agentic-plugin.md).
+The installable Mokume Plugin calls the deterministic profile, policy, and
+evaluation services, and uses the model and credentials owned by Codex or
+Claude Code. See the [Mokume Plugin guide](../docs/user-guide/agentic-plugin.md).
 
 ## Example
 
