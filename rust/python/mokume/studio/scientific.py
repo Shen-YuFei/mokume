@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from mokume.agentic.knowledge import EvidenceRecord, load_knowledge_graph
-from mokume.agentic.knowledge_search import matching_knowledge_records, method_key
+from mokume.agentic import knowledge_search
+from mokume.agentic.knowledge import load_knowledge_graph
 from mokume.studio.jobs import JobManager
 from mokume.studio.models import (
     JobOperation,
@@ -26,10 +25,6 @@ from mokume.studio.science import (
     DatasetStatus,
     ScienceStore,
 )
-
-
-_KNOWLEDGE_DATA_TYPES = {"DIA", "LFQ", "TMT"}
-_SEARCH_TOKEN = re.compile(r"[^\W_]+(?:[.+-][^\W_]+)*", re.UNICODE)
 
 
 def workspace_identity(project: ProjectRecord) -> dict[str, str]:
@@ -143,80 +138,9 @@ class ScientificController:
         limit: int = 5,
     ) -> dict[str, Any]:
         """Search validated method evidence and dataset benchmark summaries."""
-        (
-            normalized_query,
-            normalized_type,
-            normalized_method,
-            query_tokens,
-            selected_method,
-        ) = self._knowledge_search_filters(query, data_type, method, limit)
-        results = []
-        for record in matching_knowledge_records(
-            self.knowledge, query_tokens, normalized_type, selected_method, limit
-        ):
-            result = record.to_context_dict(self.knowledge.sources[record.source_id])
-            if isinstance(record, EvidenceRecord):
-                result["eligible_as_prior"] = record.eligible_as_prior
-            results.append(result)
-        return {
-            "scope": "explanation_only",
-            "execution_authority": False,
-            "knowledge_fingerprint": self.knowledge_fingerprint,
-            "query": normalized_query,
-            "filters": {
-                "data_type": normalized_type,
-                "method": normalized_method,
-            },
-            "count": len(results),
-            "results": results,
-        }
-
-    def _knowledge_search_filters(
-        self,
-        query: str,
-        data_type: str | None,
-        method: str | None,
-        limit: int,
-    ) -> tuple[str, str | None, str | None, set[str], str | None]:
-        normalized_query = self._search_value(query, "query", 200)
-        normalized_type = (
-            self._search_value(data_type, "data_type", 3).upper()
-            if data_type is not None
-            else None
+        return knowledge_search.search_knowledge(
+            self.knowledge, query, data_type=data_type, method=method, limit=limit
         )
-        if normalized_type is not None and normalized_type not in _KNOWLEDGE_DATA_TYPES:
-            raise ValueError("data_type must be DIA, LFQ, or TMT")
-        normalized_method = (
-            self._search_value(method, "method", 64) if method is not None else None
-        )
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 5:
-            raise ValueError("limit must be an integer from 1 to 5")
-        query_tokens = {
-            token.casefold() for token in _SEARCH_TOKEN.findall(normalized_query)
-        }
-        if not query_tokens:
-            raise ValueError("query must contain searchable text")
-        selected_method = method_key(normalized_method) if normalized_method else None
-        if normalized_method and not selected_method:
-            raise ValueError("method must contain searchable text")
-        return (
-            normalized_query,
-            normalized_type,
-            normalized_method,
-            query_tokens,
-            selected_method,
-        )
-
-    @staticmethod
-    def _search_value(value: str, name: str, maximum: int) -> str:
-        if not isinstance(value, str):
-            raise ValueError(f"{name} must be text")
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError(f"{name} must not be blank")
-        if "\x00" in normalized or len(normalized) > maximum:
-            raise ValueError(f"{name} is invalid or too long")
-        return normalized
 
     def prepare_evaluation(
         self,

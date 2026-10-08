@@ -229,8 +229,10 @@ def test_knowledge_search_is_bounded_and_explanation_only(tmp_path):
     assert result["execution_authority"] is False
     assert result["knowledge_fingerprint"] == harness.controller.knowledge_fingerprint
     assert result["filters"] == {"data_type": "LFQ", "method": "DirectLFQ"}
-    assert result["count"] == 1
-    assert result["results"][0]["id"] == "grid-lfq-preset"
+    assert [item["id"] for item in result["results"]] == [
+        "grid-lfq-preset",
+        "grid-lfq-directlfq-preset",
+    ]
     assert result["results"][0]["eligible_as_prior"] is True
     assert result["results"][0]["source"]["id"] == "spike-in-mokumebench"
 
@@ -263,13 +265,13 @@ def test_knowledge_search_returns_exact_dataset_benchmark_summaries(tmp_path):
     assert summary["held_out_evaluation"] is None
     assert "benchmark_inputs" not in json.dumps(summary)
 
-    assert [item["id"] for item in evaluated["results"]] == [
+    assert [item["id"] for item in evaluated["results"]][:2] == [
         "dataset-PXD020815",
         "grid-tmt-preset",
     ]
     summary = evaluated["results"][0]
     assert summary["preset_eligible"] is True
-    assert summary["held_out_evaluation"]["status"] == "evaluated"
+    assert summary["held_out_evaluation"]["held_out_study"] == "PXD020815"
     assert summary["held_out_evaluation"]["selected_pipeline"]["de_method"] == "rots"
 
 

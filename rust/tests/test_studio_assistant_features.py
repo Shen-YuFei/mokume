@@ -192,8 +192,10 @@ async def test_ask_streams_bounded_server_knowledge(ai_client, tmp_path, monkeyp
     payload = json.loads(_tool_result(events, "search_knowledge")["content"])
     assert payload["scope"] == "explanation_only"
     assert payload["execution_authority"] is False
-    assert payload["count"] == 1
-    assert payload["results"][0]["id"] == "grid-lfq-preset"
+    assert [item["id"] for item in payload["results"]] == [
+        "grid-lfq-preset",
+        "grid-lfq-directlfq-preset",
+    ]
     assert any(event["type"] == "RUN_FINISHED" for event in events)
 
 
