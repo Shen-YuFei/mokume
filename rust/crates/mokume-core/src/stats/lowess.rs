@@ -3,6 +3,8 @@
 //! Supports evaluation at the input points with `delta=0`. Missing-value
 //! filtering and sorting belong to the caller, as with the upstream Cython core.
 
+use rayon::prelude::*;
+
 use super::median_sorted;
 
 /// Smooth finite `y` at sorted, finite `x`, using local linear regression and
@@ -16,38 +18,59 @@ pub fn lowess_fit(x: &[f64], y: &[f64], frac: f64, iterations: usize) -> Vec<f64
         return y.to_vec();
     }
     let window = ((frac * n as f64 + 1e-10) as usize).clamp(2, n);
+    let fit_points = window_starts(x, window);
     let mut fitted = vec![0.0; n];
     let mut robustness = vec![1.0; n];
-    let mut weights = vec![0.0; window];
     for iteration in 0..=iterations {
-        let mut left = 0;
-        for i in 0..n {
-            // Upstream reuses the fit for tied x values, even if regression
-            // failed and the first tied point's original y was returned.
-            if i > 0 && x[i] == x[i - 1] {
+        let fits = fit_points
+            .par_iter()
+            .map_init(
+                || vec![0.0; window],
+                |weights, &(i, left)| {
+                    let right = left + window;
+                    let radius = (x[i] - x[left]).max(x[right - 1] - x[i]);
+                    local_fit(
+                        &x[left..right],
+                        &y[left..right],
+                        &robustness[left..right],
+                        weights,
+                        x[i],
+                        radius,
+                        y[i],
+                    )
+                },
+            )
+            .collect::<Vec<_>>();
+        for (&(i, _), fit) in fit_points.iter().zip(fits) {
+            fitted[i] = fit;
+        }
+        // Upstream reuses the fit for tied x values, even if regression
+        // failed and the first tied point's original y was returned.
+        for i in 1..n {
+            if x[i] == x[i - 1] {
                 fitted[i] = fitted[i - 1];
-                continue;
             }
-            while left + window < n && x[i] > (x[left] + x[left + window]) / 2.0 {
-                left += 1;
-            }
-            let right = left + window;
-            let radius = (x[i] - x[left]).max(x[right - 1] - x[i]);
-            fitted[i] = local_fit(
-                &x[left..right],
-                &y[left..right],
-                &robustness[left..right],
-                &mut weights,
-                x[i],
-                radius,
-                y[i],
-            );
         }
         if iteration < iterations {
             update_robustness(y, &fitted, &mut robustness);
         }
     }
     fitted
+}
+
+/// The first point of each run of tied x values, with its window start.
+///
+/// Upstream slides the window start while x[i] exceeds the window midpoint.
+/// The midpoints never decrease, so a binary search finds the same start for
+/// each point, and the points can then be fitted independently.
+fn window_starts(x: &[f64], window: usize) -> Vec<(usize, usize)> {
+    let midpoints = (0..x.len() - window)
+        .map(|left| (x[left] + x[left + window]) / 2.0)
+        .collect::<Vec<_>>();
+    (0..x.len())
+        .filter(|&i| i == 0 || x[i] != x[i - 1])
+        .map(|i| (i, midpoints.partition_point(|&midpoint| x[i] > midpoint)))
+        .collect()
 }
 
 fn local_fit(
