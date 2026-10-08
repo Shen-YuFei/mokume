@@ -14,7 +14,7 @@ use mokume_core::{
 use mokume_imputation::imputed_values;
 use mokume_io::{
     write_peptide_parquet, MsstatsReader, PeptideParquetRow, QpxFeatureRecord, QpxParquetReader,
-    SdrfRawTable, SdrfRecord, SdrfTable, DEFAULT_QPX_BATCH_SIZE,
+    QpxScoreValue, SdrfLookupCache, SdrfRawTable, SdrfRecord, SdrfTable,
 };
 use mokume_normalization::{
     condition_median_sample_factors, coverage_filtered_proteins, global_median_sample_factors,
@@ -24,8 +24,8 @@ use mokume_normalization::{
     SampleNormalizationMethod,
 };
 use mokume_quant::{
-    direct_lfq_aligned, direct_lfq_aligned_with_ions, max_lfq_with_samples, DirectLfqIon,
-    DirectLfqNormalizedIon, PeptideMeasurement,
+    direct_lfq_aligned, direct_lfq_aligned_with_ions, solve_max_lfq_with_stabilization,
+    DirectLfqIon, DirectLfqNormalizedIon, PeptideMeasurement,
 };
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
@@ -34,6 +34,7 @@ use tracing::{info, warn};
 mod de;
 pub mod filters;
 mod matrix;
+mod maxlfq;
 mod memory;
 mod spectral_count;
 mod threading;
@@ -42,11 +43,8 @@ use memory::MemoryPlan;
 
 pub use de::{differential_expression_matrix, MatrixDifferentialExpressionResults};
 pub use matrix::{impute_matrix, normalize_matrix};
+pub use maxlfq::run_maxlfq_from_peptides_with_threads;
 
-/// `min_nonan` used when `--quant-method maxlfq` delegates to the DirectLFQ-aligned
-/// solver. Matches Python's maxlfq delegation, which uses 2 (the streaming path
-/// hardcodes `min_nonan=2`; the class path passes `min_peptides`, default 2).
-const MAXLFQ_DIRECTLFQ_MIN_NONAN: usize = 2;
 const DEFAULT_REFERENCE_REGEX: &str = "pool|powder|ref|reference|bridge";
 const MIN_SAMPLE_CORRELATION_OVERLAP: usize = 3;
 
@@ -198,7 +196,7 @@ impl FeatureToProteinState {
     fn ingest(
         &mut self,
         feature: &QpxFeatureRecord,
-        sdrf: Option<&SdrfTable>,
+        sdrf: Option<&mut SdrfLookupCache<'_>>,
         filtering: FilterConfig,
         intensity_factors: Option<&IntensityFactors>,
     ) -> Result<()> {
@@ -247,8 +245,13 @@ impl FeatureToProteinState {
         // Python applies Run-QC within a per-sample frame but groups its rows by
         // `TechReplicate`. The pre-pass therefore rejects individual technical
         // runs; other runs from the same sample must remain available.
-        let run_qc_key = run_qc_key(feature, sdrf_record, sample_name.clone());
-        if self.run_qc_excluded_runs.contains(&run_qc_key) {
+        if !self.run_qc_excluded_runs.is_empty()
+            && self.run_qc_excluded_runs.contains(&run_qc_key(
+                feature,
+                sdrf_record,
+                sample_name.clone(),
+            ))
+        {
             return Ok(());
         }
         // CVThresholdFilter (Python `intensity.py:127-141`): drop every row of a
@@ -288,11 +291,11 @@ impl FeatureToProteinState {
             &feature.sequence,
             "canonical peptide",
         )?;
-        let biological_replicate = sdrf_record
-            .and_then(|record| record.biological_replicate)
-            .unwrap_or(1);
-        let condition = sample_condition(&sample_name, sdrf_record);
         let (peptide, contextual_canonical_peptide) = if self.aggregation.preserves_loading_rows() {
+            let biological_replicate = sdrf_record
+                .and_then(|record| record.biological_replicate)
+                .unwrap_or(1);
+            let condition = sample_condition(&sample_name, sdrf_record);
             let condition_id = self
                 .conditions
                 .get_or_insert(&condition)
@@ -353,6 +356,7 @@ impl FeatureToProteinState {
             sample,
             peptide,
             canonical: canonical_peptide,
+            species: base_peptide,
             intensity,
             ion_name: &feature.sequence,
             sample_name: &sample_name,
@@ -526,7 +530,7 @@ impl FeatureToProteinState {
         mut self,
         min_unique_peptides: usize,
         dataset_normalization: Option<SampleNormalizationMethod>,
-    ) -> ProteinMatrix {
+    ) -> Result<ProteinMatrix> {
         let allowed_cells = self.allowed_cells(min_unique_peptides);
         // Per-protein unique-canonical-peptide counts for the DEqMS DE path,
         // captured BEFORE the `min_unique_peptides` cell filter so they mirror
@@ -560,16 +564,16 @@ impl FeatureToProteinState {
             collapse_mapping,
             &self.canonical_peptides,
             &self.samples,
-        );
+        )?;
         let allowed_proteins = values.protein_ids();
-        ProteinMatrix {
+        Ok(ProteinMatrix {
             proteins: self.proteins,
             samples: self.samples,
             allowed_proteins,
             excluded_samples: HashSet::new(),
             peptide_counts,
             values,
-        }
+        })
     }
 
     /// Union the canonical-peptide sets across all of a protein's (protein,
@@ -1095,17 +1099,15 @@ enum FeatureAggregation {
     },
     Lfq {
         method: QuantMethod,
-        /// Whether this LFQ aggregation feeds the DirectLFQ-aligned solver.
-        /// True for `QuantMethod::DirectLfq`, and for `QuantMethod::MaxLfq` unless
-        /// the built-in fallback is forced (mirrors Python delegating maxlfq to
-        /// DirectLFQ when the package is installed). When false, the built-in
-        /// MaxLFQ solver runs on `traces`.
+        /// DirectLFQ alone performs hierarchical sample/ion alignment.
         route_to_directlfq: bool,
+        maxlfq_min_ratio_count: usize,
+        stabilize: bool,
         directlfq_min_nonan: usize,
         directlfq_num_samples_quadratic: usize,
-        /// MaxLFQ input: max intensity per contextual peptidoform ion, collapsed
-        /// to canonical peptide only after every feature row has been observed.
-        /// DirectLFQ uses the same feature-to-ion contract.
+        directlfq_normalize_samples: bool,
+        /// Contextual ion maxima. MaxLFQ preserves modification and charge;
+        /// DirectLFQ collapses them into canonical peptide traces.
         traces: MaxLfqFeatureAggregation,
         /// Populated only when DirectLFQ ion export runs before matrix
         /// materialization, avoiding a second solver pass.
@@ -1117,7 +1119,8 @@ enum FeatureAggregation {
 struct MaxLfqFeatureAggregation {
     ion_cells: HashMap<CellKey, HashMap<PeptideId, f64>>,
     ion_to_canonical: HashMap<PeptideId, PeptideId>,
-    canonical_traces: HashMap<PeptideCellKey, f64>,
+    ion_to_species: HashMap<PeptideId, PeptideId>,
+    peptide_traces: HashMap<PeptideCellKey, f64>,
 }
 
 #[derive(Debug)]
@@ -1191,12 +1194,11 @@ enum RatioFractionMerge {
 struct IntensityFactors {
     run: HashMap<RunCellKey, RunNormalizationTransform>,
     sample: HashMap<String, f64>,
-    /// Channel-IRS scale factors keyed by technical replicate (Python
-    /// `irs_scale_by_techrep`). The lookup key is the **apply-side**
-    /// techreplicate ([`tech_replicate_of`], the last `_` token), matching
-    /// Python's `dataset_df[TECHREPLICATE].map(...)` (`peptide.py:336`). Empty
-    /// when IRS is disabled or no reference-channel rows were found.
-    irs_scale_by_techrep: HashMap<i64, f64>,
+    /// Channel-IRS scale factors keyed by the QPX run identity. A run is one
+    /// TMT plex, so this remains unambiguous when technical-replicate numbers
+    /// repeat across mixtures. Empty when IRS is disabled or no reference-
+    /// channel rows were found.
+    irs_scale_by_run: HashMap<String, f64>,
 }
 
 /// Derive a peptide row's `TechReplicate` from its run name, matching Python's
@@ -1216,31 +1218,6 @@ fn tech_replicate_of(run_file_name: &str) -> i64 {
     run_file_name.parse::<i64>().unwrap_or(1)
 }
 
-/// IRS-internal technical-replicate derivation used when *collecting* the
-/// reference-channel scale factors. Mirrors Python's
-/// `CASE WHEN position('_' in run) > 0 THEN CAST(split_part(run, '_', 2) AS INTEGER)
-/// ELSE CAST(run AS INTEGER) END` (`feature.py:764-766`): take the **second**
-/// token (the part between the first and second `_`, or the tail after the first
-/// `_`), not the last one. A run with no `_` parses the whole name as an integer.
-/// `None` means the run cannot supply an integer techreplicate (DuckDB's `CAST`
-/// would error / the row would not contribute), so it is dropped, matching the
-/// `irs_value > 0` filter that follows in spirit (the run simply yields no key).
-///
-/// This is deliberately distinct from [`tech_replicate_of`], which keeps the
-/// **last** token (Python's apply-side `run.str.split('_').str.get(-1)`,
-/// `aggregation.py:215`). The two agree for two-token `mixture_techrep` names
-/// (typical quantms TMT) but diverge for names with three or more tokens.
-fn irs_tech_replicate_of(run_file_name: &str) -> Option<i64> {
-    if let Some((_, rest)) = run_file_name.split_once('_') {
-        // `split_part(run, '_', 2)` is the token between the first and second
-        // `_`; if there is no second `_`, it is the remainder after the first.
-        let second = rest.split('_').next().unwrap_or(rest);
-        second.parse::<i64>().ok()
-    } else {
-        run_file_name.parse::<i64>().ok()
-    }
-}
-
 impl IntensityFactors {
     fn normalize(&self, intensity: f64, sample: &str, run: &str) -> f64 {
         let sample_factor = self.sample.get(sample).copied().unwrap_or(1.0);
@@ -1256,18 +1233,13 @@ impl IntensityFactors {
         // position Python uses: `feature_normalization` (run) runs first
         // (`peptide.py:324`), then IRS multiplies `NORM_INTENSITY`
         // (`peptide.py:333-340`), then `peptide_normalized` (sample) runs later
-        // (`peptide.py:370`). Missing techreplicates map to 1.0 (Python's
-        // `.fillna(1.0)`).
-        let irs_scale = self
-            .irs_scale_by_techrep
-            .get(&tech_replicate_of(run))
-            .copied()
-            .unwrap_or(1.0);
+        // (`peptide.py:370`). Missing runs map to 1.0.
+        let irs_scale = self.irs_scale_by_run.get(run).copied().unwrap_or(1.0);
         run_intensity * irs_scale * sample_factor
     }
 
     fn is_empty(&self) -> bool {
-        self.run.is_empty() && self.sample.is_empty() && self.irs_scale_by_techrep.is_empty()
+        self.run.is_empty() && self.sample.is_empty() && self.irs_scale_by_run.is_empty()
     }
 }
 
@@ -1277,6 +1249,7 @@ struct AggregationMeasurement<'a> {
     sample: SampleId,
     peptide: PeptideId,
     canonical: PeptideId,
+    species: PeptideId,
     intensity: f64,
     ion_name: &'a str,
     sample_name: &'a str,
@@ -1318,27 +1291,17 @@ impl FeatureAggregation {
                     cells: HashMap::new(),
                 })
             }
-            QuantMethod::MaxLfq | QuantMethod::DirectLfq => {
-                let route_to_directlfq = config.quantification == QuantMethod::DirectLfq
-                    || (!config.maxlfq.force_builtin
-                        && dataset_sample_normalization_method(config)?.is_none());
-                // Python's maxlfq delegation uses min_nonan=2 (the streaming path
-                // hardcodes it; the class path passes min_peptides, default 2),
-                // whereas the directlfq method keeps its own config default.
-                let directlfq_min_nonan = if config.quantification == QuantMethod::MaxLfq {
-                    MAXLFQ_DIRECTLFQ_MIN_NONAN
-                } else {
-                    config.directlfq.min_nonan
-                };
-                Ok(Self::Lfq {
-                    method: config.quantification,
-                    route_to_directlfq,
-                    directlfq_min_nonan,
-                    directlfq_num_samples_quadratic: config.directlfq.num_samples_quadratic,
-                    traces: MaxLfqFeatureAggregation::default(),
-                    cached_directlfq_values: None,
-                })
-            }
+            QuantMethod::MaxLfq | QuantMethod::DirectLfq => Ok(Self::Lfq {
+                method: config.quantification,
+                route_to_directlfq: config.quantification == QuantMethod::DirectLfq,
+                maxlfq_min_ratio_count: config.maxlfq.min_ratio_count,
+                stabilize: config.maxlfq.stabilize,
+                directlfq_min_nonan: config.directlfq.min_nonan,
+                directlfq_num_samples_quadratic: config.directlfq.num_samples_quadratic,
+                directlfq_normalize_samples: config.directlfq.normalize_samples,
+                traces: MaxLfqFeatureAggregation::default(),
+                cached_directlfq_values: None,
+            }),
         }
     }
 
@@ -1378,9 +1341,8 @@ impl FeatureAggregation {
             | Self::PeptideCount(_)
             | Self::TopN { .. }
             | Self::Pibaq(_) => true,
-            // Built-in MaxLFQ runs dataset normalization on its peptide traces;
-            // the DirectLFQ-aligned path (DirectLFQ, or delegated MaxLFQ) does its
-            // own internal sample normalization, so mokume must not apply another.
+            // MaxLFQ uses explicitly configured normalization on peptide species.
+            // DirectLFQ performs its own internal sample normalization.
             Self::Lfq {
                 route_to_directlfq, ..
             } => !route_to_directlfq,
@@ -1390,8 +1352,9 @@ impl FeatureAggregation {
 
     /// Apply a dataset-level sample normalization (one that needs the full
     /// protein x sample matrix, not a per-sample factor). Quantile runs
-    /// on the canonical peptide cells; piBAQ and MaxLFQ support quantile on their
-    /// own structures. Other dataset methods are gated out before this point.
+    /// on the canonical peptide cells; piBAQ supports quantile and MaxLFQ supports
+    /// quantile and hierarchical on their own structures. Other dataset methods
+    /// are gated out before this point.
     fn apply_dataset_normalization(
         &mut self,
         method: SampleNormalizationMethod,
@@ -1422,11 +1385,15 @@ impl FeatureAggregation {
                 route_to_directlfq: false,
                 traces,
                 ..
-            } => {
-                if method == SampleNormalizationMethod::Quantile {
+            } => match method {
+                SampleNormalizationMethod::Quantile => {
                     traces.apply_quantile_normalization(allowed_cells);
                 }
-            }
+                SampleNormalizationMethod::Hierarchical => {
+                    traces.apply_hierarchical_normalization(allowed_cells, samples);
+                }
+                _ => {}
+            },
             Self::Ratio(_) | Self::Lfq { .. } => {}
         }
     }
@@ -1443,6 +1410,7 @@ impl FeatureAggregation {
             method: QuantMethod::DirectLfq,
             directlfq_min_nonan,
             directlfq_num_samples_quadratic,
+            directlfq_normalize_samples,
             traces,
             cached_directlfq_values,
             ..
@@ -1465,6 +1433,7 @@ impl FeatureAggregation {
             &prepared.ions,
             *directlfq_min_nonan,
             *directlfq_num_samples_quadratic,
+            *directlfq_normalize_samples,
         );
         write_directlfq_ions(
             path,
@@ -1525,8 +1494,8 @@ impl FeatureAggregation {
         peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
         canonical_peptides: &StringIdRegistry<PeptideId>,
         samples: &StringIdRegistry<SampleId>,
-    ) -> ProteinValues {
-        match self {
+    ) -> Result<ProteinValues> {
+        Ok(match self {
             Self::Sum(cells) => ProteinValues::Cells(
                 cells
                     .into_iter()
@@ -1604,6 +1573,7 @@ impl FeatureAggregation {
                 route_to_directlfq: true,
                 directlfq_min_nonan,
                 directlfq_num_samples_quadratic,
+                directlfq_normalize_samples,
                 traces,
                 cached_directlfq_values,
                 ..
@@ -1622,59 +1592,83 @@ impl FeatureAggregation {
                         &prepared.ions,
                         directlfq_min_nonan,
                         directlfq_num_samples_quadratic,
+                        directlfq_normalize_samples,
                     );
                     remap_directlfq_values(values, &prepared)
                 };
                 ProteinValues::Rows(values)
             }
-            Self::Lfq { traces, .. } => {
-                let traces = traces.into_canonical_traces();
-                let (peptide_to_lexical, _) = lexical_id_remap(canonical_peptides);
-                let mut samples = allowed_cells
-                    .iter()
-                    .map(|cell| cell.sample)
-                    .collect::<Vec<_>>();
-                samples.sort_by_key(|sample| sample.get());
-                samples.dedup();
-
-                let mut grouped = HashMap::<ProteinId, Vec<PeptideMeasurement>>::new();
-                for (key, intensity) in traces {
-                    let cell = CellKey {
-                        protein: key.protein,
-                        sample: key.sample,
-                    };
-                    if allowed_cells.contains(&cell) {
-                        grouped
-                            .entry(key.protein)
-                            .or_default()
-                            .push(PeptideMeasurement {
-                                peptide: peptide_to_lexical
-                                    .get(&key.peptide)
-                                    .copied()
-                                    .unwrap_or(key.peptide),
-                                sample: key.sample,
-                                intensity,
-                            });
-                    }
-                }
-
-                ProteinValues::Rows(
-                    grouped
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                        .into_par_iter()
-                        .map(|(protein, measurements)| {
-                            (protein, max_lfq_with_samples(&measurements, &samples))
-                        })
-                        .collect(),
-                )
-            }
-        }
+            Self::Lfq {
+                traces,
+                maxlfq_min_ratio_count,
+                stabilize,
+                ..
+            } => traces.into_protein_values(
+                allowed_cells,
+                proteins,
+                samples,
+                maxlfq_min_ratio_count,
+                stabilize,
+            )?,
+        })
     }
 }
 
 impl MaxLfqFeatureAggregation {
+    fn into_protein_values(
+        self,
+        allowed_cells: &HashSet<CellKey>,
+        proteins: &StringIdRegistry<ProteinId>,
+        samples: &StringIdRegistry<SampleId>,
+        min_ratio_count: usize,
+        stabilize: bool,
+    ) -> Result<ProteinValues> {
+        let traces = self.into_species_traces();
+        let mut sample_ids = allowed_cells
+            .iter()
+            .map(|cell| cell.sample)
+            .collect::<Vec<_>>();
+        sample_ids.sort_by(|left, right| samples.resolve(*left).cmp(&samples.resolve(*right)));
+        sample_ids.dedup();
+        let mut grouped = HashMap::<ProteinId, Vec<PeptideMeasurement>>::new();
+        for (key, intensity) in traces {
+            let cell = CellKey {
+                protein: key.protein,
+                sample: key.sample,
+            };
+            if allowed_cells.contains(&cell) {
+                grouped
+                    .entry(key.protein)
+                    .or_default()
+                    .push(PeptideMeasurement {
+                        peptide: key.peptide,
+                        sample: key.sample,
+                        intensity,
+                    });
+            }
+        }
+        let rows = grouped.into_iter().collect::<Vec<_>>().into_par_iter()
+            .map(|(protein, measurements)| {
+                let result = solve_max_lfq_with_stabilization(&measurements, &sample_ids, min_ratio_count, stabilize)?;
+                if result.components.len() > 1 {
+                    warn!(protein = ?proteins.resolve(protein), components = result.components.len(),
+                        "MaxLFQ sample graph is disconnected; between-component ratios are not identifiable");
+                }
+                Ok((protein, result.intensities.into_iter().filter(|(_, x)| *x > 0.0).collect::<Vec<_>>(), result.stabilized_pairs))
+            }).collect::<Result<Vec<_>>>()?;
+        maxlfq::log_stabilization(min_ratio_count, stabilize, rows.iter().map(|row| row.2));
+        Ok(ProteinValues::Rows(
+            rows.into_iter()
+                .map(|(protein, values, _)| (protein, values))
+                .filter(|(_, values)| !values.is_empty())
+                .collect(),
+        ))
+    }
+
     fn push(&mut self, measurement: AggregationMeasurement<'_>) {
+        self.ion_to_species
+            .entry(measurement.peptide)
+            .or_insert(measurement.species);
         self.ion_to_canonical
             .entry(measurement.peptide)
             .or_insert(measurement.canonical);
@@ -1689,14 +1683,19 @@ impl MaxLfqFeatureAggregation {
         );
     }
 
-    fn collapse_ions(&mut self) {
+    fn collapse_ions(&mut self, preserve_species: bool) {
         let mut cells = std::mem::take(&mut self.ion_cells)
             .into_iter()
             .collect::<Vec<_>>();
         cells.sort_by_key(|(cell, _)| (cell.protein.get(), cell.sample.get()));
+        let mapping = if preserve_species {
+            &self.ion_to_species
+        } else {
+            &self.ion_to_canonical
+        };
         for (cell, peptides) in cells {
-            for (canonical, intensity) in collapse_to_canonical(peptides, &self.ion_to_canonical) {
-                self.canonical_traces.insert(
+            for (canonical, intensity) in collapse_to_canonical(peptides, mapping) {
+                self.peptide_traces.insert(
                     PeptideCellKey {
                         protein: cell.protein,
                         sample: cell.sample,
@@ -1709,17 +1708,31 @@ impl MaxLfqFeatureAggregation {
     }
 
     fn apply_quantile_normalization(&mut self, allowed_cells: &HashSet<CellKey>) {
-        self.collapse_ions();
-        apply_quantile_to_lfq_traces(&mut self.canonical_traces, allowed_cells);
+        self.collapse_ions(true);
+        apply_quantile_to_lfq_traces(&mut self.peptide_traces, allowed_cells);
     }
 
-    fn into_canonical_traces(mut self) -> HashMap<PeptideCellKey, f64> {
-        self.collapse_ions();
-        self.canonical_traces
+    fn apply_hierarchical_normalization(
+        &mut self,
+        allowed_cells: &HashSet<CellKey>,
+        samples: &StringIdRegistry<SampleId>,
+    ) {
+        self.collapse_ions(true);
+        apply_hierarchical_to_lfq_traces(&mut self.peptide_traces, allowed_cells, samples);
+    }
+
+    fn into_peptide_traces(mut self) -> HashMap<PeptideCellKey, f64> {
+        self.collapse_ions(false);
+        self.peptide_traces
+    }
+
+    fn into_species_traces(mut self) -> HashMap<PeptideCellKey, f64> {
+        self.collapse_ions(true);
+        self.peptide_traces
     }
 
     fn into_directlfq_sums(self) -> HashMap<DirectLfqCellKey, f64> {
-        self.into_canonical_traces()
+        self.into_peptide_traces()
             .into_iter()
             .map(|(key, intensity)| {
                 (
@@ -1736,7 +1749,7 @@ impl MaxLfqFeatureAggregation {
 
     fn directlfq_sums(&self) -> HashMap<DirectLfqCellKey, f64> {
         let mut sums = self
-            .canonical_traces
+            .peptide_traces
             .iter()
             .map(|(key, intensity)| {
                 (
@@ -2542,35 +2555,11 @@ fn apply_rlr_to_peptide_cells(
     }
 }
 
-/// TMM (Trimmed Mean of M-values) sample normalization, mirroring
-/// `TMMNormalizer(m_trim=0.3, a_trim=0.05, ref_sample=None, log_transform=False)`
-/// in `python/mokume/normalization/tmm.py`.
-///
-/// `stages.apply_tmm` (stages.py:1087-1093) runs the normalizer through
-/// `_apply_dataset_normalizer(..., log_space=False)` (stages.py:1011-1042),
-/// which pivots the peptide-level long table to the `(protein, canonical) x
-/// sample` wide matrix with `aggfunc="sum"` and passes it in as *raw linear*
-/// intensities (TMM does its own log2 internally, `log_transform=False`). So
-/// TMM operates on the SAME summed-canonical-peptide matrix the other dataset
-/// methods use, and returns linear intensities.
-///
-/// TMM produces a single per-sample scalar `norm_factor`, then divides every
-/// value in that sample's column by it (tmm.py:334-343 uses division). Because
-/// the factor is uniform across every peptide of a sample it commutes with the
-/// downstream canonical collapse `finalize` performs, so we divide the original
-/// peptidoform cells in place (NOT the canonical-summed values) and let
-/// `finalize` remain the sole canonical-collapse site. The canonical-summed wide
-/// matrix built below is used only to fit the factors, matching Python's pivot;
-/// scaling each peptidoform by the same factor then collapsing reproduces
-/// Python's melt-back cell-for-cell without a double collapse.
-///
-/// Determinism: the factor math (library sizes, reference selection via
-/// `np.percentile` linear interpolation, the double-trimmed weighted mean) is
-/// delegated to `mokume_normalization::tmm_norm_factors`, which does all work in
-/// `f64` and sorts with `f64::total_cmp`. To match pandas' pivoted column order
-/// (columns sorted by sample label), we order the wide-matrix columns by the
-/// sample's string name; this fixes the reference `idxmin` tie-break to the
-/// first sample in label order, exactly like pandas.
+/// Fit edgeR TMM factors on the canonical-peptide x sample linear matrix.
+/// Divide original peptidoforms by their sample's centered composition factor;
+/// the later canonical sum therefore commutes with this scaling. This is not
+/// edgeR CPM: the library-size normalization is used during factor fitting only.
+/// Sample names are sorted to preserve the pipeline pivot's reference tie-break.
 fn apply_tmm_to_peptide_cells(
     cells: &mut HashMap<CellKey, HashMap<PeptideId, f64>>,
     allowed_cells: &HashSet<CellKey>,
@@ -2675,8 +2664,7 @@ fn apply_tmm_to_peptide_cells(
         }
     }
 
-    // (5) Compute the per-sample rescaled factors (tmm.py:296-299) and divide
-    // every peptidoform in that sample by its factor (tmm.py:334-343).
+    // Compute centered edgeR factors and divide the original peptidoforms.
     //
     // TMM's factor is a single per-sample scalar, so it commutes with the
     // downstream sum/median canonical collapse that `finalize` performs. We
@@ -3056,76 +3044,19 @@ const LOESS_FRAC: f64 = 0.75;
 /// Robustifying reweight iterations matching the statsmodels `lowess` default
 /// (`it=3`).
 const LOESS_ITERATIONS: usize = 3;
+/// Samples in DirectLFQ's quadratic alignment subset for hierarchical sample
+/// normalization.
+const HIERARCHICAL_NUM_SAMPLES_QUADRATIC: usize = 50;
 
-/// DirectLFQ-style hierarchical sample normalization, mirroring
-/// `mokume.normalization.hierarchical.HierarchicalSampleNormalizer` exactly as
-/// the pipeline invokes it in `NormalizationStage.apply_hierarchical`.
-///
-/// `apply_hierarchical` builds the (protein, canonical) x sample wide matrix
-/// (`aggfunc="sum"`), replaces 0 with NaN, takes `np.log2`, fits/transforms with
-/// `HierarchicalSampleNormalizer(num_samples_quadratic=cfg.directlfq_num_samples_quadratic,
-/// selected_proteins=None)` (default `num_samples_quadratic = 50`,
-/// `distance_metric = MEDIAN`, `min_overlap = 10`), then `2 ** result`. So the
-/// outer wrap is `log_space = true`: we log2 the linear matrix, run the whole
-/// alignment in log2 space, and exponentiate on write-back. `selected_proteins`
-/// is always `None` in the pipeline call, so the protein filter is a no-op here.
-///
-/// Algorithm (per the Python class):
-///  1. Collapse each allowed cell's peptidoforms to canonical peptides by SUM via
-///     `peptide_to_canonical`; keep only strictly-positive finite sums and store
-///     their `log2`. Rows of the wide matrix are `(protein, canonical)`, columns
-///     are samples. Missing/non-positive cells become NaN (i.e. absent here).
-///  2. Order samples ascending by their resolved NAME string -> column index
-///     `0..n`. The Python pivot's column order is load-bearing because the
-///     distance-matrix indexing, `leaves_list`, and the cumulative linear-shift
-///     propagation (which sample anchors each cluster at shift 0) all depend on
-///     it; `pivot_table(columns=SAMPLE_ID)` produces lexicographically sorted
-///     sample columns, so the columns must be sorted by sample name here, NOT by
-///     `SampleId` (which is parquet-stream insertion order and does not match the
-///     pivot order on real data). `SampleId` breaks any name ties deterministically.
-///  3. Edge cases:
-///     - n == 0: nothing to do.
-///     - n == 1: shift 0.0.
-///     - n == 2: `shift = median(c0 over overlap) - median(c1 over overlap)` if
-///       the pairwise overlap count >= min_overlap, else 0.0; factors {c0:0, c1:shift}.
-///  4. n >= 3: pairwise distance matrix `D[i,j] = |median(log2 col i over i&j
-///     overlap) - median(...col j...)|` when overlap >= min_overlap, else +inf
-///     (MEDIAN metric). If all D are inf -> all shifts 0.0. Otherwise replace inf
-///     with `max_finite * 10`, run scipy `linkage(method="average")` (UPGMA via the
-///     nn-chain algorithm) + `leaves_list` to get `leaf_order`.
-///  5. Compute shifts in `leaf_order`:
-///     - n <= num_samples_quadratic: quadratic optimization. The Python
-///       `least_squares(method="lm")` minimizes
-///       `sum_{i<j, overlap>=min} w_ij * ((s_i - s_j) - md_ij)^2` with
-///       `w_ij = sqrt(overlap_ij)`, `md_ij = median(col_i over i&j) -
-///       median(col_j over i&j)`, `s_0` fixed at 0. Because the residuals are
-///       LINEAR in the shifts, this is a weighted linear least-squares whose unique
-///       minimizer (when the constraint graph is connected) is the normal-equations
-///       solution `(A^T W A) s = A^T W b`; LM converges to it (verified < 1e-15).
-///       If the normal matrix is singular (disconnected graph) -> fall back to the
-///       linear shifts, matching Python's "did not converge -> linear" path.
-///     - n > num_samples_quadratic: linear optimization. Walk `leaf_order`; each
-///       step `shift = median(prev over prev&curr) - median(curr over prev&curr)`
-///       if overlap >= min_overlap else 0.0; accumulate cumulatively.
-///  6. Write-back: for each allowed cell, `value <- 2 ** (log2(value) +
-///     shift[sample])`. Cells that were NaN/non-positive stay dropped.
-///
-/// Determinism: samples are sorted by `(name, SampleId)` to reproduce the Python
-/// pivot's lexicographic column order; per-row sample lists are sorted by
-/// `(value, row_id)` only for medians (order-independent); the nn-chain reads a
-/// dense condensed distance array indexed by sorted sample position; the
-/// post-merge `Z` is stably argsorted by distance then relabeled with union-find,
-/// exactly reproducing scipy. Verified bit-order-identical to scipy `leaves_list`
-/// on 92,573 exhaustive tie-heavy matrices (n=3..6) and 5,000 random matrices
-/// (n up to 40, ties injected): 0 mismatches.
+/// DirectLFQ sample normalization on canonical-peptide log2 profiles. Samples
+/// follow the pipeline pivot's name order; the shared DirectLFQ primitive picks
+/// pairs by variance, shifts by their median difference, and merges profiles.
 fn apply_hierarchical_to_peptide_cells(
     cells: &mut HashMap<CellKey, HashMap<PeptideId, f64>>,
     allowed_cells: &HashSet<CellKey>,
     peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
     sample_registry: &StringIdRegistry<SampleId>,
 ) {
-    const MIN_OVERLAP: usize = 10;
-    const NUM_SAMPLES_QUADRATIC: usize = 50;
     // (No trimming in hierarchical normalization.)
 
     // (1) Collapse to canonical and log2 the strictly-positive sums.
@@ -3155,39 +3086,13 @@ fn apply_hierarchical_to_peptide_cells(
         return;
     }
 
-    // (2) Sample columns ordered ascending by sample NAME (then SampleId as a
-    // tie-break), matching the Python `pivot_table(columns=SAMPLE_ID)` column
-    // order. `columns[idx]` maps each (protein, canonical) row to its log2 value
-    // in sample `samples[idx]`. The ordering is load-bearing: it drives the
-    // distance-matrix indices, `leaves_list`, and the cumulative shift chain.
-    let mut samples = log2_cells
-        .keys()
-        .map(|cell| cell.sample)
-        .collect::<Vec<_>>();
-    samples.sort_unstable();
-    samples.dedup();
-    // Re-sort by resolved name (lexicographic), falling back to SampleId so the
-    // order stays total and deterministic even if a name fails to resolve.
-    samples.sort_by(|left, right| {
-        sample_registry
-            .resolve(*left)
-            .cmp(&sample_registry.resolve(*right))
-            .then_with(|| left.cmp(right))
-    });
-    let n = samples.len();
-
-    let mut columns = vec![HashMap::<QuantilePeptideKey, f64>::new(); n];
-    let sample_index = samples
-        .iter()
-        .enumerate()
-        .map(|(idx, sample)| (*sample, idx))
-        .collect::<HashMap<SampleId, usize>>();
+    // (2) One column per sample maps each (protein, canonical) row to its log2
+    // value; compute per-column log2 shifts with the official DirectLFQ algorithm.
+    let mut columns = HashMap::<SampleId, HashMap<QuantilePeptideKey, f64>>::new();
     for (cell, peptides) in &log2_cells {
-        let Some(&idx) = sample_index.get(&cell.sample) else {
-            continue;
-        };
+        let column = columns.entry(cell.sample).or_default();
         for (peptide, value) in peptides {
-            columns[idx].insert(
+            column.insert(
                 QuantilePeptideKey {
                     protein: cell.protein,
                     peptide: *peptide,
@@ -3196,9 +3101,7 @@ fn apply_hierarchical_to_peptide_cells(
             );
         }
     }
-
-    // (3)+(4)+(5) Compute per-column log2 shifts.
-    let shifts = hierarchical_compute_shifts(&columns, MIN_OVERLAP, NUM_SAMPLES_QUADRATIC);
+    let shifts = hierarchical_shifts_by_sample(columns, sample_registry);
 
     // (6) Write back: 2 ** (log2(value) + shift[sample]).
     for (cell, peptides) in cells {
@@ -3208,10 +3111,9 @@ fn apply_hierarchical_to_peptide_cells(
         let Some(log_row) = log2_cells.get(cell) else {
             continue;
         };
-        let Some(&idx) = sample_index.get(&cell.sample) else {
+        let Some(&shift) = shifts.get(&cell.sample) else {
             continue;
         };
-        let shift = shifts.get(idx).copied().unwrap_or(0.0);
         peptides.clear();
         for (peptide, value) in log_row {
             peptides.insert(*peptide, (value + shift).exp2());
@@ -3219,422 +3121,77 @@ fn apply_hierarchical_to_peptide_cells(
     }
 }
 
-/// Per-column log2 shift factors, returned in the same index order as `columns`.
-/// Mirrors `HierarchicalSampleNormalizer.fit` (`_compute_distance_matrix` +
-/// scipy clustering + `_compute_shifts`).
+/// DirectLFQ log2 shift of each sample in `columns` (sample -> row -> log2
+/// value). Samples are ordered ascending by NAME (then SampleId as a tie-break),
+/// matching the Python `pivot_table(columns=SAMPLE_ID)` column order. The
+/// ordering is load-bearing: it drives the pairwise distance indices, merge
+/// tie-breaking, and the anchor sample.
+fn hierarchical_shifts_by_sample(
+    mut columns: HashMap<SampleId, HashMap<QuantilePeptideKey, f64>>,
+    sample_registry: &StringIdRegistry<SampleId>,
+) -> HashMap<SampleId, f64> {
+    let mut samples = columns.keys().copied().collect::<Vec<_>>();
+    samples.sort_by(|left, right| {
+        sample_registry
+            .resolve(*left)
+            .cmp(&sample_registry.resolve(*right))
+            .then_with(|| left.cmp(right))
+    });
+    let ordered = samples
+        .iter()
+        .map(|sample| columns.remove(sample).unwrap_or_default())
+        .collect::<Vec<_>>();
+    let shifts = hierarchical_compute_shifts(&ordered, HIERARCHICAL_NUM_SAMPLES_QUADRATIC);
+    samples.into_iter().zip(shifts).collect()
+}
+
+/// Preserve the sparse pivot's feature order when using the shared DirectLFQ
+/// sample-alignment kernel. Missing canonical peptides remain NaN.
 fn hierarchical_compute_shifts(
     columns: &[HashMap<QuantilePeptideKey, f64>],
-    min_overlap: usize,
     num_samples_quadratic: usize,
 ) -> Vec<f64> {
-    let n = columns.len();
-    match n {
-        0 => return Vec::new(),
-        1 => return vec![0.0],
-        2 => {
-            // shift second column to match the first over their pairwise overlap.
-            let shift =
-                hierarchical_pair_median_diff(&columns[0], &columns[1], min_overlap).unwrap_or(0.0);
-            return vec![0.0, shift];
-        }
-        _ => {}
-    }
-
-    // (4) Pairwise distance matrix (MEDIAN metric): D[i][j] = |md_ij|, +inf when
-    // the overlap is below `min_overlap`. `md_ij` is the signed median difference.
-    let mut distance = vec![vec![0.0_f64; n]; n];
-    let mut all_inf = true;
-    let mut max_finite = f64::NEG_INFINITY;
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let value = match hierarchical_pair_median_diff(&columns[i], &columns[j], min_overlap) {
-                Some(diff) => {
-                    let absolute = diff.abs();
-                    if absolute.is_finite() {
-                        all_inf = false;
-                        max_finite = max_finite.max(absolute);
-                    }
-                    absolute
-                }
-                None => f64::INFINITY,
-            };
-            distance[i][j] = value;
-            distance[j][i] = value;
-        }
-    }
-    if all_inf {
-        // No overlapping values between any pair -> zero shifts.
-        return vec![0.0; n];
-    }
-
-    // Replace +inf with max_finite * 10 for clustering (matches the Python guard).
-    let inf_replacement = max_finite * 10.0;
-    for i in 0..n {
-        // `split_at_mut` borrows row `i` and each later row `j` simultaneously so
-        // both symmetric entries can be written without cloning.
-        let (head, tail) = distance.split_at_mut(i + 1);
-        let row_i = &mut head[i];
-        for (offset, row_j) in tail.iter_mut().enumerate() {
-            let j = i + 1 + offset;
-            if row_i[j].is_infinite() {
-                row_i[j] = inf_replacement;
-                row_j[i] = inf_replacement;
-            }
-        }
-    }
-
-    // scipy linkage(method="average") + leaves_list -> clustering order.
-    let leaf_order = hierarchical_leaf_order(&distance, n);
-
-    if n <= num_samples_quadratic {
-        hierarchical_shifts_quadratic(columns, &leaf_order, min_overlap, n)
-    } else {
-        hierarchical_shifts_linear(columns, &leaf_order, min_overlap, n)
-    }
-}
-
-/// Signed median difference between two columns over their shared rows, when the
-/// overlap count is at least `min_overlap`; otherwise `None`.
-/// `median(col_a over overlap) - median(col_b over overlap)` in log2 space.
-fn hierarchical_pair_median_diff(
-    column_a: &HashMap<QuantilePeptideKey, f64>,
-    column_b: &HashMap<QuantilePeptideKey, f64>,
-    min_overlap: usize,
-) -> Option<f64> {
-    let (small, large) = if column_a.len() <= column_b.len() {
-        (column_a, column_b)
-    } else {
-        (column_b, column_a)
-    };
-    let mut a_values = Vec::<f64>::new();
-    let mut b_values = Vec::<f64>::new();
-    for (key, &value_small) in small {
-        let Some(&value_large) = large.get(key) else {
-            continue;
-        };
-        if value_small.is_finite() && value_large.is_finite() {
-            if column_a.len() <= column_b.len() {
-                a_values.push(value_small);
-                b_values.push(value_large);
-            } else {
-                a_values.push(value_large);
-                b_values.push(value_small);
-            }
-        }
-    }
-    if a_values.len() < min_overlap {
-        return None;
-    }
-    let median_a = finite_median(&mut a_values)?;
-    let median_b = finite_median(&mut b_values)?;
-    Some(median_a - median_b)
-}
-
-/// Cumulative linear shifts along the clustering order (`_compute_shifts_linear`).
-fn hierarchical_shifts_linear(
-    columns: &[HashMap<QuantilePeptideKey, f64>],
-    leaf_order: &[usize],
-    min_overlap: usize,
-    n: usize,
-) -> Vec<f64> {
-    let mut shifts = vec![0.0_f64; n];
-    let mut cumulative = 0.0;
-    for window in leaf_order.windows(2) {
-        let previous = window[0];
-        let current = window[1];
-        let step =
-            hierarchical_pair_median_diff(&columns[previous], &columns[current], min_overlap)
-                .unwrap_or(0.0);
-        cumulative += step;
-        shifts[current] = cumulative;
-    }
-    shifts
-}
-
-/// Weighted least-squares shifts (`_compute_shifts_quadratic`). The first leaf is
-/// pinned at 0.0; the remaining shifts minimize
-/// `sum_{i<j, overlap>=min} overlap_ij * ((s_i - s_j) - md_ij)^2`. Because the
-/// residuals are linear in the shifts, the unique minimizer (connected graph) is
-/// the normal-equations solution. Falls back to the linear shifts when the normal
-/// matrix is singular (disconnected graph), matching Python's "did not converge".
-fn hierarchical_shifts_quadratic(
-    columns: &[HashMap<QuantilePeptideKey, f64>],
-    leaf_order: &[usize],
-    min_overlap: usize,
-    n: usize,
-) -> Vec<f64> {
-    // Reorder columns into clustering order: `ordered[k]` is column `leaf_order[k]`.
-    // Variable `k` in `1..n` is the free shift of leaf `k`; leaf 0 is fixed at 0.
-    let free = n - 1;
-    let mut normal = vec![vec![0.0_f64; free]; free];
-    let mut rhs = vec![0.0_f64; free];
-
-    // Each kept pair (p, q) with p < q (positions in `leaf_order`) contributes a
-    // residual sqrt(w) * ((s_p - s_q) - md). md is measured in leaf order: column
-    // leaf_order[p] minus column leaf_order[q].
-    let mut any_constraint = false;
-    for p in 0..n {
-        for q in (p + 1)..n {
-            let column_p = &columns[leaf_order[p]];
-            let column_q = &columns[leaf_order[q]];
-            // overlap count and median diff over shared rows.
-            let overlap = hierarchical_pair_overlap(column_p, column_q);
-            if overlap < min_overlap {
-                continue;
-            }
-            let Some(md) = hierarchical_pair_median_diff(column_p, column_q, min_overlap) else {
-                continue;
-            };
-            any_constraint = true;
-            let weight = overlap as f64; // sqrt(w)^2 cancels into the normal matrix.
-                                         // Coefficients of (s_p - s_q): +1 on variable (p-1) if p>0, -1 on (q-1).
-                                         // Variable index for leaf position `k` (k>=1) is `k-1`.
-            let mut coefficients = Vec::<(usize, f64)>::with_capacity(2);
-            if p >= 1 {
-                coefficients.push((p - 1, 1.0));
-            }
-            if q >= 1 {
-                coefficients.push((q - 1, -1.0));
-            }
-            for &(row_index, row_coeff) in &coefficients {
-                rhs[row_index] += weight * row_coeff * md;
-                for &(col_index, col_coeff) in &coefficients {
-                    normal[row_index][col_index] += weight * row_coeff * col_coeff;
-                }
-            }
-        }
-    }
-
-    if !any_constraint {
-        return hierarchical_shifts_linear(columns, leaf_order, min_overlap, n);
-    }
-
-    // Solve the symmetric system; on singularity fall back to linear shifts.
-    let Some(solution) = solve_symmetric_system(normal, rhs) else {
-        return hierarchical_shifts_linear(columns, leaf_order, min_overlap, n);
-    };
-
-    // Map leaf-order shifts back to original column indices.
-    let mut shifts = vec![0.0_f64; n];
-    for position in 1..n {
-        shifts[leaf_order[position]] = solution[position - 1];
-    }
-    shifts
-}
-
-/// Count of shared finite rows between two columns (overlap size).
-fn hierarchical_pair_overlap(
-    column_a: &HashMap<QuantilePeptideKey, f64>,
-    column_b: &HashMap<QuantilePeptideKey, f64>,
-) -> usize {
-    let (small, large) = if column_a.len() <= column_b.len() {
-        (column_a, column_b)
-    } else {
-        (column_b, column_a)
-    };
-    small
+    let mut keys = columns
         .iter()
-        .filter(|(key, value)| {
-            value.is_finite() && large.get(key).is_some_and(|other| other.is_finite())
+        .flat_map(|column| column.keys().copied())
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    keys.dedup();
+    let rows = keys
+        .iter()
+        .map(|key| {
+            columns
+                .iter()
+                .map(|column| column.get(key).copied().unwrap_or(f64::NAN))
+                .collect()
         })
-        .count()
+        .collect::<Vec<_>>();
+    hierarchical_sample_shifts(&rows, columns.len(), num_samples_quadratic)
 }
 
-/// Reproduce scipy `leaves_list(linkage(squareform(distance), method="average"))`.
-/// Runs the nn-chain UPGMA agglomeration on a condensed distance buffer, stably
-/// sorts the merges by distance, relabels with union-find, then pre-order
-/// traverses the dendrogram. Verified identical to scipy across 97k+ cases.
-fn hierarchical_leaf_order(distance: &[Vec<f64>], n: usize) -> Vec<usize> {
-    if n == 1 {
-        return vec![0];
-    }
-    // Condensed buffer: index(i, j) for i < j.
-    let condensed_index = |i: usize, j: usize| -> usize {
-        let (i, j) = if i < j { (i, j) } else { (j, i) };
-        n * i - (i * (i + 1)) / 2 + (j - i - 1)
-    };
-    let mut condensed = vec![0.0_f64; n * (n - 1) / 2];
-    for i in 0..n {
-        for j in (i + 1)..n {
-            condensed[condensed_index(i, j)] = distance[i][j];
+/// Upstream quadratic alignment masks samples with fewer than two observed
+/// features. Linear-to-reference samples are not subject to that masking.
+fn hierarchical_sample_shifts(
+    rows: &[Vec<f64>],
+    n_samples: usize,
+    quadratic_limit: usize,
+) -> Vec<f64> {
+    let mut shifts = mokume_quant::direct_lfq_sample_shifts(rows, n_samples, quadratic_limit);
+    let mut counts: Vec<_> = (0..n_samples)
+        .map(|sample| {
+            (
+                sample,
+                rows.iter().filter(|row| row[sample].is_finite()).count(),
+            )
+        })
+        .collect();
+    counts.sort_by(|(i, a), (j, b)| b.cmp(a).then(i.cmp(j)));
+    for (sample, count) in counts.into_iter().take(quadratic_limit) {
+        if count < 2 {
+            shifts[sample] = f64::NAN;
         }
     }
-
-    // nn-chain: each row of `merges` is (cluster_a, cluster_b, distance).
-    let mut size = vec![1usize; n];
-    let mut chain = vec![0usize; n];
-    let mut chain_length = 0usize;
-    let mut merges = Vec::<(usize, usize, f64)>::with_capacity(n - 1);
-
-    for _ in 0..(n - 1) {
-        if chain_length == 0 {
-            chain_length = 1;
-            for (index, &cluster_size) in size.iter().enumerate() {
-                if cluster_size > 0 {
-                    chain[0] = index;
-                    break;
-                }
-            }
-        }
-        let mut x;
-        let mut y = 0usize;
-        let mut current_min;
-        loop {
-            x = chain[chain_length - 1];
-            if chain_length > 1 {
-                y = chain[chain_length - 2];
-                current_min = condensed[condensed_index(x, y)];
-            } else {
-                current_min = f64::INFINITY;
-            }
-            for (index, &cluster_size) in size.iter().enumerate() {
-                if cluster_size == 0 || index == x {
-                    continue;
-                }
-                let candidate = condensed[condensed_index(x, index)];
-                if candidate < current_min {
-                    current_min = candidate;
-                    y = index;
-                }
-            }
-            if chain_length > 1 && y == chain[chain_length - 2] {
-                break;
-            }
-            chain[chain_length] = y;
-            chain_length += 1;
-        }
-        chain_length -= 2;
-        let (low, high) = if x > y { (y, x) } else { (x, y) };
-        let size_low = size[low];
-        let size_high = size[high];
-        merges.push((low, high, current_min));
-        // Average linkage Lance-Williams update onto `high`; deactivate `low`.
-        size[low] = 0;
-        size[high] = size_low + size_high;
-        let denominator = (size_low + size_high) as f64;
-        for index in 0..n {
-            if size[index] == 0 || index == high {
-                continue;
-            }
-            let distance_low = condensed[condensed_index(low, index)];
-            let distance_high = condensed[condensed_index(high, index)];
-            condensed[condensed_index(high, index)] =
-                (size_low as f64 * distance_low + size_high as f64 * distance_high) / denominator;
-        }
-    }
-
-    // Stable argsort of merges by distance (scipy uses a stable sort here).
-    let mut order = (0..merges.len()).collect::<Vec<usize>>();
-    order.sort_by(|&left, &right| {
-        merges[left]
-            .2
-            .total_cmp(&merges[right].2)
-            .then_with(|| left.cmp(&right))
-    });
-
-    // Union-find relabel: children stored as (left_child, right_child) per merged
-    // node id in `[n, 2n-2]`.
-    let mut parent = (0..(2 * n - 1)).collect::<Vec<usize>>();
-    let mut component_size = vec![1usize; 2 * n - 1];
-    let mut children = vec![(0usize, 0usize); n - 1];
-    let mut next_id = n;
-    let find = |parent: &mut Vec<usize>, mut node: usize| -> usize {
-        while parent[node] != node {
-            parent[node] = parent[parent[node]];
-            node = parent[node];
-        }
-        node
-    };
-    for (slot, &merge_index) in order.iter().enumerate() {
-        let (raw_a, raw_b, _) = merges[merge_index];
-        let root_a = find(&mut parent, raw_a);
-        let root_b = find(&mut parent, raw_b);
-        let (low, high) = if root_a < root_b {
-            (root_a, root_b)
-        } else {
-            (root_b, root_a)
-        };
-        children[slot] = (low, high);
-        component_size[next_id] = component_size[low] + component_size[high];
-        parent[low] = next_id;
-        parent[high] = next_id;
-        next_id += 1;
-    }
-
-    // Pre-order traversal from the root (id 2n-2), left child first.
-    let mut leaves = Vec::<usize>::with_capacity(n);
-    let mut stack = vec![2 * n - 2];
-    while let Some(node) = stack.pop() {
-        if node < n {
-            leaves.push(node);
-        } else {
-            let (left, right) = children[node - n];
-            // push right first so the left child is visited first on pop.
-            stack.push(right);
-            stack.push(left);
-        }
-    }
-    leaves
-}
-
-/// Solve the symmetric positive-(semi)definite linear system `matrix * x = rhs`
-/// via Gaussian elimination with partial pivoting. Returns `None` if the matrix
-/// is singular (used as the "did not converge" fall-back signal). Deterministic:
-/// pivot ties resolve to the lowest row index.
-fn solve_symmetric_system(mut matrix: Vec<Vec<f64>>, mut rhs: Vec<f64>) -> Option<Vec<f64>> {
-    let size = rhs.len();
-    if size == 0 {
-        return Some(Vec::new());
-    }
-    for column in 0..size {
-        // Partial pivot: largest |value| in this column at or below the diagonal.
-        let mut pivot_row = column;
-        let mut pivot_magnitude = matrix[column][column].abs();
-        for (offset, candidate) in matrix[column + 1..].iter().enumerate() {
-            let magnitude = candidate[column].abs();
-            if magnitude > pivot_magnitude {
-                pivot_magnitude = magnitude;
-                pivot_row = column + 1 + offset;
-            }
-        }
-        if pivot_magnitude <= 1e-12 {
-            return None;
-        }
-        if pivot_row != column {
-            matrix.swap(column, pivot_row);
-            rhs.swap(column, pivot_row);
-        }
-        // Eliminate below the pivot. `split_at_mut` lets us borrow the pivot row
-        // and a target row simultaneously without cloning.
-        let (upper, lower) = matrix.split_at_mut(column + 1);
-        let pivot = &upper[column];
-        let pivot_value = pivot[column];
-        for (offset, target) in lower.iter_mut().enumerate() {
-            let row = column + 1 + offset;
-            let factor = target[column] / pivot_value;
-            if factor == 0.0 {
-                continue;
-            }
-            for index in column..size {
-                target[index] -= factor * pivot[index];
-            }
-            rhs[row] -= factor * rhs[column];
-        }
-    }
-    // Back substitution.
-    let mut solution = vec![0.0_f64; size];
-    for row in (0..size).rev() {
-        let mut accumulator = rhs[row];
-        for column in (row + 1)..size {
-            accumulator -= matrix[row][column] * solution[column];
-        }
-        let diagonal = matrix[row][row];
-        if diagonal.abs() <= 1e-12 {
-            return None;
-        }
-        solution[row] = accumulator / diagonal;
-    }
-    Some(solution)
+    shifts
 }
 
 fn apply_quantile_to_lfq_traces(
@@ -3673,6 +3230,44 @@ fn apply_quantile_to_lfq_traces(
     }
 }
 
+/// Hierarchical (DirectLFQ) sample normalization on the MaxLFQ species traces,
+/// mirroring Python's `apply_hierarchical` over the `(protein, canonical,
+/// peptidoform, charge)` rows that `_sum_maxlfq_species` produces. Every trace
+/// of a sample is scaled by that sample's shift.
+fn apply_hierarchical_to_lfq_traces(
+    traces: &mut HashMap<PeptideCellKey, f64>,
+    allowed_cells: &HashSet<CellKey>,
+    sample_registry: &StringIdRegistry<SampleId>,
+) {
+    let allowed = |key: &PeptideCellKey| {
+        allowed_cells.contains(&CellKey {
+            protein: key.protein,
+            sample: key.sample,
+        })
+    };
+    let mut columns = HashMap::<SampleId, HashMap<QuantilePeptideKey, f64>>::new();
+    for (key, intensity) in traces.iter() {
+        if allowed(key) && intensity.is_finite() && *intensity > 0.0 {
+            columns.entry(key.sample).or_default().insert(
+                QuantilePeptideKey {
+                    protein: key.protein,
+                    peptide: key.peptide,
+                },
+                intensity.log2(),
+            );
+        }
+    }
+    if columns.is_empty() {
+        return;
+    }
+    let shifts = hierarchical_shifts_by_sample(columns, sample_registry);
+    for (key, intensity) in traces.iter_mut() {
+        if let Some(shift) = shifts.get(&key.sample).filter(|_| allowed(key)) {
+            *intensity *= shift.exp2();
+        }
+    }
+}
+
 /// Quantile-normalize each sample (column) by mapping every value to a mean
 /// reference distribution at the value's rank fraction. Mirrors the standard
 /// quantile normalization used by limma `normalizeQuantiles` / preprocessCore:
@@ -3686,40 +3281,28 @@ fn quantile_normalized_assignments<K>(
 where
     K: Copy + Eq + Ord + std::hash::Hash,
 {
-    let mut by_sample = HashMap::<SampleId, Vec<(K, f64)>>::new();
+    let mut by_sample = std::collections::BTreeMap::<SampleId, Vec<(K, f64)>>::new();
+    let mut rows = HashSet::new();
     for (row, sample, intensity) in measurements {
+        rows.insert(row);
         if intensity.is_finite() {
             by_sample.entry(sample).or_default().push((row, intensity));
         }
     }
 
-    let mut grid_size = 0usize;
+    let grid_size = rows.len();
     for values in by_sample.values_mut() {
         values.sort_by(|left, right| {
             left.1
                 .total_cmp(&right.1)
                 .then_with(|| left.0.cmp(&right.0))
         });
-        grid_size = grid_size.max(values.len());
     }
     if grid_size == 0 {
         return HashMap::new();
     }
 
-    // Mean reference distribution on a uniform [0, 1] grid of `grid_size`
-    // points: reference[j] is the cross-sample mean of each column's quantile
-    // function evaluated at fraction j / (grid_size - 1).
-    let mut reference = vec![0.0; grid_size];
-    let column_count = by_sample.len();
-    for values in by_sample.values() {
-        let sorted = values.iter().map(|(_, value)| *value).collect::<Vec<_>>();
-        for (j, slot) in reference.iter_mut().enumerate() {
-            *slot += interpolate_sorted(&sorted, grid_fraction(j, grid_size));
-        }
-    }
-    for slot in &mut reference {
-        *slot /= column_count as f64;
-    }
+    let reference = quantile_target(&by_sample, grid_size);
 
     let mut assignments = HashMap::new();
     for (sample, values) in by_sample {
@@ -3727,7 +3310,7 @@ where
         let mut index = 0;
         while index < n {
             let mut end = index + 1;
-            while end < n && values[end].1.total_cmp(&values[index].1).is_eq() {
+            while end < n && values[end].1 == values[index].1 {
                 end += 1;
             }
             // 1-based average rank of the tie group, mapped to a [0, 1] fraction.
@@ -3745,6 +3328,24 @@ where
         }
     }
     assignments
+}
+
+/// The target grid has the original row count, including entirely missing rows.
+fn quantile_target<K>(
+    by_sample: &std::collections::BTreeMap<SampleId, Vec<(K, f64)>>,
+    grid_size: usize,
+) -> Vec<f64> {
+    let mut reference = vec![0.0; grid_size];
+    for values in by_sample.values() {
+        let sorted = values.iter().map(|(_, value)| *value).collect::<Vec<_>>();
+        for (j, slot) in reference.iter_mut().enumerate() {
+            *slot += interpolate_sorted(&sorted, grid_fraction(j, grid_size));
+        }
+    }
+    for slot in &mut reference {
+        *slot /= by_sample.len() as f64;
+    }
+    reference
 }
 
 /// Fraction in [0, 1] of the `j`-th point on a uniform grid of `size` points.
@@ -4083,8 +3684,7 @@ fn encode_covariate(column: &str, values: &[String]) -> Result<Vec<Vec<f64>>> {
         .iter()
         .map(|value| value.parse::<f64>())
         .collect::<Vec<_>>();
-    let numeric_count = parsed.iter().filter(|value| value.is_ok()).count();
-    if numeric_count == values.len() {
+    if parsed.iter().all(std::result::Result::is_ok) {
         let numeric = parsed
             .into_iter()
             .filter_map(std::result::Result::ok)
@@ -4096,12 +3696,9 @@ fn encode_covariate(column: &str, values: &[String]) -> Result<Vec<Vec<f64>>> {
         }
         return Ok(vec![numeric]);
     }
-    if numeric_count > 0 {
-        return Err(invalid_input(format!(
-            "batch covariate column `{column}` mixes numeric and categorical values"
-        )));
-    }
 
+    // Any non-numeric value makes the whole column nominal, including labels
+    // that look like numbers (e.g. the cell line 5637).
     let encoded = factorize_batch_labels(values);
     let category_count = encoded.iter().copied().max().unwrap_or(0) + 1;
     Ok((1..category_count)
@@ -4490,6 +4087,21 @@ impl ProteinMatrix {
         Ok((names, rows))
     }
 
+    /// Whether any kept protein lacks a finite, strictly positive value in one
+    /// of `samples`, i.e. whether [`Self::log2_rows`] over them would emit `NaN`.
+    fn has_missing_values(&self, samples: &[SampleId]) -> bool {
+        self.proteins
+            .iter()
+            .filter(|(protein, _)| self.allowed_proteins.contains(protein))
+            .any(|(protein, _)| {
+                samples.iter().any(|sample| {
+                    !self
+                        .value(protein, *sample)
+                        .is_some_and(|value| value.is_finite() && value > 0.0)
+                })
+            })
+    }
+
     /// Per-protein unique-canonical-peptide counts keyed by the protein NAME
     /// (the same accession string `log2_rows` emits). This resolves the
     /// `ProteinId`-keyed [`Self::peptide_counts`] map back to names so the DEqMS
@@ -4547,6 +4159,7 @@ impl ProteinMatrix {
         config: &BatchCorrectionConfig,
         sdrf_path: Option<&Path>,
         drop_empty_samples: bool,
+        values_are_log2: bool,
     ) -> Result<()> {
         let samples = self.sample_columns(drop_empty_samples);
         if samples.len() < 2 {
@@ -4610,32 +4223,7 @@ impl ProteinMatrix {
             )
         })?;
 
-        // Split proteins into complete rows (no missing cell -> corrected) and the
-        // rest (kept uncorrected). ComBat's empirical-Bayes priors are pooled over
-        // the complete rows but are row-order independent, so any stable order of
-        // the complete set reproduces Python's result; sort by accession to match
-        // the matrix output order.
-        let mut proteins = self
-            .proteins
-            .iter()
-            .filter(|(protein, _)| self.allowed_proteins.contains(protein))
-            .collect::<Vec<_>>();
-        proteins.sort_by(|left, right| left.1.cmp(right.1));
-
-        let mut complete = Vec::new();
-        for (protein, _) in proteins {
-            let row = sample_ids
-                .iter()
-                .map(|&sample| self.value(protein, sample))
-                .collect::<Vec<_>>();
-            if row.iter().all(|cell| cell.is_some_and(f64::is_finite)) {
-                let values = row
-                    .into_iter()
-                    .map(|cell| cell.unwrap_or(0.0))
-                    .collect::<Vec<_>>();
-                complete.push((protein, values));
-            }
-        }
+        let complete = self.complete_batch_rows(&sample_ids, values_are_log2);
         if complete.is_empty() {
             return Err(invalid_input(
                 "batch correction requires at least one protein observed in every sample",
@@ -4668,13 +4256,68 @@ impl ProteinMatrix {
             ref_batch,
         };
         let corrected = mokume_stats::batch::combat(&data, &batch, covariates.as_deref(), params);
+        self.write_batch_corrected(&complete, &corrected, &sample_ids, values_are_log2);
+        Ok(())
+    }
 
-        for ((protein, _), corrected_row) in complete.iter().zip(corrected.iter()) {
-            for (&sample, &value) in sample_ids.iter().zip(corrected_row.iter()) {
+    /// Proteins observed in every sample, as rows on ComBat's (log2) scale.
+    ///
+    /// Incomplete proteins are left out and stay uncorrected. ComBat's
+    /// empirical-Bayes priors are pooled over the complete rows but are
+    /// row-order independent; rows are sorted by accession to match the matrix
+    /// output order. ComBat models additive batch effects, so linear
+    /// intensities are corrected on the log2 scale, where a zero or negative
+    /// intensity is not finite and counts as missing (DirectLFQ writes missing
+    /// proteins as zero).
+    fn complete_batch_rows(
+        &self,
+        sample_ids: &[SampleId],
+        values_are_log2: bool,
+    ) -> Vec<(ProteinId, Vec<f64>)> {
+        let mut proteins = self
+            .proteins
+            .iter()
+            .filter(|(protein, _)| self.allowed_proteins.contains(protein))
+            .collect::<Vec<_>>();
+        proteins.sort_by(|left, right| left.1.cmp(right.1));
+        let modeled = |value: f64| if values_are_log2 { value } else { value.log2() };
+        proteins
+            .into_iter()
+            .filter_map(|(protein, _)| {
+                let row = sample_ids
+                    .iter()
+                    .map(|&sample| {
+                        self.value(protein, sample)
+                            .map(modeled)
+                            .filter(|value| value.is_finite())
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some((protein, row))
+            })
+            .collect()
+    }
+
+    /// Write ComBat's rows back on the matrix scale.
+    ///
+    /// ComBat leaves a row undefined (NaN) when its priors cannot be estimated,
+    /// e.g. with a single complete row; such a row keeps its measured values
+    /// instead of turning into missing values.
+    fn write_batch_corrected(
+        &mut self,
+        complete: &[(ProteinId, Vec<f64>)],
+        corrected: &[Vec<f64>],
+        sample_ids: &[SampleId],
+        values_are_log2: bool,
+    ) {
+        for ((protein, _), corrected_row) in complete.iter().zip(corrected) {
+            if corrected_row.iter().any(|value| !value.is_finite()) {
+                continue;
+            }
+            for (&sample, &value) in sample_ids.iter().zip(corrected_row) {
+                let value = if values_are_log2 { value } else { value.exp2() };
                 self.set_value(*protein, sample, value);
             }
         }
-        Ok(())
     }
 
     fn apply_coverage_filter(
@@ -4921,11 +4564,8 @@ pub struct LfqProteinIntensity {
 
 /// Roll a peptide-level table up to per-protein intensities inside an explicitly
 /// sized Rayon worker pool with the DirectLFQ estimator (canonical peptides as
-/// ions) -- the engine behind
-/// `quantify peptides2protein --quant-method directlfq` and `--quant-method maxlfq`. mokume's
-/// `MaxLFQQuantification` delegates to DirectLFQ when the package is available
-/// (`min_nonan = 2`, its `min_peptides`); the `directlfq` method uses its own
-/// `min_nonan`. `num_samples_quadratic` is DirectLFQ's global-stage knob (the
+/// ions), used by `quantify peptides2protein --quant-method directlfq`.
+/// `num_samples_quadratic` is DirectLFQ's global-stage knob (the
 /// directlfq default is 50). `None` retains the configured global pool. Only
 /// intensities `> 0` are returned, matching Python's `_parse_wide_output`.
 pub fn run_lfq_from_peptides_with_threads(
@@ -5013,7 +4653,7 @@ pub fn run_lfq_from_peptides(
     }
 
     let mut result = Vec::new();
-    for (protein, per_sample) in direct_lfq_aligned(&ions, min_nonan, num_samples_quadratic) {
+    for (protein, per_sample) in direct_lfq_aligned(&ions, min_nonan, num_samples_quadratic, true) {
         let Some(protein_name) = proteins.resolve(protein) else {
             continue;
         };
@@ -5278,11 +4918,7 @@ pub fn run_features_to_proteins_with_pibaq_digest(
 }
 
 fn configured_threads(config: &FeatureToProteinsConfig) -> Option<usize> {
-    config.runtime.threads.or_else(|| {
-        (config.quantification == QuantMethod::DirectLfq)
-            .then_some(config.directlfq.cores)
-            .flatten()
-    })
+    config.runtime.threads
 }
 
 fn initialize_memory_plan(runtime: &RuntimeConfig) -> Result<MemoryPlan> {
@@ -5352,8 +4988,14 @@ fn run_features_to_proteins_inner(
     let dataset_normalization = dataset_sample_normalization_method(config)?;
     let mut state =
         FeatureToProteinState::new(config, sdrf.as_ref(), raw_sdrf.as_ref(), pibaq_digest)?;
-    stream_input_features(&config.input, sdrf.as_ref(), &memory, |feature| {
-        state.ingest(&feature, sdrf.as_ref(), config.filtering, intensity_factors)
+    let mut sdrf_lookup = sdrf.as_ref().map(SdrfLookupCache::new);
+    stream_input_features(&config.input, sdrf.as_ref(), &memory, None, |feature| {
+        state.ingest(
+            &feature,
+            sdrf_lookup.as_mut(),
+            config.filtering,
+            intensity_factors,
+        )
     })?;
     memory.check("feature aggregation")?;
 
@@ -5380,7 +5022,7 @@ fn run_features_to_proteins_inner(
         PeptideExportOptions::default(),
         dataset_normalization,
     )?;
-    let matrix = state.into_matrix(min_unique_peptides, dataset_normalization);
+    let matrix = state.into_matrix(min_unique_peptides, dataset_normalization)?;
     memory.check("protein matrix materialization")?;
     finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix)
 }
@@ -5395,15 +5037,29 @@ fn finish_protein_matrix(
     let drop_empty_samples = config.quantification == QuantMethod::Ratio;
     apply_protein_postprocessing(config, sdrf, raw_sdrf, drop_empty_samples, &mut matrix)?;
     memory.check("matrix post-processing")?;
+    // Python's dataset-level normalization pivots through sparse long form, so
+    // absent cells remain missing even for additive quantification methods.
+    let missing_fill = if dataset_sample_normalization_method(config)?.is_some() {
+        None
+    } else {
+        missing_protein_value(config.quantification)
+    };
     matrix.write_csv(
         &config.output.protein_matrix,
         config.output.format,
         drop_empty_samples,
-        missing_protein_value(config.quantification),
+        missing_fill,
     )?;
     if config.differential_expression.enabled {
         let mut differential_expression = config.differential_expression.clone();
-        differential_expression.method = resolve_de_method(config);
+        differential_expression.method = resolve_de_method(config, || {
+            let samples = matrix
+                .sample_columns(drop_empty_samples)
+                .into_iter()
+                .map(|(sample, _)| sample)
+                .collect::<Vec<_>>();
+            !matrix.has_missing_values(&samples)
+        });
         de::run_differential_expression(
             &matrix,
             sdrf,
@@ -5424,9 +5080,8 @@ fn apply_protein_postprocessing(
     if config.irs.enabled {
         matrix.apply_irs(sdrf, raw_sdrf, &config.irs)?;
     }
+    let values_are_log2 = matches!(config.quantification, QuantMethod::Abd | QuantMethod::Ratio);
     if let Some(threshold) = config.sample_correlation_threshold {
-        let values_are_log2 =
-            matches!(config.quantification, QuantMethod::Abd | QuantMethod::Ratio);
         matrix.apply_sample_correlation_filter(
             sdrf,
             threshold,
@@ -5445,6 +5100,7 @@ fn apply_protein_postprocessing(
             &config.batch,
             config.input.sdrf.as_deref(),
             drop_empty_samples,
+            values_are_log2,
         )?;
     }
     Ok(())
@@ -5813,7 +5469,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     if let Some(irs) = &config.irs {
         let irs_min_intensity =
             filter_pipeline.map_or(0.0, |pipeline| pipeline.intensity.min_intensity);
-        let irs_scale_by_techrep = collect_irs_scale(
+        let irs_scale_by_run = collect_irs_scale(
             parquet,
             irs,
             sdrf.as_ref(),
@@ -5822,13 +5478,13 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             irs_min_intensity,
             named_score,
         )?;
-        if irs_scale_by_techrep.is_empty() {
+        if irs_scale_by_run.is_empty() {
             return Err(invalid_input(format!(
                 "features2peptides IRS channel `{}` produced no scaling factors",
                 irs.channel
             )));
         }
-        intensity_factors.irs_scale_by_techrep = irs_scale_by_techrep;
+        intensity_factors.irs_scale_by_run = irs_scale_by_run;
     }
     let intensity_factors = (!intensity_factors.is_empty()).then_some(&intensity_factors);
     let mut state = FeatureToProteinState::new(&proteins_config, sdrf.as_ref(), None, None)?;
@@ -5908,11 +5564,11 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
         // features (the warning is emitted in `validate_filter_pipeline_subset`).
         state.replicate_agreement_wipes_all = pipeline.intensity.min_replicate_agreement > 1;
     }
-    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+    let mut sdrf_lookup = sdrf.as_ref().map(SdrfLookupCache::new);
+    stream_qpx_features(parquet, &MemoryPlan::unlimited(), named_score, |feature| {
         state.ingest(
             &feature,
-            sdrf.as_ref(),
+            sdrf_lookup.as_mut(),
             proteins_config.filtering,
             intensity_factors,
         )
@@ -5997,8 +5653,7 @@ fn collect_fdr_filter_state(
     let mut peptide_values = 0_usize;
     let mut protein_values = 0_usize;
     let mut protein_min_qvalue: HashMap<String, f64> = HashMap::new();
-    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+    stream_qpx_features(parquet, &MemoryPlan::unlimited(), named_score, |feature| {
         if peptide_threshold.is_some()
             && feature
                 .peptide_qvalue
@@ -6098,59 +5753,42 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
 /// floating-point accumulation order is identical to a fully serial pass and
 /// the protein matrix stays cell-for-cell identical. The consumer mutates
 /// shared state and therefore stays serial on the calling thread.
-fn stream_qpx_features<F>(mut reader: QpxParquetReader, mut consume: F) -> Result<()>
-where
-    F: FnMut(QpxFeatureRecord) -> Result<()>,
-{
-    stream_qpx_features_with_optional_score(
-        &mut reader,
-        &MemoryPlan::unlimited(),
-        None,
-        &mut consume,
-    )
-}
-
-fn stream_qpx_features_with_score<F>(
-    mut reader: QpxParquetReader,
-    score: &NamedScoreFilterConfig,
+/// Stream QPX features in file order. With `score`, only rows that pass the
+/// named `additional_scores` threshold reach `consume`, and a file without that
+/// score is rejected.
+fn stream_qpx_features<F>(
+    parquet: &Path,
+    memory: &MemoryPlan,
+    score: Option<&NamedScoreFilterConfig>,
     mut consume: F,
 ) -> Result<()>
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
-    let mut seen = 0_usize;
-    let mut direction = None;
-    stream_qpx_features_with_optional_score(
+    let mut reader = QpxParquetReader::open(parquet, memory.qpx_batch_size(), score.is_some())?;
+    let Some(score) = score else {
+        return read_qpx_features(&mut reader, memory, None, &mut consume);
+    };
+    let mut filter = ScoreFilter {
+        score,
+        seen: 0,
+        higher_better: None,
+    };
+    read_qpx_features(
         &mut reader,
-        &MemoryPlan::unlimited(),
+        memory,
         Some(score.name.as_str()),
         &mut |feature| {
             let Some(value) = feature.selected_score else {
                 return Ok(());
             };
-            seen += 1;
-            if let Some(expected) = direction {
-                if expected != value.higher_better {
-                    return Err(invalid_input(format!(
-                        "QPX score `{}` has inconsistent higher_better values",
-                        score.name
-                    )));
-                }
-            } else {
-                direction = Some(value.higher_better);
-            }
-            let passes = if value.higher_better {
-                value.value >= score.threshold
-            } else {
-                value.value <= score.threshold
-            };
-            if passes {
+            if filter.passes(value)? {
                 consume(feature)?;
             }
             Ok(())
         },
     )?;
-    if seen == 0 {
+    if filter.seen == 0 {
         return Err(invalid_input(format!(
             "--filter-score requires QPX `additional_scores` entry `{}`",
             score.name
@@ -6159,32 +5797,32 @@ where
     Ok(())
 }
 
-fn stream_qpx_features_maybe_score<F>(
-    reader: QpxParquetReader,
-    score: Option<&NamedScoreFilterConfig>,
-    consume: F,
-) -> Result<()>
-where
-    F: FnMut(QpxFeatureRecord) -> Result<()>,
-{
-    match score {
-        Some(score) => stream_qpx_features_with_score(reader, score, consume),
-        None => stream_qpx_features(reader, consume),
+/// `--filter-score` state for one pass: every row carrying the score must agree
+/// on its direction.
+struct ScoreFilter<'a> {
+    score: &'a NamedScoreFilterConfig,
+    seen: usize,
+    higher_better: Option<bool>,
+}
+
+impl ScoreFilter<'_> {
+    fn passes(&mut self, value: QpxScoreValue) -> Result<bool> {
+        self.seen += 1;
+        if *self.higher_better.get_or_insert(value.higher_better) != value.higher_better {
+            return Err(invalid_input(format!(
+                "QPX score `{}` has inconsistent higher_better values",
+                self.score.name
+            )));
+        }
+        Ok(if value.higher_better {
+            value.value >= self.score.threshold
+        } else {
+            value.value <= self.score.threshold
+        })
     }
 }
 
-fn stream_qpx_features_with_plan<F>(
-    reader: &mut QpxParquetReader,
-    memory: &MemoryPlan,
-    consume: &mut F,
-) -> Result<()>
-where
-    F: FnMut(QpxFeatureRecord) -> Result<()>,
-{
-    stream_qpx_features_with_optional_score(reader, memory, None, consume)
-}
-
-fn stream_qpx_features_with_optional_score<F>(
+fn read_qpx_features<F>(
     reader: &mut QpxParquetReader,
     memory: &MemoryPlan,
     score_name: Option<&str>,
@@ -6298,16 +5936,14 @@ fn stream_input_features<F>(
     input: &InputConfig,
     sdrf: Option<&SdrfTable>,
     memory: &MemoryPlan,
+    score: Option<&NamedScoreFilterConfig>,
     mut consume: F,
 ) -> Result<()>
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
     match (&input.parquet, &input.msstats) {
-        (Some(parquet), None) => {
-            let mut reader = QpxParquetReader::open(parquet, memory.qpx_batch_size())?;
-            stream_qpx_features_with_plan(&mut reader, memory, &mut consume)
-        }
+        (Some(parquet), None) => stream_qpx_features(parquet, memory, score, consume),
         (None, Some(msstats)) => {
             let sdrf = sdrf.ok_or_else(|| invalid_input("MSstats input requires --sdrf option"))?;
             for (index, feature) in MsstatsReader::open(msstats, sdrf)?.enumerate() {
@@ -6385,220 +6021,21 @@ fn dataset_sample_normalization_method(
     )
 }
 
+/// Argument rules are enforced where the config is built (`mokume-command`).
+/// Before any input is read, only the referenced files must exist.
 fn validate_features_to_proteins(config: &FeatureToProteinsConfig) -> Result<()> {
-    validate_feature_input(config)?;
-    if let Some(sdrf) = &config.input.sdrf {
-        if !sdrf.exists() {
-            return Err(MokumeError::MissingInput { path: sdrf.clone() });
-        }
-    }
-    if config.directlfq.cores.is_some() && config.quantification != QuantMethod::DirectLfq {
-        return Err(invalid_input(
-            "DirectLfqConfig.cores only applies to --quant-method directlfq; use RuntimeConfig.threads for other methods",
-        ));
-    }
-    if config.directlfq.min_nonan != 1 && config.quantification != QuantMethod::DirectLfq {
-        return Err(invalid_input(
-            "--directlfq-min-nonan only applies to --quant-method directlfq",
-        ));
-    }
-    if config.directlfq.num_samples_quadratic != 50
-        && !matches!(
-            config.quantification,
-            QuantMethod::DirectLfq | QuantMethod::MaxLfq
-        )
-    {
-        return Err(invalid_input(
-            "--directlfq-num-samples-quadratic only applies to DirectLFQ/MaxLFQ",
-        ));
-    }
-    if let Some(fasta) = &config.input.fasta {
-        if !fasta.exists() {
-            return Err(MokumeError::MissingInput {
-                path: fasta.clone(),
-            });
-        }
-    }
-    if let Some(path) = &config.normalization.normalization_proteins {
-        if !path.exists() {
-            return Err(MokumeError::MissingInput { path: path.clone() });
-        }
-        if !matches!(
-            config
-                .normalization
-                .sample_method
-                .trim()
-                .to_ascii_lowercase()
-                .as_str(),
-            "globalmedian" | "conditionmedian"
-        ) {
-            return Err(invalid_input(
-                "--normalization-proteins requires globalmedian or conditionmedian sample normalization",
-            ));
-        }
-    }
-    if config.quantification == QuantMethod::Pibaq && config.input.fasta.is_none() {
-        return Err(invalid_input(
-            "piBAQ quantification requires --fasta option",
-        ));
-    }
-    if config.quantification != QuantMethod::Pibaq
-        && (config.input.fasta.is_some()
-            || !config.pibaq.enzyme.eq_ignore_ascii_case("Trypsin")
-            || config.pibaq.max_aa != 30
-            || config.pibaq.min_shared != 2
-            || config.pibaq.families_yaml.is_some()
-            || config.pibaq.min_anchors != 1
-            || config.pibaq.high_anchor_threshold != 3)
-    {
-        return Err(invalid_input(
-            "piBAQ FASTA/digestion options require --quant-method pibaq",
-        ));
-    }
-    if config.quantification == QuantMethod::Ratio && config.input.sdrf.is_none() {
-        return Err(invalid_input("Ratio quantification requires --sdrf option"));
-    }
-    if !config.ratio.fraction_merge.eq_ignore_ascii_case("mean")
-        && config.quantification != QuantMethod::Ratio
-    {
-        return Err(invalid_input(
-            "--ratio-fraction-merge only applies to --quant-method ratio",
-        ));
-    }
-    if matches!(
-        config.quantification,
-        QuantMethod::DirectLfq
-            | QuantMethod::Ratio
-            | QuantMethod::PeptideCount
-            | QuantMethod::SpectralCount
-    ) && (!config.normalization.run_method.eq_ignore_ascii_case("none")
-        || !config
-            .normalization
-            .sample_method
-            .eq_ignore_ascii_case("none")
-        || config.normalization.normalization_proteins.is_some())
-    {
-        let reason = if matches!(
-            config.quantification,
-            QuantMethod::PeptideCount | QuantMethod::SpectralCount
-        ) {
-            "does not use intensity normalization"
-        } else {
-            "manages normalization internally"
-        };
-        return Err(invalid_input(format!(
-            "{} {reason}; use --run-normalization none and --sample-normalization \
-             none, and do not pass --normalization-proteins",
-            config.quantification
-        )));
-    }
-    if config.batch.enabled
-        && config.batch.method.eq_ignore_ascii_case("column")
-        && config.batch.column.is_none()
-    {
-        return Err(invalid_input(
-            "Batch correction with method 'column' requires --batch-column option",
-        ));
-    }
-    if config.batch.enabled
-        && !matches!(
-            config.batch.method.trim().to_ascii_lowercase().as_str(),
-            "sample_prefix" | "column"
-        )
-    {
-        return Err(invalid_input(
-            "batch-method must be `sample_prefix` or `column` for protein matrices",
-        ));
-    }
-    if !config.batch.enabled
-        && (!config.batch.method.eq_ignore_ascii_case("sample_prefix")
-            || config.batch.column.is_some()
-            || config.batch.covariates.is_some()
-            || !config.batch.parametric
-            || config.batch.mean_only
-            || config.batch.ref_batch.is_some())
-    {
-        return Err(invalid_input("batch options require --batch-correction"));
-    }
-    if config.batch.enabled
-        && !config.batch.method.eq_ignore_ascii_case("column")
-        && config.batch.column.is_some()
-    {
-        return Err(invalid_input(
-            "--batch-column requires --batch-method column",
-        ));
-    }
-    if config.batch.enabled
-        && config.input.sdrf.is_none()
-        && (config.batch.column.is_some() || config.batch.covariates.is_some())
-    {
-        return Err(invalid_input(
-            "Batch correction with --batch-column or --batch-covariate requires --sdrf option",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_feature_input(config: &FeatureToProteinsConfig) -> Result<()> {
-    match (
-        &config.input.parquet,
-        &config.input.msstats,
-        &config.input.psm,
-    ) {
-        (Some(parquet), None, None) => validate_feature_qpx_input(parquet, config.quantification),
-        (None, Some(msstats), None) => validate_msstats_input(msstats, config),
-        (Some(parquet), None, Some(psm)) => validate_spectral_count_inputs(parquet, psm, config),
-        (None, None, Some(_)) => Err(invalid_input(
-            "spectral_count requires matching QPX inputs via --psm and --parquet",
-        )),
-        _ => Err(invalid_input(
-            "provide --parquet, --msstats, or matching --psm and --parquet inputs",
-        )),
-    }
-}
-
-fn validate_feature_qpx_input(parquet: &Path, method: QuantMethod) -> Result<()> {
-    require_existing_input(parquet)?;
-    if method == QuantMethod::SpectralCount {
-        return Err(invalid_input(
-            "spectral_count requires matching QPX inputs via --psm and --parquet",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_msstats_input(path: &Path, config: &FeatureToProteinsConfig) -> Result<()> {
-    require_existing_input(path)?;
-    if config.input.sdrf.is_none() {
-        return Err(invalid_input("MSstats input requires --sdrf option"));
-    }
-    match config.quantification {
-        QuantMethod::Ratio => Err(invalid_input(
-            "Ratio quantification requires PSM-level QPX input; MSstats feature tables do not contain PSM evidence",
-        )),
-        QuantMethod::SpectralCount => Err(invalid_input(
-            "spectral_count requires matching QPX inputs via --psm and --parquet",
-        )),
-        _ => Ok(()),
-    }
-}
-
-fn validate_spectral_count_inputs(
-    parquet: &Path,
-    psm: &Path,
-    config: &FeatureToProteinsConfig,
-) -> Result<()> {
-    require_existing_input(parquet)?;
-    require_existing_input(psm)?;
-    if config.quantification != QuantMethod::SpectralCount {
-        return Err(invalid_input(
-            "--psm with --parquet only applies to spectral_count quantification",
-        ));
-    }
-    if config.input.sdrf.is_none() {
-        return Err(invalid_input("spectral_count requires --sdrf option"));
-    }
-    Ok(())
+    let input = &config.input;
+    [
+        &input.parquet,
+        &input.msstats,
+        &input.psm,
+        &input.sdrf,
+        &input.fasta,
+        &config.normalization.normalization_proteins,
+    ]
+    .into_iter()
+    .flatten()
+    .try_for_each(|path| require_existing_input(path))
 }
 
 fn require_existing_input(path: &Path) -> Result<()> {
@@ -6611,336 +6048,74 @@ fn require_existing_input(path: &Path) -> Result<()> {
     }
 }
 
+/// Option combinations the Rust aggregation paths do not implement.
 fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
-    if config.runtime.threads == Some(0) || config.directlfq.cores == Some(0) {
-        return Err(invalid_input("thread counts must be greater than zero"));
-    }
-    if config.runtime.threads.is_some() && config.directlfq.cores.is_some() {
-        return Err(invalid_input(
-            "choose either runtime threads or directlfq cores, not both",
-        ));
-    }
-    if config.output.export_peptides.is_some()
-        && matches!(
-            config.quantification,
-            QuantMethod::DirectLfq | QuantMethod::Ratio | QuantMethod::SpectralCount
-        )
-    {
-        return Err(invalid_input(format!(
-            "export-peptides is not supported by {} quantification",
-            config.quantification
-        )));
-    }
+    let dataset_normalization = dataset_sample_normalization_method(config)?;
     // Dataset-level sample normalization is carried into the exported peptides
     // only for the cell-based linear methods (their aggregation and export share
     // one normalization helper); other aggregations would emit peptides whose
     // normalization does not match the protein matrix.
     if config.output.export_peptides.is_some()
-        && dataset_sample_normalization_method(config)?.is_some()
+        && dataset_normalization.is_some()
         && !is_cell_based_linear_quant(config.quantification)
     {
         return unsupported("dataset-normalization-export-peptides");
     }
-    if config.output.export_ions.is_some() && config.quantification != QuantMethod::DirectLfq {
-        return unsupported("export-ions");
-    }
-    if let Some(alignment) = &config.maxlfq.ion_alignment {
-        if !alignment.eq_ignore_ascii_case("none") {
-            return unsupported("ion-alignment");
-        }
-    }
-    match config.quantification {
-        QuantMethod::Sum
-        | QuantMethod::Median
-        | QuantMethod::TopN
-        | QuantMethod::MaxLfq
-        | QuantMethod::DirectLfq
-        | QuantMethod::Abd
-        | QuantMethod::Intensity
-        | QuantMethod::PeptideCount
-        | QuantMethod::SpectralCount
-        | QuantMethod::Pibaq
-        | QuantMethod::Ratio => {}
-    }
-
-    if !matches!(
-        config.quantification,
-        QuantMethod::DirectLfq
-            | QuantMethod::Ratio
-            | QuantMethod::PeptideCount
-            | QuantMethod::SpectralCount
-    ) {
-        if !supports_run_normalization(&config.normalization.run_method) {
-            return unsupported("run-normalization-method");
-        }
-        if !supports_sample_normalization(&config.normalization.sample_method) {
-            return unsupported("sample-normalization-method");
-        }
-        if matches!(
-            config.quantification,
-            QuantMethod::Pibaq | QuantMethod::MaxLfq
-        ) && dataset_sample_normalization_method(config)?
-            .is_some_and(|method| method != SampleNormalizationMethod::Quantile)
-        {
-            return Err(invalid_input(format!(
-                "{} supports quantile as its only dataset-level sample normalization",
-                config.quantification
-            )));
-        }
-    }
-
-    validate_postprocessing_subset(config)
-}
-
-fn validate_postprocessing_subset(config: &FeatureToProteinsConfig) -> Result<()> {
-    // ComBat (parametric / non-parametric / mean_only / ref_batch) is wired into
-    // the pipeline (`apply_batch_correction`) for `sample_prefix` and explicit
-    // `column` detection plus SDRF covariate extraction. `run` detection has no
-    // run-level mapping in the protein-matrix flow and errors at runtime, the
-    // same way Python's `_detect_batch_indices` raises `run_info required`.
-    if matches!(
-        config.quantification,
-        QuantMethod::PeptideCount | QuantMethod::SpectralCount
-    ) && config.irs.enabled
+    if config.quantification == QuantMethod::Pibaq
+        && dataset_normalization.is_some_and(|method| method != SampleNormalizationMethod::Quantile)
     {
         return Err(invalid_input(format!(
-            "{} quantification cannot apply IRS",
+            "{} supports quantile as its only dataset-level sample normalization",
             config.quantification
         )));
     }
-    if config
-        .irs
-        .reference_samples
-        .as_ref()
-        .is_some_and(Vec::is_empty)
-    {
-        return Err(invalid_input("IRS reference sample list must not be empty"));
-    }
-    if config.irs.sdrf_column.is_some() != config.irs.sdrf_values.is_some() {
-        return Err(invalid_input(
-            "--irs-sdrf-column and --irs-sdrf-value must be provided together",
-        ));
-    }
-    let custom_regex = config.irs.reference_regex != DEFAULT_REFERENCE_REGEX;
-    let selector_count = usize::from(config.irs.reference_samples.is_some())
-        + usize::from(config.irs.sdrf_column.is_some())
-        + usize::from(custom_regex);
-    if selector_count > 1 {
-        return Err(invalid_input(
-            "choose one reference selector: samples, SDRF column+values, or regex",
-        ));
-    }
-    if config.quantification == QuantMethod::Ratio {
-        if config.irs.enabled {
-            return Err(invalid_input("Ratio quantification cannot also apply IRS"));
-        }
-        if config.irs.sdrf_column.is_some()
-            || !config.irs.stat.eq_ignore_ascii_case("median")
-            || config.irs.remove_reference
-        {
-            return Err(invalid_input(
-                "Ratio accepts IRS reference samples/regex only; IRS normalization options require --irs",
-            ));
-        }
-        if config.input.sdrf.is_none() {
-            return Err(invalid_input(
-                "Ratio reference detection requires --sdrf option",
-            ));
-        }
-    } else {
-        let uses_irs_parameters = selector_count > 0
-            || !config.irs.stat.eq_ignore_ascii_case("median")
-            || config.irs.remove_reference;
-        if uses_irs_parameters && !config.irs.enabled {
-            return Err(invalid_input("IRS options require --irs"));
-        }
-        if config.irs.enabled {
-            if config.input.sdrf.is_none() {
-                return Err(invalid_input("IRS options require --sdrf option"));
-            }
-            if !matches!(
-                config.irs.stat.trim().to_ascii_lowercase().as_str(),
-                "median" | "mean"
-            ) {
-                return unsupported("irs-stat");
-            }
-        }
-    }
-    if let Some(threshold) = config.coverage_threshold {
-        if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
-            return Err(invalid_input("coverage-threshold must be between 0 and 1"));
-        }
-        if config.input.sdrf.is_none() {
-            return Err(invalid_input("coverage-threshold requires --sdrf option"));
-        }
-    }
-    if let Some(threshold) = config.sample_correlation_threshold {
-        if !threshold.is_finite() || !(-1.0..=1.0).contains(&threshold) {
-            return Err(invalid_input(
-                "min-sample-correlation must be between -1 and 1",
-            ));
-        }
-        if config.input.sdrf.is_none() {
-            return Err(invalid_input(
-                "min-sample-correlation requires --sdrf option",
-            ));
-        }
-    }
-    if !matches!(
-        config
-            .ratio
-            .fraction_merge
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "mean" | "max"
-    ) {
-        return unsupported("ratio-fraction-merge");
-    }
-    validate_imputation_config(&config.imputation)?;
-    validate_de_subset(config)?;
-    Ok(())
-}
-
-pub(crate) fn validate_imputation_config(config: &ImputationConfig) -> Result<()> {
-    let method = config.method.trim().to_ascii_lowercase();
-    if !config.enabled {
-        if method != "none"
-            || (config.quantile - 0.01).abs() > f64::EPSILON
-            || (config.shift - 1.6).abs() > f64::EPSILON
-            || (config.scale - 0.3).abs() > f64::EPSILON
-            || config.n_neighbors != 5
-        {
-            return Err(invalid_input("imputation options require --impute-method"));
-        }
-        return Ok(());
-    }
-    if !matches!(method.as_str(), "mindet" | "minprob")
-        && (config.quantile - 0.01).abs() > f64::EPSILON
-    {
-        return Err(invalid_input(
-            "--impute-quantile only applies to mindet/minprob",
-        ));
-    }
-    if method != "minprob"
-        && ((config.shift - 1.6).abs() > f64::EPSILON || (config.scale - 0.3).abs() > f64::EPSILON)
-    {
-        return Err(invalid_input(
-            "--impute-shift/--impute-scale only apply to minprob",
-        ));
-    }
-    if !matches!(method.as_str(), "knn" | "seqknn") && config.n_neighbors != 5 {
-        return Err(invalid_input(
-            "--impute-n-neighbors only applies to knn/seqknn",
-        ));
-    }
-    match method.as_str() {
-        "" | "none" => return Err(invalid_input("--impute-method must name a method")),
-        "mindet" | "minprob" => {
-            if !config.quantile.is_finite() || !(0.0..=1.0).contains(&config.quantile) {
-                return Err(invalid_input("impute-quantile must be between 0 and 1"));
-            }
-            if method == "minprob"
-                && (!config.shift.is_finite() || !config.scale.is_finite() || config.scale < 0.0)
-            {
-                return Err(invalid_input(
-                    "minprob imputation requires finite shift and non-negative scale",
-                ));
-            }
-        }
-        "knn" | "seqknn" if config.n_neighbors == 0 => {
-            return Err(invalid_input(
-                "impute-n-neighbors must be greater than zero",
-            ));
-        }
-        "mean" | "median" | "constant" | "zero" | "most_frequent" | "knn" | "seqknn" | "impseq"
-        | "gms" | "bpca" | "impseqrob" | "qrilc" => {}
-        "missforest" => return unsupported("missforest imputation is unported"),
-        _ => return unsupported("imputation"),
-    }
-    Ok(())
-}
-
-/// Validate the differential-expression subset the Rust port implements.
-///
-/// The limma, deqms, rots, limrots, proda, and ensemble paths with
-/// BH, IHW, BKY, or Storey correction are wired (mirroring
-/// `mokume.analysis.differential_expression.DifferentialExpression(method=...)`).
-/// `auto` is accepted and resolved to a concrete method just before the DE stage
-/// (Python's `_resolve_de_method`: directlfq -> deqms, otherwise -> limrots).
-/// Any other requested method, and every unsupported option, returns an error
-/// rather than silently running a different test. `rots`, `limrots`, and `proda`
-/// are faithful ports that match Python in
-/// algorithm/distribution, not cell-for-cell: `rots`/`limrots` are RNG-based,
-/// and `proda`'s per-protein MLE is optimizer-dependent (best-effort full port,
-/// deterministic kernels cell-exact, end-to-end within the optimizer tolerance).
-fn validate_de_subset(config: &FeatureToProteinsConfig) -> Result<()> {
-    let de = &config.differential_expression;
-    if !de.enabled {
-        if de.contrasts.is_some()
-            || de.contrasts_file.is_some()
-            || de.ensemble_methods.is_some()
-            || de.effect_size_gate.is_some()
-            || de.output.is_some()
-            || !de.method.eq_ignore_ascii_case("auto")
-            || de.ensemble_min_k != 2
-            || (de.log2fc_threshold - 0.5).abs() > f64::EPSILON
-            || (de.fdr_threshold - 0.05).abs() > f64::EPSILON
-            || !de.fdr_method.eq_ignore_ascii_case("bh")
-        {
-            return Err(invalid_input(
-                "differential-expression options require --de",
-            ));
-        }
-        return Ok(());
-    }
-
-    if config.input.sdrf.is_none() {
-        return Err(invalid_input(
-            "differential expression requires an SDRF file (--sdrf)",
-        ));
-    }
-
-    if de.output.is_none() {
-        return Err(invalid_input(
-            "differential expression requires --de-output so results are not discarded",
-        ));
-    }
-
-    de::validate_config(de, true)?;
-    let effective_method = if de.method.eq_ignore_ascii_case("auto") {
-        resolve_de_method(config)
-    } else {
-        de.method.trim().to_ascii_lowercase()
-    };
-    if matches!(effective_method.as_str(), "rots" | "limrots")
-        && !de.fdr_method.eq_ignore_ascii_case("bh")
+    if config.quantification == QuantMethod::MaxLfq
+        && dataset_normalization.is_some_and(|method| {
+            !matches!(
+                method,
+                SampleNormalizationMethod::Quantile | SampleNormalizationMethod::Hierarchical
+            )
+        })
     {
         return Err(invalid_input(format!(
-            "--de-fdr-method {} does not apply to {effective_method}, which retains its permutation FDR",
-            de.fdr_method
+            "{} supports quantile and hierarchical as its only dataset-level sample normalizations",
+            config.quantification
         )));
     }
-    if !de.method.eq_ignore_ascii_case("ensemble") && de.ensemble_min_k != 2 {
+    let de = &config.differential_expression;
+    // `--de-contrast-file` is expanded into `contrasts` before validation runs
+    // (see `expand_de_contrasts_file`), so the list reflects both sources.
+    if de.enabled && de.contrasts.as_ref().is_none_or(Vec::is_empty) {
         return Err(invalid_input(
-            "--de-ensemble-min-k only applies to --de-method ensemble",
+            "differential expression requires explicit contrasts via --de-contrast \
+             or --de-contrast-file",
         ));
     }
-
-    // `--de-contrast-file` is expanded into `contrasts` before validation runs
-    // (see `expand_de_contrasts_file`), so by here `contrasts_file` is already
-    // folded in and the contrasts list below reflects both sources.
-    match &de.contrasts {
-        Some(contrasts) if !contrasts.is_empty() => {}
-        _ => {
-            return Err(invalid_input(
-                "differential expression requires explicit contrasts via --de-contrast \
-                 or --de-contrast-file",
-            ));
-        }
-    }
-
     Ok(())
+}
+
+/// Validate a matrix-imputation request; option applicability is checked by the
+/// caller that knows which options were supplied.
+pub(crate) fn validate_imputation_config(config: &ImputationConfig) -> Result<()> {
+    if !config.enabled {
+        return Ok(());
+    }
+    let method = config.method.trim().to_ascii_lowercase();
+    match method.as_str() {
+        "" | "none" => Err(invalid_input("--impute-method must name a method")),
+        "mindet" | "minprob"
+            if !config.quantile.is_finite() || !(0.0..=1.0).contains(&config.quantile) =>
+        {
+            Err(invalid_input("impute-quantile must be between 0 and 1"))
+        }
+        "knn" | "seqknn" if config.n_neighbors == 0 => Err(invalid_input(
+            "impute-n-neighbors must be greater than zero",
+        )),
+        "mean" | "median" | "constant" | "zero" | "most_frequent" | "knn" | "seqknn" | "impseq"
+        | "gms" | "bpca" | "impseqrob" | "qrilc" | "mindet" | "minprob" => Ok(()),
+        "missforest" => unsupported("missforest imputation is unported"),
+        _ => unsupported("imputation"),
+    }
 }
 
 /// Validate only the ensemble-specific DE contract before any input access.
@@ -6953,22 +6128,34 @@ fn validate_de_ensemble_options(config: &FeatureToProteinsConfig) -> Result<()> 
     Ok(())
 }
 
-/// Resolve the `--de-method auto` sentinel to a concrete method, mirroring
-/// Python's `_resolve_de_method` (stages.py:1784): `directlfq` quantification
-/// selects `deqms`, every other quantification selects `limrots`. A non-`auto`
-/// method is returned unchanged. Resolved just before the DE stage so both the
-/// validation and the `de::run_differential_expression` dispatch observe a
-/// concrete method.
-fn resolve_de_method(config: &FeatureToProteinsConfig) -> String {
+/// Resolve the `--de-method auto` sentinel to a concrete method, following
+/// Python's quantification-based `_resolve_de_method` default: `directlfq`
+/// quantification selects `deqms`, every other quantification selects
+/// `limrots`. The LimROTS kernel accepts only complete finite log2 matrices, so
+/// `auto` selects `deqms` instead when `matrix_is_complete` reports a missing
+/// cell; Python's LimROTS accepts missing values and keeps `limrots`. A
+/// non-`auto` method is returned unchanged. Resolved just before the DE stage so
+/// both the validation and the `de::run_differential_expression` dispatch
+/// observe a concrete method.
+fn resolve_de_method(
+    config: &FeatureToProteinsConfig,
+    matrix_is_complete: impl FnOnce() -> bool,
+) -> String {
     let method = config.differential_expression.method.trim();
     if !method.eq_ignore_ascii_case("auto") {
         return method.to_string();
     }
-    if config.quantification == QuantMethod::DirectLfq {
-        "deqms".to_string()
+    let resolved = if config.quantification != QuantMethod::DirectLfq && matrix_is_complete() {
+        "limrots"
     } else {
-        "limrots".to_string()
-    }
+        "deqms"
+    };
+    info!(
+        quant_method = %config.quantification,
+        de_method = resolved,
+        "auto-selected DE method"
+    );
+    resolved.to_string()
 }
 
 /// Fold `--de-contrast-file` (a TSV with `group1`/`group2` columns) into the
@@ -7020,14 +6207,6 @@ fn expand_de_contrasts_file(config: &FeatureToProteinsConfig) -> Result<FeatureT
 
     config.differential_expression.contrasts = (!contrasts.is_empty()).then_some(contrasts);
     Ok(config)
-}
-
-fn supports_run_normalization(method: &str) -> bool {
-    parse_run_normalization_method(method).is_ok()
-}
-
-fn supports_sample_normalization(method: &str) -> bool {
-    parse_sample_normalization_method(method).is_ok()
 }
 
 #[derive(Debug, Default)]
@@ -7111,8 +6290,8 @@ fn collect_run_qc_proteins(
     named_score: Option<&NamedScoreFilterConfig>,
 ) -> Result<HashMap<(String, String), RunQcProteinStats>> {
     let mut proteins: HashMap<(String, String), RunQcProteinStats> = HashMap::new();
-    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+    let mut sdrf_lookup = sdrf.map(SdrfLookupCache::new);
+    stream_qpx_features(parquet, &MemoryPlan::unlimited(), named_score, |feature| {
         if !passes_feature_filter(&feature, source.filtering, source.keep_shared_peptides) {
             return Ok(());
         }
@@ -7131,7 +6310,7 @@ fn collect_run_qc_proteins(
         if has_removed_accession(&feature.protein_accessions, source.remove_protein_ids) {
             return Ok(());
         }
-        let sdrf_record = sdrf_record(&feature, sdrf)?;
+        let sdrf_record = sdrf_record(&feature, sdrf_lookup.as_mut())?;
         let sample = sample_name(&feature, sdrf_record);
         let technical_replicate =
             run_qc_key(&feature, sdrf_record, sample.clone()).technical_replicate;
@@ -7300,8 +6479,8 @@ fn collect_intensity_group_filters(
     // include them, so this pre-pass deliberately omits the contaminant check.
     let mut group_intensities: HashMap<(String, String, String), Vec<f64>> = HashMap::new();
     let mut cell_canonicals: HashMap<(String, String), HashSet<String>> = HashMap::new();
-    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+    let mut sdrf_lookup = sdrf.map(SdrfLookupCache::new);
+    stream_qpx_features(parquet, &MemoryPlan::unlimited(), named_score, |feature| {
         if !passes_feature_filter(&feature, source.filtering, source.keep_shared_peptides) {
             return Ok(());
         }
@@ -7311,7 +6490,7 @@ fn collect_intensity_group_filters(
         if feature.intensity < min_floor {
             return Ok(());
         }
-        let sdrf_record = sdrf_record(&feature, sdrf)?;
+        let sdrf_record = sdrf_record(&feature, sdrf_lookup.as_mut())?;
         let sample = sample_name(&feature, sdrf_record);
         let run_key = run_qc_key(&feature, sdrf_record, sample.clone());
         if run_qc_excluded.contains(&run_key) {
@@ -7406,7 +6585,7 @@ fn irs_mixture_first_token(value: &str) -> &str {
 /// Python's SQL uses (`intensity > 0`; the contaminant `NOT LIKE` only when
 /// `remove_contaminants`; the `min_intensity` floor only when positive), groups
 /// the surviving intensities by run into a per-run `irs_value` via the chosen
-/// statistic, then derives the scale per technical replicate under `irs.scope`.
+/// statistic, then derives one scale per run under `irs.scope`.
 ///
 /// Each run also carries its `mixture` (Python `split_part(sample_accession,
 /// '_', 1)`): with no SDRF the sample accession is the `run_file_name`, so the
@@ -7414,12 +6593,11 @@ fn irs_mixture_first_token(value: &str) -> &str {
 /// of the joined `source name`. `by_mixture` / `two_stage` use this; `global`
 /// ignores it.
 ///
-/// Returns the `techreplicate -> scale` map. The techreplicate key is Python's
-/// IRS-internal `split_part(run, '_', 2)` ([`irs_tech_replicate_of`]); the
-/// **apply** side keys by the last `_` token ([`tech_replicate_of`]) — both are
-/// reproduced exactly because they diverge for runs with three or more tokens.
-/// An empty map means no valid scale could be computed; the command layer turns
-/// that into an explicit input error.
+/// Returns the `run_file_name -> scale` map. Run identity is the correct plex
+/// key: unlike a technical-replicate number, it is stable for arbitrary file
+/// names and cannot collide when the same replicate number occurs in multiple
+/// mixtures. An empty map means no valid scale could be computed; the command
+/// layer turns that into an explicit input error.
 fn collect_irs_scale(
     parquet: &Path,
     irs: &IrsChannelConfig,
@@ -7428,19 +6606,16 @@ fn collect_irs_scale(
     contaminant_patterns: &[String],
     min_intensity: f64,
     named_score: Option<&NamedScoreFilterConfig>,
-) -> Result<HashMap<i64, f64>> {
-    // Phase 1: per run, buffer the reference-channel intensities and remember the
-    // IRS-internal techreplicate and mixture. A run with no integer techreplicate
-    // cannot key into the scale dict, so it is dropped (Python's `CAST` would
-    // error out).
+) -> Result<HashMap<String, f64>> {
+    // Phase 1: per run, buffer the reference-channel intensities and remember
+    // the mixture used by the non-global scopes.
     struct RunBuffer {
-        techrep: i64,
         mixture: String,
         intensities: Vec<f64>,
     }
     let mut runs: HashMap<String, RunBuffer> = HashMap::new();
-    let reader = QpxParquetReader::open(parquet, DEFAULT_QPX_BATCH_SIZE)?;
-    stream_qpx_features_maybe_score(reader, named_score, |feature| {
+    let mut sdrf_lookup = sdrf.map(SdrfLookupCache::new);
+    stream_qpx_features(parquet, &MemoryPlan::unlimited(), named_score, |feature| {
         // Channel match is on the *raw* feature label (Python filters on
         // `channel = ?` before any reformat). A row with no label never matches.
         if feature.label.as_deref() != Some(irs.channel.as_str()) {
@@ -7460,10 +6635,7 @@ fn collect_irs_scale(
         {
             return Ok(());
         }
-        let Some(techrep) = irs_tech_replicate_of(&feature.run_file_name) else {
-            return Ok(());
-        };
-        let sdrf_record = sdrf_record(&feature, sdrf)?;
+        let sdrf_record = sdrf_record(&feature, sdrf_lookup.as_mut())?;
         let sample_accession = sdrf_record.map_or(feature.run_file_name.as_str(), |record| {
             record.sample_accession.as_str()
         });
@@ -7476,7 +6648,6 @@ fn collect_irs_scale(
                 // `enrich_with_sdrf`; when an SDRF is present, an unmatched run or
                 // label is rejected instead of falling back to the run name.
                 RunBuffer {
-                    techrep,
                     mixture: irs_mixture_first_token(sample_accession).to_owned(),
                     intensities: Vec::new(),
                 }
@@ -7488,25 +6659,19 @@ fn collect_irs_scale(
 
     // Phase 2: collapse each run's buffered intensities into one `irs_value`, then
     // derive the scale under `irs.scope`. Collect into a `BTreeMap` keyed by run
-    // name so the runs are visited in a stable (sorted) order; this makes the
-    // (rare) techreplicate collision resolve deterministically (last run name
-    // wins), matching Python's `dict(zip(...))`.
-    let per_run: Vec<(i64, String, Vec<f64>)> = runs
+    // name so the runs are visited in a stable (sorted) order.
+    let per_run: Vec<(String, String, Vec<f64>)> = runs
         .into_iter()
-        .map(|(run_name, buffer)| {
-            (
-                run_name,
-                (buffer.techrep, buffer.mixture, buffer.intensities),
-            )
-        })
+        .map(|(run_name, buffer)| (run_name, (buffer.mixture, buffer.intensities)))
         .collect::<BTreeMap<_, _>>()
-        .into_values()
+        .into_iter()
+        .map(|(run_name, (mixture, intensities))| (run_name, mixture, intensities))
         .collect();
     Ok(match irs.scope {
         IrsScope::Global => {
             let runs = per_run
                 .into_iter()
-                .map(|(techrep, _mixture, intensities)| (techrep, intensities))
+                .map(|(run, _mixture, intensities)| (run, intensities))
                 .collect();
             irs_global_scale_from_runs(runs, irs.stat)
         }
@@ -7516,59 +6681,59 @@ fn collect_irs_scale(
 }
 
 /// Pure global-scope IRS math (Python `get_irs_scaling_factors`,
-/// `feature.py:776-815`, global branch). Given each run's `(techreplicate,
+/// `feature.py:776-815`, global branch). Given each run's `(run identity,
 /// reference-channel intensities)` in a stable order, collapse to one
 /// `irs_value` per run via `stat`, drop non-positive `irs_value`s, take the
-/// global center via the same `stat`, and return `scale[techrep] = center /
-/// irs_value`. Runs sharing a techreplicate resolve last-wins, matching Python's
-/// `dict(zip(...))`. Returns an empty map when nothing positive survives.
-fn irs_global_scale_from_runs(per_run: Vec<(i64, Vec<f64>)>, stat: IrsStat) -> HashMap<i64, f64> {
+/// global center via the same `stat`, and return `scale[run] = center /
+/// irs_value`. Returns an empty map when nothing positive survives.
+fn irs_global_scale_from_runs(
+    per_run: Vec<(String, Vec<f64>)>,
+    stat: IrsStat,
+) -> HashMap<String, f64> {
     let aggregate = |values: &mut Vec<f64>| match stat {
         IrsStat::Median => median(values),
         IrsStat::Mean => mean_positive(values),
     };
-    let mut irs_values: Vec<(i64, f64)> = Vec::new();
-    for (techrep, mut intensities) in per_run {
+    let mut irs_values: Vec<(String, f64)> = Vec::new();
+    for (run, mut intensities) in per_run {
         // `irs_df = irs_df[irs_df["irs_value"] > 0]` drops non-positive centers.
         if let Some(irs_value) = aggregate(&mut intensities) {
             if irs_value > 0.0 {
-                irs_values.push((techrep, irs_value));
+                irs_values.push((run, irs_value));
             }
         }
     }
     if irs_values.is_empty() {
         return HashMap::new();
     }
-    let mut centers: Vec<f64> = irs_values.iter().map(|&(_, value)| value).collect();
+    let mut centers: Vec<f64> = irs_values.iter().map(|(_, value)| *value).collect();
     let Some(global_center) = aggregate(&mut centers) else {
         return HashMap::new();
     };
-    let mut scale_by_techrep: HashMap<i64, f64> = HashMap::new();
-    for (techrep, irs_value) in irs_values {
-        scale_by_techrep.insert(techrep, global_center / irs_value);
+    let mut scale_by_run: HashMap<String, f64> = HashMap::new();
+    for (run, irs_value) in irs_values {
+        scale_by_run.insert(run, global_center / irs_value);
     }
-    scale_by_techrep
+    scale_by_run
 }
 
 /// Collapse each run's buffered reference-channel intensities into a single
-/// `irs_value` and drop the runs whose center is non-positive, mirroring
-/// Python's per-run aggregate followed by `irs_df = irs_df[irs_df["irs_value"]
-/// > 0]`. Preserves input (stable, run-name-sorted) order so any later
-/// `dict(zip(...))` collision resolves last-wins exactly as in pandas. Returns
-/// `(techrep, mixture, irs_value)` per surviving run.
+/// `irs_value` and drop the runs whose center is non-positive, mirroring the
+/// Python filter `irs_value > 0`. Preserves input (stable, run-name-sorted)
+/// order. Returns `(run identity, mixture, irs_value)` per surviving run.
 fn irs_values_per_run(
-    per_run: Vec<(i64, String, Vec<f64>)>,
+    per_run: Vec<(String, String, Vec<f64>)>,
     stat: IrsStat,
-) -> Vec<(i64, String, f64)> {
+) -> Vec<(String, String, f64)> {
     let aggregate = |values: &mut Vec<f64>| match stat {
         IrsStat::Median => median(values),
         IrsStat::Mean => mean_positive(values),
     };
     let mut out = Vec::with_capacity(per_run.len());
-    for (techrep, mixture, mut intensities) in per_run {
+    for (run, mixture, mut intensities) in per_run {
         if let Some(irs_value) = aggregate(&mut intensities) {
             if irs_value > 0.0 {
-                out.push((techrep, mixture, irs_value));
+                out.push((run, mixture, irs_value));
             }
         }
     }
@@ -7580,7 +6745,10 @@ fn irs_values_per_run(
 /// keyed by mixture; every input mixture is present because each contributes at
 /// least one run. `median` / `mean_positive` keep only positive finite values,
 /// which is a no-op here (all `irs_value`s are already positive).
-fn irs_mixture_centers(irs_values: &[(i64, String, f64)], stat: IrsStat) -> HashMap<String, f64> {
+fn irs_mixture_centers(
+    irs_values: &[(String, String, f64)],
+    stat: IrsStat,
+) -> HashMap<String, f64> {
     let mut by_mixture: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for (_, mixture, irs_value) in irs_values {
         by_mixture
@@ -7604,25 +6772,24 @@ fn irs_mixture_centers(irs_values: &[(i64, String, f64)], stat: IrsStat) -> Hash
 /// Pure `by_mixture`-scope IRS math (Python `get_irs_scaling_factors`,
 /// `feature.py:779-784`). For each surviving run, `scale = mixture_center /
 /// irs_value`, where `mixture_center` is the `stat` over that mixture's
-/// `irs_value`s. Runs sharing a techreplicate resolve last-wins over the stable
-/// input order, matching Python's `dict(zip(techrep_guess, scale))`. Returns an
-/// empty map when no run survives the positive-`irs_value` filter.
+/// `irs_value`s. Returns an empty map when no run survives the positive-
+/// `irs_value` filter.
 fn irs_by_mixture_scale_from_runs(
-    per_run: Vec<(i64, String, Vec<f64>)>,
+    per_run: Vec<(String, String, Vec<f64>)>,
     stat: IrsStat,
-) -> HashMap<i64, f64> {
+) -> HashMap<String, f64> {
     let irs_values = irs_values_per_run(per_run, stat);
     if irs_values.is_empty() {
         return HashMap::new();
     }
     let centers = irs_mixture_centers(&irs_values, stat);
-    let mut scale_by_techrep: HashMap<i64, f64> = HashMap::new();
-    for (techrep, mixture, irs_value) in irs_values {
+    let mut scale_by_run: HashMap<String, f64> = HashMap::new();
+    for (run, mixture, irs_value) in irs_values {
         if let Some(&mixture_center) = centers.get(&mixture) {
-            scale_by_techrep.insert(techrep, mixture_center / irs_value);
+            scale_by_run.insert(run, mixture_center / irs_value);
         }
     }
-    scale_by_techrep
+    scale_by_run
 }
 
 /// Pure `two_stage`-scope IRS math (Python `get_irs_scaling_factors`,
@@ -7632,13 +6799,12 @@ fn irs_by_mixture_scale_from_runs(
 /// scale is the product, which algebraically equals `global_center / irs_value`
 /// but is computed exactly as the two factors so float rounding matches Python.
 /// `global_center` is the `stat` over one center per distinct mixture, mirroring
-/// `irs_df[["mixture","mixture_center"]].drop_duplicates()`. Runs sharing a
-/// techreplicate resolve last-wins over the stable input order. Returns an empty
+/// `irs_df[["mixture","mixture_center"]].drop_duplicates()`. Returns an empty
 /// map when no run survives or the global center cannot be formed.
 fn irs_two_stage_scale_from_runs(
-    per_run: Vec<(i64, String, Vec<f64>)>,
+    per_run: Vec<(String, String, Vec<f64>)>,
     stat: IrsStat,
-) -> HashMap<i64, f64> {
+) -> HashMap<String, f64> {
     let irs_values = irs_values_per_run(per_run, stat);
     if irs_values.is_empty() {
         return HashMap::new();
@@ -7655,15 +6821,15 @@ fn irs_two_stage_scale_from_runs(
     let Some(global_center) = global_center else {
         return HashMap::new();
     };
-    let mut scale_by_techrep: HashMap<i64, f64> = HashMap::new();
-    for (techrep, mixture, irs_value) in irs_values {
+    let mut scale_by_run: HashMap<String, f64> = HashMap::new();
+    for (run, mixture, irs_value) in irs_values {
         if let Some(&mixture_center) = centers.get(&mixture) {
             let stage1 = mixture_center / irs_value;
             let stage2 = global_center / mixture_center;
-            scale_by_techrep.insert(techrep, stage1 * stage2);
+            scale_by_run.insert(run, stage1 * stage2);
         }
     }
-    scale_by_techrep
+    scale_by_run
 }
 
 /// Resolve the IRS reference channel from the SDRF when `--irs_channel` is not
@@ -7745,12 +6911,6 @@ fn collect_intensity_factors(
     if run_method.is_none() && !sample_uses_factors {
         return Ok(IntensityFactors::default());
     }
-    if sample_method == Some(SampleNormalizationMethod::ConditionMedian) && sdrf.is_none() {
-        return Err(invalid_input(
-            "conditionmedian sample normalization requires --sdrf option",
-        ));
-    }
-
     let normalization_proteins = config
         .normalization
         .normalization_proteins
@@ -7774,7 +6934,7 @@ fn collect_intensity_factors(
     // forwards the `--keep-shared-peptides` flag from `FeatureToPeptidesConfig`,
     // which `peptide_export_config` cannot represent (it pins quantification to
     // `Sum`, so the old in-function `== Pibaq` derivation always read `false`).
-    stream_normalization_features(config, sdrf, memory, named_score, &mut |feature| {
+    stream_input_features(&config.input, sdrf, memory, named_score, |feature| {
         collector.push(feature, config.filtering, keep_shared_peptides)
     })?;
     if collector.normalization_proteins.is_some()
@@ -7788,25 +6948,6 @@ fn collect_intensity_factors(
     Ok(collector.into_factors())
 }
 
-fn stream_normalization_features<F>(
-    config: &FeatureToProteinsConfig,
-    sdrf: Option<&SdrfTable>,
-    memory: &MemoryPlan,
-    named_score: Option<&NamedScoreFilterConfig>,
-    consume: &mut F,
-) -> Result<()>
-where
-    F: FnMut(QpxFeatureRecord) -> Result<()>,
-{
-    match (&config.input.parquet, named_score) {
-        (Some(parquet), Some(score)) => {
-            let reader = QpxParquetReader::open(parquet, memory.qpx_batch_size())?;
-            stream_qpx_features_with_score(reader, score, consume)
-        }
-        _ => stream_input_features(&config.input, sdrf, memory, consume),
-    }
-}
-
 fn sample_method_uses_factors(method: Option<SampleNormalizationMethod>) -> bool {
     matches!(
         method,
@@ -7818,7 +6959,7 @@ fn sample_method_uses_factors(method: Option<SampleNormalizationMethod>) -> bool
 struct NormalizationFactorCollector<'a> {
     run_method: Option<RunNormalizationMethod>,
     sample_method: Option<SampleNormalizationMethod>,
-    sdrf: Option<&'a SdrfTable>,
+    sdrf: Option<SdrfLookupCache<'a>>,
     normalization_proteins: Option<HashSet<String>>,
     /// Custom contaminant patterns for the median pre-pass (Python
     /// `SQLFilterBuilder.contaminant_patterns`). Matched against the **raw**
@@ -7841,7 +6982,7 @@ impl<'a> NormalizationFactorCollector<'a> {
         Self {
             run_method,
             sample_method,
-            sdrf,
+            sdrf: sdrf.map(SdrfLookupCache::new),
             normalization_proteins,
             contaminant_patterns,
             sample_values: HashMap::new(),
@@ -7872,7 +7013,7 @@ impl<'a> NormalizationFactorCollector<'a> {
             return Ok(());
         };
 
-        let sdrf_record = sdrf_record(&feature, self.sdrf)?;
+        let sdrf_record = sdrf_record(&feature, self.sdrf.as_mut())?;
         let sample = sample_name(&feature, sdrf_record);
         if self
             .normalization_proteins
@@ -8293,7 +7434,7 @@ fn parse_protein_accession(accession: &str) -> String {
     }
     if matches!(
         parts[0].to_ascii_lowercase().as_str(),
-        "sp" | "tr" | "sw" | "nxp"
+        "sp" | "tr" | "sw" | "nxp" | "ups"
     ) && parts.len() >= 2
     {
         parts[1].to_owned()
@@ -8304,14 +7445,10 @@ fn parse_protein_accession(accession: &str) -> String {
 
 fn sdrf_record<'a>(
     feature: &QpxFeatureRecord,
-    sdrf: Option<&'a SdrfTable>,
+    sdrf: Option<&mut SdrfLookupCache<'a>>,
 ) -> Result<Option<&'a SdrfRecord>> {
-    match sdrf {
-        Some(table) => table
-            .lookup(&feature.run_file_name, feature.label.as_deref())
-            .map(Some),
-        None => Ok(None),
-    }
+    sdrf.map(|lookup| lookup.lookup(&feature.run_file_name, feature.label.as_deref()))
+        .transpose()
 }
 
 fn sample_name(feature: &QpxFeatureRecord, sdrf_record: Option<&SdrfRecord>) -> String {
@@ -9260,10 +8397,23 @@ fn mean_finite(mut values: Vec<f64>) -> Option<f64> {
 }
 
 fn sample_plex(sample_name: &str) -> String {
+    if let Some(mixture) = sample_name.split('_').find(|part| {
+        part.to_ascii_lowercase()
+            .strip_prefix("mixture")
+            .is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit())
+            })
+    }) {
+        return mixture.to_ascii_lowercase();
+    }
     let Some((prefix, suffix)) = sample_name.rsplit_once('_') else {
         return "plex1".to_owned();
     };
-    if suffix.chars().all(|character| character.is_ascii_digit()) && !prefix.is_empty() {
+    let channel = suffix.strip_suffix(['N', 'C', 'n', 'c']).unwrap_or(suffix);
+    if !channel.is_empty()
+        && channel.chars().all(|character| character.is_ascii_digit())
+        && !prefix.is_empty()
+    {
         prefix.to_owned()
     } else {
         "plex1".to_owned()
@@ -9363,11 +8513,11 @@ mod tests {
     use super::{
         batch_column_values_for_samples, detect_reference_samples, expand_de_contrasts_file,
         extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
-        irs_global_scale_from_runs, irs_mixture_first_token, irs_tech_replicate_of,
-        irs_two_stage_scale_from_runs, load_normalization_proteins, match_sdrf_column,
-        resolve_de_method, resolve_irs_autodetect_channel, resolve_irs_reference_samples,
-        resolve_reference_batch, run_features_to_proteins, sum_peptide_values, tech_replicate_of,
-        validate_batch_sizes, validate_combat_design, validate_features_to_proteins,
+        irs_global_scale_from_runs, irs_mixture_first_token, irs_two_stage_scale_from_runs,
+        load_normalization_proteins, match_sdrf_column, resolve_de_method,
+        resolve_irs_autodetect_channel, resolve_irs_reference_samples, resolve_reference_batch,
+        run_features_to_proteins, sample_plex, sum_peptide_values, validate_batch_sizes,
+        validate_combat_design, validate_de_ensemble_options, validate_features_to_proteins,
         validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
         ProteinValues,
     };
@@ -9483,61 +8633,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_pibaq_without_fasta_before_loading() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("pibaq_without_fasta")?;
-        let mut config = base_config(parquet);
-        config.quantification = QuantMethod::Pibaq;
-
-        let error = run_features_to_proteins(&config).err();
-
-        assert_eq!(
-            error.map(|error| error.to_string()).as_deref(),
-            Some("invalid input: piBAQ quantification requires --fasta option")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_ratio_without_sdrf_before_loading() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("ratio_without_sdrf")?;
-        let mut config = base_config(parquet);
-        config.quantification = QuantMethod::Ratio;
-
-        let error = validate_features_to_proteins(&config).err();
-
-        assert_eq!(
-            error.map(|error| error.to_string()).as_deref(),
-            Some("invalid input: Ratio quantification requires --sdrf option")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_batch_column_without_column_name_before_loading(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("batch_column_without_name")?;
-        let sdrf = existing_dummy_path("batch_column_without_name_sdrf")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(sdrf);
-        config.batch.enabled = true;
-        config.batch.method = "column".to_string();
-
-        let error = validate_features_to_proteins(&config).err();
-
-        assert_eq!(
-            error.map(|error| error.to_string()).as_deref(),
-            Some(
-                "invalid input: Batch correction with method 'column' requires --batch-column option"
-            )
-        );
-        Ok(())
-    }
-
-    #[test]
     fn accepts_normalization_proteins_file_for_supported_subset(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("normalization_proteins")?;
-        let proteins = existing_dummy_path("normalization_proteins_list")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("normalization_proteins")?;
+        let (_proteins_guard, proteins) = existing_dummy_path("normalization_proteins_list")?;
         fs::write(&proteins, "P1\nP2\n")?;
         let mut config = base_config(parquet);
         config.normalization.normalization_proteins = Some(proteins);
@@ -9551,7 +8650,7 @@ mod tests {
     #[test]
     fn rejects_empty_normalization_proteins_file_before_loading(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let proteins = existing_dummy_path("empty_normalization_proteins_list")?;
+        let (_proteins_guard, proteins) = existing_dummy_path("empty_normalization_proteins_list")?;
         fs::write(&proteins, "\n")?;
 
         let error = load_normalization_proteins(&proteins).err();
@@ -9608,61 +8707,21 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn accepts_median_center_sample_normalization_subset() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let parquet = existing_dummy_path("median_center_sample_normalization")?;
-        let mut config = base_config(parquet);
-        config.quantification = QuantMethod::Median;
-        config.normalization.sample_method = "mediancenter".to_string();
-
-        validate_implemented_subset(&config)?;
-
-        Ok(())
-    }
-
-    // The IRS collect side uses Python's `split_part(run, '_', 2)` (second token),
-    // while the apply side uses `run.str.split('_').str.get(-1)` (last token). They
-    // agree for two-token names and diverge for three-or-more-token names; both
-    // must be reproduced exactly (see `irs_tech_replicate_of` / `tech_replicate_of`).
-    #[test]
-    fn irs_and_apply_techreplicate_derivations_agree_for_two_token_runs() {
-        for run in ["M1_3", "M2_2", "mixture_7"] {
-            assert_eq!(
-                irs_tech_replicate_of(run),
-                Some(tech_replicate_of(run)),
-                "two-token run {run} should match on both derivations",
-            );
-        }
-    }
-
-    #[test]
-    fn irs_and_apply_techreplicate_derivations_diverge_for_three_token_runs() {
-        // "plex_2_5": collect side -> split_part(_,2) = 2; apply side -> last = 5.
-        assert_eq!(irs_tech_replicate_of("plex_2_5"), Some(2));
-        assert_eq!(tech_replicate_of("plex_2_5"), 5);
-        // A run with no underscore parses the whole name as the techreplicate.
-        assert_eq!(irs_tech_replicate_of("4"), Some(4));
-        assert_eq!(tech_replicate_of("4"), 4);
-        // A non-integer second token yields no IRS key (Python's CAST would error).
-        assert_eq!(irs_tech_replicate_of("M1_xx"), None);
-    }
-
     // Locks the synthetic TMT oracle (also verified against Python's
     // `get_irs_scaling_factors`): reference-channel `irs_value` per run = 200 / 100
     // / 400 -> global_center = median(200,100,400) = 200 ->
-    // scale = {techrep1: 1.0, techrep2: 2.0, techrep3: 0.5}.
+    // scale = {M1_1: 1.0, M2_2: 2.0, M3_3: 0.5}.
     #[test]
     fn irs_global_scale_matches_synthetic_tmt_oracle_median() {
         let per_run = vec![
-            (1_i64, vec![150.0_f64, 250.0]), // median 200
-            (2_i64, vec![80.0, 120.0]),      // median 100
-            (3_i64, vec![350.0, 450.0]),     // median 400
+            ("M1_1".to_owned(), vec![150.0_f64, 250.0]), // median 200
+            ("M2_2".to_owned(), vec![80.0, 120.0]),      // median 100
+            ("M3_3".to_owned(), vec![350.0, 450.0]),     // median 400
         ];
         let scale = irs_global_scale_from_runs(per_run, IrsStat::Median);
-        assert_eq!(scale.get(&1).copied(), Some(1.0));
-        assert_eq!(scale.get(&2).copied(), Some(2.0));
-        assert_eq!(scale.get(&3).copied(), Some(0.5));
+        assert_eq!(scale.get("M1_1").copied(), Some(1.0));
+        assert_eq!(scale.get("M2_2").copied(), Some(2.0));
+        assert_eq!(scale.get("M3_3").copied(), Some(0.5));
         assert_eq!(scale.len(), 3);
     }
 
@@ -9670,15 +8729,15 @@ mod tests {
     fn irs_global_scale_matches_synthetic_tmt_oracle_mean() {
         // Same per-run intensities; mean center = mean(200,100,400) = 233.333...
         let per_run = vec![
-            (1_i64, vec![150.0_f64, 250.0]),
-            (2_i64, vec![80.0, 120.0]),
-            (3_i64, vec![350.0, 450.0]),
+            ("M1_1".to_owned(), vec![150.0_f64, 250.0]),
+            ("M2_2".to_owned(), vec![80.0, 120.0]),
+            ("M3_3".to_owned(), vec![350.0, 450.0]),
         ];
         let scale = irs_global_scale_from_runs(per_run, IrsStat::Mean);
         let center = (200.0 + 100.0 + 400.0) / 3.0;
-        assert!((scale[&1] - center / 200.0).abs() < 1e-12);
-        assert!((scale[&2] - center / 100.0).abs() < 1e-12);
-        assert!((scale[&3] - center / 400.0).abs() < 1e-12);
+        assert!((scale["M1_1"] - center / 200.0).abs() < 1e-12);
+        assert!((scale["M2_2"] - center / 100.0).abs() < 1e-12);
+        assert!((scale["M3_3"] - center / 400.0).abs() < 1e-12);
     }
 
     #[test]
@@ -9686,12 +8745,15 @@ mod tests {
         // A run whose only intensities aggregate to a non-positive center is
         // dropped (Python's `irs_value > 0` filter); empty input yields no scale.
         assert!(irs_global_scale_from_runs(Vec::new(), IrsStat::Median).is_empty());
-        let per_run = vec![(1_i64, vec![100.0_f64]), (2_i64, vec![0.0, 0.0])];
+        let per_run = vec![
+            ("run1".to_owned(), vec![100.0_f64]),
+            ("run2".to_owned(), vec![0.0, 0.0]),
+        ];
         let scale = irs_global_scale_from_runs(per_run, IrsStat::Median);
-        // techrep 2 aggregates to 0 (median drops zeros -> None), so only techrep 1
+        // run2 aggregates to 0 (median drops zeros -> None), so only run1
         // survives; with one surviving run the center equals its own value -> 1.0.
-        assert_eq!(scale.get(&1).copied(), Some(1.0));
-        assert!(!scale.contains_key(&2));
+        assert_eq!(scale.get("run1").copied(), Some(1.0));
+        assert!(!scale.contains_key("run2"));
     }
 
     // Multi-mixture synthetic TMT fixture shared by the by_mixture / two_stage
@@ -9703,12 +8765,28 @@ mod tests {
     //   mixB_4 -> [ 80,120,400]  (median 120, mean 200)   techrep 4
     // Values are locked against Python `get_irs_scaling_factors` run on the
     // matching pyarrow fixture (see scratchpad oracle).
-    fn multi_mixture_runs() -> Vec<(i64, String, Vec<f64>)> {
+    fn multi_mixture_runs() -> Vec<(String, String, Vec<f64>)> {
         vec![
-            (1, "mixA".to_owned(), vec![100.0, 200.0, 300.0]),
-            (2, "mixA".to_owned(), vec![50.0, 150.0, 250.0]),
-            (3, "mixB".to_owned(), vec![400.0, 500.0, 600.0]),
-            (4, "mixB".to_owned(), vec![80.0, 120.0, 400.0]),
+            (
+                "mixA_1".to_owned(),
+                "mixA".to_owned(),
+                vec![100.0, 200.0, 300.0],
+            ),
+            (
+                "mixA_2".to_owned(),
+                "mixA".to_owned(),
+                vec![50.0, 150.0, 250.0],
+            ),
+            (
+                "mixB_3".to_owned(),
+                "mixB".to_owned(),
+                vec![400.0, 500.0, 600.0],
+            ),
+            (
+                "mixB_4".to_owned(),
+                "mixB".to_owned(),
+                vec![80.0, 120.0, 400.0],
+            ),
         ]
     }
 
@@ -9724,10 +8802,10 @@ mod tests {
         // mixA center = median(200,150) = 175; mixB center = median(500,120) = 310.
         let scale = irs_by_mixture_scale_from_runs(multi_mixture_runs(), IrsStat::Median);
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], 175.0 / 200.0); // 0.875
-        assert_close(scale[&2], 175.0 / 150.0); // 1.16666...
-        assert_close(scale[&3], 310.0 / 500.0); // 0.62
-        assert_close(scale[&4], 310.0 / 120.0); // 2.58333...
+        assert_close(scale["mixA_1"], 175.0 / 200.0); // 0.875
+        assert_close(scale["mixA_2"], 175.0 / 150.0); // 1.16666...
+        assert_close(scale["mixB_3"], 310.0 / 500.0); // 0.62
+        assert_close(scale["mixB_4"], 310.0 / 120.0); // 2.58333...
     }
 
     #[test]
@@ -9735,10 +8813,10 @@ mod tests {
         // mixA center = mean(200,150) = 175; mixB center = mean(500,200) = 350.
         let scale = irs_by_mixture_scale_from_runs(multi_mixture_runs(), IrsStat::Mean);
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], 175.0 / 200.0); // 0.875
-        assert_close(scale[&2], 175.0 / 150.0); // 1.16666...
-        assert_close(scale[&3], 350.0 / 500.0); // 0.7
-        assert_close(scale[&4], 350.0 / 200.0); // 1.75
+        assert_close(scale["mixA_1"], 175.0 / 200.0); // 0.875
+        assert_close(scale["mixA_2"], 175.0 / 150.0); // 1.16666...
+        assert_close(scale["mixB_3"], 350.0 / 500.0); // 0.7
+        assert_close(scale["mixB_4"], 350.0 / 200.0); // 1.75
     }
 
     #[test]
@@ -9749,10 +8827,10 @@ mod tests {
         let scale = irs_two_stage_scale_from_runs(multi_mixture_runs(), IrsStat::Median);
         let global = 242.5;
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], (175.0 / 200.0) * (global / 175.0)); // 1.2125
-        assert_close(scale[&2], (175.0 / 150.0) * (global / 175.0)); // 1.61666...
-        assert_close(scale[&3], (310.0 / 500.0) * (global / 310.0)); // 0.485
-        assert_close(scale[&4], (310.0 / 120.0) * (global / 310.0)); // 2.02083...
+        assert_close(scale["mixA_1"], (175.0 / 200.0) * (global / 175.0));
+        assert_close(scale["mixA_2"], (175.0 / 150.0) * (global / 175.0));
+        assert_close(scale["mixB_3"], (310.0 / 500.0) * (global / 310.0));
+        assert_close(scale["mixB_4"], (310.0 / 120.0) * (global / 310.0));
     }
 
     #[test]
@@ -9761,10 +8839,10 @@ mod tests {
         let scale = irs_two_stage_scale_from_runs(multi_mixture_runs(), IrsStat::Mean);
         let global = 262.5;
         assert_eq!(scale.len(), 4);
-        assert_close(scale[&1], (175.0 / 200.0) * (global / 175.0)); // 1.3125
-        assert_close(scale[&2], (175.0 / 150.0) * (global / 175.0)); // 1.75
-        assert_close(scale[&3], (350.0 / 500.0) * (global / 350.0)); // 0.525
-        assert_close(scale[&4], (350.0 / 200.0) * (global / 350.0)); // 1.3125
+        assert_close(scale["mixA_1"], (175.0 / 200.0) * (global / 175.0));
+        assert_close(scale["mixA_2"], (175.0 / 150.0) * (global / 175.0));
+        assert_close(scale["mixB_3"], (350.0 / 500.0) * (global / 350.0));
+        assert_close(scale["mixB_4"], (350.0 / 200.0) * (global / 350.0));
     }
 
     #[test]
@@ -9774,15 +8852,15 @@ mod tests {
         // A run aggregating to a non-positive center is dropped before the
         // mixture center is formed (Python's `irs_value > 0`).
         let runs = vec![
-            (1_i64, "m".to_owned(), vec![100.0]),
-            (2_i64, "m".to_owned(), vec![0.0, 0.0]),
+            ("run1".to_owned(), "m".to_owned(), vec![100.0]),
+            ("run2".to_owned(), "m".to_owned(), vec![0.0, 0.0]),
         ];
         let by_mixture = irs_by_mixture_scale_from_runs(runs.clone(), IrsStat::Median);
-        assert_eq!(by_mixture.get(&1).copied(), Some(1.0));
-        assert!(!by_mixture.contains_key(&2));
+        assert_eq!(by_mixture.get("run1").copied(), Some(1.0));
+        assert!(!by_mixture.contains_key("run2"));
         let two_stage = irs_two_stage_scale_from_runs(runs, IrsStat::Median);
-        assert_eq!(two_stage.get(&1).copied(), Some(1.0));
-        assert!(!two_stage.contains_key(&2));
+        assert_eq!(two_stage.get("run1").copied(), Some(1.0));
+        assert!(!two_stage.contains_key("run2"));
     }
 
     #[test]
@@ -9793,25 +8871,36 @@ mod tests {
         assert_eq!(irs_mixture_first_token(""), "");
     }
 
-    fn write_temp_sdrf(name: &str, contents: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let path = tempfile::Builder::new()
+    #[test]
+    fn sample_plex_recognizes_tmt_channel_suffixes() {
+        assert_eq!(sample_plex("UPS1_Norm_Mixture1_126"), "mixture1");
+        assert_eq!(sample_plex("UPS1_0.5_Mixture1_127N"), "mixture1");
+        assert_eq!(sample_plex("UPS1_0.5_Mixture1_127C"), "mixture1");
+        assert_eq!(sample_plex("p2_127N"), "p2");
+        assert_eq!(sample_plex("sample_alpha"), "plex1");
+    }
+
+    fn write_temp_sdrf(
+        name: &str,
+        contents: &str,
+    ) -> Result<(tempfile::TempDir, PathBuf), Box<dyn std::error::Error>> {
+        let directory = tempfile::Builder::new()
             .prefix(&format!(
                 "mokume_irs_autodetect_{name}_{}_{}_",
                 std::process::id(),
                 unique_suffix()
             ))
-            .tempdir()?
-            .keep()
-            .join("autodetect.sdrf.tsv");
+            .tempdir()?;
+        let path = directory.path().join("autodetect.sdrf.tsv");
         fs::write(&path, contents)?;
-        Ok(path)
+        Ok((directory, path))
     }
 
     #[test]
     fn resolve_irs_autodetect_channel_picks_mode_label() -> Result<(), Box<dyn std::error::Error>> {
         // Three pooled rows: TMT131 appears twice, TMT130 once -> mode TMT131.
         // A non-pooled row must not vote.
-        let sdrf = write_temp_sdrf(
+        let (_sdrf_guard, sdrf) = write_temp_sdrf(
             "pooled",
             "source name\tcomment[label]\tcharacteristics[pooled sample]\n\
              sample_pool_1\tTMT131\tpooled\n\
@@ -9830,7 +8919,7 @@ mod tests {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // TMT127 and TMT131 each match once; pandas `mode().iloc[0]` returns the
         // smallest of the tied labels -> TMT127.
-        let sdrf = write_temp_sdrf(
+        let (_sdrf_guard, sdrf) = write_temp_sdrf(
             "tie",
             "source name\tcomment[label]\n\
              pool_a\tTMT131\n\
@@ -9846,7 +8935,7 @@ mod tests {
     fn resolve_irs_autodetect_channel_returns_none_on_no_match(
     ) -> Result<(), Box<dyn std::error::Error>> {
         // No source name matches the regex -> None (Python skips IRS).
-        let sdrf = write_temp_sdrf(
+        let (_sdrf_guard, sdrf) = write_temp_sdrf(
             "nomatch",
             "source name\tcomment[label]\n\
              ordinary_1\tTMT126\n",
@@ -9854,7 +8943,7 @@ mod tests {
         assert!(resolve_irs_autodetect_channel(&sdrf, "pool")?.is_none());
         fs::remove_file(&sdrf)?;
         // Missing comment[label] column -> None.
-        let sdrf2 = write_temp_sdrf("nolabel", "source name\npool_1\n")?;
+        let (_sdrf2_guard, sdrf2) = write_temp_sdrf("nolabel", "source name\npool_1\n")?;
         assert!(resolve_irs_autodetect_channel(&sdrf2, "pool")?.is_none());
         fs::remove_file(&sdrf2)?;
         Ok(())
@@ -9907,32 +8996,18 @@ mod tests {
     }
 
     #[test]
-    fn accepts_directlfq_option_subset() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("directlfq_options")?;
-        let mut config = base_config(parquet);
-        config.quantification = QuantMethod::DirectLfq;
-        config.directlfq.min_nonan = 2;
-        config.directlfq.num_samples_quadratic = 10;
-
-        validate_implemented_subset(&config)?;
-
-        Ok(())
-    }
-
-    #[test]
     fn rejects_missing_normalization_proteins_file_before_loading(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("missing_normalization_proteins")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("missing_normalization_proteins")?;
         let mut config = base_config(parquet);
-        let missing_path = tempfile::Builder::new()
+        let missing_directory = tempfile::Builder::new()
             .prefix(&format!(
                 "mokume_missing_normalization_proteins_{}_{}_",
                 std::process::id(),
                 unique_suffix()
             ))
-            .tempdir()?
-            .keep()
-            .join("missing.txt");
+            .tempdir()?;
+        let missing_path = missing_directory.path().join("missing.txt");
         config.normalization.normalization_proteins = Some(missing_path.clone());
 
         let error = validate_features_to_proteins(&config).err();
@@ -9945,62 +9020,8 @@ mod tests {
     }
 
     #[test]
-    fn accepts_quantile_sample_normalization_subset() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("quantile_sample_normalization")?;
-        let mut config = base_config(parquet);
-        config.normalization.sample_method = "quantile".to_string();
-
-        validate_implemented_subset(&config)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn accepts_limma_de_subset() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("limma_de")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "limma".to_string();
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-        config.differential_expression.output = Some(PathBuf::from("de.csv"));
-
-        validate_implemented_subset(&config)?;
-        Ok(())
-    }
-
-    #[test]
-    fn accepts_rots_de_subset() -> Result<(), Box<dyn std::error::Error>> {
-        // rots is a faithful (RNG-based) port and is now a supported method, so
-        // a well-formed rots DE config must validate.
-        let parquet = existing_dummy_path("rots_de")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "rots".to_string();
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-        config.differential_expression.output = Some(PathBuf::from("de.csv"));
-
-        validate_implemented_subset(&config)?;
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_limma_de_without_sdrf() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("limma_de_no_sdrf")?;
-        let mut config = base_config(parquet);
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "limma".to_string();
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-
-        let error = validate_implemented_subset(&config).err();
-        assert!(matches!(error, Some(MokumeError::InvalidInput { .. })));
-        Ok(())
-    }
-
-    #[test]
     fn rejects_limma_de_without_contrasts() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("limma_de_no_contrasts")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("limma_de_no_contrasts")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -10008,32 +9029,17 @@ mod tests {
 
         let error = validate_implemented_subset(&config).err();
         assert!(matches!(error, Some(MokumeError::InvalidInput { .. })));
-        Ok(())
-    }
-
-    #[test]
-    fn accepts_limrots_de_subset() -> Result<(), Box<dyn std::error::Error>> {
-        // limrots is a faithful (RNG-based) port and is now a supported method, so
-        // a well-formed limrots DE config must validate.
-        let parquet = existing_dummy_path("limrots_de")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "limrots".to_string();
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-        config.differential_expression.output = Some(PathBuf::from("de.csv"));
-
-        validate_implemented_subset(&config)?;
         Ok(())
     }
 
     #[test]
     fn resolves_auto_de_method() -> Result<(), Box<dyn std::error::Error>> {
-        // `auto` mirrors Python's `_resolve_de_method` (stages.py:1784): directlfq
+        // `auto` follows Python's quantification-based default: directlfq
         // quantification selects `deqms`, every other quantification selects
-        // `limrots`. It validates (both targets are ported) and is resolved to the
-        // concrete method just before the DE stage runs.
-        let parquet = existing_dummy_path("de_method_auto")?;
+        // `limrots` unless the matrix has missing values, which LimROTS rejects.
+        // It validates (both targets are ported) and is resolved to the concrete
+        // method just before the DE stage runs.
+        let (_parquet_guard, parquet) = existing_dummy_path("de_method_auto")?;
         let mut config = base_config(parquet);
         config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
         config.differential_expression.enabled = true;
@@ -10043,11 +9049,60 @@ mod tests {
 
         config.quantification = QuantMethod::DirectLfq;
         validate_implemented_subset(&config)?;
-        assert_eq!(resolve_de_method(&config), "deqms");
+        assert_eq!(resolve_de_method(&config, || true), "deqms");
 
         config.quantification = QuantMethod::MaxLfq;
         validate_implemented_subset(&config)?;
-        assert_eq!(resolve_de_method(&config), "limrots");
+        assert_eq!(resolve_de_method(&config, || true), "limrots");
+        assert_eq!(resolve_de_method(&config, || false), "deqms");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_value_check_matches_log2_rows() -> Result<(), Box<dyn std::error::Error>> {
+        let mut samples = StringIdRegistry::<SampleId>::new();
+        let sample_ids = ["A1", "B1"]
+            .into_iter()
+            .map(|name| samples.get_or_insert(name).ok_or("sample id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let protein_ids = ["P1", "P2", "P3"]
+            .into_iter()
+            .map(|name| proteins.get_or_insert(name).ok_or("protein id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        // P1 is complete, P2 has a zero in B1, and P3 (filtered out) lacks B1.
+        let mut cells = HashMap::new();
+        for (protein, sample, value) in [
+            (0, 0, 10.0),
+            (0, 1, 20.0),
+            (1, 0, 30.0),
+            (1, 1, 0.0),
+            (2, 0, 40.0),
+        ] {
+            cells.insert(
+                CellKey {
+                    protein: protein_ids[protein],
+                    sample: sample_ids[sample],
+                },
+                value,
+            );
+        }
+        let mut matrix = ProteinMatrix {
+            proteins,
+            samples,
+            allowed_proteins: protein_ids[..2].iter().copied().collect(),
+            excluded_samples: HashSet::new(),
+            peptide_counts: HashMap::new(),
+            values: ProteinValues::Cells(cells),
+        };
+
+        for (columns, missing) in [(&sample_ids[..1], false), (&sample_ids[..], true)] {
+            let (_, rows) = matrix.log2_rows(columns)?;
+            assert_eq!(rows.iter().flatten().any(|value| value.is_nan()), missing);
+            assert_eq!(matrix.has_missing_values(columns), missing);
+        }
+        matrix.allowed_proteins.remove(&protein_ids[1]);
+        assert!(!matrix.has_missing_values(&sample_ids));
         Ok(())
     }
 
@@ -10057,8 +9112,8 @@ mod tests {
         // columns appends "<g1> vs <g2>" after the repeated --de-contrast entries,
         // empty rows are skipped, and contrasts_file is cleared so downstream sees
         // one resolved list.
-        let parquet = existing_dummy_path("de_contrasts_file")?;
-        let contrasts_file = existing_dummy_path("de_contrasts_file_tsv")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_contrasts_file")?;
+        let (_contrasts_file_guard, contrasts_file) = existing_dummy_path("de_contrasts_file_tsv")?;
         fs::write(&contrasts_file, "group1\tgroup2\nTumor\tNormal\nA\tB\n\t\n")?;
 
         let mut config = base_config(parquet);
@@ -10080,8 +9135,8 @@ mod tests {
 
     #[test]
     fn rejects_de_contrasts_file_missing_group_columns() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("de_contrasts_bad")?;
-        let contrasts_file = existing_dummy_path("de_contrasts_bad_tsv")?;
+        let (_parquet_guard, parquet) = existing_dummy_path("de_contrasts_bad")?;
+        let (_contrasts_file_guard, contrasts_file) = existing_dummy_path("de_contrasts_bad_tsv")?;
         fs::write(&contrasts_file, "groupA\tgroupB\nTumor\tNormal\n")?;
 
         let mut config = base_config(parquet);
@@ -10236,8 +9291,8 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     fn sample_correlation_uses_negative_values_for_log2_methods(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut samples = StringIdRegistry::<SampleId>::new();
-        let left = samples.get_or_insert("A1").ok_or("left sample")?;
-        let right = samples.get_or_insert("A2").ok_or("right sample")?;
+        let left = samples.get_or_insert("A1").expect("left sample");
+        let right = samples.get_or_insert("A2").expect("right sample");
         let mut proteins = StringIdRegistry::<ProteinId>::new();
         let protein_ids = ["P1", "P2", "P3"]
             .into_iter()
@@ -10301,6 +9356,14 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             &["P10".to_owned()],
             &HashSet::from(["P1".to_owned()])
         ));
+    }
+
+    #[test]
+    fn ups_database_prefix_keeps_each_accession() {
+        assert_eq!(
+            super::parse_protein_accession("UPS|P02768ups|ALBU_HUMAN_UPS"),
+            "P02768ups"
+        );
     }
 
     #[test]
@@ -10475,8 +9538,27 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     }
 
     #[test]
-    fn covariates_reject_missing_nonfinite_and_mixed_values(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn mixed_covariate_columns_are_nominal() -> Result<(), Box<dyn std::error::Error>> {
+        // "5637" is a cell line name, not a number, once the column has other labels.
+        let raw = SdrfRawTable::from_reader(
+            "source name\tcell line\nS1\t5637\nS2\tA549\nS3\t5637\nS4\tK562\n".as_bytes(),
+        )?;
+        let covariates =
+            extract_sdrf_covariates(&raw, &["S1", "S2", "S3", "S4"], &["cell line".into()])?;
+        assert_eq!(
+            covariates,
+            Some(vec![
+                vec![0.0, 0.0],
+                vec![1.0, 0.0],
+                vec![0.0, 0.0],
+                vec![0.0, 1.0],
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn covariates_reject_missing_and_nonfinite_values() -> Result<(), Box<dyn std::error::Error>> {
         for (header, rows, expected) in [
             (
                 "missing",
@@ -10487,11 +9569,6 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                 "nonfinite",
                 ["20", "NaN", "50", "65"],
                 "contains a non-finite value",
-            ),
-            (
-                "mixed",
-                ["20", "unknown", "50", "65"],
-                "mixes numeric and categorical values",
             ),
         ] {
             let input = format!(
@@ -10539,9 +9616,9 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             .map(|name| samples.get_or_insert(name).ok_or("sample id"))
             .collect::<Result<Vec<_>, _>>()?;
         let mut proteins = StringIdRegistry::<ProteinId>::new();
-        let p1 = proteins.get_or_insert("P1").ok_or("p1")?;
-        let p2 = proteins.get_or_insert("P2").ok_or("p2")?;
-        let p3 = proteins.get_or_insert("P3").ok_or("p3")?;
+        let p1 = proteins.get_or_insert("P1").expect("p1");
+        let p2 = proteins.get_or_insert("P2").expect("p2");
+        let p3 = proteins.get_or_insert("P3").expect("p3");
 
         let p1_row = [10.0, 12.0, 30.0, 33.0];
         let p2_row = [5.0, 6.0, 20.0, 19.0];
@@ -10592,27 +9669,143 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             },
             None,
             false,
+            false,
         )?;
 
-        // Complete rows match a direct ComBat call over [P1, P2] with batch [0,0,1,1].
-        let expected = mokume_stats::batch::combat(
-            &[p1_row.to_vec(), p2_row.to_vec()],
-            &[0, 0, 1, 1],
-            None,
-            mokume_stats::batch::ComBatParams::default(),
-        );
+        // Complete rows match a direct ComBat call over log2([P1, P2]) with batch
+        // [0,0,1,1], returned to the linear scale.
+        let expected = combat_on_log2(&[p1_row.to_vec(), p2_row.to_vec()], &[0, 0, 1, 1]);
         for (row, protein) in [p1, p2].into_iter().enumerate() {
             for (col, sample) in sample_ids.iter().enumerate() {
-                let got = matrix.value(protein, *sample).ok_or("corrected value")?;
-                assert!((got - expected[row][col]).abs() < 1e-9);
+                let got = matrix.value(protein, *sample).expect("corrected value");
+                assert!((got - expected[row][col]).abs() < 1e-9 * expected[row][col]);
             }
         }
         // Incomplete row P3 is untouched, and its missing cell stays missing.
         for (col, sample) in sample_ids.iter().take(3).enumerate() {
-            let got = matrix.value(p3, *sample).ok_or("p3 value")?;
+            let got = matrix.value(p3, *sample).expect("p3 value");
             assert!((got - [7.0, 8.0, 9.0][col]).abs() < 1e-12);
         }
         assert!(matrix.value(p3, sample_ids[3]).is_none());
+        Ok(())
+    }
+
+    /// Direct log2-scale ComBat of linear rows, returned to the linear scale.
+    fn combat_on_log2(rows: &[Vec<f64>], batch: &[usize]) -> Vec<Vec<f64>> {
+        let log2 = rows
+            .iter()
+            .map(|row| row.iter().map(|value| value.log2()).collect())
+            .collect::<Vec<Vec<f64>>>();
+        mokume_stats::batch::combat(
+            &log2,
+            batch,
+            None,
+            mokume_stats::batch::ComBatParams::default(),
+        )
+        .into_iter()
+        .map(|row| row.into_iter().map(f64::exp2).collect())
+        .collect()
+    }
+
+    fn batch_test_matrix(
+        rows: &[(&str, [Option<f64>; 4])],
+    ) -> (ProteinMatrix, Vec<SampleId>, Vec<ProteinId>) {
+        let mut samples = StringIdRegistry::<SampleId>::new();
+        let sample_ids = ["A-1", "A-2", "B-1", "B-2"]
+            .iter()
+            .map(|name| samples.get_or_insert(name).expect("sample id"))
+            .collect::<Vec<_>>();
+        let mut proteins = StringIdRegistry::<ProteinId>::new();
+        let mut cells = std::collections::HashMap::new();
+        let mut ids = Vec::new();
+        for (name, values) in rows {
+            let protein = proteins.get_or_insert(name).expect("protein id");
+            ids.push(protein);
+            for (sample, value) in sample_ids.iter().zip(values) {
+                if let Some(value) = value {
+                    cells.insert(
+                        CellKey {
+                            protein,
+                            sample: *sample,
+                        },
+                        *value,
+                    );
+                }
+            }
+        }
+        let matrix = ProteinMatrix {
+            proteins,
+            samples,
+            allowed_proteins: ids.iter().copied().collect(),
+            excluded_samples: HashSet::new(),
+            peptide_counts: std::collections::HashMap::new(),
+            values: ProteinValues::Cells(cells),
+        };
+        (matrix, sample_ids, ids)
+    }
+
+    #[test]
+    fn apply_batch_correction_skips_non_positive_rows_and_keeps_undefined_rows(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let config = BatchCorrectionConfig {
+            enabled: true,
+            ..BatchCorrectionConfig::default()
+        };
+        // P2 holds a zero (DirectLFQ's missing value): it is not a complete row,
+        // so it stays as it is and only P1 is corrected. With a single complete
+        // row ComBat cannot estimate its priors and returns NaN; P1 then keeps
+        // its measured values rather than becoming missing.
+        let (mut matrix, samples, ids) = batch_test_matrix(&[
+            ("P1", [Some(10.0), Some(12.0), Some(30.0), Some(33.0)]),
+            ("P2", [Some(5.0), Some(0.0), Some(20.0), Some(19.0)]),
+        ]);
+        matrix.apply_batch_correction(&config, None, false, false)?;
+        for (protein, row) in ids
+            .iter()
+            .zip([[10.0, 12.0, 30.0, 33.0], [5.0, 0.0, 20.0, 19.0]])
+        {
+            for (sample, expected) in samples.iter().zip(row) {
+                assert_eq!(matrix.value(*protein, *sample), Some(expected));
+            }
+        }
+
+        // Log2-scale values (abd, ratio) are corrected as they are, negatives included.
+        let rows = [vec![-1.0, -0.5, 2.0, 2.5], vec![0.5, 1.0, 3.0, 2.0]];
+        let (mut log2, samples, ids) = batch_test_matrix(&[
+            (
+                "P1",
+                rows[0]
+                    .iter()
+                    .copied()
+                    .map(Some)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .expect("row"),
+            ),
+            (
+                "P2",
+                rows[1]
+                    .iter()
+                    .copied()
+                    .map(Some)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .expect("row"),
+            ),
+        ]);
+        log2.apply_batch_correction(&config, None, false, true)?;
+        let expected = mokume_stats::batch::combat(
+            &rows,
+            &[0, 0, 1, 1],
+            None,
+            mokume_stats::batch::ComBatParams::default(),
+        );
+        for (protein, row) in ids.iter().zip(&expected) {
+            for (sample, value) in samples.iter().zip(row) {
+                let got = log2.value(*protein, *sample).expect("corrected value");
+                assert!((got - value).abs() < 1e-9);
+            }
+        }
         Ok(())
     }
 
@@ -10634,8 +9827,8 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                 .map(|name| samples.get_or_insert(name).ok_or("sample id"))
                 .collect::<Result<Vec<_>, _>>()?;
             let mut proteins = StringIdRegistry::<ProteinId>::new();
-            let p1 = proteins.get_or_insert("P1").ok_or("p1")?;
-            let p2 = proteins.get_or_insert("P2").ok_or("p2")?;
+            let p1 = proteins.get_or_insert("P1").expect("p1");
+            let p2 = proteins.get_or_insert("P2").expect("p2");
             let mut cells: std::collections::HashMap<CellKey, f64> =
                 std::collections::HashMap::new();
             for (sample, &value) in sample_ids.iter().zip(p1_row.iter()) {
@@ -10674,9 +9867,8 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
 
         let dir = tempfile::Builder::new()
             .prefix("mokume-batch-column-wiring-")
-            .tempdir()?
-            .keep();
-        let sdrf_path = dir.join("col.sdrf.tsv");
+            .tempdir()?;
+        let sdrf_path = dir.path().join("col.sdrf.tsv");
         fs::write(
             &sdrf_path,
             "source name\tbatch_id\nX1\tg1\nX2\tg1\nX3\tg2\nX4\tg2\n",
@@ -10694,18 +9886,14 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             &column_config("column", Some("batch_id")),
             Some(&sdrf_path),
             false,
+            false,
         )?;
-        // Corrected rows match a direct ComBat over the column-derived batch [0,0,1,1].
-        let expected = mokume_stats::batch::combat(
-            &[p1_row.to_vec(), p2_row.to_vec()],
-            &[0, 0, 1, 1],
-            None,
-            mokume_stats::batch::ComBatParams::default(),
-        );
+        // Corrected rows match a direct log2 ComBat over the column-derived batch [0,0,1,1].
+        let expected = combat_on_log2(&[p1_row.to_vec(), p2_row.to_vec()], &[0, 0, 1, 1]);
         for (row, protein) in [p1, p2].into_iter().enumerate() {
             for (col, sample) in sample_ids.iter().enumerate() {
-                let got = matrix.value(protein, *sample).ok_or("corrected value")?;
-                assert!((got - expected[row][col]).abs() < 1e-9);
+                let got = matrix.value(protein, *sample).expect("corrected value");
+                assert!((got - expected[row][col]).abs() < 1e-9 * expected[row][col]);
             }
         }
 
@@ -10715,6 +9903,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             .apply_batch_correction(
                 &column_config("column", Some("nope")),
                 Some(&sdrf_path),
+                false,
                 false
             )
             .is_err());
@@ -10722,7 +9911,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         // `run` has no run-level mapping in the protein-matrix flow -> error.
         let (mut run_matrix, ..) = build()?;
         assert!(run_matrix
-            .apply_batch_correction(&column_config("run", None), Some(&sdrf_path), false)
+            .apply_batch_correction(&column_config("run", None), Some(&sdrf_path), false, false)
             .is_err());
 
         fs::remove_dir_all(&dir).ok();
@@ -10742,8 +9931,8 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                 .map(|name| samples.get_or_insert(name).ok_or("sample id"))
                 .collect::<Result<Vec<_>, _>>()?;
             let mut proteins = StringIdRegistry::<ProteinId>::new();
-            let p1 = proteins.get_or_insert("P1").ok_or("p1")?;
-            let p2 = proteins.get_or_insert("P2").ok_or("p2")?;
+            let p1 = proteins.get_or_insert("P1").expect("p1");
+            let p2 = proteins.get_or_insert("P2").expect("p2");
             let mut cells: std::collections::HashMap<CellKey, f64> =
                 std::collections::HashMap::new();
             for (sample, &value) in sample_ids.iter().zip(p1_row.iter()) {
@@ -10789,7 +9978,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         for method in ["fraction", "techreplicate", "totally-unknown"] {
             let (mut matrix, ..) = build()?;
             assert!(matrix
-                .apply_batch_correction(&method_config(method), None, false)
+                .apply_batch_correction(&method_config(method), None, false, false)
                 .is_err());
         }
         Ok(())
@@ -10802,12 +9991,12 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         // in S1 and S2; P2 only in S1 (missing in the observed sample S2); S3 carries
         // no observation at all.
         let mut samples = StringIdRegistry::<SampleId>::new();
-        let s1 = samples.get_or_insert("S1").ok_or("s1")?;
-        let s2 = samples.get_or_insert("S2").ok_or("s2")?;
-        let _s3 = samples.get_or_insert("S3").ok_or("s3")?;
+        let s1 = samples.get_or_insert("S1").expect("s1");
+        let s2 = samples.get_or_insert("S2").expect("s2");
+        let _s3 = samples.get_or_insert("S3").expect("s3");
         let mut proteins = StringIdRegistry::<ProteinId>::new();
-        let p1 = proteins.get_or_insert("P1").ok_or("p1")?;
-        let p2 = proteins.get_or_insert("P2").ok_or("p2")?;
+        let p1 = proteins.get_or_insert("P1").expect("p1");
+        let p2 = proteins.get_or_insert("P2").expect("p2");
         let mut cells: std::collections::HashMap<CellKey, f64> = std::collections::HashMap::new();
         cells.insert(
             CellKey {
@@ -10849,11 +10038,10 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
 
         // Additive method (`Some(0.0)`): a missing cell in the observed sample S2 is
         // `0`, but the all-empty sample S3 stays blank (Python never densifies it).
-        let zero_path = tempfile::Builder::new()
+        let zero_directory = tempfile::Builder::new()
             .prefix("mokume-missing-zero-")
-            .tempdir()?
-            .keep()
-            .join("missing_zero.csv");
+            .tempdir()?;
+        let zero_path = zero_directory.path().join("missing_zero.csv");
         matrix.write_csv(&zero_path, OutputFormat::PythonCompatible, false, Some(0.0))?;
         let zero = fs::read_to_string(&zero_path)?;
         assert_eq!(cell(&zero, "P1", 1), "10");
@@ -10861,35 +10049,15 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         assert_eq!(cell(&zero, "P2", 3), "");
 
         // Average/ratio method (`None`): every missing cell is blank.
-        let nan_path = tempfile::Builder::new()
+        let nan_directory = tempfile::Builder::new()
             .prefix("mokume-missing-nan-")
-            .tempdir()?
-            .keep()
-            .join("missing_nan.csv");
+            .tempdir()?;
+        let nan_path = nan_directory.path().join("missing_nan.csv");
         matrix.write_csv(&nan_path, OutputFormat::PythonCompatible, false, None)?;
         let nan = fs::read_to_string(&nan_path)?;
         assert_eq!(cell(&nan, "P1", 1), "10");
         assert_eq!(cell(&nan, "P2", 2), "");
         assert_eq!(cell(&nan, "P2", 3), "");
-        Ok(())
-    }
-
-    #[test]
-    fn accepts_ensemble_de_subset() -> Result<(), Box<dyn std::error::Error>> {
-        // ensemble runs member methods and fuses them with the deterministic
-        // top-k consensus combiner; a well-formed ensemble DE config must validate
-        // (including an explicit member list via repeated --de-ensemble-method).
-        let parquet = existing_dummy_path("ensemble_de")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "ensemble".to_string();
-        config.differential_expression.ensemble_methods =
-            Some(vec!["limma".to_string(), "deqms".to_string()]);
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-        config.differential_expression.output = Some(PathBuf::from("de.csv"));
-
-        validate_implemented_subset(&config)?;
         Ok(())
     }
 
@@ -10909,7 +10077,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         ];
 
         for (members, expected) in invalid_members {
-            let parquet = existing_dummy_path("invalid_ensemble_member")?;
+            let (_parquet_guard, parquet) = existing_dummy_path("invalid_ensemble_member")?;
             let mut config = base_config(parquet);
             config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
             config.differential_expression.enabled = true;
@@ -10919,7 +10087,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
             config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
-            let Some(error) = validate_implemented_subset(&config).err() else {
+            let Some(error) = validate_de_ensemble_options(&config).err() else {
                 return Err("invalid ensemble member configuration was accepted".into());
             };
             let error = error.to_string();
@@ -10935,7 +10103,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     fn validates_ensemble_min_k_against_configured_members(
     ) -> Result<(), Box<dyn std::error::Error>> {
         for min_k in [0, 3] {
-            let parquet = existing_dummy_path("invalid_ensemble_min_k")?;
+            let (_parquet_guard, parquet) = existing_dummy_path("invalid_ensemble_min_k")?;
             let mut config = base_config(parquet);
             config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
             config.differential_expression.enabled = true;
@@ -10946,7 +10114,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
             config.differential_expression.output = Some(PathBuf::from("de.csv"));
 
-            let Some(error) = validate_implemented_subset(&config).err() else {
+            let Some(error) = validate_de_ensemble_options(&config).err() else {
                 return Err("invalid ensemble min-k was accepted".into());
             };
             let error = error.to_string();
@@ -10979,119 +10147,19 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         Ok(())
     }
 
-    #[test]
-    fn rejects_ensemble_methods_for_single_method() -> Result<(), Box<dyn std::error::Error>> {
-        // --de-ensemble-method is meaningless for a single-method run and must be
-        // rejected rather than silently ignored.
-        let parquet = existing_dummy_path("ensemble_methods_on_limma")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "limma".to_string();
-        config.differential_expression.ensemble_methods = Some(vec!["deqms".to_string()]);
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-
-        let error = validate_implemented_subset(&config).err();
-        assert!(
-            matches!(error, Some(MokumeError::InvalidInput { .. })),
-            "expected InvalidInput, got {error:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn accepts_ihw_fdr_method() -> Result<(), Box<dyn std::error::Error>> {
-        // IHW is now a supported FDR method (ported in mokume-stats'
-        // `ihw_correction` and applied per method in `de::run_member`), so the
-        // validation must let it through.
-        let parquet = existing_dummy_path("de_ihw")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "limma".to_string();
-        config.differential_expression.fdr_method = "ihw".to_string();
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-        config.differential_expression.output = Some(PathBuf::from("de.csv"));
-
-        validate_implemented_subset(&config)?;
-        Ok(())
-    }
-
-    #[test]
-    fn accepts_adaptive_fdr_methods() -> Result<(), Box<dyn std::error::Error>> {
-        for method in ["bky", "storey"] {
-            let parquet = existing_dummy_path(&format!("de_{method}"))?;
-            let mut config = base_config(parquet);
-            config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-            config.differential_expression.enabled = true;
-            config.differential_expression.method = "limma".to_string();
-            config.differential_expression.fdr_method = method.to_string();
-            config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-            config.differential_expression.output = Some(PathBuf::from("de.csv"));
-            validate_implemented_subset(&config)?;
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_unknown_fdr_method() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("de_unknown_fdr")?;
-        let mut config = base_config(parquet);
-        config.input.sdrf = Some(PathBuf::from("sdrf.tsv"));
-        config.differential_expression.enabled = true;
-        config.differential_expression.method = "limma".to_string();
-        config.differential_expression.fdr_method = "unknown".to_string();
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-        config.differential_expression.output = Some(PathBuf::from("de.csv"));
-
-        assert!(matches!(
-            validate_implemented_subset(&config),
-            Err(MokumeError::NotImplemented {
-                stage: "differential-expression-fdr-method"
-            })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn accepts_most_frequent_imputation() -> Result<(), Box<dyn std::error::Error>> {
-        let parquet = existing_dummy_path("impute_most_frequent")?;
-        let mut config = base_config(parquet);
-        config.imputation.enabled = true;
-        config.imputation.method = "most_frequent".to_string();
-
-        validate_implemented_subset(&config)?;
-        Ok(())
-    }
-
-    #[test]
-    fn disabled_de_options_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
-        // Non-default DE options must not be accepted when no DE result will run.
-        let parquet = existing_dummy_path("de_disabled")?;
-        let mut config = base_config(parquet);
-        config.differential_expression.method = "deqms".to_string();
-        config.differential_expression.fdr_method = "ihw".to_string();
-        config.differential_expression.contrasts = Some(vec!["A vs B".to_string()]);
-
-        assert!(matches!(
-            validate_implemented_subset(&config),
-            Err(MokumeError::InvalidInput { .. })
-        ));
-        Ok(())
-    }
-
-    fn existing_dummy_path(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let path = tempfile::Builder::new()
+    fn existing_dummy_path(
+        name: &str,
+    ) -> Result<(tempfile::TempDir, PathBuf), Box<dyn std::error::Error>> {
+        let directory = tempfile::Builder::new()
             .prefix(&format!(
                 "mokume_pipeline_{name}_{}_{}_",
                 std::process::id(),
                 unique_suffix()
             ))
-            .tempdir()?
-            .keep()
-            .join("dummy");
+            .tempdir()?;
+        let path = directory.path().join("dummy");
         fs::write(&path, [])?;
-        Ok(path)
+        Ok((directory, path))
     }
 
     fn unique_suffix() -> u128 {
@@ -11141,7 +10209,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
         method: super::QuantMethod,
         directlfq_sums: std::collections::HashMap<super::DirectLfqCellKey, f64>,
     ) -> super::FeatureAggregation {
-        let canonical_traces = directlfq_sums
+        let peptide_traces = directlfq_sums
             .into_iter()
             .map(|(key, intensity)| {
                 (
@@ -11156,11 +10224,14 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             .collect();
         super::FeatureAggregation::Lfq {
             method,
-            route_to_directlfq: true,
+            route_to_directlfq: method == super::QuantMethod::DirectLfq,
+            maxlfq_min_ratio_count: 2,
+            stabilize: false,
             directlfq_min_nonan: 1,
             directlfq_num_samples_quadratic: 50,
+            directlfq_normalize_samples: true,
             traces: super::MaxLfqFeatureAggregation {
-                canonical_traces,
+                peptide_traces,
                 ..super::MaxLfqFeatureAggregation::default()
             },
             cached_directlfq_values: None,
@@ -11232,24 +10303,24 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
     fn lfq_fixture_protein_ids(
         method: super::QuantMethod,
         fixture: &LfqMinUniqueFixture,
-    ) -> HashSet<ProteinId> {
+    ) -> mokume_core::Result<HashSet<ProteinId>> {
         let mut proteins = StringIdRegistry::<ProteinId>::new();
-        lfq_aggregation(method, fixture.sums.clone())
+        Ok(lfq_aggregation(method, fixture.sums.clone())
             .finalize(
                 &fixture.allowed_cells,
                 &mut proteins,
                 &HashMap::new(),
                 &fixture.canonical_peptides,
                 &StringIdRegistry::<SampleId>::new(),
-            )
-            .protein_ids()
+            )?
+            .protein_ids())
     }
 
     #[test]
-    fn lfq_min_unique_gate_is_per_cell_for_both_methods() {
+    fn lfq_min_unique_gate_is_per_cell_for_both_methods() -> mokume_core::Result<()> {
         let fixture = lfq_min_unique_fixture();
-        let max_proteins = lfq_fixture_protein_ids(super::QuantMethod::MaxLfq, &fixture);
-        let direct_proteins = lfq_fixture_protein_ids(super::QuantMethod::DirectLfq, &fixture);
+        let max_proteins = lfq_fixture_protein_ids(super::QuantMethod::MaxLfq, &fixture)?;
+        let direct_proteins = lfq_fixture_protein_ids(super::QuantMethod::DirectLfq, &fixture)?;
 
         assert!(
             max_proteins.contains(&fixture.dense),
@@ -11264,6 +10335,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             !direct_proteins.contains(&fixture.scattered),
             "DirectLFQ applies the same per-cell unique-peptide gate"
         );
+        Ok(())
     }
 
     // Lock the monoisotopic molecular weight against the pyOpenMS

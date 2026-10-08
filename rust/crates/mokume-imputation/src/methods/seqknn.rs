@@ -1,12 +1,11 @@
-use mokume_core::stats::mean_finite;
-use mokume_core::{ProteinId, SampleId};
+use mokume_core::{MokumeError, ProteinId, Result, SampleId};
 
 pub(crate) fn seqknn_imputed_values<F>(
     proteins: &[ProteinId],
     samples: &[SampleId],
     n_neighbors: usize,
     value_at: &mut F,
-) -> Vec<(ProteinId, SampleId, f64)>
+) -> Result<Vec<(ProteinId, SampleId, f64)>>
 where
     F: FnMut(ProteinId, SampleId) -> Option<f64>,
 {
@@ -21,17 +20,15 @@ where
         })
         .collect::<Vec<_>>();
     if matrix.is_empty() || samples.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let missing_counts = matrix
         .iter()
         .map(|row| row.iter().filter(|value| value.is_none()).count())
         .collect::<Vec<_>>();
-    if missing_counts.iter().all(|count| *count == 0)
-        || missing_counts.iter().all(|count| *count == samples.len())
-    {
-        return Vec::new();
+    if missing_counts.iter().all(|count| *count == 0) {
+        return Ok(Vec::new());
     }
 
     let original_missing = matrix
@@ -55,8 +52,9 @@ where
         .cloned()
         .collect::<Vec<_>>();
     if complete_rows.is_empty() {
-        seed_seqknn_with_column_means(&matrix, &mut sorted_matrix[0]);
-        complete_rows.push(sorted_matrix[0].clone());
+        return Err(MokumeError::InvalidInput {
+            message: "SeqKNN requires an initial set of complete protein rows".to_owned(),
+        });
     }
 
     for row in sorted_matrix.iter_mut().skip(complete_rows.len()) {
@@ -78,21 +76,7 @@ where
             }
         }
     }
-    imputed
-}
-
-fn seed_seqknn_with_column_means(matrix: &[Vec<Option<f64>>], row: &mut [Option<f64>]) {
-    for sample_index in 0..row.len() {
-        if row[sample_index].is_some() {
-            continue;
-        }
-        row[sample_index] = mean_finite(
-            &matrix
-                .iter()
-                .filter_map(|source_row| source_row[sample_index])
-                .collect::<Vec<_>>(),
-        );
-    }
+    Ok(imputed)
 }
 
 fn seqknn_imputed_row(
@@ -110,7 +94,7 @@ fn seqknn_imputed_row(
         .enumerate()
         .filter_map(|(index, value)| value.is_some().then_some(index))
         .collect::<Vec<_>>();
-    if missing_indices.is_empty() || observed_indices.is_empty() || complete_rows.is_empty() {
+    if missing_indices.is_empty() || complete_rows.is_empty() {
         return target.to_vec();
     }
 
@@ -118,10 +102,7 @@ fn seqknn_imputed_row(
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
-            let mut distance = seqknn_distance(target, row, &observed_indices)?;
-            if distance == 0.0 {
-                distance = 1e-9;
-            }
+            let distance = seqknn_distance(target, row, &observed_indices)?;
             Some((distance, index, row))
         })
         .collect::<Vec<_>>();
@@ -140,7 +121,8 @@ fn seqknn_imputed_row(
             let Some(value) = row[sample_index] else {
                 continue;
             };
-            let weight = 1.0 / distance;
+            // Original SeqKnn 1.0.1 nnmiss uses squared Euclidean distance.
+            let weight = 1.0 / (distance + 1e-15);
             weighted_sum += value * weight;
             weight_sum += weight;
         }
@@ -163,5 +145,5 @@ fn seqknn_distance(
         let delta = row_value - target_value;
         squared += delta * delta;
     }
-    Some(squared.sqrt())
+    Some(squared)
 }

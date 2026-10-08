@@ -19,7 +19,8 @@
 //!      rots carries a single `d_stat` column).
 //!
 //! `--de-method ensemble` is also wired: it runs each configured member method
-//! (default members `[limrots, deqms, proda]`, overridable via
+//! (default members `[limrots, deqms, proda]`, with `limma` in place of
+//! `limrots` on a contrast with missing values; overridable via
 //! repeated `--de-ensemble-method`), keeps the non-empty results, and fuses them with the
 //! deterministic top-k consensus combiner (`combine_de_results`), emitting the
 //! consensus column set (`n_methods_up`/`n_methods_down`/`methods_significant`).
@@ -36,10 +37,10 @@
 //! available explicitly.
 //!
 //! Unsupported methods and options are rejected upstream in
-//! `validate_de_subset`; this module never silently substitutes a different
-//! test. The in-pipeline deqms path feeds the per-protein
-//! unique-canonical-peptide counts captured at ingest (mirroring Python's
-//! `_load_de_peptide_counts` -> `_build_count_vector`), so the
+//! `validate_de_subset`; this module never substitutes an explicitly requested
+//! test and logs the default-member swap above. The in-pipeline deqms path
+//! feeds the per-protein unique-canonical-peptide counts captured at ingest
+//! (mirroring Python's `_load_de_peptide_counts` -> `_build_count_vector`), so the
 //! spectraCounteBayes count moderation runs when the data has a real spread of
 //! counts and at least 10 testable proteins; with all-equal counts (or fewer
 //! than 10 valid points) it falls back to plain eBayes (== limma), exactly as
@@ -85,7 +86,6 @@ pub(crate) fn run_differential_expression(
     config: &DifferentialExpressionConfig,
     drop_empty_samples: bool,
 ) -> Result<()> {
-    validate_config(config, false)?;
     let Some(sdrf) = sdrf else {
         return Err(invalid_input(
             "differential expression requires an SDRF file (--sdrf)",
@@ -96,26 +96,21 @@ pub(crate) fn run_differential_expression(
         return Ok(());
     }
 
+    let method = de_method(config)?;
     let condition_by_sample = condition_by_sample(sdrf);
     let samples = matrix.sample_columns(drop_empty_samples);
 
     for contrast in &contrasts {
-        let results = run_one_contrast(matrix, &samples, &condition_by_sample, contrast, config)?;
-        if let Some(output) = de_output_path(config, contrast, contrasts.len()) {
-            match &results {
-                MatrixDifferentialExpressionResults::Standard(rows) => {
-                    let DeMethod::Member(method) = de_method(config)? else {
-                        return Err(invalid_input(
-                            "ensemble results cannot use the single-method writer",
-                        ));
-                    };
-                    write_de_csv(&output, rows, contrast, method, matrix)?;
-                }
-                MatrixDifferentialExpressionResults::Ensemble(rows) => {
-                    write_ensemble_csv(&output, rows, contrast)?;
-                }
-            }
-        }
+        let output = de_output_path(config, contrast, contrasts.len());
+        run_one_contrast(
+            matrix,
+            &samples,
+            &condition_by_sample,
+            contrast,
+            method,
+            output.as_deref(),
+            config,
+        )?;
     }
     Ok(())
 }
@@ -147,7 +142,7 @@ pub fn differential_expression_matrix(
     config: &DifferentialExpressionConfig,
     threads: Option<usize>,
 ) -> Result<MatrixDifferentialExpressionResults> {
-    validate_config(config, false)?;
+    validate_config(config)?;
     validate_matrix_de_inputs(proteins, values, n_a, n_b, peptide_counts, config)?;
 
     crate::threading::install(threads, || {
@@ -173,7 +168,7 @@ pub fn differential_expression_matrix(
                 &prepared, config,
             )?)),
             DeMethod::Member(method) => Ok(MatrixDifferentialExpressionResults::Standard(
-                run_member(method, &prepared, config),
+                run_member(method, &prepared, config)?,
             )),
         }
     })
@@ -302,8 +297,10 @@ fn run_one_contrast(
     samples: &[(SampleId, &str)],
     condition_by_sample: &HashMap<String, String>,
     contrast: &Contrast,
+    method: DeMethod,
+    output: Option<&Path>,
     config: &DifferentialExpressionConfig,
-) -> Result<MatrixDifferentialExpressionResults> {
+) -> Result<()> {
     let samples_a = group_samples(samples, condition_by_sample, &contrast.cond_a);
     let samples_b = group_samples(samples, condition_by_sample, &contrast.cond_b);
     if samples_a.is_empty() {
@@ -335,15 +332,17 @@ fn run_one_contrast(
         n_b: samples_b.len(),
     };
 
-    // Method is validated upstream in `validate_de_subset`; only `limma`,
-    // `deqms`, `rots`, `limrots`, `proda`, and `ensemble` reach here.
-    match de_method(config)? {
-        DeMethod::Ensemble => Ok(MatrixDifferentialExpressionResults::Ensemble(run_ensemble(
-            &prepared, config,
-        )?)),
-        DeMethod::Member(method) => Ok(MatrixDifferentialExpressionResults::Standard(run_member(
-            method, &prepared, config,
-        ))),
+    match method {
+        DeMethod::Ensemble => {
+            let rows = run_ensemble(&prepared, config)?;
+            output.map_or(Ok(()), |path| write_ensemble_csv(path, &rows, contrast))
+        }
+        DeMethod::Member(method) => {
+            let rows = run_member(method, &prepared, config)?;
+            output.map_or(Ok(()), |path| {
+                write_de_csv(path, &rows, contrast, method, matrix)
+            })
+        }
     }
 }
 
@@ -364,8 +363,8 @@ fn run_member(
     method: MemberMethod,
     prepared: &Prepared<'_>,
     config: &DifferentialExpressionConfig,
-) -> Vec<DeResult> {
-    let results = run_method_bh(method, prepared, config);
+) -> Result<Vec<DeResult>> {
+    let results = run_method_bh(method, prepared, config)?;
     finalize_member_results(method, results, config)
 }
 
@@ -373,19 +372,20 @@ fn finalize_member_results(
     method: MemberMethod,
     mut results: Vec<DeResult>,
     config: &DifferentialExpressionConfig,
-) -> Vec<DeResult> {
-    // LimROTS and ROTS preserve their own permutation FDR. All other methods
+) -> Result<Vec<DeResult>> {
+    // LimROTS preserves official BH.pvalue; ROTS preserves BH-adjusted permutation p-values.
+    // All other methods
     // apply the configured correction over the raw p-values.
     if !matches!(method, MemberMethod::Limrots | MemberMethod::Rots) {
         if is_ihw(config) {
-            apply_ihw(&mut results, config);
+            apply_ihw(&mut results, config)?;
         } else if let Some(adaptive_method) = adaptive_fdr_method(config) {
             apply_adaptive_fdr(&mut results, adaptive_method, config);
         }
     }
     let gate = resolved_effect_size_gate(&results, config);
     classify_and_sort(&mut results, gate, config);
-    results
+    Ok(results)
 }
 
 /// Run one single-method DE test with its built-in Benjamini-Hochberg
@@ -395,12 +395,12 @@ fn run_method_bh(
     method: MemberMethod,
     prepared: &Prepared<'_>,
     config: &DifferentialExpressionConfig,
-) -> Vec<DeResult> {
+) -> Result<Vec<DeResult>> {
     let (proteins, rows, n_a, n_b) = (prepared.proteins, prepared.rows, prepared.n_a, prepared.n_b);
     let (fdr, log2fc) = (config.fdr_threshold, config.log2fc_threshold);
-    match method {
+    Ok(match method {
         MemberMethod::Rots => rots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
-        MemberMethod::Limrots => limrots_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
+        MemberMethod::Limrots => limrots_two_group(proteins, rows, n_a, n_b, fdr, log2fc)?,
         MemberMethod::Proda => proda_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
         MemberMethod::Deqms => {
             // Per-protein unique-canonical-peptide counts captured at ingest,
@@ -423,12 +423,11 @@ fn run_method_bh(
             )
         }
         MemberMethod::Limma => limma_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
-    }
+    })
 }
 
-/// IHW uses 5 covariate bins, matching mokume's `_ihw_correction(..., n_bins=5)`
-/// default (differential_expression.py:393).
-const IHW_N_BINS: usize = 5;
+/// Use the official IHW automatic bin-count rule (one bin below 3000 tests).
+const IHW_N_BINS: usize = 0;
 
 /// Whether the configured FDR method is IHW (case-insensitive, trimmed),
 /// matching mokume's `self.fdr_method = config["fdr_method"].lower()` and the
@@ -451,21 +450,22 @@ fn adaptive_fdr_method(config: &DifferentialExpressionConfig) -> Option<Adaptive
 /// The covariate is the per-protein row-mean of the two `mean_<cond>` columns
 /// (`_ihw_covariate`, differential_expression.py:328-330): mokume's
 /// `de_df[mean_cols].mean(axis=1)` skips NaN, so a protein observed in only one
-/// group uses that group's mean; both-NaN yields a NaN covariate (excluded from
-/// binning by `ihw_correction`). The fallback to `n_a + n_b`
+/// group uses that group's mean; a tested protein with no finite covariate is
+/// rejected by IHW instead of being silently excluded. The fallback to `n_a + n_b`
 /// (differential_expression.py:331-332) cannot trigger here because the
 /// two-group methods always emit both mean columns.
-fn apply_ihw(results: &mut [DeResult], config: &DifferentialExpressionConfig) {
+fn apply_ihw(results: &mut [DeResult], config: &DifferentialExpressionConfig) -> Result<()> {
     if results.is_empty() {
-        return;
+        return Ok(());
     }
     let pvalues: Vec<f64> = results.iter().map(|row| row.p_value).collect();
     let covariate: Vec<f64> = results.iter().map(ihw_covariate).collect();
-    let adjusted = ihw_correction(&pvalues, &covariate, config.fdr_threshold, IHW_N_BINS);
+    let adjusted = ihw_correction(&pvalues, &covariate, config.fdr_threshold, IHW_N_BINS)?;
 
     for (row, &adj_p_value) in results.iter_mut().zip(&adjusted) {
         row.adj_p_value = adj_p_value;
     }
+    Ok(())
 }
 
 fn apply_adaptive_fdr(
@@ -570,9 +570,9 @@ fn run_ensemble(
     config: &DifferentialExpressionConfig,
 ) -> Result<Vec<EnsembleResult>> {
     let mut members: Vec<(String, Vec<DeResult>)> = Vec::new();
-    for name in validated_ensemble_member_names(config)? {
+    for name in ensemble_member_names(prepared, config)? {
         let method = parse_ensemble_method(&name)?;
-        let result = run_member(method, prepared, config);
+        let result = run_member(method, prepared, config)?;
         // Python only adds members whose result is non-empty.
         if !result.is_empty() {
             members.push((name, result));
@@ -587,6 +587,34 @@ fn run_ensemble(
         config.fdr_threshold,
     );
     Ok(finalize_ensemble_results(combined, config))
+}
+
+/// The member methods for one contrast. The LimROTS kernel accepts only
+/// complete finite log2 matrices, so on a contrast with missing values the
+/// default member set runs `limma`, the moderated t-test that LimROTS builds
+/// on, in place of `limrots`. Python's LimROTS accepts missing values and keeps
+/// `limrots`; an explicitly requested `limrots` member still needs a complete
+/// matrix.
+fn ensemble_member_names(
+    prepared: &Prepared<'_>,
+    config: &DifferentialExpressionConfig,
+) -> Result<Vec<String>> {
+    let mut names = validated_ensemble_member_names(config)?;
+    let incomplete = || {
+        prepared
+            .rows
+            .iter()
+            .any(|row| row.iter().any(|value| !value.is_finite()))
+    };
+    if config.ensemble_methods.is_none() && incomplete() {
+        if let Some(name) = names.iter_mut().find(|name| name.as_str() == "limrots") {
+            *name = "limma".to_owned();
+        }
+        tracing::info!(
+            "ensemble default member limrots replaced by limma: the contrast has missing values"
+        );
+    }
+    Ok(names)
 }
 
 fn finalize_ensemble_results(
@@ -652,21 +680,20 @@ fn classify_ensemble(
     }
 }
 
-pub(crate) fn validate_config(
-    config: &DifferentialExpressionConfig,
-    allow_auto: bool,
-) -> Result<()> {
+/// Validate a matrix-DE request. Option applicability (which options were
+/// supplied) is checked by the caller; `auto` cannot be resolved without a
+/// quantification method and is rejected.
+pub(crate) fn validate_config(config: &DifferentialExpressionConfig) -> Result<()> {
     let method = config.method.trim().to_ascii_lowercase();
     let is_ensemble = method == "ensemble";
-    match method.as_str() {
-        "limma" | "deqms" | "rots" | "limrots" | "proda" | "ensemble" => {}
-        "auto" if allow_auto => {}
-        _ => {
-            return Err(invalid_input(format!(
-                "unknown DE method `{}`",
-                config.method
-            )))
-        }
+    if !matches!(
+        method.as_str(),
+        "limma" | "deqms" | "rots" | "limrots" | "proda" | "ensemble"
+    ) {
+        return Err(invalid_input(format!(
+            "unknown DE method `{}`",
+            config.method
+        )));
     }
     if !matches!(
         config.fdr_method.trim().to_ascii_lowercase().as_str(),
@@ -676,22 +703,9 @@ pub(crate) fn validate_config(
             stage: "differential-expression-fdr-method",
         });
     }
-    if matches!(method.as_str(), "rots" | "limrots")
-        && !config.fdr_method.trim().eq_ignore_ascii_case("bh")
-    {
-        return Err(invalid_input(format!(
-            "--de-fdr-method {} does not apply to {method}, which retains its permutation FDR",
-            config.fdr_method
-        )));
-    }
     if config.ensemble_methods.is_some() && !is_ensemble {
         return Err(invalid_input(
             "--de-ensemble-method only applies to --de-method ensemble",
-        ));
-    }
-    if !is_ensemble && config.ensemble_min_k != 2 {
-        return Err(invalid_input(
-            "--de-ensemble-min-k only applies to --de-method ensemble",
         ));
     }
     if is_ensemble {
@@ -1258,14 +1272,14 @@ mod tests {
     use std::error::Error;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use mokume_core::{DifferentialExpressionConfig, MokumeError, ProteinId, SampleId};
+    use mokume_core::{DifferentialExpressionConfig, ProteinId, SampleId};
     use mokume_io::SdrfTable;
     use mokume_stats::de::{DeResult, EnsembleResult, Significance};
 
     use super::{
         available_conditions, build_count_vector, classify_significance, condition_by_sample,
         differential_expression_matrix, finalize_ensemble_results, finalize_member_results,
-        run_differential_expression, shorten_factor_label, split_contrast, validate_config,
+        run_differential_expression, shorten_factor_label, split_contrast,
         validated_ensemble_member_names, write_de_csv, Contrast, MemberMethod,
     };
     use crate::{CellKey, ProteinMatrix, ProteinValues};
@@ -1357,12 +1371,13 @@ mod tests {
         ("P6", 8.954019282642177),
     ];
 
-    fn temp_dir(tag: &str) -> TestResult<std::path::PathBuf> {
+    fn temp_dir(tag: &str) -> TestResult<(tempfile::TempDir, std::path::PathBuf)> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        Ok(tempfile::Builder::new()
+        let directory = tempfile::Builder::new()
             .prefix(&format!("mokume-de-{tag}-{nanos}-"))
-            .tempdir()?
-            .keep())
+            .tempdir()?;
+        let path = directory.path().to_path_buf();
+        Ok((directory, path))
     }
 
     /// Build a `ProteinMatrix` directly from the raw fixture, with every protein
@@ -1372,12 +1387,12 @@ mod tests {
         let mut samples = mokume_core::StringIdRegistry::<SampleId>::new();
         let mut sample_ids = Vec::with_capacity(SAMPLES.len());
         for name in SAMPLES {
-            sample_ids.push(samples.get_or_insert(name).ok_or("sample id overflow")?);
+            sample_ids.push(samples.get_or_insert(name).expect("sample id overflow"));
         }
         let mut values = HashMap::new();
         let mut allowed = HashSet::new();
         for (row, name) in PROTEINS.iter().enumerate() {
-            let protein = proteins.get_or_insert(name).ok_or("protein id overflow")?;
+            let protein = proteins.get_or_insert(name).expect("protein id overflow");
             allowed.insert(protein);
             for (col, sample) in sample_ids.iter().enumerate() {
                 values.insert(
@@ -1404,7 +1419,7 @@ mod tests {
 
     #[test]
     fn standard_de_csv_quotes_identifiers_and_dynamic_headers() -> TestResult<()> {
-        let dir = temp_dir("quoted-standard-csv")?;
+        let (_tempdir, dir) = temp_dir("quoted-standard-csv")?;
         let output = dir.join("quoted.csv");
         let matrix = fixture_matrix()?;
         let rows = vec![DeResult {
@@ -1432,7 +1447,7 @@ mod tests {
         let headers = reader.headers()?.clone();
         assert!(headers.iter().any(|value| value == "mean_A,one"));
         assert!(headers.iter().any(|value| value == "mean_B\"two"));
-        let record = reader.records().next().ok_or("missing DE row")??;
+        let record = reader.records().next().expect("missing DE row")?;
         assert_eq!(record.get(0), Some("P,\"quoted\"\nline"));
         assert_eq!(record.len(), headers.len());
         Ok(())
@@ -1449,11 +1464,11 @@ mod tests {
     #[test]
     fn deqms_count_vector_uses_real_count_and_defaults_missing_to_one() -> TestResult<()> {
         let mut proteins = mokume_core::StringIdRegistry::<ProteinId>::new();
-        let p1 = proteins.get_or_insert("P1").ok_or("protein id overflow")?;
-        let p2 = proteins.get_or_insert("P2").ok_or("protein id overflow")?;
+        let p1 = proteins.get_or_insert("P1").expect("protein id overflow");
+        let p2 = proteins.get_or_insert("P2").expect("protein id overflow");
         // P3 is a contrast row with no recorded count (e.g. a `;`-joined group or
         // a protein Python's anchor reindex would miss): it must default to 1.
-        let _p3 = proteins.get_or_insert("P3").ok_or("protein id overflow")?;
+        let _p3 = proteins.get_or_insert("P3").expect("protein id overflow");
 
         let mut peptide_counts = HashMap::new();
         peptide_counts.insert(p1, 4usize);
@@ -1503,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_fdr_and_auto_gate_are_wired_into_member_finalization() {
+    fn adaptive_fdr_and_auto_gate_are_wired_into_member_finalization() -> mokume_core::Result<()> {
         let mut pvalues = (0..900)
             .map(|index| (index as f64 + 0.5) / 900.0)
             .collect::<Vec<_>>();
@@ -1542,10 +1557,10 @@ mod tests {
             effect_size_gate: Some("mixture".to_string()),
             ..DifferentialExpressionConfig::default()
         };
-        let bky = finalize_member_results(MemberMethod::Limma, rows.clone(), &bky_config);
+        let bky = finalize_member_results(MemberMethod::Limma, rows.clone(), &bky_config)?;
         assert_eq!(bky.iter().filter(|row| row.adj_p_value < 0.05).count(), 168);
 
-        let finalized = finalize_member_results(MemberMethod::Limma, rows, &storey_config);
+        let finalized = finalize_member_results(MemberMethod::Limma, rows, &storey_config)?;
         assert_eq!(
             finalized
                 .iter()
@@ -1559,6 +1574,7 @@ mod tests {
         assert!(finalized
             .iter()
             .all(|row| { row.significance != Significance::Up || row.log2_fold_change < 0.5 }));
+        Ok(())
     }
 
     #[test]
@@ -1791,6 +1807,50 @@ mod tests {
     }
 
     #[test]
+    fn default_ensemble_runs_limma_for_limrots_on_missing_values() {
+        let proteins = vec!["P1".to_owned(), "P2".to_owned(), "P3".to_owned()];
+        let complete = vec![
+            vec![1.0, 2.0, 4.0, 8.0],
+            vec![8.0, 4.0, 2.0, 1.0],
+            vec![2.0, 3.0, 2.5, 3.5],
+        ];
+        let mut incomplete = complete.clone();
+        incomplete[2][0] = f64::NAN;
+        let counts = vec![1.0, 2.0, 3.0];
+        let default_members = DifferentialExpressionConfig {
+            enabled: true,
+            method: "ensemble".to_owned(),
+            ..DifferentialExpressionConfig::default()
+        };
+        let run = |values: &[Vec<f64>], config: &DifferentialExpressionConfig| {
+            differential_expression_matrix(&proteins, values, 2, 2, Some(&counts), config, Some(2))
+        };
+
+        // On a complete contrast the default members still run LimROTS, which
+        // rejects this three-protein matrix as too small for its search grid.
+        let Err(error) = run(&complete, &default_members) else {
+            panic!("LimROTS accepted a three-protein search grid");
+        };
+        assert!(error
+            .to_string()
+            .contains("LimROTS has an empty search grid"));
+        assert!(run(&incomplete, &default_members).is_ok());
+
+        let explicit = DifferentialExpressionConfig {
+            ensemble_methods: Some(vec![
+                "limrots".to_owned(),
+                "deqms".to_owned(),
+                "proda".to_owned(),
+            ]),
+            ..default_members.clone()
+        };
+        let Err(error) = run(&incomplete, &explicit) else {
+            panic!("an explicitly requested LimROTS member accepted missing values");
+        };
+        assert!(error.to_string().contains("complete finite log2 matrices"));
+    }
+
+    #[test]
     fn classification_marks_non_finite_results_not_tested() {
         assert_eq!(
             classify_significance(f64::NAN, 1.0, 0.05, 0.5),
@@ -1827,7 +1887,7 @@ mod tests {
     // relative 1e-6.
     #[test]
     fn de_dispatcher_matches_python_limma_oracle() -> TestResult<()> {
-        let dir = temp_dir("oracle")?;
+        let (_tempdir, dir) = temp_dir("oracle")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -1836,7 +1896,7 @@ mod tests {
 
         let text = std::fs::read_to_string(&output)?;
         let mut lines = text.lines();
-        let header = lines.next().ok_or("missing header")?;
+        let header = lines.next().expect("missing header");
         assert_eq!(
             header,
             "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,AveExpr,B,mean_groupA,mean_groupB,n_a,n_b,significance"
@@ -1846,7 +1906,7 @@ mod tests {
         let mut order: Vec<String> = Vec::new();
         for line in lines {
             let fields = line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>();
-            let protein = fields.first().ok_or("empty row")?.clone();
+            let protein = fields.first().expect("empty row").clone();
             order.push(protein.clone());
             rows.insert(protein, fields);
         }
@@ -1896,26 +1956,6 @@ mod tests {
         Ok(())
     }
 
-    // LimROTS and ROTS retain their permutation FDR, so accepting another FDR
-    // method would create a user-visible no-op. Reject that combination.
-    #[test]
-    fn de_dispatcher_rejects_unused_fdr_for_limrots_and_rots() -> TestResult<()> {
-        for method in ["limrots", "rots"] {
-            for fdr_method in ["ihw", "bky", "storey"] {
-                let config = DifferentialExpressionConfig {
-                    method: method.to_string(),
-                    fdr_method: fdr_method.to_string(),
-                    ..DifferentialExpressionConfig::default()
-                };
-                assert!(matches!(
-                    validate_config(&config, false),
-                    Err(MokumeError::InvalidInput { .. })
-                ));
-            }
-        }
-        Ok(())
-    }
-
     // Pipeline wiring test for `--de-method deqms`. The 6-protein fixture has
     // fewer than 10 valid points, so the in-pipeline deqms (with its all-ones
     // default counts) falls back to plain eBayes and reproduces the limma oracle
@@ -1927,7 +1967,7 @@ mod tests {
     // covered cell-by-cell in mokume-stats' deqms unit tests with explicit counts.
     #[test]
     fn de_dispatcher_deqms_falls_back_to_limma_oracle() -> TestResult<()> {
-        let dir = temp_dir("oracle-deqms")?;
+        let (_tempdir, dir) = temp_dir("oracle-deqms")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -1936,7 +1976,7 @@ mod tests {
 
         let text = std::fs::read_to_string(&output)?;
         let mut lines = text.lines();
-        let header = lines.next().ok_or("missing header")?;
+        let header = lines.next().expect("missing header");
         assert_eq!(
             header,
             "ProteinName,log2FC,pvalue,adj_pvalue,sca_t,sca_pvalue,sca_adj_pvalue,mean_groupA,mean_groupB,n_a,n_b,peptide_count,log_pvalue,significance"
@@ -1946,7 +1986,7 @@ mod tests {
         let mut order: Vec<String> = Vec::new();
         for line in lines {
             let fields = line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>();
-            let protein = fields.first().ok_or("empty row")?.clone();
+            let protein = fields.first().expect("empty row").clone();
             order.push(protein.clone());
             rows.insert(protein, fields);
         }
@@ -1991,7 +2031,7 @@ mod tests {
     // grids/rank_abs) are covered cell-by-cell in mokume-stats' rots unit tests.
     #[test]
     fn de_dispatcher_rots_wires_dstat_column_and_log2fc() -> TestResult<()> {
-        let dir = temp_dir("oracle-rots")?;
+        let (_tempdir, dir) = temp_dir("oracle-rots")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -2000,7 +2040,7 @@ mod tests {
 
         let text = std::fs::read_to_string(&output)?;
         let mut lines = text.lines();
-        let header = lines.next().ok_or("missing header")?;
+        let header = lines.next().expect("missing header");
         // rots header: a single d_stat column between adj_pvalue and the means.
         assert_eq!(
             header,
@@ -2011,7 +2051,7 @@ mod tests {
         let mut order: Vec<String> = Vec::new();
         for line in lines {
             let fields = line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>();
-            let protein = fields.first().ok_or("empty row")?.clone();
+            let protein = fields.first().expect("empty row").clone();
             order.push(protein.clone());
             rows.insert(protein, fields);
         }
@@ -2027,71 +2067,68 @@ mod tests {
         Ok(())
     }
 
-    // LimROTS log2FC is `beta` = the full-data eBayes contrast coefficient
-    // (mean_A - mean_B, the SAME sign convention as limma, the OPPOSITE of rots),
-    // so P1 (low in A, high in B) is -2.0 here. Captured from limrots' full-data
-    // eBayes on log2(RAW) (see scratchpad limrots oracle). Deterministic and
-    // cell-exact regardless of the RNG.
-    const EXPECTED_LIMROTS_LOG2FC: &[(&str, f64)] = &[
-        ("P1", -2.0004868432854863),
-        ("P2", 2.0090616097754097),
-        ("P3", 0.015910691677655464),
-        ("P4", -1.0),
-        ("P5", -1.0),
-        ("P6", 0.09175595082658106),
-    ];
-
-    // Pipeline wiring test for `--de-method limrots`. LimROTS is a faithful
-    // RNG-based port (fixed internal PRNG), so its permutation p-values are
-    // deterministic run-to-run but NOT bit-matched to Python (Python is itself
-    // seed-unstable). This test asserts the structural contract that IS
-    // deterministic:
-    //   (1) the limrots-specific header (a single `t_stat` extra column, no
-    //       AveExpr/B, no peptide_count);
-    //   (2) log2FC cell-exact vs Python (the deterministic full-data eBayes beta,
-    //       in limrots' mean_A - mean_B convention);
-    //   (3) every pvalue/adj_pvalue in [0,1] and the rows sorted by adj_pvalue;
-    //   (4) the t_stat (== d_stat) column is finite.
-    // The deterministic LimROTS helpers (d_stat / boot_ebayes reorder /
-    // p-value counting / s2_post) are covered cell-by-cell in mokume-stats'
-    // limrots unit tests.
     #[test]
-    fn de_dispatcher_limrots_wires_tstat_column_and_log2fc() -> TestResult<()> {
-        let dir = temp_dir("oracle-limrots")?;
+    fn de_dispatcher_limrots_rejects_empty_official_search_grid() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("limrots-empty-grid")?;
         let output = dir.join("de_results.csv");
-        let matrix = fixture_matrix()?;
-        let sdrf = fixture_sdrf()?;
-
-        run_differential_expression(&matrix, Some(&sdrf), &de_config(&output, "limrots"), false)?;
-
-        let text = std::fs::read_to_string(&output)?;
-        let mut lines = text.lines();
-        let header = lines.next().ok_or("missing header")?;
-        // limrots header: a single t_stat column between adj_pvalue and the means.
-        assert_eq!(
-            header,
-            "ProteinName,log2FC,pvalue,adj_pvalue,t_stat,mean_groupA,mean_groupB,n_a,n_b,significance"
+        let result = run_differential_expression(
+            &fixture_matrix()?,
+            Some(&fixture_sdrf()?),
+            &de_config(&output, "limrots"),
+            false,
         );
+        let error = result.expect_err("expected LimROTS search-grid error");
+        assert!(error.to_string().contains("empty search grid"));
+        assert!(
+            !output.exists(),
+            "failed analysis must not write a result table"
+        );
+        Ok(())
+    }
 
-        let mut rows: HashMap<String, Vec<String>> = HashMap::new();
-        let mut order: Vec<String> = Vec::new();
-        for line in lines {
-            let fields = line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>();
-            let protein = fields.first().ok_or("empty row")?.clone();
-            order.push(protein.clone());
-            rows.insert(protein, fields);
+    #[test]
+    fn matrix_limrots_preserves_ids_and_signed_fold_changes() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("limrots-valid-grid")?;
+        let proteins = (1..=60).map(|i| format!("P{i:03}")).collect::<Vec<_>>();
+        let log_rows = (1..=60)
+            .map(|i| {
+                (1..=8)
+                    .map(|j| {
+                        let (i, j) = (i as f64, j as f64);
+                        20.0 + i / 100.0
+                            + (i * 0.21).sin().exp()
+                                * ((i * j * 0.31).sin() + 0.3 * (i * j * 0.47).cos())
+                            + if j <= 4.0 {
+                                (i - 1.0) * 3.0 / 59.0
+                            } else {
+                                0.0
+                            }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let values = log_rows
+            .iter()
+            .map(|r| r.iter().map(|v| v.exp2()).collect())
+            .collect::<Vec<_>>();
+        let config = de_config(&dir.join("unused.csv"), "limrots");
+        let output =
+            differential_expression_matrix(&proteins, &values, 4, 4, None, &config, Some(4))?;
+        let super::MatrixDifferentialExpressionResults::Standard(results) = output else {
+            return Err("expected standard LimROTS results".into());
+        };
+        assert_eq!(results.len(), proteins.len());
+        for result in results {
+            let i = proteins
+                .iter()
+                .position(|p| p == &result.protein)
+                .expect("unknown protein");
+            let expected = log_rows[i][..4].iter().sum::<f64>() / 4.0
+                - log_rows[i][4..].iter().sum::<f64>() / 4.0;
+            assert!((result.log2_fold_change - expected).abs() < 1e-12);
+            assert!(result.t_statistic >= 0.0);
+            assert!((0.0..=1.0).contains(&result.p_value));
         }
-        assert_eq!(rows.len(), EXPECTED_LIMROTS_LOG2FC.len(), "row count");
-
-        // The limrots field layout matches rots (single extra column at index 4),
-        // so the rots row assertions apply unchanged.
-        for &(protein, log2fc) in EXPECTED_LIMROTS_LOG2FC {
-            let fields = rows
-                .get(protein)
-                .ok_or_else(|| format!("missing {protein}"))?;
-            assert_rots_row(fields, protein, log2fc)?;
-        }
-        assert_rots_sorted_by_adj_pvalue(&order, &rows)?;
         Ok(())
     }
 
@@ -2125,7 +2162,7 @@ mod tests {
     ) -> TestResult<()> {
         let mut prev = f64::NEG_INFINITY;
         for name in order {
-            let adj = parse(rows.get(name).ok_or("row")?, 3)?;
+            let adj = parse(rows.get(name).expect("row"), 3)?;
             assert!(adj >= prev, "rots rows not sorted by adj_pvalue at {name}");
             prev = adj;
         }
@@ -2234,7 +2271,8 @@ mod tests {
 
     #[test]
     fn ensemble_members_are_canonicalized_once() -> TestResult<()> {
-        let output = temp_dir("ensemble-member-canonicalization")?.join("de.csv");
+        let (_tempdir, dir) = temp_dir("ensemble-member-canonicalization")?;
+        let output = dir.join("de.csv");
         let mut config = ensemble_config(&output, &[" LimMA ", "DeQMS"]);
         config.ensemble_min_k = 1;
 
@@ -2260,7 +2298,7 @@ mod tests {
     //   (5) median log2FC is finite for every protein both members reported.
     #[test]
     fn de_dispatcher_ensemble_with_rng_member_is_valid() -> TestResult<()> {
-        let dir = temp_dir("oracle-ensemble-rng")?;
+        let (_tempdir, dir) = temp_dir("oracle-ensemble-rng")?;
         let output = dir.join("de_results.csv");
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
@@ -2274,7 +2312,7 @@ mod tests {
 
         let text = std::fs::read_to_string(&output)?;
         let mut lines = text.lines();
-        let header = lines.next().ok_or("missing header")?;
+        let header = lines.next().expect("missing header");
         assert_eq!(
             header,
             "ProteinName,log2FC,pvalue,n_methods_up,n_methods_down,methods_significant,adj_pvalue,significance"
@@ -2305,16 +2343,16 @@ mod tests {
     /// the member counts) and return the row's adjusted p-value when present, so
     /// the caller can check the global BH sort order.
     fn assert_ensemble_row_valid(fields: &[String]) -> TestResult<Option<f64>> {
-        let protein = fields.first().ok_or("empty row")?.clone();
+        let protein = fields.first().expect("empty row").clone();
         assert!(parse(fields, 1)?.is_finite(), "{protein} log2FC not finite");
         assert_unit_interval(field(fields, 2), &protein, "pvalue")?;
         let adj = assert_unit_interval(field(fields, 6), &protein, "adj_pvalue")?;
 
         // Consensus: UP requires n_methods_up >= 2, DOWN requires
         // n_methods_down >= 2, and never both directions at once.
-        let n_up = field(fields, 3).ok_or("n_up")?.parse::<usize>()?;
-        let n_down = field(fields, 4).ok_or("n_down")?.parse::<usize>()?;
-        let sig = field(fields, 7).ok_or("sig")?;
+        let n_up = field(fields, 3).expect("n_up").parse::<usize>()?;
+        let n_down = field(fields, 4).expect("n_down").parse::<usize>()?;
+        let sig = field(fields, 7).expect("sig");
         assert!(
             !(n_up >= 2 && n_down >= 2),
             "{protein} cannot be both UP and DOWN consensus"

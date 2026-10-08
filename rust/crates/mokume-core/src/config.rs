@@ -372,17 +372,27 @@ impl Default for NormalizationConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MaxLfqConfig {
-    pub ion_alignment: Option<String>,
-    /// Force the built-in MaxLFQ implementation instead of delegating to the
-    /// DirectLFQ-aligned path. Mirrors Python's `MaxLFQQuantification.force_builtin`:
-    /// Python delegates `--quant-method maxlfq` to DirectLFQ whenever the directlfq
-    /// package is installed (the default in the reference environment), and only
-    /// uses the built-in fallback when it is absent. The Rust DirectLFQ core is
-    /// always available, so the faithful default is to delegate; this flag exposes
-    /// the built-in fallback for testing and comparison.
-    pub force_builtin: bool,
+    /// Minimum shared peptide species for each sample-pair ratio (Cox et al., Fig. 2).
+    #[serde(default = "default_maxlfq_min_ratio_count")]
+    pub min_ratio_count: usize,
+    /// Enable Cox et al. Eq. 5 large-ratio stabilization for low-overlap sample pairs.
+    #[serde(default)]
+    pub stabilize: bool,
+}
+
+fn default_maxlfq_min_ratio_count() -> usize {
+    2
+}
+
+impl Default for MaxLfqConfig {
+    fn default() -> Self {
+        Self {
+            min_ratio_count: default_maxlfq_min_ratio_count(),
+            stabilize: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,17 +420,25 @@ impl Default for PibaqConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectLfqConfig {
-    pub cores: Option<usize>,
     pub min_nonan: usize,
     pub num_samples_quadratic: usize,
+    /// DirectLFQ's global sample normalization (the inverse of directlfq's
+    /// `deactivate_normalization`). Without it, sample loading differences stay
+    /// in the protein intensities.
+    #[serde(default = "default_directlfq_normalize_samples")]
+    pub normalize_samples: bool,
+}
+
+fn default_directlfq_normalize_samples() -> bool {
+    true
 }
 
 impl Default for DirectLfqConfig {
     fn default() -> Self {
         Self {
-            cores: None,
             min_nonan: 1,
             num_samples_quadratic: 50,
+            normalize_samples: default_directlfq_normalize_samples(),
         }
     }
 }
@@ -495,9 +513,20 @@ pub struct ImputationConfig {
     pub enabled: bool,
     pub method: String,
     pub quantile: f64,
-    pub shift: f64,
-    pub scale: f64,
     pub n_neighbors: usize,
+    /// Seed for stochastic imputation (cross-language random streams may differ).
+    #[serde(default = "default_imputation_seed")]
+    pub seed: u64,
+    /// Official imputeLCMD tune.sigma for QRILC and MinProb.
+    #[serde(default = "default_imputation_tune_sigma")]
+    pub tune_sigma: f64,
+}
+
+fn default_imputation_seed() -> u64 {
+    42
+}
+fn default_imputation_tune_sigma() -> f64 {
+    1.0
 }
 
 impl Default for ImputationConfig {
@@ -506,9 +535,9 @@ impl Default for ImputationConfig {
             enabled: false,
             method: "none".to_string(),
             quantile: 0.01,
-            shift: 1.6,
-            scale: 0.3,
             n_neighbors: 5,
+            seed: default_imputation_seed(),
+            tune_sigma: default_imputation_tune_sigma(),
         }
     }
 }
