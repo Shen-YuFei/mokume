@@ -1140,6 +1140,7 @@ dependencies = [
 name = "mokume-core"
 version = "0.2.0"
 dependencies = [
+ "rayon",
  "serde",
  "thiserror",
 ]
