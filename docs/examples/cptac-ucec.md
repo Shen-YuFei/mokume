@@ -13,10 +13,10 @@ root of a local CPTAC archive that contains the PDC000125 QPX export.
 ## Install the runtime
 
 The helper needs PyArrow to read the QPX run column and Requests to query PDC.
-The plotting extra renders the final Mokume outputs.
+The analysis extra renders the final Mokume outputs.
 
 ```bash
-python -m pip install "mokume[plotting]" pyarrow requests
+python -m pip install "mokume[analysis]" pyarrow requests
 ```
 
 ## Build the analysis SDRF
@@ -64,7 +64,7 @@ mokume quantify features2proteins \
 normalization corrects sample-wide reporter loading shifts, then IRS aligns the
 17 plexes through their pooled channels and removes those references from the
 matrix. The 65% condition-wise coverage gate keeps a protein only when it is
-observed in at least 69 of 104 tumors and 32 of 49 normals. `ratio` is also a
+observed in at least 68 of 104 tumors and 32 of 49 normals. `ratio` is also a
 valid TMT quantification method, but its output is already
 log2(sample/reference); this example intentionally keeps a linear matrix for
 the downstream DE and plotting interfaces.

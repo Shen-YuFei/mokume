@@ -203,10 +203,12 @@ It is unavailable for DirectLFQ, Ratio, peptide-count, and spectral-count.
     `mokume.normalization.tmm.TMMNormalizer`) is robust to composition bias from
     highly abundant proteins.
 
-    MaxLFQ and piBAQ currently accept `quantile` as their dataset-level method;
-    requesting RLR, LOESS, hierarchical, centering, or TMM with either method
-    is rejected before input loading. For MaxLFQ + quantile, Mokume selects the
-    built-in MaxLFQ path so the requested normalization is actually applied.
+    MaxLFQ accepts `quantile` and `hierarchical` as dataset-level methods,
+    applied to its peptide species, and piBAQ accepts `quantile`; requesting
+    RLR, LOESS, centering, or TMM with either method, or `hierarchical` with
+    piBAQ, is rejected before input loading. For MaxLFQ + quantile or
+    hierarchical, Mokume selects the built-in MaxLFQ path so the requested
+    normalization is actually applied.
 
 - `global-median` is the default and a good general-purpose starting point.
 - `hierarchical` is useful when you want DirectLFQ-style normalization with a non-DirectLFQ quantification method.
@@ -387,12 +389,17 @@ enables differential expression without a separate switch.
 
 !!! tip
     `--de-method auto` chooses `deqms` for `directlfq`
-    quantification and `limrots` for all others. All methods
+    quantification and `limrots` for all others; LimROTS needs a
+    complete matrix, so a protein matrix with missing values also
+    gets `deqms`. All methods
     run in the native Rust kernel — no R or rpy2 required.
     BKY and Storey fall back to BH when their pi0 estimate is not reliable.
     ROTS and LimROTS retain their own permutation FDR, so alternative
     `--de-fdr-method` values are rejected for those methods. Ensemble applies
-    the selected correction to the combined result.
+    the selected correction to the combined result. On a contrast with
+    missing values, the default ensemble members run `limma` in place of
+    `limrots`; an explicit `--de-ensemble-method limrots` member needs a
+    complete (for example, imputed) matrix.
     See [Differential Expression
     concepts](../concepts/differential-expression.md) for a
     detailed comparison of methods.
@@ -461,8 +468,8 @@ another method is rejected.
 Plotting and the interactive HTML report are **not** part of the `features2proteins`
 CLI — there are no `--plot-*` / `--interactive-report` flags. The kernel writes the
 protein matrix and, with `--de-output`, one DE result CSV per contrast; the Python
-periphery then reads those CSVs and renders the figures. Install the `plotting`
-and/or `reports` extra:
+periphery then reads those CSVs and renders the figures. Install the `analysis`
+extra:
 
 ```python
 import mokume
@@ -477,7 +484,7 @@ mokume.de_plots([
     "--contrast", "NASH-HL", "NASH", "HL", "de_results.csv",
 ])
 
-# Interactive HTML report from the same kernel CSVs (reports extra).
+# Interactive HTML report from the same kernel CSVs (analysis extra).
 mokume.interactive_report([
     "--protein-matrix", "proteins.csv",
     "--sdrf", "experiment.sdrf.tsv",

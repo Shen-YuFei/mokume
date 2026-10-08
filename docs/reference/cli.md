@@ -63,10 +63,13 @@ feature tables.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--quant-method` | `maxlfq` | Method: maxlfq, directlfq, pibaq, `top<N>`, sum, median, ratio, abd, intensity, peptide-count, spectral-count |
+| `--maxlfq-min-ratio-count` | `2` | Minimum shared peptide species per sample pair (MaxLFQ only) |
+| `--stabilize` | off | Enable overlap-dependent large-ratio stabilization (MaxLFQ only; may worsen some ratios) |
 | `-f/--fasta` | none | FASTA file (required for piBAQ) |
 | `-t/--threads` | auto | Shared Rust worker count for all methods, including DirectLFQ |
 | `--directlfq-min-nonan` | 1 | Min non-NaN values for DirectLFQ |
 | `--directlfq-num-samples-quadratic` | 50 | Maximum samples in DirectLFQ's quadratic global-alignment subset |
+| `--directlfq-no-sample-normalization` | off | Skip DirectLFQ's global sample normalization (directlfq `deactivate_normalization`) |
 | `--pibaq-enzyme` | `Trypsin` | Protease name from the installed pyOpenMS catalog |
 | `--pibaq-max-aa` | 30 | Maximum theoretical peptide length |
 | `--pibaq-min-shared` | 2 | Minimum shared peptides for automatic family discovery |
@@ -89,7 +92,10 @@ DirectLFQ and Ratio manage normalization internally. `peptide-count` and
 `spectral-count` count evidence identities and do not use intensity
 normalization. All four therefore default both normalization layers to `none`;
 passing a non-`none` value is rejected. Other methods default to `median` /
-`global-median`.
+`global-median`, except that MaxLFQ's sample normalization defaults to
+`hierarchical` (`global-median` when `--normalization-proteins` is given): the
+median of a sample's detected features moves with detection depth and spike-in
+composition, while hierarchical alignment compares the peptides that samples share.
 
 ### IRS (Multi-Plex TMT)
 
@@ -176,30 +182,32 @@ output path must be supplied, so a completed calculation cannot be discarded.
 Inline and file contrasts can be combined.
 
 `--de-method auto` selects `deqms` for `directlfq` quantification and `limrots`
-for other quantification methods. All methods run in the native Rust kernel —
+for other quantification methods. LimROTS needs a complete matrix, so `auto`
+selects `deqms` when the protein matrix has missing values (for example, without
+imputation). All methods run in the native Rust kernel —
 no R or rpy2 required. ROTS and LimROTS retain permutation FDR and therefore
 reject alternative `--de-fdr-method` values. Deterministic methods (limma /
 deqms) are cell-exact against frozen Python-generated compatibility output;
 RNG/optimizer-driven methods (rots / limrots / proda) match log2 fold change
 cell-exactly and p-values at rank level.
 
-`--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold. Eligible non-ROTS members use the requested correction; ROTS and LimROTS retain their native permutation FDR. The Fisher-combined p-values use BH by default, with BKY or Storey applied when requested and reliable; IHW remains a member-level correction because the combined rows have no IHW covariate.
+`--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold. Eligible non-ROTS members use the requested correction; ROTS and LimROTS retain their native permutation FDR. The Fisher-combined p-values use BH by default, with BKY or Storey applied when requested and reliable; IHW remains a member-level correction because the combined rows have no IHW covariate. The default members are `limrots`, `deqms`, and `proda`; on a contrast with missing values they run `limma` in place of `limrots`, because LimROTS needs a complete matrix. An explicit `--de-ensemble-method limrots` member still needs a complete matrix.
 
 ### Plots & Reports
 
 `features2proteins` is pure compute and writes no figures. The kernel emits the protein-matrix CSV and (with `--de-output`) one DE result CSV per contrast; render plots and HTML reports from those CSVs with the wheel periphery:
 
 ```bash
-# PCA from the protein matrix (plotting extra)
+# PCA from the protein matrix (analysis extra)
 mokume plot pca --protein-matrix proteins.csv \
     --sdrf experiment.sdrf.tsv --output pca.pdf
 
-# DE volcano / heatmap from the kernel CSVs (plotting extra)
+# DE volcano / heatmap from the kernel CSVs (analysis extra)
 mokume plot de --protein-matrix proteins.csv --outdir plots \
     --sdrf experiment.sdrf.tsv --volcano --heatmap \
     --contrast c1 A B de.csv
 
-# Interactive HTML report (reports extra)
+# Interactive HTML report (analysis extra)
 mokume interactive-report --protein-matrix proteins.csv \
     --sdrf experiment.sdrf.tsv --output report.html \
     --contrast c1 A B de.csv
@@ -337,6 +345,8 @@ mokume quantify peptides2protein [OPTIONS]
 | `-p/--peptides` | required | Input peptide intensity file |
 | `-f/--fasta` | none | FASTA file (required for piBAQ) |
 | `--quant-method` | `pibaq` | Method: pibaq, `top<N>` (top3, top5, top10, ...), maxlfq, sum, directlfq |
+| `--maxlfq-min-ratio-count` | `2` | Minimum shared peptide species per sample pair (MaxLFQ only) |
+| `--stabilize` | off | Enable overlap-dependent large-ratio stabilization (MaxLFQ only; may worsen some ratios) |
 | `--enzyme` | `Trypsin` | Enzyme for in-silico digestion |
 | `--normalize` | off | Normalize quantification values |
 | `--min-aa` | 7 | Min amino acid length |
@@ -366,7 +376,7 @@ Use `--quant-method top5` or `--quant-method top10` for Top5 or Top10-style quan
 
 !!! note "`--qc-report` plots the native result table"
     Rust writes the piBAQ table first, then the wheel renders the density and box
-    plots from those exact values. Install `mokume[plotting]` to use this option.
+    plots from those exact values. Install `mokume[analysis]` to use this option.
 
 ---
 
@@ -401,13 +411,30 @@ options; for those, use `features2proteins --batch-correction`.
 
 ---
 
+## studio
+
+Launch the optional loopback-only web workbench:
+
+```bash
+pip install "mokume[studio]"
+mokume studio [--port PORT] [--no-browser]
+```
+
+Without `--port`, Studio uses the first free local port starting at 8765.
+An explicit port is strict, and the command fails if it is unavailable.
+`--no-browser` prints the one-time launch URL without opening it. The command
+does not accept a project path; select one with **File > Open Folder**. See the
+[Mokume Studio guide](../user-guide/studio.md).
+
+---
+
 ## Periphery commands
 
 These commands ship in the `pip install mokume` wheel but remain implemented in
 Python rather than the Rust compute kernel:
 
 ```bash
-pip install "mokume[plotting]"
+pip install "mokume[analysis]"
 mokume plot tsne --input ./proteins --pattern proteins.tsv --output tsne.pdf
 
 pip install "mokume[tissuemap]"
