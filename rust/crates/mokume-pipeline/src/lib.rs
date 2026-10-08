@@ -2398,7 +2398,12 @@ fn apply_center_to_peptide_cells(
         .filter_map(|(sample, mut values)| {
             let center = match stat {
                 CenterStat::Median => median_finite(&mut values),
-                CenterStat::Mean => mokume_core::stats::mean_finite(&values),
+                CenterStat::Mean => {
+                    // The values arrive in hash-map order, which changes between
+                    // runs; sum them in a fixed order so the mean is reproducible.
+                    values.sort_by(f64::total_cmp);
+                    mokume_core::stats::mean_finite(&values)
+                }
             }?;
             center.is_finite().then_some((sample, center))
         })
