@@ -2969,54 +2969,16 @@ fn apply_loess_to_peptide_cells(
         }
     }
 
-    // Deterministic sample ordering so the fit is reproducible run to run.
-    let mut samples = by_sample.keys().copied().collect::<Vec<_>>();
-    samples.sort();
-
-    let mut corrected = HashMap::<(QuantilePeptideKey, SampleId), f64>::new();
-    for sample in samples {
-        let rows = &by_sample[&sample];
-        // Pair each row's log2 value with its reference; drop rows lacking a
-        // finite reference (matches the `sample.notna() & ref.notna()` mask).
-        let mut paired = rows
-            .iter()
-            .filter_map(|(key, value)| {
-                reference
-                    .get(key)
-                    .filter(|r| r.is_finite() && value.is_finite())
-                    .map(|r| (*key, *value, *r))
-            })
-            .collect::<Vec<_>>();
-        if paired.len() < 10 {
-            // < 10 valid points: leave the column unchanged.
-            for (key, value, _) in &paired {
-                corrected.insert((*key, sample), *value);
-            }
-            continue;
-        }
-        // Deterministic tie-break: sort by (A ascending, key) before fitting so
-        // the window selection and unsort match a stable reference order.
-        paired.sort_by(|left, right| {
-            let a_left = (left.1 + left.2) / 2.0;
-            let a_right = (right.1 + right.2) / 2.0;
-            a_left
-                .total_cmp(&a_right)
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        let a_values = paired
-            .iter()
-            .map(|(_, value, r)| (value + r) / 2.0)
-            .collect::<Vec<_>>();
-        let m_values = paired
-            .iter()
-            .map(|(_, value, r)| value - r)
-            .collect::<Vec<_>>();
-        let fitted =
-            mokume_core::stats::lowess_fit(&a_values, &m_values, LOESS_FRAC, LOESS_ITERATIONS);
-        for ((key, value, _), bias) in paired.iter().zip(fitted) {
-            corrected.insert((*key, sample), value - bias);
-        }
-    }
+    // Each sample is fitted against the fixed reference and writes only its own
+    // keys, so samples run in parallel without changing the result.
+    let corrected = by_sample
+        .par_iter()
+        .flat_map_iter(|(sample, rows)| {
+            loess_correct_sample(rows, &reference)
+                .into_iter()
+                .map(move |(key, value)| ((key, *sample), value))
+        })
+        .collect::<HashMap<(QuantilePeptideKey, SampleId), f64>>();
 
     // Write canonical results back into the cells, exponentiating out of log2.
     for (cell, peptides) in cells {
@@ -3037,6 +2999,56 @@ fn apply_loess_to_peptide_cells(
             }
         }
     }
+}
+
+/// LOESS-correct one sample's log2 values against the per-row reference.
+/// A sample is corrected only if it has at least 10 finite (sample, reference)
+/// pairs; otherwise its paired values pass through.
+fn loess_correct_sample(
+    rows: &[(QuantilePeptideKey, f64)],
+    reference: &HashMap<QuantilePeptideKey, f64>,
+) -> Vec<(QuantilePeptideKey, f64)> {
+    // Pair each row's log2 value with its reference; drop rows lacking a
+    // finite reference (matches the `sample.notna() & ref.notna()` mask).
+    let mut paired = rows
+        .iter()
+        .filter_map(|(key, value)| {
+            reference
+                .get(key)
+                .filter(|r| r.is_finite() && value.is_finite())
+                .map(|r| (*key, *value, *r))
+        })
+        .collect::<Vec<_>>();
+    if paired.len() < 10 {
+        // < 10 valid points: leave the column unchanged.
+        return paired
+            .into_iter()
+            .map(|(key, value, _)| (key, value))
+            .collect();
+    }
+    // Deterministic tie-break: sort by (A ascending, key) before fitting so
+    // the window selection and unsort match a stable reference order.
+    paired.sort_by(|left, right| {
+        let a_left = (left.1 + left.2) / 2.0;
+        let a_right = (right.1 + right.2) / 2.0;
+        a_left
+            .total_cmp(&a_right)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    let a_values = paired
+        .iter()
+        .map(|(_, value, r)| (value + r) / 2.0)
+        .collect::<Vec<_>>();
+    let m_values = paired
+        .iter()
+        .map(|(_, value, r)| value - r)
+        .collect::<Vec<_>>();
+    let fitted = mokume_core::stats::lowess_fit(&a_values, &m_values, LOESS_FRAC, LOESS_ITERATIONS);
+    paired
+        .iter()
+        .zip(fitted)
+        .map(|((key, value, _), bias)| (*key, value - bias))
+        .collect()
 }
 
 /// LOWESS smoothing fraction used by `LOESSNormalizer` (frac=0.75).
