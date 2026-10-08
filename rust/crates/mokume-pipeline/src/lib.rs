@@ -2913,51 +2913,8 @@ fn apply_loess_to_peptide_cells(
     allowed_cells: &HashSet<CellKey>,
     peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
 ) {
-    // Collapse each allowed cell to canonical peptides by SUM, then log2 the
-    // strictly positive finite values (matching `np.log2(wide.replace(0, nan))`).
-    let mut log2_cells = HashMap::<CellKey, HashMap<PeptideId, f64>>::new();
-    for (cell, peptides) in cells.iter() {
-        if !allowed_cells.contains(cell) {
-            continue;
-        }
-        let mut summed = HashMap::<PeptideId, f64>::new();
-        for (peptide, intensity) in peptides {
-            let canonical = peptide_to_canonical
-                .get(peptide)
-                .copied()
-                .unwrap_or(*peptide);
-            *summed.entry(canonical).or_insert(0.0) += *intensity;
-        }
-        let log_row = summed
-            .into_iter()
-            .filter(|(_, value)| value.is_finite() && *value > 0.0)
-            .map(|(canonical, value)| (canonical, value.log2()))
-            .collect::<HashMap<_, _>>();
-        if !log_row.is_empty() {
-            log2_cells.insert(*cell, log_row);
-        }
-    }
-
-    // Per-row (protein, canonical) reference = NaN-skipping median across the
-    // samples that observe the row. Collect every log2 value per row first.
-    let mut row_values = HashMap::<QuantilePeptideKey, Vec<f64>>::new();
-    for (cell, peptides) in &log2_cells {
-        for (peptide, value) in peptides {
-            row_values
-                .entry(QuantilePeptideKey {
-                    protein: cell.protein,
-                    peptide: *peptide,
-                })
-                .or_default()
-                .push(*value);
-        }
-    }
-    let mut reference = HashMap::<QuantilePeptideKey, f64>::new();
-    for (key, mut values) in row_values {
-        if let Some(median) = median_finite(&mut values) {
-            reference.insert(key, median);
-        }
-    }
+    let log2_cells = canonical_log2_cells(cells, allowed_cells, peptide_to_canonical);
+    let reference = row_median_reference(&log2_cells);
 
     // Fit and apply per sample column. A sample is corrected only if it has at
     // least 10 finite (sample, reference) pairs; otherwise it passes through.
@@ -3004,6 +2961,62 @@ fn apply_loess_to_peptide_cells(
             }
         }
     }
+}
+
+/// Collapse each allowed cell to canonical peptides by SUM, then log2 the
+/// strictly positive finite values (matching `np.log2(wide.replace(0, nan))`).
+/// Cells without such a value are left out.
+fn canonical_log2_cells(
+    cells: &HashMap<CellKey, HashMap<PeptideId, f64>>,
+    allowed_cells: &HashSet<CellKey>,
+    peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
+) -> HashMap<CellKey, HashMap<PeptideId, f64>> {
+    let mut log2_cells = HashMap::<CellKey, HashMap<PeptideId, f64>>::new();
+    for (cell, peptides) in cells {
+        if !allowed_cells.contains(cell) {
+            continue;
+        }
+        let mut summed = HashMap::<PeptideId, f64>::new();
+        for (peptide, intensity) in peptides {
+            let canonical = peptide_to_canonical
+                .get(peptide)
+                .copied()
+                .unwrap_or(*peptide);
+            *summed.entry(canonical).or_insert(0.0) += *intensity;
+        }
+        let log_row = summed
+            .into_iter()
+            .filter(|(_, value)| value.is_finite() && *value > 0.0)
+            .map(|(canonical, value)| (canonical, value.log2()))
+            .collect::<HashMap<_, _>>();
+        if !log_row.is_empty() {
+            log2_cells.insert(*cell, log_row);
+        }
+    }
+    log2_cells
+}
+
+/// Per-row (protein, canonical) reference: the NaN-skipping median across the
+/// samples that observe the row.
+fn row_median_reference(
+    log2_cells: &HashMap<CellKey, HashMap<PeptideId, f64>>,
+) -> HashMap<QuantilePeptideKey, f64> {
+    let mut row_values = HashMap::<QuantilePeptideKey, Vec<f64>>::new();
+    for (cell, peptides) in log2_cells {
+        for (peptide, value) in peptides {
+            row_values
+                .entry(QuantilePeptideKey {
+                    protein: cell.protein,
+                    peptide: *peptide,
+                })
+                .or_default()
+                .push(*value);
+        }
+    }
+    row_values
+        .into_iter()
+        .filter_map(|(key, mut values)| median_finite(&mut values).map(|median| (key, median)))
+        .collect()
 }
 
 /// LOESS-correct one sample's log2 values against the per-row reference.
@@ -3447,6 +3460,53 @@ fn resolve_batch_method(name: &str) -> Result<mokume_stats::batch::BatchDetectio
         .ok_or_else(|| invalid_input(format!("unknown batch method `{name}`")))
 }
 
+/// `column` detection and covariate extraction re-read the raw SDRF columns
+/// (Python re-reads via `load_sdrf`); `validate_postprocessing_subset` already
+/// guarantees `--sdrf` is present when either is requested.
+fn read_batch_sdrf(
+    method: mokume_stats::batch::BatchDetectionMethod,
+    config: &BatchCorrectionConfig,
+    sdrf_path: Option<&Path>,
+) -> Result<Option<SdrfRawTable>> {
+    use mokume_stats::batch::BatchDetectionMethod;
+
+    if !matches!(method, BatchDetectionMethod::ExplicitColumn) && config.covariates.is_none() {
+        return Ok(None);
+    }
+    sdrf_path.map(SdrfRawTable::from_path).transpose()
+}
+
+/// Original batch label of every matrix sample under the selected method.
+fn batch_labels(
+    method: mokume_stats::batch::BatchDetectionMethod,
+    config: &BatchCorrectionConfig,
+    raw: Option<&SdrfRawTable>,
+    sample_names: &[&str],
+) -> Result<Vec<String>> {
+    use mokume_stats::batch::BatchDetectionMethod;
+
+    match method {
+        BatchDetectionMethod::ExplicitColumn => {
+            let column = config.column.as_deref().unwrap_or_default();
+            let raw =
+                raw.ok_or_else(|| invalid_input("batch column detection requires --sdrf option"))?;
+            // Python's `_detect_explicit_batches(None)` raises when the column
+            // is absent; mirror that hard failure rather than silently skipping.
+            batch_column_values_for_samples(raw, sample_names, column)
+        }
+        BatchDetectionMethod::RunName
+        | BatchDetectionMethod::Fraction
+        | BatchDetectionMethod::TechReplicate => Err(invalid_input(format!(
+            "batch-method '{}' requires run-level information not available in the protein matrix",
+            method.as_value()
+        ))),
+        BatchDetectionMethod::SamplePrefix => Ok(sample_names
+            .iter()
+            .map(|sample| mokume_stats::batch::sample_prefix(sample).to_owned())
+            .collect()),
+    }
+}
+
 /// Run `mokume-stats`'s `detect_batches` for the protein-matrix flow. Methods
 /// that require unavailable run metadata are rejected by the caller.
 #[cfg(test)]
@@ -3485,6 +3545,26 @@ fn validate_batch_sizes(batch: Vec<usize>) -> Option<Vec<usize>> {
         return None;
     }
     Some(batch)
+}
+
+/// Run ComBat on the complete rows with the configured priors.
+fn combat_rows(
+    complete: &[(ProteinId, Vec<f64>)],
+    batch: &[usize],
+    covariates: Option<&[Vec<f64>]>,
+    ref_batch: Option<usize>,
+    config: &BatchCorrectionConfig,
+) -> Vec<Vec<f64>> {
+    let data = complete
+        .iter()
+        .map(|(_, values)| values.clone())
+        .collect::<Vec<_>>();
+    let params = mokume_stats::batch::ComBatParams {
+        par_prior: config.parametric,
+        mean_only: config.mean_only,
+        ref_batch,
+    };
+    mokume_stats::batch::combat(&data, batch, covariates, params)
 }
 
 fn resolve_reference_batch(
@@ -4190,49 +4270,9 @@ impl ProteinMatrix {
             .collect::<Vec<_>>();
         let sample_names = samples.iter().map(|(_, name)| *name).collect::<Vec<_>>();
 
-        use mokume_stats::batch::BatchDetectionMethod;
-
         let method = resolve_batch_method(&config.method)?;
-
-        // `column` detection and covariate extraction re-read the raw SDRF columns
-        // (Python re-reads via `load_sdrf`); `validate_postprocessing_subset`
-        // already guarantees `--sdrf` is present when either is requested.
-        let raw = if matches!(method, BatchDetectionMethod::ExplicitColumn)
-            || config.covariates.is_some()
-        {
-            match sdrf_path {
-                Some(path) => Some(SdrfRawTable::from_path(path)?),
-                None => None,
-            }
-        } else {
-            None
-        };
-
-        let original_batch_labels = match method {
-            BatchDetectionMethod::ExplicitColumn => {
-                let column = config.column.as_deref().unwrap_or_default();
-                let raw = raw.as_ref().ok_or_else(|| {
-                    invalid_input("batch column detection requires --sdrf option")
-                })?;
-                // Python's `_detect_explicit_batches(None)` raises when the column
-                // is absent; mirror that hard failure rather than silently skipping.
-                batch_column_values_for_samples(raw, &sample_names, column)?
-            }
-            BatchDetectionMethod::RunName
-            | BatchDetectionMethod::Fraction
-            | BatchDetectionMethod::TechReplicate => {
-                return Err(invalid_input(
-                    format!(
-                        "batch-method '{}' requires run-level information not available in the protein matrix",
-                        method.as_value()
-                    ),
-                ));
-            }
-            BatchDetectionMethod::SamplePrefix => sample_names
-                .iter()
-                .map(|sample| mokume_stats::batch::sample_prefix(sample).to_owned())
-                .collect(),
-        };
+        let raw = read_batch_sdrf(method, config, sdrf_path)?;
+        let original_batch_labels = batch_labels(method, config, raw.as_ref(), &sample_names)?;
         let batch = factorize_batch_labels(&original_batch_labels);
         let batch = validate_batch_sizes(batch).ok_or_else(|| {
             invalid_input(
@@ -4263,16 +4303,7 @@ impl ProteinMatrix {
             validate_combat_design(&batch, covariates, ref_batch)?;
         }
 
-        let data = complete
-            .iter()
-            .map(|(_, values)| values.clone())
-            .collect::<Vec<_>>();
-        let params = mokume_stats::batch::ComBatParams {
-            par_prior: config.parametric,
-            mean_only: config.mean_only,
-            ref_batch,
-        };
-        let corrected = mokume_stats::batch::combat(&data, &batch, covariates.as_deref(), params);
+        let corrected = combat_rows(&complete, &batch, covariates.as_deref(), ref_batch, config);
         self.write_batch_corrected(&complete, &corrected, &sample_ids, values_are_log2);
         Ok(())
     }
