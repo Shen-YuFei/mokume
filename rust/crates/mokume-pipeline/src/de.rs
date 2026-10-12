@@ -39,12 +39,12 @@
 //! Unsupported methods and options are rejected upstream in
 //! `validate_de_subset`; this module never substitutes an explicitly requested
 //! test and logs the default-member swap above. The in-pipeline deqms path
-//! feeds the per-protein unique-canonical-peptide counts captured at ingest
-//! (mirroring Python's `_load_de_peptide_counts` -> `_build_count_vector`), so the
-//! spectraCounteBayes count moderation runs when the data has a real spread of
-//! counts and at least 10 testable proteins; with all-equal counts (or fewer
-//! than 10 valid points) it falls back to plain eBayes (== limma), exactly as
-//! mokume does.
+//! feeds, per protein, the smallest per-sample unique-canonical-peptide count
+//! over the contrast's samples plus 1 (the DEqMS vignette's and OpDEA's count),
+//! so the spectraCounteBayes count moderation runs when the data has a real
+//! spread of counts and at least 10 testable proteins; with all-equal counts (or
+//! fewer than 10 valid points) it falls back to plain eBayes (== limma), exactly
+//! as mokume does.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -323,7 +323,7 @@ fn run_one_contrast(
     let ordered: Vec<SampleId> = samples_a.iter().chain(samples_b.iter()).copied().collect();
     let (proteins, rows) = matrix.log2_rows(&ordered)?;
     let row_refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    let peptide_counts = build_count_vector(matrix, &proteins);
+    let peptide_counts = build_count_vector(matrix, &proteins, &ordered);
     let prepared = Prepared {
         proteins: &proteins,
         rows: &row_refs,
@@ -340,15 +340,15 @@ fn run_one_contrast(
         DeMethod::Member(method) => {
             let rows = run_member(method, &prepared, config)?;
             output.map_or(Ok(()), |path| {
-                write_de_csv(path, &rows, contrast, method, matrix)
+                write_de_csv(path, &rows, contrast, method, &prepared)
             })
         }
     }
 }
 
-/// The per-contrast inputs shared by every single-method run: the matrix (for
-/// deqms counts), the contrast-ordered protein names, the log2 rows, and the two
-/// group sizes.
+/// The per-contrast inputs shared by every single-method run: the
+/// contrast-ordered protein names, the log2 rows, the deqms count vector, and
+/// the two group sizes.
 struct Prepared<'a> {
     proteins: &'a [String],
     rows: &'a [&'a [f64]],
@@ -403,15 +403,11 @@ fn run_method_bh(
         MemberMethod::Limrots => limrots_two_group(proteins, rows, n_a, n_b, fdr, log2fc)?,
         MemberMethod::Proda => proda_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
         MemberMethod::Deqms => {
-            // Per-protein unique-canonical-peptide counts captured at ingest,
-            // aligned to the contrast's protein order and defaulting to 1 for any
-            // protein absent from the map -- mirroring Python's
-            // `_build_count_vector` (deqms.py:147), which reindexes the
-            // `_load_de_peptide_counts` Series onto the matrix protein order and
-            // fills missing entries with 1. With a real spread of counts the
-            // spectraCounteBayes moderation runs; an all-equal/all-ones vector
-            // still trips the `ptp(log2 counts) < 1e-10` guard and falls back to
-            // plain eBayes (== limma), so behaviour degrades gracefully.
+            // The contrast's count vector (`build_count_vector`), aligned to its
+            // protein order. With a real spread of counts the spectraCounteBayes
+            // moderation runs; an all-equal vector still trips the
+            // `ptp(log2 counts) < 1e-10` guard and falls back to plain eBayes
+            // (== limma), so behaviour degrades gracefully.
             deqms_two_group(
                 proteins,
                 rows,
@@ -784,48 +780,22 @@ pub(crate) fn validated_ensemble_member_names(
 }
 
 /// Build the DEqMS per-protein count vector aligned to `proteins` (the contrast
-/// row order), defaulting to `1` for any protein absent from the matrix's
-/// per-protein count map. This is the Rust port of Python's `_build_count_vector`
-/// (deqms.py:147): `counts = np.ones(...); counts[valid] = aligned[valid]`, where
-/// `aligned = peptide_counts.reindex(proteins)`.
+/// row order), as the DEqMS vignette and OpDEA (`DEqMS_DE.R`) do: the smallest
+/// per-sample count of unique canonical peptides over the contrast's `samples`,
+/// plus 1, so a protein missing from one sample still gets a positive count.
 ///
-/// Count semantics vs Python (verified by cross-language pairing on a synthetic
-/// 15-protein, 3-vs-3 dataset):
-///   * KERNEL (counts agree, single-accession proteins): both sides count the
-///     distinct canonical-peptide sequences per protein, keyed by the parsed
-///     protein name `proteins` carries. Here `peptide_counts_by_name` resolves
-///     the same key the matrix uses, so the count vector matches Python.
-///   * Niche 1 -- accession format. Python's `_load_de_peptide_counts`
-///     (stages.py:1810) groups the RAW parquet by the un-parsed `anchor_protein`
-///     column (`sp|P1000|NAME`), but the matrix `ProteinName` is run through
-///     `parse_uniprot_accession` (aggregation.py:207) to `P1000`. With the
-///     standard `db|ACC|NAME` UniProt format the reindex therefore matches
-///     nothing, every count collapses to the all-ones default, and Python's
-///     spectraCounteBayes degrades to plain eBayes ("all counts identical").
-///     This Rust port keys both the count map and `proteins` by the same parsed
-///     name, so it does NOT degrade -- it runs real count-aware moderation.
-///   * Niche 2 -- protein groups. For a multi-accession group the matrix name is
-///     the `;`-joined parsed group (`P1000;P1001`), while Python's
-///     `anchor_protein` is a single accession, so the reindex misses and Python
-///     keeps the all-ones default for that group; this port carries the real
-///     group-level count.
-///   * Niche 3 -- data pipeline. Python counts distinct sequences from the raw
-///     parquet (pre-filter), this port from the post-filter accepted stream
-///     (`unique_peptides`, lib.rs:`protein_peptide_counts`). A shared / dropped
-///     peptide can shift a single-accession count by one.
-///
-/// In all three niches only the DEqMS-specific `peptide_count` / `sca_t` /
-/// `sca_pvalue` columns differ; the limma layer (`log2FC` / `pvalue`) and the
-/// protein quantification matrix remain cell-for-cell identical.
-fn build_count_vector(matrix: &ProteinMatrix, proteins: &[String]) -> Vec<f64> {
-    let counts_by_name = matrix.peptide_counts_by_name();
+/// The pure-Python pipeline (`_load_de_peptide_counts`) still counts all unique
+/// sequences per raw `anchor_protein`; only the DEqMS-specific `peptide_count` /
+/// `sca_t` / `sca_pvalue` columns differ, while the limma layer (`log2FC` /
+/// `pvalue`) and the protein quantification matrix are unaffected.
+fn build_count_vector(
+    matrix: &ProteinMatrix,
+    proteins: &[String],
+    samples: &[SampleId],
+) -> Vec<f64> {
     proteins
         .iter()
-        .map(|protein| {
-            counts_by_name
-                .get(protein)
-                .map_or(1.0, |count| *count as f64)
-        })
+        .map(|protein| (matrix.min_sample_peptide_count(protein, samples) + 1) as f64)
         .collect()
 }
 
@@ -1063,15 +1033,14 @@ fn shorten_factor_label(raw: &str) -> String {
 ///  significance`. Here
 /// `pvalue == sca_pvalue` and `adj_pvalue == sca_adj_pvalue` (both BH of
 /// `sca_pvalue`), exactly as Python sets them, and `peptide_count` is the
-/// per-protein unique-canonical-peptide count captured at ingest, aligned by
-/// protein name (default 1 for any protein with no recorded count -- see
-/// `build_count_vector`).
+/// count vector the test used (see `build_count_vector`), aligned by protein
+/// name.
 fn write_de_csv(
     path: &Path,
     results: &[DeResult],
     contrast: &Contrast,
     method: MemberMethod,
-    matrix: &ProteinMatrix,
+    prepared: &Prepared,
 ) -> Result<()> {
     create_parent_dir(path)?;
     let file = File::create(path).map_err(|source| MokumeError::Io {
@@ -1105,14 +1074,14 @@ fn write_de_csv(
         .write_record(&header)
         .map_err(|source| crate::csv_error(path, source))?;
 
-    // deqms emits a per-protein `peptide_count` column; resolve the same aligned
-    // count map `build_count_vector` uses (default 1 for absent proteins) so the
-    // written value matches Python's `counts` column exactly. Other methods never
-    // read this map.
-    let counts_by_name = match method {
-        MemberMethod::Deqms => matrix.peptide_counts_by_name(),
-        _ => HashMap::new(),
-    };
+    // deqms emits a per-protein `peptide_count` column: the count vector the
+    // test used. Other methods never read this map.
+    let counts_by_name: HashMap<&str, f64> = prepared
+        .proteins
+        .iter()
+        .map(String::as_str)
+        .zip(prepared.peptide_counts.iter().copied())
+        .collect();
 
     for row in results {
         let mut record = vec![
@@ -1145,9 +1114,9 @@ fn write_de_csv(
         if method == MemberMethod::Deqms {
             record.extend([
                 counts_by_name
-                    .get(&row.protein)
+                    .get(row.protein.as_str())
                     .copied()
-                    .unwrap_or(1)
+                    .unwrap_or(1.0)
                     .to_string(),
                 format_float(row.log_p_value),
             ]);
@@ -1267,7 +1236,7 @@ mod tests {
         available_conditions, build_count_vector, classify_significance, condition_by_sample,
         differential_expression_matrix, finalize_ensemble_results, finalize_member_results,
         run_differential_expression, sample_condition, shorten_factor_label, split_contrast,
-        validated_ensemble_member_names, write_de_csv, Contrast, MemberMethod,
+        validated_ensemble_member_names, write_de_csv, Contrast, MemberMethod, Prepared,
     };
     use crate::{CellKey, ProteinMatrix, ProteinValues};
 
@@ -1396,9 +1365,9 @@ mod tests {
             samples,
             allowed_proteins: allowed,
             excluded_samples: HashSet::new(),
-            // No recorded peptide counts: the deqms path then defaults every
-            // protein to 1 (the all-ones `_build_count_vector` fallback), which is
-            // what this 6-protein fixture exercises (< 10 valid points -> eBayes).
+            // No recorded peptide counts: the deqms path then gives every
+            // protein 0 + 1, which is what this 6-protein fixture exercises
+            // (< 10 valid points -> eBayes).
             peptide_counts: HashMap::new(),
             values: ProteinValues::Cells(values),
         })
@@ -1408,7 +1377,6 @@ mod tests {
     fn standard_de_csv_quotes_identifiers_and_dynamic_headers() -> TestResult<()> {
         let (_tempdir, dir) = temp_dir("quoted-standard-csv")?;
         let output = dir.join("quoted.csv");
-        let matrix = fixture_matrix()?;
         let rows = vec![DeResult {
             protein: "P,\"quoted\"\nline".to_owned(),
             log2_fold_change: 1.0,
@@ -1428,7 +1396,14 @@ mod tests {
             cond_a: "A,one".to_owned(),
             cond_b: "B\"two".to_owned(),
         };
-        write_de_csv(&output, &rows, &contrast, MemberMethod::Limma, &matrix)?;
+        let prepared = Prepared {
+            proteins: &[],
+            rows: &[],
+            peptide_counts: &[],
+            n_a: 3,
+            n_b: 3,
+        };
+        write_de_csv(&output, &rows, &contrast, MemberMethod::Limma, &prepared)?;
 
         let mut reader = csv::Reader::from_path(&output)?;
         let headers = reader.headers()?.clone();
@@ -1440,43 +1415,46 @@ mod tests {
         Ok(())
     }
 
-    // KERNEL pin for the DEqMS count vector: when a protein name is present in
-    // the matrix's per-protein unique-canonical count map, `build_count_vector`
-    // carries that real count, aligned by the parsed name the contrast row order
-    // uses. A name absent from the map keeps the all-ones default -- the same
-    // fallback Python reaches when its `anchor_protein`-keyed reindex misses (the
-    // niche documented on `build_count_vector`). Single-accession proteins with a
-    // recorded count are the cell-for-cell-consistent KERNEL; the all-ones
-    // fallback is the niche boundary.
+    // DEqMS count vector: per protein, the fewest unique canonical peptides over
+    // the contrast's samples, plus 1 (DEqMS vignette, OpDEA). A sample outside
+    // the contrast does not count; a protein missing from one of its samples, or
+    // unknown, gets 0 + 1.
     #[test]
-    fn deqms_count_vector_uses_real_count_and_defaults_missing_to_one() -> TestResult<()> {
+    fn deqms_count_vector_takes_the_fewest_peptides_per_sample_plus_one() -> TestResult<()> {
         let mut proteins = mokume_core::StringIdRegistry::<ProteinId>::new();
         let p1 = proteins.get_or_insert("P1").expect("protein id overflow");
         let p2 = proteins.get_or_insert("P2").expect("protein id overflow");
-        // P3 is a contrast row with no recorded count (e.g. a `;`-joined group or
-        // a protein Python's anchor reindex would miss): it must default to 1.
-        let _p3 = proteins.get_or_insert("P3").expect("protein id overflow");
+        let p3 = proteins.get_or_insert("P3").expect("protein id overflow");
+        let mut samples = mokume_core::StringIdRegistry::<SampleId>::new();
+        let s1 = samples.get_or_insert("S1").expect("sample id overflow");
+        let s2 = samples.get_or_insert("S2").expect("sample id overflow");
+        let s3 = samples.get_or_insert("S3").expect("sample id overflow");
 
         let mut peptide_counts = HashMap::new();
-        peptide_counts.insert(p1, 4usize);
-        peptide_counts.insert(p2, 2usize);
+        for (protein, sample, count) in [
+            (p1, s1, 4usize),
+            (p1, s2, 3),
+            (p1, s3, 1),
+            (p2, s1, 2),
+            (p2, s2, 5),
+            (p3, s1, 6),
+        ] {
+            peptide_counts.insert(CellKey { protein, sample }, count);
+        }
 
         let matrix = ProteinMatrix {
             proteins,
-            samples: mokume_core::StringIdRegistry::<SampleId>::new(),
+            samples,
             allowed_proteins: HashSet::new(),
             excluded_samples: HashSet::new(),
             peptide_counts,
             values: ProteinValues::Cells(HashMap::new()),
         };
 
-        let order = vec!["P1".to_owned(), "P2".to_owned(), "P3".to_owned()];
-        let counts = build_count_vector(&matrix, &order);
-
+        let order = ["P1", "P2", "P3", "P4"].map(str::to_owned);
         assert_eq!(
-            counts,
-            vec![4.0, 2.0, 1.0],
-            "real counts for recorded proteins, all-ones default for the missing one"
+            build_count_vector(&matrix, &order, &[s1, s2]),
+            vec![4.0, 3.0, 1.0, 1.0]
         );
         Ok(())
     }

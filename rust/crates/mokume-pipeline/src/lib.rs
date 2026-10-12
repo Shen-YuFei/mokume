@@ -532,11 +532,9 @@ impl FeatureToProteinState {
         dataset_normalization: Option<SampleNormalizationMethod>,
     ) -> Result<ProteinMatrix> {
         let allowed_cells = self.allowed_cells(min_unique_peptides);
-        // Per-protein unique-canonical-peptide counts for the DEqMS DE path,
-        // captured BEFORE the `min_unique_peptides` cell filter so they mirror
-        // Python's `groupby("anchor_protein")["sequence"].nunique()` over the
-        // whole (unfiltered) parquet (stages.py:1810).
-        let peptide_counts = self.protein_peptide_counts();
+        // Per-(protein, sample) unique-canonical-peptide counts for the DEqMS DE
+        // path, captured BEFORE the `min_unique_peptides` cell filter.
+        let peptide_counts = self.cell_peptide_counts();
         if let Some(method) = dataset_normalization {
             if self.aggregation.applies_dataset_normalization() {
                 self.aggregation.apply_dataset_normalization(
@@ -576,23 +574,13 @@ impl FeatureToProteinState {
         })
     }
 
-    /// Union the canonical-peptide sets across all of a protein's (protein,
-    /// sample) cells into one per-protein unique-peptide count. This is the
-    /// Rust equivalent of Python's `groupby("anchor_protein")["sequence"]
-    /// .nunique()`: the canonical id is registered from `feature.sequence`
-    /// (Python's `sequence` column), and the count is taken over the whole
-    /// ingested set, with no `min_unique_peptides` filter applied.
-    fn protein_peptide_counts(&self) -> HashMap<ProteinId, usize> {
-        let mut by_protein = HashMap::<ProteinId, HashSet<PeptideId>>::new();
-        for (cell, peptides) in &self.unique_peptides {
-            by_protein
-                .entry(cell.protein)
-                .or_default()
-                .extend(peptides.iter().copied());
-        }
-        by_protein
-            .into_iter()
-            .map(|(protein, peptides)| (protein, peptides.len()))
+    /// Distinct canonical peptides (from `feature.sequence`) per (protein,
+    /// sample) cell over the whole ingested set, with no `min_unique_peptides`
+    /// filter applied.
+    fn cell_peptide_counts(&self) -> HashMap<CellKey, usize> {
+        self.unique_peptides
+            .iter()
+            .map(|(cell, peptides)| (*cell, peptides.len()))
             .collect()
     }
 
@@ -3438,11 +3426,11 @@ struct ProteinMatrix {
     samples: StringIdRegistry<SampleId>,
     allowed_proteins: HashSet<ProteinId>,
     excluded_samples: HashSet<SampleId>,
-    /// Per-protein unique-canonical-peptide count, captured at ingest before the
-    /// `min_unique_peptides` cell filter. Consumed only by the DEqMS DE path
-    /// (the count-aware `spectraCounteBayes` moderation); every other stage
-    /// ignores it. Mirrors Python's `_load_de_peptide_counts` Series.
-    peptide_counts: HashMap<ProteinId, usize>,
+    /// Per-(protein, sample) unique-canonical-peptide count, captured at ingest
+    /// before the `min_unique_peptides` cell filter. Consumed only by the DEqMS
+    /// DE path (the count-aware `spectraCounteBayes` moderation); every other
+    /// stage ignores it.
+    peptide_counts: HashMap<CellKey, usize>,
     values: ProteinValues,
 }
 
@@ -4199,20 +4187,23 @@ impl ProteinMatrix {
             })
     }
 
-    /// Per-protein unique-canonical-peptide counts keyed by the protein NAME
-    /// (the same accession string `log2_rows` emits). This resolves the
-    /// `ProteinId`-keyed [`Self::peptide_counts`] map back to names so the DEqMS
-    /// DE path can align counts to its `proteins` row order, exactly as Python's
-    /// `_build_count_vector` reindexes the count Series onto the matrix index.
-    fn peptide_counts_by_name(&self) -> HashMap<String, usize> {
-        self.peptide_counts
+    /// Fewest unique canonical peptides of the protein named `name` (the
+    /// accession string `log2_rows` emits) in any of `samples`; a sample without
+    /// the protein, or an unknown name, counts 0.
+    fn min_sample_peptide_count(&self, name: &str, samples: &[SampleId]) -> usize {
+        let Some(protein) = self.proteins.get(name) else {
+            return 0;
+        };
+        samples
             .iter()
-            .filter_map(|(protein, count)| {
-                self.proteins
-                    .resolve(*protein)
-                    .map(|name| (name.to_owned(), *count))
+            .map(|&sample| {
+                self.peptide_counts
+                    .get(&CellKey { protein, sample })
+                    .copied()
+                    .unwrap_or(0)
             })
-            .collect()
+            .min()
+            .unwrap_or(0)
     }
 
     fn set_value(&mut self, protein: ProteinId, sample: SampleId, value: f64) {
@@ -5182,7 +5173,7 @@ fn spectral_count_matrix(
     let (proteins, samples) = spectral_registries(&counted.cells)?;
 
     let mut values = HashMap::new();
-    let mut peptide_sets = HashMap::<ProteinId, HashSet<String>>::new();
+    let mut peptide_counts = HashMap::new();
     for cell in counted.cells {
         let protein_id = proteins
             .get(&cell.protein_group)
@@ -5190,23 +5181,14 @@ fn spectral_count_matrix(
         let sample_id = samples
             .get(&cell.sample)
             .ok_or_else(|| invalid_input("spectral-count sample registry is inconsistent"))?;
-        values.insert(
-            CellKey {
-                protein: protein_id,
-                sample: sample_id,
-            },
-            cell.psms as f64,
-        );
-        peptide_sets
-            .entry(protein_id)
-            .or_default()
-            .extend(cell.sequences);
+        let key = CellKey {
+            protein: protein_id,
+            sample: sample_id,
+        };
+        values.insert(key, cell.psms as f64);
+        peptide_counts.insert(key, cell.sequences.len());
     }
     let allowed_proteins = values.keys().map(|cell| cell.protein).collect();
-    let peptide_counts = peptide_sets
-        .into_iter()
-        .map(|(protein, sequences)| (protein, sequences.len()))
-        .collect();
     info!(
         target_psms = counted.target_psms,
         unique_psms = counted.unique_psms,

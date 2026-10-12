@@ -5820,8 +5820,9 @@ fn features2proteins_qrilc_imputation_matches_official_shared_draws() -> Result<
 // features2proteins --de-method deqms: PER-PROTEIN PEPTIDE-COUNT wiring.
 //
 // This is the pipeline-level proof that the DEqMS DE path consumes the real
-// per-protein unique-canonical-peptide counts (captured at ingest) rather than
-// the all-ones fallback. The synthetic parquet has 12 proteins, each with a
+// per-sample unique-canonical-peptide counts (captured at ingest; the smallest
+// over the contrast's samples, plus 1) rather than the all-ones fallback. The
+// synthetic parquet has 12 proteins, each with a
 // DISTINCT number of unique peptide sequences (1,2,3,4,5,6,7,8,9,11,13,15), so
 // the spectraCounteBayes count moderation genuinely runs (>= 10 testable
 // proteins and a real log2(count) spread), NOT the limma fallback.
@@ -5834,108 +5835,109 @@ fn features2proteins_qrilc_imputation_matches_official_shared_draws() -> Result<
 //
 // Independent Bioconductor DEqMS 1.28.0, R 4.5.3: lmFit(log2(DEQMS_TARGETS),
 // ~0+group), contrast A-B, eBayes, then spectraCounteBayes(fit.method="loess")
-// with DEQMS_COUNTS. This uses the official Gaussian quadratic LOESS surface.
+// with DEQMS_COUNTS + 1 (every peptide is in every sample, so the smallest
+// per-sample count is the total). This uses the official Gaussian quadratic
+// LOESS surface.
 // Tuple: (protein, log2FC, sca_t, sca_pvalue, BH, peptide_count).
 const DEQMS_PIPELINE_ORACLE: &[(&str, f64, f64, f64, f64, usize)] = &[
     (
         "PROT05",
         -0.9999999999999982,
-        -108.63131358984134,
-        7.698724837040662e-12,
-        9.238469804448795e-11,
-        8,
+        -109.51940472414849,
+        7.302063232188464e-12,
+        8.762475878626156e-11,
+        9,
     ),
     (
         "PROT09",
         -0.9999999999999991,
-        -46.95665067158488,
-        1.7828506851640617e-09,
-        1.0697104110984371e-08,
-        11,
+        -47.323521066550306,
+        1.6951257200029422e-09,
+        1.0170754320017653e-08,
+        12,
     ),
     (
         "PROT08",
         -1.0000000000000018,
-        -38.775823269918334,
-        6.1630119736146325e-09,
-        2.465204789445853e-08,
-        7,
+        -38.80926849955069,
+        6.128701301104685e-09,
+        2.451480520441874e-08,
+        8,
     ),
     (
         "PROT07",
         1.0,
-        27.540163305718362,
-        5.628612346975546e-08,
-        1.6885837040926637e-07,
-        4,
+        27.116203656122753,
+        6.221031193079203e-08,
+        1.8663093579237608e-07,
+        5,
     ),
     (
         "PROT04",
         -1.0,
-        -22.113258859441515,
-        2.3127116090466298e-07,
-        5.550507861711912e-07,
-        5,
+        -21.580991911897772,
+        2.704484155453108e-07,
+        6.49076197308746e-07,
+        6,
     ),
     (
         "PROT10",
         0.9999999999999964,
-        19.766239573248104,
-        4.7506527895102186e-07,
-        9.501305579020437e-07,
-        6,
+        19.869256756540995,
+        4.595047291347392e-07,
+        9.190094582694784e-07,
+        7,
     ),
     (
         "PROT02",
         2.0090616097754097,
-        17.05872587361833,
-        1.2179809565950436e-06,
-        2.0879673541629316e-06,
-        2,
+        17.152970197769925,
+        1.1759423721963774e-06,
+        2.015901209479504e-06,
+        3,
     ),
     (
         "PROT01",
         -2.00048684328549,
-        -15.484844223525773,
-        2.2547414598780906e-06,
-        3.382112189817136e-06,
-        1,
+        -15.20198554297494,
+        2.534570967347522e-06,
+        3.801856451021283e-06,
+        2,
     ),
     (
         "PROT12",
         -0.9999999999999982,
-        -8.951316476271492,
-        6.859950546907935e-05,
-        9.14660072921058e-05,
-        15,
+        -8.981209839393513,
+        6.72251409468691e-05,
+        8.963352126249214e-05,
+        16,
     ),
     (
         "PROT03",
         0.015910691677653688,
-        0.35122920454352724,
-        0.7365233507722879,
-        0.8464084878151766,
-        3,
+        0.3338625791472756,
+        0.7489935554533345,
+        0.8463792080005441,
+        4,
     ),
     (
         "PROT06",
         0.09175595082658283,
-        0.29680367733269925,
-        0.775874447163912,
-        0.8464084878151766,
-        13,
+        0.29684043988169595,
+        0.7758476073338322,
+        0.8463792080005441,
+        14,
     ),
     (
         "PROT11",
         -0.0016644556595100113,
-        -0.12803767351565662,
-        0.9019896520332734,
-        0.9019896520332734,
-        9,
+        -0.1302860212054248,
+        0.9002796786684337,
+        0.9002796786684337,
+        10,
     ),
 ];
 
-// Full BH order from the independent count-moderated fit, including tied BH.
 const DEQMS_PIPELINE_RANK: &[&str] = &[
     "PROT05", "PROT09", "PROT08", "PROT07", "PROT04", "PROT10", "PROT02", "PROT01", "PROT12",
     "PROT03", "PROT06", "PROT11",
@@ -6027,8 +6029,8 @@ fn assert_deqms_oracle_rows(table: &CsvTable) -> Result<(), Box<dyn Error>> {
         // Public p-value columns must preserve the count-aware results.
         assert_de_columns_equal(row, 2, 5, protein, "pvalue==sca_pvalue")?;
         assert_de_columns_equal(row, 3, 6, protein, "adj_pvalue==sca_adj_pvalue")?;
-        // The per-protein peptide_count is the exact unique-sequence count: this is
-        // the core of the fix (Rust nunique == Python nunique).
+        // peptide_count is the smallest per-sample unique-sequence count plus 1,
+        // the count the DEqMS vignette and OpDEA pass to spectraCounteBayes.
         let actual_count = de_field(row, 11)?;
         assert_eq!(
             actual_count,
@@ -6167,8 +6169,8 @@ const DEQMS_TARGETS: &[(&str, [f32; 6])] = &[
     ("PROT12", [900.0, 950.0, 850.0, 1800.0, 1900.0, 1700.0]),
 ];
 
-/// Per-protein number of UNIQUE peptide sequences (the count vector). Index
-/// aligns with `DEQMS_TARGETS`.
+/// Per-protein number of unique peptide sequences, each seen in every sample (the
+/// DEqMS count is this plus 1). Index aligns with `DEQMS_TARGETS`.
 const DEQMS_COUNTS: [usize; 12] = [1, 2, 3, 5, 8, 13, 4, 7, 11, 6, 9, 15];
 
 const DEQMS_SAMPLE_RUNS: [&str; 6] = ["A1.raw", "A2.raw", "A3.raw", "B1.raw", "B2.raw", "B3.raw"];
