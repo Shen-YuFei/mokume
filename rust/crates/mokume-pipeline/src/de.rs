@@ -52,7 +52,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use mokume_core::{DifferentialExpressionConfig, MokumeError, Result, SampleId};
-use mokume_io::SdrfTable;
+use mokume_io::{normalize_file_key, SdrfTable};
 use mokume_stats::de::{
     adaptive_adjust, combine_de_results, deqms_two_group, estimate_effect_size_gate,
     ihw_correction, limma_two_group, limrots_two_group, proda_two_group, rots_two_group,
@@ -880,6 +880,19 @@ fn parse_ensemble_method(name: &str) -> Result<MemberMethod> {
     }
 }
 
+/// Condition of a matrix column: an exact key (a source name) first, else the
+/// column normalized like an SDRF data file, which is how run-level matrices name
+/// their columns.
+fn sample_condition<'a>(
+    condition_by_sample: &'a HashMap<String, String>,
+    name: &str,
+) -> Option<&'a str> {
+    condition_by_sample
+        .get(name)
+        .or_else(|| condition_by_sample.get(&normalize_file_key(name)))
+        .map(String::as_str)
+}
+
 /// Sample ids whose condition equals `condition`, in matrix column order.
 fn group_samples(
     samples: &[(SampleId, &str)],
@@ -888,7 +901,7 @@ fn group_samples(
 ) -> Vec<SampleId> {
     samples
         .iter()
-        .filter(|(_, name)| condition_by_sample.get(*name).map(String::as_str) == Some(condition))
+        .filter(|(_, name)| sample_condition(condition_by_sample, name) == Some(condition))
         .map(|(sample, _)| *sample)
         .collect()
 }
@@ -978,7 +991,7 @@ fn de_output_path(
 /// `factor value[*]` column, reduced by `_shorten_factor_label`, keyed by both
 /// the `source name` and the `comment[data file]` name. The data-file keys let
 /// run-level protein matrices (whose columns are run-file stems, not source
-/// names) resolve their conditions.
+/// names) resolve their conditions through `sample_condition`.
 fn condition_by_sample(sdrf: &SdrfTable) -> HashMap<String, String> {
     let mut map = HashMap::new();
     // Pass 1: source name -> condition (Python's dedup'd source-name loop, first
@@ -990,11 +1003,10 @@ fn condition_by_sample(sdrf: &SdrfTable) -> HashMap<String, String> {
         map.entry(record.sample_accession.clone())
             .or_insert_with(|| shorten_factor_label(condition));
     }
-    // Pass 2: data-file name + extension-stripped stem (+ uppercase variants),
+    // Pass 2: the data file keyed like mokume-io's SDRF lookup (basename,
+    // lowercase, run extension stripped, also inside `.d.zip` or `.raw.gz`),
     // filling only keys not already mapped so source-name entries win
-    // (irs.py:393-401). The stem strips `.raw`/`.mzML`/`.d`/`.wiff`
-    // case-insensitively so the key matches the extension-less `run_file_name`
-    // the protein matrix uses as its sample columns.
+    // (irs.py:393-401).
     for record in sdrf.records() {
         let Some(condition) = record.condition.as_deref() else {
             continue;
@@ -1003,38 +1015,13 @@ fn condition_by_sample(sdrf: &SdrfTable) -> HashMap<String, String> {
         if raw.is_empty() {
             continue;
         }
-        let short = shorten_factor_label(condition);
-        let stem = strip_run_extension(raw);
-        for variant in [
-            raw.to_owned(),
-            stem.clone(),
-            raw.to_uppercase(),
-            stem.to_uppercase(),
-        ] {
-            if !variant.is_empty() {
-                map.entry(variant).or_insert_with(|| short.clone());
-            }
+        let key = normalize_file_key(raw);
+        if !key.is_empty() {
+            map.entry(key)
+                .or_insert_with(|| shorten_factor_label(condition));
         }
     }
     map
-}
-
-/// Strip a single trailing run extension (case-insensitive). Beyond Python's
-/// `re.sub(r"\.(raw|mzML|d)$", ...)` this also strips `.wiff`: the protein-matrix
-/// sample columns come from the QPX `run_file_name`, which is already
-/// extension-less, so the SDRF `comment[data file]` key must drop the run
-/// extension to match it. Without `.wiff`, DE on Sciex (`.wiff`) datasets finds
-/// no samples for any contrast even though the conditions are present.
-fn strip_run_extension(name: &str) -> String {
-    let lower = name.to_ascii_lowercase();
-    for ext in [".raw", ".mzml", ".d", ".wiff"] {
-        if lower.ends_with(ext) {
-            if let Some(stem) = name.get(..name.len() - ext.len()) {
-                return stem.to_owned();
-            }
-        }
-    }
-    name.to_owned()
 }
 
 /// Port of `mokume.normalization.irs._shorten_factor_label`. Verbose
@@ -1279,7 +1266,7 @@ mod tests {
     use super::{
         available_conditions, build_count_vector, classify_significance, condition_by_sample,
         differential_expression_matrix, finalize_ensemble_results, finalize_member_results,
-        run_differential_expression, shorten_factor_label, split_contrast,
+        run_differential_expression, sample_condition, shorten_factor_label, split_contrast,
         validated_ensemble_member_names, write_de_csv, Contrast, MemberMethod,
     };
     use crate::{CellKey, ProteinMatrix, ProteinValues};
@@ -1624,32 +1611,34 @@ mod tests {
     #[test]
     fn condition_by_sample_maps_data_file_stems() -> TestResult<()> {
         // source name != run-file stem, so run-level matrix columns (the stems)
-        // only resolve via the data-file pass. `.raw`/`.mzML`/`.wiff` are all
-        // stripped (case-insens) so the stem matches the extension-less
-        // run_file_name the protein matrix uses as columns.
+        // only resolve via the data-file keys, which follow mokume-io's
+        // normalize_file_key: any case, with or without the run extension, and
+        // through archives such as `.d.zip`.
         let tsv = concat!(
             "source name\tcomment[data file]\tfactor value[phenotype]\n",
             "Sample-1\trun_alpha.raw\tgroupA\n",
             "Sample-2\tRUN_BETA.mzML\tgroupB\n",
             "Sample-3\trun_gamma.wiff\tgroupA\n",
+            "Sample-4\tRun_Delta.d.zip\tgroupB\n",
         );
         let sdrf = SdrfTable::from_reader(tsv.as_bytes())?;
         let map = condition_by_sample(&sdrf);
+        let condition = |name| sample_condition(&map, name);
 
         // Source names still resolve.
-        assert_eq!(map.get("Sample-1").map(String::as_str), Some("groupA"));
-        // `.raw` stem resolves (the run-level fix).
-        assert_eq!(map.get("run_alpha").map(String::as_str), Some("groupA"));
-        assert_eq!(map.get("run_alpha.raw").map(String::as_str), Some("groupA"));
-        // `.mzML` stem strips case-insensitively; uppercase variant present too.
-        assert_eq!(map.get("RUN_BETA").map(String::as_str), Some("groupB"));
-        // `.wiff` is stripped too, so the extension-less stem (the protein-matrix
-        // column form) and the full name both resolve.
-        assert_eq!(map.get("run_gamma").map(String::as_str), Some("groupA"));
-        assert_eq!(
-            map.get("run_gamma.wiff").map(String::as_str),
-            Some("groupA")
-        );
+        assert_eq!(condition("Sample-1"), Some("groupA"));
+        for (name, expected) in [
+            ("run_alpha", "groupA"),
+            ("run_alpha.raw", "groupA"),
+            ("RUN_BETA", "groupB"),
+            ("run_beta", "groupB"),
+            ("run_gamma", "groupA"),
+            ("run_gamma.wiff", "groupA"),
+            ("Run_Delta", "groupB"),
+        ] {
+            assert_eq!(condition(name), Some(expected), "condition of {name}");
+        }
+        assert_eq!(condition("run_epsilon"), None);
         Ok(())
     }
 

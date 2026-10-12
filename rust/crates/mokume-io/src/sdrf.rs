@@ -459,7 +459,7 @@ pub fn normalize_file_key(value: &str) -> String {
     // Strip a trailing run extension so the SDRF `comment[data file]` key matches
     // the QPX `run_file_name`, which is stored extension-less. Without this the
     // per-feature SDRF lookup misses and the Condition column falls back to the
-    // run filename. Mirrors `mokume-pipeline` de.rs::strip_run_extension.
+    // run filename. `mokume-pipeline` de.rs keys run-level DE columns the same way.
     let last_extension = [".raw", ".mzml", ".wiff", ".d"]
         .into_iter()
         .flat_map(|extension| {
