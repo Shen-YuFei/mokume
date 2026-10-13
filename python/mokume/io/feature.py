@@ -169,7 +169,8 @@ class SQLFilterBuilder:
     min_peptide_length : int
         Minimum peptide sequence length.
     require_unique : bool
-        Whether to require unique peptides only (unique = 1).
+        Whether to require unique peptides only (unique = 1). A null flag
+        means a one-protein group.
     has_is_decoy : bool
         Whether the parquet has an ``is_decoy`` column. When True, DECOY
         filtering uses ``is_decoy = false`` instead of text pattern matching.
@@ -216,9 +217,13 @@ class SQLFilterBuilder:
             conditions.append('LENGTH("sequence") >= ?')
             params.append(self.min_peptide_length)
 
-        # Unique peptides only
+        # Unique peptides only. qpx < 1.1.3 leaves the flag null in
+        # OpenMS-derived features; it then means a one-protein group, which is
+        # how qpx >= 1.1.3 sets it.
         if self.require_unique:
-            conditions.append('"unique" = 1')
+            conditions.append(
+                '("unique" = 1 OR ("unique" IS NULL AND len(pg_accessions) = 1))'
+            )
 
         score_clause, score_params = self.build_named_score_clause()
         if score_clause:
@@ -707,13 +712,14 @@ class Feature:
                 "                AND p._mapping_label = s.qpx_label"
             )
             sample_accession = "s.sdrf_sample_accession"
-            condition = "s.sdrf_condition"
+            # A factor value can be numeric; conditions are compared as text.
+            condition = "CAST(s.sdrf_condition AS VARCHAR)"
         else:
             unnest_cols = "unnest.channel,\n                unnest.intensity"
             extra_cols = ",\n                unnest.sample_accession as _legacy_sa"
             join_clause = "ON p._legacy_sa = s.sdrf_sample_accession"
             sample_accession = "COALESCE(s.sdrf_sample_accession, p._legacy_sa)"
-            condition = "COALESCE(s.sdrf_condition, p._legacy_sa)"
+            condition = "COALESCE(CAST(s.sdrf_condition AS VARCHAR), p._legacy_sa)"
             run_value = run_col
 
         # Normalize pg_accessions: extract accession strings from struct if needed
@@ -826,7 +832,9 @@ class Feature:
                     " ",
                     condition,
                     " as condition,",
-                    " COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,",
+                    # Text replicates such as 'pooled' get 1, as in the Rust reader.
+                    " COALESCE(TRY_CAST(s.sdrf_biological_replicate AS INTEGER), 1)",
+                    " as biological_replicate,",
                     " COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,",
                     " split_part(",
                     sample_accession,

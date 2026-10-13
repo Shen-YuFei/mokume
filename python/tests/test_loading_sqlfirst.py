@@ -280,6 +280,39 @@ def test_sqlfirst_filters_unique_min_aa_decoy_contam_entrap(lfq_dataset):
     )
 
 
+def test_null_unique_flag_means_a_one_protein_group(lfq_dataset):
+    """qpx < 1.1.3 leaves ``unique`` null; it then means a one-protein group."""
+    parquet, sdrf = lfq_dataset
+    table = pq.read_table(parquet)
+    groups = table["pg_accessions"].to_pylist()
+    for row, sequence in enumerate(table["sequence"].to_pylist()):
+        if sequence in {"KEPTPEPAR", "KEPTPEPBR"}:
+            groups[row] = groups[row] + [{**groups[row][0], "accession": "P00002"}]
+    table = table.set_column(
+        table.schema.get_field_index("pg_accessions"),
+        "pg_accessions",
+        pa.array(groups, type=_PG_PROTEIN_TYPE),
+    )
+    column = table.schema.get_field_index("unique")
+    nulls = pa.nulls(table.num_rows, pa.bool_())
+    pq.write_table(table.set_column(column, "unique", nulls), parquet)
+    cfg = _make_config(parquet, sdrf)
+
+    # Both P99999 peptides are now shared with P00002, so they are dropped.
+    for df in (LoadingStage(cfg).load_for_mokume(), _legacy_path_output(cfg)):
+        assert set(df[PROTEIN_NAME].astype(str)) == {"P12345"}
+
+
+def test_load_fails_when_no_feature_passes_the_filters(lfq_dataset):
+    """Input that the filters empty fails early with a message naming them."""
+    parquet, sdrf = lfq_dataset
+    cfg = _make_config(parquet, sdrf)
+    cfg.filtering.min_aa = 50
+
+    with pytest.raises(ValueError, match="No features pass the input filters"):
+        LoadingStage(cfg).load_for_mokume()
+
+
 def test_sqlfirst_respects_disabled_contaminant_filter(request):
     """The SQL-first path must not apply a second hard-coded name filter."""
     parquet, sdrf = request.getfixturevalue("lfq_dataset")
