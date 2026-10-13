@@ -29,6 +29,10 @@ from mokume.core.constants import (
     AGGREGATION_LEVEL_SAMPLE,
     AGGREGATION_LEVEL_RUN,
 )
+from mokume.core.contaminants import (
+    DEFAULT_CONTAMINANT_PATTERNS,
+    contaminant_group_mask,
+)
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.preprocessing.aggregation")
@@ -94,11 +98,6 @@ def remove_contaminants_entrapments_decoys(
     pd.DataFrame
         A DataFrame with the contaminants, entrapments, and decoys removed.
     """
-    from mokume.core.contaminants import (
-        DEFAULT_CONTAMINANT_PATTERNS,
-        contaminant_group_mask,
-    )
-
     mask = contaminant_group_mask(
         dataset[protein_field], DEFAULT_CONTAMINANT_PATTERNS, case_sensitive=True
     )
