@@ -300,6 +300,19 @@ def _build_run_scale_query(where_clause: str, metric_expr: str) -> str:
     )
 
 
+def _require_rows_passing_filters(
+    feature: Feature, filter_builder: SQLFilterBuilder
+) -> None:
+    """Fail before loading, with the reason, when the filters keep no rows."""
+    where_clause, where_params = filter_builder.build_where_clause()
+    sql = "".join(["SELECT 1 FROM parquet_db WHERE ", where_clause, " LIMIT 1"])
+    if feature.parquet_db.execute(sql, where_params).fetchone() is None:
+        raise ValueError(
+            "No features pass the input filters (intensity > 0, peptide "
+            "length, unique peptides, contaminants, decoys and scores)"
+        )
+
+
 class LoadingStage:
     """Load and filter QPX parquet or native SDRF+MSstats data."""
 
@@ -357,6 +370,8 @@ class LoadingStage:
                 _sample_names,
                 choice,
             ) = feature.experimental_inference
+
+        _require_rows_passing_filters(feature, filter_builder)
 
         # Build normalization config snapshot (shared between both load paths).
         run_norm = self.config.normalization.run_method.lower()

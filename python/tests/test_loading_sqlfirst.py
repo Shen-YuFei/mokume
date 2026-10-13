@@ -303,6 +303,16 @@ def test_null_unique_flag_means_a_one_protein_group(lfq_dataset):
         assert set(df[PROTEIN_NAME].astype(str)) == {"P12345"}
 
 
+def test_load_fails_when_no_feature_passes_the_filters(lfq_dataset):
+    """Input that the filters empty fails early with a message naming them."""
+    parquet, sdrf = lfq_dataset
+    cfg = _make_config(parquet, sdrf)
+    cfg.filtering.min_aa = 50
+
+    with pytest.raises(ValueError, match="No features pass the input filters"):
+        LoadingStage(cfg).load_for_mokume()
+
+
 def test_sqlfirst_respects_disabled_contaminant_filter(request):
     """The SQL-first path must not apply a second hard-coded name filter."""
     parquet, sdrf = request.getfixturevalue("lfq_dataset")
