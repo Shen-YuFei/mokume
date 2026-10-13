@@ -98,6 +98,55 @@ def test_lfq_msstats_runs_end_to_end(tmp_path):
     assert row["S2"] == 200.0
 
 
+def test_numeric_factor_and_pooled_replicate_load(tmp_path):
+    """SDRF numeric factor values and pooled biological replicates load."""
+    sdrf = tmp_path / "input.sdrf.tsv"
+    msstats = tmp_path / "input_msstats_in.csv"
+    output = tmp_path / "proteins.csv"
+    _write_sdrf(
+        sdrf,
+        [
+            {
+                "source name": sample,
+                "comment[data file]": f"{sample}.raw",
+                "comment[label]": "label free sample",
+                "comment[technical replicate]": "1",
+                "comment[fraction identifier]": "1",
+                "characteristics[biological replicate]": replicate,
+                "factor value[dose]": dose,
+            }
+            for sample, replicate, dose in [("S1", "1", 10), ("S2", "pooled", 20)]
+        ],
+    )
+    pd.DataFrame(
+        [
+            {
+                "ProteinName": "P1",
+                "PeptideSequence": "PEPTIDEK",
+                "PrecursorCharge": 2,
+                "Intensity": intensity,
+                "Reference": f"{sample}.mzML",
+            }
+            for sample, intensity in [("S1", 100.0), ("S2", 200.0)]
+        ]
+    ).to_csv(msstats, index=False)
+
+    proteins = features_to_proteins(
+        parquet=None,
+        msstats=str(msstats),
+        sdrf=str(sdrf),
+        output=str(output),
+        quant_method="sum",
+        min_unique_peptides=1,
+        run_normalization="none",
+        sample_normalization="none",
+    )
+
+    row = proteins.set_index("ProteinName").loc["P1"]
+    assert row["S1"] == 100.0
+    assert row["S2"] == 200.0
+
+
 def test_tmt10_channel_positions_use_sdrf_labels(tmp_path):
     """TMT channel positions map to canonical SDRF labels."""
     sdrf = tmp_path / "input.sdrf.tsv"

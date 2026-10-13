@@ -707,13 +707,14 @@ class Feature:
                 "                AND p._mapping_label = s.qpx_label"
             )
             sample_accession = "s.sdrf_sample_accession"
-            condition = "s.sdrf_condition"
+            # A factor value can be numeric; conditions are compared as text.
+            condition = "CAST(s.sdrf_condition AS VARCHAR)"
         else:
             unnest_cols = "unnest.channel,\n                unnest.intensity"
             extra_cols = ",\n                unnest.sample_accession as _legacy_sa"
             join_clause = "ON p._legacy_sa = s.sdrf_sample_accession"
             sample_accession = "COALESCE(s.sdrf_sample_accession, p._legacy_sa)"
-            condition = "COALESCE(s.sdrf_condition, p._legacy_sa)"
+            condition = "COALESCE(CAST(s.sdrf_condition AS VARCHAR), p._legacy_sa)"
             run_value = run_col
 
         # Normalize pg_accessions: extract accession strings from struct if needed
@@ -826,7 +827,9 @@ class Feature:
                     " ",
                     condition,
                     " as condition,",
-                    " COALESCE(CAST(s.sdrf_biological_replicate AS INTEGER), 1) as biological_replicate,",
+                    # Text replicates such as 'pooled' get 1, as in the Rust reader.
+                    " COALESCE(TRY_CAST(s.sdrf_biological_replicate AS INTEGER), 1)",
+                    " as biological_replicate,",
                     " COALESCE(CAST(s.sdrf_fraction AS VARCHAR), '1') as fraction,",
                     " split_part(",
                     sample_accession,
