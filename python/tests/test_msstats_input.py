@@ -211,6 +211,50 @@ def test_partial_tmt11_uses_declared_channel_positions(tmp_path):
     assert row == ("TMT131N",)
 
 
+def test_reference_names_the_file_when_run_is_a_design_index(tmp_path):
+    """quantms Run is a design index, so numeric file names must not claim it."""
+    sdrf = tmp_path / "input.sdrf.tsv"
+    msstats = tmp_path / "input_msstats_in.csv"
+    _write_sdrf(
+        sdrf,
+        [
+            {
+                "source name": sample,
+                "comment[data file]": data_file,
+                "comment[label]": "label free sample",
+            }
+            for sample, data_file in [("S1", "2.raw"), ("S2", "2_20221202203139.raw")]
+        ],
+    )
+    pd.DataFrame(
+        [
+            {
+                "ProteinName": "P1",
+                "PeptideSequence": "PEPTIDEK",
+                "Charge": 2,
+                "Run": run,
+                "Intensity": intensity,
+                "Reference": reference,
+            }
+            for run, reference, intensity in [
+                (1, "2.mzML", 100.0),
+                (2, "2_20221202203139.mzML", 200.0),
+            ]
+        ]
+    ).to_csv(msstats, index=False)
+
+    feature = Feature.from_msstats(str(msstats), str(sdrf))
+    try:
+        rows = feature.parquet_db.execute(
+            "SELECT intensities[1].intensity, run_file_name "
+            "FROM parquet_db_raw ORDER BY 1"
+        ).fetchall()
+    finally:
+        feature.parquet_db.close()
+
+    assert rows == [(100.0, "2.raw"), (200.0, "2_20221202203139.raw")]
+
+
 def test_msstats_rejects_nonfinite_intensity(tmp_path):
     """Non-finite source values must not become quantified zeroes."""
     sdrf = tmp_path / "input.sdrf.tsv"
