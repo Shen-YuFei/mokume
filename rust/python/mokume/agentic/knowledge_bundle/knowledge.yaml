@@ -11,11 +11,11 @@ sources:
     kind: cross_dataset_ground_truth_benchmark
     title: Mokume spike-in Grid benchmark (mokumebench, 81 datasets, 31 studies)
     locator: sources/spike-in-mokumebench
-    captured_at: '2026-10-09'
+    captured_at: '2026-10-12'
     trust: locally_reproduced_ground_truth
     status: benchmark_candidates_not_published
     artifacts:
-      datasets.yaml: 3aaaeaf40e9d1be31ce8b00c407cda25eb0d0b3b2830ed5b731e5cdff88cfec9
+      datasets.yaml: daac4979b071c151fe635d05a1e001817a169940c188525aada7d3bb79c61eba
 evidence:
   - id: grid-lfq-preset
     source_id: spike-in-mokumebench
@@ -55,29 +55,29 @@ evidence:
       datasets: 39
       candidates_per_dataset: 744
       service_candidates_per_dataset: 310
-      mean_study_deficit: 0.0633
-      median_study_deficit: 0.0454
-      iqr_study_deficit: 0.036
+      mean_study_deficit: 0.0554
+      median_study_deficit: 0.0336
+      iqr_study_deficit: 0.0326
       near_best: 0.01
-      near_best_rate: 0.1111
+      near_best_rate: 0.2778
       top_fraction: 0.05
-      top_rate: 0.2222
-      mean_score_a: 0.8128
+      top_rate: 0.3333
+      mean_score_a: 0.8224
       mean_coverage: 0.6858
-      overall_best_config: directlfq|none|minprob|half|deqms
+      overall_best_config: directlfq|none|mindet|half|deqms
       lodo_unit: study
       lodo_folds: 18
-      lodo_folds_selecting_preset: 11
-      lodo_near_best_rate: 0.0556
-      mean_lodo_regret: 0.069782
-      max_lodo_regret: 0.222098
-      mean_lodo_rank_spearman: 0.486
+      lodo_folds_selecting_preset: 17
+      lodo_near_best_rate: 0.2778
+      mean_lodo_regret: 0.04138
+      max_lodo_regret: 0.187337
+      mean_lodo_rank_spearman: 0.497
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
       - Quantification is frozen when the workflow starts from a protein matrix.
       - Many configurations fall within the study-bootstrap interval of this preset, and on held-out studies
-        it was rarely within 0.01 of the best deficit.
+        it was within 0.01 of the best deficit in 5 of 18 studies.
       - DirectLFQ normalizes samples internally; where many proteins change in one direction (PXD000279),
         maxlfq or DirectLFQ without sample normalization (mokume --directlfq-no-sample-normalization)
         scored far higher.
@@ -120,29 +120,29 @@ evidence:
       datasets: 39
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0633
-      median_study_deficit: 0.0454
-      iqr_study_deficit: 0.036
+      mean_study_deficit: 0.0554
+      median_study_deficit: 0.0336
+      iqr_study_deficit: 0.0326
       near_best: 0.01
-      near_best_rate: 0.2222
+      near_best_rate: 0.4444
       top_fraction: 0.05
-      top_rate: 0.0556
-      mean_score_a: 0.8128
+      top_rate: 0.1111
+      mean_score_a: 0.8224
       mean_coverage: 0.6858
-      overall_best_config: directlfq|none|minprob|half|deqms
+      overall_best_config: directlfq|none|mindet|half|deqms
       lodo_unit: study
       lodo_folds: 18
-      lodo_folds_selecting_preset: 11
-      lodo_near_best_rate: 0.0556
-      mean_lodo_regret: 0.050756
-      max_lodo_regret: 0.158632
-      mean_lodo_rank_spearman: 0.255
+      lodo_folds_selecting_preset: 17
+      lodo_near_best_rate: 0.4444
+      mean_lodo_regret: 0.024674
+      max_lodo_regret: 0.110023
+      mean_lodo_rank_spearman: 0.302
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
       - Applies only to protein matrices quantified with directlfq; near-best, top and held-out rates
         compare only directlfq configurations.
-      - seqknn imputation scored as well as minprob.
+      - mindet imputation scored almost as well as minprob.
       - DirectLFQ normalizes samples internally; where many proteins change in one direction (PXD000279),
         DirectLFQ without sample normalization (mokume --directlfq-no-sample-normalization) scored far
         higher.
@@ -173,7 +173,7 @@ evidence:
     pipeline:
       quantification: maxlfq
       normalization: none
-      imputation: seqknn
+      imputation: minprob
       de_method: deqms
       fdr_method: bh
       log2fc_threshold: 0.584963
@@ -184,29 +184,29 @@ evidence:
       datasets: 39
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0674
-      median_study_deficit: 0.0517
-      iqr_study_deficit: 0.0409
+      mean_study_deficit: 0.0648
+      median_study_deficit: 0.0524
+      iqr_study_deficit: 0.0463
       near_best: 0.01
-      near_best_rate: 0.2778
+      near_best_rate: 0.4444
       top_fraction: 0.05
-      top_rate: 0.2222
-      mean_score_a: 0.8057
+      top_rate: 0.1667
+      mean_score_a: 0.8136
       mean_coverage: 0.6762
-      overall_best_config: directlfq|none|minprob|half|deqms
+      overall_best_config: directlfq|none|mindet|half|deqms
       lodo_unit: study
       lodo_folds: 18
-      lodo_folds_selecting_preset: 17
-      lodo_near_best_rate: 0.2778
-      mean_lodo_regret: 0.050892
-      max_lodo_regret: 0.287541
-      mean_lodo_rank_spearman: 0.175
+      lodo_folds_selecting_preset: 15
+      lodo_near_best_rate: 0.3333
+      mean_lodo_regret: 0.055707
+      max_lodo_regret: 0.30717
+      mean_lodo_rank_spearman: 0.251
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
       - Applies only to protein matrices quantified with maxlfq; near-best, top and held-out rates compare
         only maxlfq configurations.
-      - knn imputation came second; median normalization lowered the scores.
+      - mindet imputation came second; median normalization lowered the scores.
   - id: grid-lfq-pibaq-preset
     source_id: spike-in-mokumebench
     kind: quantification_preset
@@ -233,8 +233,8 @@ evidence:
       missing_rate: [0.07683, 0.481664]
     pipeline:
       quantification: pibaq
-      normalization: median
-      imputation: seqknn
+      normalization: none
+      imputation: minprob
       de_method: deqms
       fdr_method: bh
       log2fc_threshold: 0.584963
@@ -245,23 +245,23 @@ evidence:
       datasets: 39
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.1172
-      median_study_deficit: 0.0913
-      iqr_study_deficit: 0.0779
+      mean_study_deficit: 0.113
+      median_study_deficit: 0.0968
+      iqr_study_deficit: 0.1038
       near_best: 0.01
-      near_best_rate: 0.2778
+      near_best_rate: 0.1667
       top_fraction: 0.05
-      top_rate: 0.0556
-      mean_score_a: 0.7644
+      top_rate: 0.1111
+      mean_score_a: 0.7771
       mean_coverage: 0.9925
-      overall_best_config: directlfq|none|minprob|half|deqms
+      overall_best_config: directlfq|none|mindet|half|deqms
       lodo_unit: study
       lodo_folds: 18
-      lodo_folds_selecting_preset: 13
-      lodo_near_best_rate: 0.1667
-      mean_lodo_regret: 0.054804
-      max_lodo_regret: 0.195482
-      mean_lodo_rank_spearman: 0.313
+      lodo_folds_selecting_preset: 11
+      lodo_near_best_rate: 0.0
+      mean_lodo_regret: 0.06089
+      max_lodo_regret: 0.192508
+      mean_lodo_rank_spearman: 0.355
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
@@ -273,7 +273,7 @@ evidence:
     source_id: spike-in-mokumebench
     kind: quantification_preset
     status: candidate_for_review
-    confidence: low
+    confidence: moderate
     priority: 11
     eligible_as_prior: true
     applicability:
@@ -295,8 +295,8 @@ evidence:
       missing_rate: [0.124348, 0.561861]
     pipeline:
       quantification: sum
-      normalization: median
-      imputation: minprob
+      normalization: none
+      imputation: mindet
       de_method: deqms
       fdr_method: bh
       log2fc_threshold: 0.584963
@@ -307,30 +307,30 @@ evidence:
       datasets: 39
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.1075
-      median_study_deficit: 0.0799
-      iqr_study_deficit: 0.075
+      mean_study_deficit: 0.0984
+      median_study_deficit: 0.0821
+      iqr_study_deficit: 0.0827
       near_best: 0.01
-      near_best_rate: 0.0556
+      near_best_rate: 0.5
       top_fraction: 0.05
-      top_rate: 0.0
-      mean_score_a: 0.7718
+      top_rate: 0.2778
+      mean_score_a: 0.7862
       mean_coverage: 0.7346
-      overall_best_config: directlfq|none|minprob|half|deqms
+      overall_best_config: directlfq|none|mindet|half|deqms
       lodo_unit: study
       lodo_folds: 18
-      lodo_folds_selecting_preset: 14
-      lodo_near_best_rate: 0.0556
-      mean_lodo_regret: 0.060653
-      max_lodo_regret: 0.246218
-      mean_lodo_rank_spearman: 0.197
+      lodo_folds_selecting_preset: 16
+      lodo_near_best_rate: 0.3889
+      mean_lodo_regret: 0.04593
+      max_lodo_regret: 0.230887
+      mean_lodo_rank_spearman: 0.25
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
       - Applies only to protein matrices quantified with sum; near-best, top and held-out rates compare
         only sum configurations.
       - Sum matrices scored well below DirectLFQ and MaxLFQ matrices.
-      - Median normalization improved the scores.
+      - Median normalization and no normalization scored almost the same.
   - id: grid-lfq-top3-preset
     source_id: spike-in-mokumebench
     kind: quantification_preset
@@ -369,23 +369,23 @@ evidence:
       datasets: 39
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.1328
-      median_study_deficit: 0.1168
-      iqr_study_deficit: 0.0563
+      mean_study_deficit: 0.1283
+      median_study_deficit: 0.1128
+      iqr_study_deficit: 0.0428
       near_best: 0.01
-      near_best_rate: 0.1111
+      near_best_rate: 0.2222
       top_fraction: 0.05
-      top_rate: 0.0556
-      mean_score_a: 0.7492
+      top_rate: 0.1111
+      mean_score_a: 0.7541
       mean_coverage: 0.7346
-      overall_best_config: directlfq|none|minprob|half|deqms
+      overall_best_config: directlfq|none|mindet|half|deqms
       lodo_unit: study
       lodo_folds: 18
-      lodo_folds_selecting_preset: 16
-      lodo_near_best_rate: 0.1111
-      mean_lodo_regret: 0.050142
-      max_lodo_regret: 0.257266
-      mean_lodo_rank_spearman: 0.224
+      lodo_folds_selecting_preset: 15
+      lodo_near_best_rate: 0.2222
+      mean_lodo_regret: 0.051873
+      max_lodo_regret: 0.226423
+      mean_lodo_rank_spearman: 0.247
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
@@ -416,11 +416,11 @@ evidence:
         PXD056598_DIA__G_ulti_ex_DIA_PYE1, PXD056598_DIA__H_ulti_ecl_DIA_PYE1, PXD056598_DIA__H_ulti_ex_DIA_PYE1,
         PXD056598_DIA__I_nLC_ex_DIA_PYE1, PXD056832__HYEPept_Batch1, PXD056832__HYEPept_Batch2, PXD056832__HYEPept_Batch3,
         PXD062685, PXD066672, PXD070049, PXD071205_TE__TE_15min_50ng, PXD071205_TE__TE_5min_50ng]
-      n_proteins: [2263, 15536]
+      n_proteins: [2266, 15652]
       n_samples: [6, 16]
-      missing_rate: [0.03068, 0.246267]
+      missing_rate: [0.031154, 0.261076]
     pipeline:
-      quantification: maxlfq
+      quantification: directlfq
       normalization: none
       imputation: mindet
       de_method: deqms
@@ -433,23 +433,23 @@ evidence:
       datasets: 38
       candidates_per_dataset: 744
       service_candidates_per_dataset: 310
-      mean_study_deficit: 0.037
-      median_study_deficit: 0.0366
-      iqr_study_deficit: 0.0193
+      mean_study_deficit: 0.0333
+      median_study_deficit: 0.0219
+      iqr_study_deficit: 0.0154
       near_best: 0.01
-      near_best_rate: 0.2143
+      near_best_rate: 0.5
       top_fraction: 0.05
-      top_rate: 0.2857
-      mean_score_a: 0.8881
-      mean_coverage: 0.7139
-      overall_best_config: maxlfq|none|mindet|none|deqms
+      top_rate: 0.4286
+      mean_score_a: 0.8953
+      mean_coverage: 0.7196
+      overall_best_config: directlfq|none|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
-      lodo_folds_selecting_preset: 8
-      lodo_near_best_rate: 0.0
-      mean_lodo_regret: 0.038286
-      max_lodo_regret: 0.124137
-      mean_lodo_rank_spearman: 0.517
+      lodo_folds_selecting_preset: 7
+      lodo_near_best_rate: 0.1429
+      mean_lodo_regret: 0.034851
+      max_lodo_regret: 0.106093
+      mean_lodo_rank_spearman: 0.522
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -497,23 +497,23 @@ evidence:
       datasets: 38
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0375
-      median_study_deficit: 0.0259
-      iqr_study_deficit: 0.0146
+      mean_study_deficit: 0.0333
+      median_study_deficit: 0.0219
+      iqr_study_deficit: 0.0154
       near_best: 0.01
-      near_best_rate: 0.5714
+      near_best_rate: 0.7143
       top_fraction: 0.05
       top_rate: 0.2857
-      mean_score_a: 0.8912
+      mean_score_a: 0.8953
       mean_coverage: 0.7196
-      overall_best_config: maxlfq|none|mindet|none|deqms
+      overall_best_config: directlfq|none|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 13
-      lodo_near_best_rate: 0.5
-      mean_lodo_regret: 0.011194
-      max_lodo_regret: 0.028406
-      mean_lodo_rank_spearman: 0.335
+      lodo_near_best_rate: 0.6429
+      mean_lodo_regret: 0.008984
+      max_lodo_regret: 0.026188
+      mean_lodo_rank_spearman: 0.368
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -561,23 +561,23 @@ evidence:
       datasets: 38
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.037
-      median_study_deficit: 0.0366
-      iqr_study_deficit: 0.0193
+      mean_study_deficit: 0.0337
+      median_study_deficit: 0.031
+      iqr_study_deficit: 0.0186
       near_best: 0.01
       near_best_rate: 0.6429
       top_fraction: 0.05
-      top_rate: 0.1429
-      mean_score_a: 0.8881
+      top_rate: 0.2857
+      mean_score_a: 0.8908
       mean_coverage: 0.7139
-      overall_best_config: maxlfq|none|mindet|none|deqms
+      overall_best_config: directlfq|none|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 13
       lodo_near_best_rate: 0.5714
-      mean_lodo_regret: 0.014239
-      max_lodo_regret: 0.056135
-      mean_lodo_rank_spearman: 0.349
+      mean_lodo_regret: 0.011956
+      max_lodo_regret: 0.052558
+      mean_lodo_rank_spearman: 0.365
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -613,7 +613,7 @@ evidence:
     pipeline:
       quantification: pibaq
       normalization: none
-      imputation: mindet
+      imputation: minprob
       de_method: deqms
       fdr_method: bh
       log2fc_threshold: 0.584963
@@ -624,35 +624,35 @@ evidence:
       datasets: 38
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0868
-      median_study_deficit: 0.0811
-      iqr_study_deficit: 0.0511
+      mean_study_deficit: 0.0836
+      median_study_deficit: 0.0766
+      iqr_study_deficit: 0.0506
       near_best: 0.01
-      near_best_rate: 0.2143
+      near_best_rate: 0.2857
       top_fraction: 0.05
       top_rate: 0.0714
-      mean_score_a: 0.8441
+      mean_score_a: 0.8468
       mean_coverage: 0.9974
-      overall_best_config: maxlfq|none|mindet|none|deqms
+      overall_best_config: directlfq|none|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 13
       lodo_near_best_rate: 0.2143
-      mean_lodo_regret: 0.037822
-      max_lodo_regret: 0.186302
-      mean_lodo_rank_spearman: 0.016
+      mean_lodo_regret: 0.02727
+      max_lodo_regret: 0.092164
+      mean_lodo_rank_spearman: 0.029
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
       - Applies only to protein matrices quantified with pibaq; near-best, top and held-out rates compare
         only pibaq configurations.
-      - The same normalization, imputation and DE method were best for every quantification method.
+      - mindet imputation scored almost as well as minprob.
       - piBAQ matrices scored well below DirectLFQ and MaxLFQ matrices.
   - id: grid-dia-sum-preset
     source_id: spike-in-mokumebench
     kind: quantification_preset
     status: candidate_for_review
-    confidence: low
+    confidence: moderate
     priority: 11
     eligible_as_prior: true
     applicability:
@@ -688,35 +688,35 @@ evidence:
       datasets: 38
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0856
-      median_study_deficit: 0.0825
-      iqr_study_deficit: 0.0455
+      mean_study_deficit: 0.0819
+      median_study_deficit: 0.0821
+      iqr_study_deficit: 0.0519
       near_best: 0.01
-      near_best_rate: 0.2143
+      near_best_rate: 0.3571
       top_fraction: 0.05
-      top_rate: 0.0714
-      mean_score_a: 0.8419
+      top_rate: 0.1429
+      mean_score_a: 0.8453
       mean_coverage: 0.7464
-      overall_best_config: maxlfq|none|mindet|none|deqms
+      overall_best_config: directlfq|none|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
-      lodo_folds_selecting_preset: 13
-      lodo_near_best_rate: 0.2143
-      mean_lodo_regret: 0.036661
-      max_lodo_regret: 0.258246
-      mean_lodo_rank_spearman: 0.081
+      lodo_folds_selecting_preset: 14
+      lodo_near_best_rate: 0.3571
+      mean_lodo_regret: 0.022134
+      max_lodo_regret: 0.091294
+      mean_lodo_rank_spearman: 0.1
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
       - Applies only to protein matrices quantified with sum; near-best, top and held-out rates compare
         only sum configurations.
-      - The same normalization, imputation and DE method were best for every quantification method.
+      - The best normalization, imputation and DE method matched those of DirectLFQ and MaxLFQ.
       - Sum matrices scored well below DirectLFQ and MaxLFQ matrices.
   - id: grid-dia-top3-preset
     source_id: spike-in-mokumebench
     kind: quantification_preset
     status: candidate_for_review
-    confidence: low
+    confidence: moderate
     priority: 11
     eligible_as_prior: true
     applicability:
@@ -752,29 +752,29 @@ evidence:
       datasets: 38
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.1101
-      median_study_deficit: 0.1094
-      iqr_study_deficit: 0.0506
+      mean_study_deficit: 0.1064
+      median_study_deficit: 0.0999
+      iqr_study_deficit: 0.0487
       near_best: 0.01
-      near_best_rate: 0.2143
+      near_best_rate: 0.2857
       top_fraction: 0.05
-      top_rate: 0.0714
-      mean_score_a: 0.8183
+      top_rate: 0.1429
+      mean_score_a: 0.821
       mean_coverage: 0.7464
-      overall_best_config: maxlfq|none|mindet|none|deqms
+      overall_best_config: directlfq|none|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
-      lodo_folds_selecting_preset: 13
-      lodo_near_best_rate: 0.2143
-      mean_lodo_regret: 0.037364
-      max_lodo_regret: 0.268912
-      mean_lodo_rank_spearman: 0.085
+      lodo_folds_selecting_preset: 14
+      lodo_near_best_rate: 0.2857
+      mean_lodo_regret: 0.021489
+      max_lodo_regret: 0.087719
+      mean_lodo_rank_spearman: 0.103
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
       - Applies only to protein matrices quantified with top3; near-best, top and held-out rates compare
         only top3 configurations.
-      - The same normalization, imputation and DE method were best for every quantification method.
+      - The best normalization, imputation and DE method matched those of DirectLFQ and MaxLFQ.
       - Top3 matrices scored lowest of the five quantification methods.
   - id: grid-tmt-preset
     source_id: spike-in-mokumebench
@@ -807,23 +807,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 310
-      mean_study_deficit: 0.0449
+      mean_study_deficit: 0.0459
       median_study_deficit: 0.0165
-      iqr_study_deficit: 0.0589
+      iqr_study_deficit: 0.0604
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.6667
-      mean_score_a: 0.7542
+      mean_score_a: 0.7543
       mean_coverage: 0.7988
-      overall_best_config: directlfq|none|impseqrob|half|deqms
+      overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 0
       lodo_near_best_rate: 0.0
-      mean_lodo_regret: 0.092899
+      mean_lodo_regret: 0.09281
       max_lodo_regret: 0.150022
-      mean_lodo_rank_spearman: 0.209
+      mean_lodo_rank_spearman: 0.216
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -863,23 +863,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0449
+      mean_study_deficit: 0.0459
       median_study_deficit: 0.0165
-      iqr_study_deficit: 0.0589
+      iqr_study_deficit: 0.0604
       near_best: 0.01
       near_best_rate: 1.0
       top_fraction: 0.05
-      top_rate: 0.3333
-      mean_score_a: 0.7542
+      top_rate: 0.0
+      mean_score_a: 0.7543
       mean_coverage: 0.7988
-      overall_best_config: directlfq|none|impseqrob|half|deqms
+      overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 1
       lodo_near_best_rate: 0.6667
-      mean_lodo_regret: 0.014858
-      max_lodo_regret: 0.040746
-      mean_lodo_rank_spearman: 0.824
+      mean_lodo_regret: 0.014822
+      max_lodo_regret: 0.040816
+      mean_lodo_rank_spearman: 0.83
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -908,7 +908,7 @@ evidence:
     pipeline:
       quantification: maxlfq
       normalization: none
-      imputation: none
+      imputation: seqknn
       de_method: deqms
       fdr_method: bh
       log2fc_threshold: 0.584963
@@ -919,23 +919,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0748
-      median_study_deficit: 0.0374
-      iqr_study_deficit: 0.0565
+      mean_study_deficit: 0.075
+      median_study_deficit: 0.0375
+      iqr_study_deficit: 0.0563
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.3333
-      mean_score_a: 0.7044
-      mean_coverage: 0.7988
-      overall_best_config: directlfq|none|impseqrob|half|deqms
+      mean_score_a: 0.7047
+      mean_coverage: 0.8001
+      overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
-      lodo_folds_selecting_preset: 1
-      lodo_near_best_rate: 0.0
-      mean_lodo_regret: 0.041614
+      lodo_folds_selecting_preset: 2
+      lodo_near_best_rate: 0.3333
+      mean_lodo_regret: 0.027333
       max_lodo_regret: 0.06071
-      mean_lodo_rank_spearman: 0.003
+      mean_lodo_rank_spearman: 0.027
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -976,22 +976,22 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.077
-      median_study_deficit: 0.0822
-      iqr_study_deficit: 0.0614
+      mean_study_deficit: 0.0781
+      median_study_deficit: 0.0853
+      iqr_study_deficit: 0.0613
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.3333
       mean_score_a: 0.714
       mean_coverage: 0.9954
-      overall_best_config: directlfq|none|impseqrob|half|deqms
+      overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 2
       lodo_near_best_rate: 0.3333
-      mean_lodo_regret: 0.035041
-      max_lodo_regret: 0.064829
+      mean_lodo_regret: 0.035119
+      max_lodo_regret: 0.06483
       mean_lodo_rank_spearman: 0.117
     limitations:
       - Candidate preset has not been published as a Mokume default.
@@ -1034,23 +1034,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0821
-      median_study_deficit: 0.0756
-      iqr_study_deficit: 0.0512
+      mean_study_deficit: 0.0832
+      median_study_deficit: 0.0757
+      iqr_study_deficit: 0.0496
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.3333
-      mean_score_a: 0.6927
+      mean_score_a: 0.6926
       mean_coverage: 0.8003
-      overall_best_config: directlfq|none|impseqrob|half|deqms
+      overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 2
       lodo_near_best_rate: 0.3333
-      mean_lodo_regret: 0.026981
+      mean_lodo_regret: 0.023113
       max_lodo_regret: 0.042081
-      mean_lodo_rank_spearman: 0.037
+      mean_lodo_rank_spearman: 0.042
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1091,23 +1091,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0916
-      median_study_deficit: 0.0743
-      iqr_study_deficit: 0.0321
+      mean_study_deficit: 0.0927
+      median_study_deficit: 0.0744
+      iqr_study_deficit: 0.0306
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.6667
       mean_score_a: 0.6939
       mean_coverage: 0.7988
-      overall_best_config: directlfq|none|impseqrob|half|deqms
+      overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 2
       lodo_near_best_rate: 0.3333
       mean_lodo_regret: 0.020779
       max_lodo_regret: 0.048
-      mean_lodo_rank_spearman: 0.037
+      mean_lodo_rank_spearman: 0.042
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
