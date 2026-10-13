@@ -564,7 +564,14 @@ class LoadingStage:
             for sample in samples:
                 dataset_df = df[df["sample_accession"] == sample].copy()
                 if self.config.quantification.method.lower() != "pibaq":
-                    dataset_df = dataset_df[dataset_df["unique"] == 1]
+                    # A null flag means a one-protein group, as in SQLFilterBuilder.
+                    dataset_df = dataset_df[
+                        dataset_df["unique"].eq(1)
+                        | (
+                            dataset_df["unique"].isna()
+                            & dataset_df["pg_accessions"].map(len).eq(1)
+                        )
+                    ]
                 dataset_df = dataset_df[PARQUET_COLUMNS]
 
                 dataset_df = reformat_quantms_feature_table_quant_labels(
