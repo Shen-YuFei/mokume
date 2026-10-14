@@ -45,9 +45,10 @@ Provide `--parquet`, `--msstats`, or the paired `--psm` and `--parquet` inputs.
 The paired QPX inputs are used only by true `spectral-count` and require SDRF.
 MSstats input requires
 `ProteinName`, `PeptideSequence`, `Intensity`, `Charge` or `PrecursorCharge`,
-and `Run` or `Reference`; isobaric data also requires `Channel`. Ratio
-quantification requires PSM-level QPX evidence and does not accept MSstats
-feature tables.
+and `Run` or `Reference`; isobaric data also requires `Channel`. If both
+`Run` and `Reference` are present, `Reference` names the data file, because
+quantms writes `Run` as a design index. Ratio quantification requires
+PSM-level QPX evidence and does not accept MSstats feature tables.
 
 ### Metadata & Filtering
 

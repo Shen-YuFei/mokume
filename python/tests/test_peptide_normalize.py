@@ -31,7 +31,9 @@ class TestSQLFilterBuilder:
         assert 'LENGTH("sequence") >= ?' in where_clause
         assert 7 in params
         # Should include unique peptide filter
-        assert '"unique" = 1' in where_clause
+        assert '("unique" = 1 OR ("unique" IS NULL AND len(pg_accessions) = 1))' in (
+            where_clause
+        )
         # Should include contaminant filters (parameterized with ? placeholders)
         assert "strpos(pg_accessions::text, ?) = 0" in where_clause
         assert "CONTAMINANT" in params

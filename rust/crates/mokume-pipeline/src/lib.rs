@@ -7188,7 +7188,9 @@ fn passes_feature_filter(
 ) -> bool {
     feature.sequence.len() >= filtering.min_aa
         && !feature.is_decoy.unwrap_or(false)
-        && (keep_shared_peptides || feature.unique.unwrap_or(true))
+        // qpx < 1.1.3 leaves `unique` null in OpenMS-derived features; it then
+        // means a one-protein group, which is how qpx >= 1.1.3 sets it.
+        && (keep_shared_peptides || feature.unique.unwrap_or(feature.protein_accessions.len() == 1))
         && feature.intensity.is_finite()
         && feature.intensity > 0.0
         && !feature.protein_accessions.is_empty()
@@ -8544,7 +8546,7 @@ mod tests {
         batch_column_values_for_samples, detect_reference_samples, expand_de_contrasts_file,
         extract_sdrf_covariates, factorize_batch_labels, irs_by_mixture_scale_from_runs,
         irs_global_scale_from_runs, irs_mixture_first_token, irs_two_stage_scale_from_runs,
-        load_normalization_proteins, match_sdrf_column, resolve_de_method,
+        load_normalization_proteins, match_sdrf_column, passes_feature_filter, resolve_de_method,
         resolve_irs_autodetect_channel, resolve_irs_reference_samples, resolve_reference_batch,
         run_features_to_proteins, sample_plex, sum_peptide_values, validate_batch_sizes,
         validate_combat_design, validate_de_ensemble_options, validate_features_to_proteins,
@@ -8735,6 +8737,48 @@ mod tests {
             "unmatched normalization proteins must not feed sample factor values"
         );
         Ok(())
+    }
+
+    #[test]
+    fn null_unique_flag_means_a_one_protein_group() {
+        let feature = |proteins: &[&str], unique: Option<bool>| QpxFeatureRecord {
+            sequence: "PEPTIDEAK".to_owned(),
+            peptidoform: "PEPTIDEAK".to_owned(),
+            charge: 2,
+            run_file_name: "run1.raw".to_owned(),
+            sample_accession: None,
+            protein_accessions: proteins.iter().map(|&protein| protein.to_owned()).collect(),
+            anchor_protein: None,
+            unique,
+            is_decoy: Some(false),
+            peptide_qvalue: None,
+            pg_global_qvalue: None,
+            selected_score: None,
+            label: None,
+            intensity: 100.0,
+        };
+        let filtering = FilterConfig::default();
+
+        assert!(passes_feature_filter(
+            &feature(&["P1"], None),
+            filtering,
+            false
+        ));
+        assert!(!passes_feature_filter(
+            &feature(&["P1", "P2"], None),
+            filtering,
+            false
+        ));
+        assert!(passes_feature_filter(
+            &feature(&["P1", "P2"], None),
+            filtering,
+            true
+        ));
+        assert!(passes_feature_filter(
+            &feature(&["P1", "P2"], Some(true)),
+            filtering,
+            false
+        ));
     }
 
     // Locks the synthetic TMT oracle (also verified against Python's

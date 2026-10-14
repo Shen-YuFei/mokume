@@ -67,9 +67,11 @@ mokume quantify features2proteins \
 ```
 
 An MSstats CSV must contain `ProteinName`, `PeptideSequence`, `Intensity`,
-`Charge` or `PrecursorCharge`, and `Run` or `Reference`. Isobaric data also
-requires `Channel`. `--quant-method ratio` requires PSM-level QPX evidence and
-therefore cannot use an MSstats feature table.
+`Charge` or `PrecursorCharge`, and `Run` or `Reference`. If both `Run` and
+`Reference` are present, `Reference` names the data file, because quantms
+writes `Run` as a design index. Isobaric data also requires `Channel`.
+`--quant-method ratio` requires PSM-level QPX evidence and therefore cannot
+use an MSstats feature table.
 
 ## Quantification Methods
 

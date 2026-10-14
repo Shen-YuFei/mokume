@@ -19,7 +19,7 @@ import pyarrow as pa
 from pathlib import Path
 from typing import Optional
 
-from mokume.io.feature import Feature, SQLFilterBuilder
+from mokume.io.feature import Feature, SQLFilterBuilder, unique_peptide_rows
 from mokume.preprocessing.sdrf import analyse_sdrf
 from mokume.preprocessing.aggregation import (
     remove_contaminants_entrapments_decoys,
@@ -327,6 +327,19 @@ def _sum_maxlfq_species(dataset_df: pd.DataFrame) -> pd.DataFrame:
     return dataset_df
 
 
+def _require_rows_passing_filters(
+    feature: Feature, filter_builder: SQLFilterBuilder
+) -> None:
+    """Fail before loading, with the reason, when the filters keep no rows."""
+    where_clause, where_params = filter_builder.build_where_clause()
+    sql = "".join(["SELECT 1 FROM parquet_db WHERE ", where_clause, " LIMIT 1"])
+    if feature.parquet_db.execute(sql, where_params).fetchone() is None:
+        raise ValueError(
+            "No features pass the input filters (intensity > 0, peptide "
+            "length, unique peptides, contaminants, decoys and scores)"
+        )
+
+
 class LoadingStage:
     """Load and filter QPX parquet or native SDRF+MSstats data."""
 
@@ -384,6 +397,8 @@ class LoadingStage:
                 _sample_names,
                 choice,
             ) = feature.experimental_inference
+
+        _require_rows_passing_filters(feature, filter_builder)
 
         # Build normalization config snapshot (shared between both load paths).
         run_norm = self.config.normalization.run_method.lower()
@@ -596,7 +611,7 @@ class LoadingStage:
             for sample in samples:
                 dataset_df = df[df["sample_accession"] == sample].copy()
                 if self.config.quantification.method.lower() != "pibaq":
-                    dataset_df = dataset_df[dataset_df["unique"] == 1]
+                    dataset_df = dataset_df[unique_peptide_rows(dataset_df)]
                 dataset_df = dataset_df[PARQUET_COLUMNS]
 
                 dataset_df = reformat_quantms_feature_table_quant_labels(
