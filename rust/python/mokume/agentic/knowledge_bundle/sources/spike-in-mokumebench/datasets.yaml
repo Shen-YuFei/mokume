@@ -535,28 +535,28 @@
         group2: 1x
         role: primary
         expected_direction: UP
-        expected_log2fc: 1.584962500721156
+        expected_log2fc: 1.6770807027095875
         expected_log2fc_by_component:
           human: 0.0
-          ecoli: 1.584962500721156
+          ecoli: 1.6770807027095875
       - id: 2x_vs_1x
         group1: 2x
         group2: 1x
         role: primary
         expected_direction: UP
-        expected_log2fc: 1.0
+        expected_log2fc: 1.0453239905094902
         expected_log2fc_by_component:
           human: 0.0
-          ecoli: 1.0
+          ecoli: 1.0453239905094902
       - id: 3x_vs_1.5x
         group1: 3x
         group2: 1.5x
         role: primary
         expected_direction: UP
-        expected_log2fc: 1.0
+        expected_log2fc: 1.069634187837052
         expected_log2fc_by_component:
           human: 0.0
-          ecoli: 1.0
+          ecoli: 1.069634187837052
   ground_truth:
     entity_count: 565
     source:
@@ -677,28 +677,28 @@
         group2: Y10
         role: primary
         expected_direction: DOWN
-        expected_log2fc: -1.0
+        expected_log2fc: -1.078002512001273
         expected_log2fc_by_component:
           human: 0.0
-          yeast: -1.0
+          yeast: -1.078002512001273
       - id: Y3.3_vs_Y10
         group1: Y3.3
         group2: Y10
         role: primary
         expected_direction: DOWN
-        expected_log2fc: -1.584962500721156
+        expected_log2fc: -1.6880559936852595
         expected_log2fc_by_component:
           human: 0.0
-          yeast: -1.584962500721156
+          yeast: -1.6880559936852595
       - id: Y3.3_vs_Y5
         group1: Y3.3
         group2: Y5
         role: diagnostic
         expected_direction: DOWN
-        expected_log2fc: -0.5849625007211561
+        expected_log2fc: -0.6100534816839865
         expected_log2fc_by_component:
           human: 0.0
-          yeast: -0.5849625007211561
+          yeast: -0.6100534816839865
   ground_truth:
     entity_count: 596
     source:

@@ -15,7 +15,7 @@ sources:
     trust: locally_reproduced_ground_truth
     status: benchmark_candidates_not_published
     artifacts:
-      datasets.yaml: daac4979b071c151fe635d05a1e001817a169940c188525aada7d3bb79c61eba
+      datasets.yaml: 3f08ce0141d49fe50abf34971920e591d33117b19bd7cd312c19971ea0572c50
   - id: cptac-mokumebench
     kind: cross_study_consistency_benchmark
     title: Mokume CPTAC TMT Grid benchmark (mokumebench, CDAP PSM reports, 24 PDC studies)
