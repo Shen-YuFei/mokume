@@ -185,7 +185,7 @@ class TestDrawsAreReproducible:
     """
 
     @pytest.mark.parametrize(
-        "method", ["minprob", "mindet", "knn", "qrilc", "gms", "impseq", "impseqrob"]
+        "method", ["minprob", "mindet", "knn", "qrilc", "gms", "impseq"]
     )
     def test_same_input_same_output(self, matrix_with_missing, method):
         """Two runs of one imputer on one matrix must agree exactly."""

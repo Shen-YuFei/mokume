@@ -5691,11 +5691,10 @@ fn features2proteins_impseq_imputation_matches_synthetic_oracle() -> Result<(), 
     Ok(())
 }
 
-// GMS is stochastic in Python (GMM + random draw), so cell-exact cross-language
-// parity is not applicable. The Rust port deterministically fills the lower
-// mixture component's mean. For this 3-observations-per-column
-// matrix the lower component collapses onto the minimum observation, and every
-// fill lies in [min_observed, geometric_mean_observed].
+// GMS fills the lower mixture component's mean, as the pure-Python impute_gms
+// does. For this 3-observations-per-column matrix the lower component collapses
+// onto the minimum observation, and every fill lies in [min_observed,
+// geometric_mean_observed].
 #[test]
 fn features2proteins_gms_imputation_matches_stochastic_oracle_property(
 ) -> Result<(), Box<dyn Error>> {

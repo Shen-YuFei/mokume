@@ -127,8 +127,9 @@ mokume quantify features2proteins -p data.parquet -o out.csv \
 
 ### GMS
 
-Gaussian Mixture Sampling — fits a small mixture model to observed
-values and draws missing entries from the appropriate component.
+Gaussian Mixture Sampling — fits a two-component mixture model to each
+sample's observed values and fills its missing entries with the centre of
+the lower component.
 Runs natively in the Rust kernel. In the OpDEA benchmark GMS is the
 best-performing imputer for FragPipe TMT data.
 

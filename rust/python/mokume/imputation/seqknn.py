@@ -57,7 +57,7 @@ def _weighted_neighbour_mean(
     return result
 
 
-def impute_seqknn(data: pd.DataFrame, k: int = 10) -> pd.DataFrame:
+def impute_seqknn(data: pd.DataFrame, k: int = 5) -> pd.DataFrame:
     """Sequentially impute missing values with weighted k-NN.
 
     ``data`` is a DataFrame with NaN-encoded missings; ``k`` is the
