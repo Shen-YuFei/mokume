@@ -397,10 +397,12 @@ def workflow_comparison(
 def impute(matrix, method, output=None, **kwargs):
     """Impute missing values with the pure-Python imputers (``analysis`` extra).
 
-    Reaches the imputers the Rust kernel does not reproduce (``missforest`` wraps
-    a scikit-learn estimator), plus every other supported method. ``matrix`` is a
-    wide protein matrix CSV or DataFrame; writes ``output`` if given and returns
-    the imputed DataFrame.
+    Reaches ``missforest``, which the Rust kernel does not reproduce (it wraps a
+    scikit-learn estimator). It also accepts ``knn``, ``mean``, ``median``,
+    ``most_frequent``, ``constant`` and ``seqknn``; every method except
+    ``missforest`` runs in the kernel through ``impute_matrix``. ``matrix`` is
+    a wide protein matrix CSV or DataFrame; writes ``output`` if given and
+    returns the imputed DataFrame.
     """
     _bootstrap()
     import pandas as pd
