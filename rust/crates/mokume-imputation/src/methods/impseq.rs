@@ -96,7 +96,7 @@ fn impseq_conditional_normal(
         .map(|(_, row)| row.clone())
         .collect::<Vec<_>>();
 
-    let (mut mu, mut cov) = mean_and_cov(&complete_rows, n_cols);
+    let mut moments = Moments::new(&complete_rows, n_cols);
 
     // Incomplete rows ordered by ascending missing-count, ties by row index
     // (stable), matching the Python `incomplete_idx[np.argsort(n_miss)]`.
@@ -110,8 +110,6 @@ fn impseq_conditional_normal(
         let right_miss = matrix[*right].iter().filter(|cell| cell.is_none()).count();
         left_miss.cmp(&right_miss).then_with(|| left.cmp(right))
     });
-
-    let mut used_rows = complete_rows;
 
     for row_index in order {
         let observed = matrix[row_index]
@@ -127,13 +125,13 @@ fn impseq_conditional_normal(
 
         if observed.is_empty() {
             for &col in &missing {
-                if let Some(value) = mu.get(col) {
+                if let Some(value) = moments.mean.get(col) {
                     result[row_index][col] = *value;
                 }
             }
         } else {
-            let mut estimation_cov = cov.clone();
-            if used_rows.len() <= n_cols {
+            let mut estimation_cov = moments.covariance();
+            if moments.rows <= n_cols {
                 for (i, row) in estimation_cov.iter_mut().enumerate() {
                     row[i] += 0.01;
                 }
@@ -142,7 +140,7 @@ fn impseq_conditional_normal(
                 &result[row_index],
                 &observed,
                 &missing,
-                &mu,
+                &moments.mean,
                 &estimation_cov,
             )?;
             for (slot, &col) in imputed.into_iter().zip(missing.iter()) {
@@ -150,12 +148,7 @@ fn impseq_conditional_normal(
             }
         }
 
-        used_rows.push(result[row_index].clone());
-        let (next_mu, next_cov) = mean_and_cov(&used_rows, n_cols);
-        mu = next_mu;
-        if used_rows.len() > 1 {
-            cov = next_cov;
-        }
+        moments.push(&result[row_index]);
     }
     Ok(())
 }
@@ -202,32 +195,74 @@ fn conditional_normal_impute(
         .collect())
 }
 
-/// Column means and sample covariance (ddof = 1) of `rows` (each length
-/// `n_cols`). The covariance matches NumPy `np.cov(rows, rowvar=False,
-/// ddof=1)`; with a single row every covariance entry is zero.
-fn mean_and_cov(rows: &[Vec<f64>], n_cols: usize) -> (Vec<f64>, Vec<Vec<f64>>) {
-    let mut mu = vec![0.0; n_cols];
-    let mut cov = vec![vec![0.0; n_cols]; n_cols];
-    let m = rows.len();
-    if m == 0 {
-        return (mu, cov);
-    }
-    for col in 0..n_cols {
-        let sum: f64 = rows.iter().map(|row| row[col]).sum();
-        mu[col] = sum / m as f64;
-    }
-    if m < 2 {
-        return (mu, cov);
-    }
-    let denom = (m - 1) as f64;
-    for a in 0..n_cols {
-        for b in 0..n_cols {
-            let sum: f64 = rows
-                .iter()
-                .map(|row| (row[a] - mu[a]) * (row[b] - mu[b]))
-                .sum();
-            cov[a][b] = sum / denom;
+/// Column sums, means and scatter (summed centred cross-products) of the rows
+/// used so far, which start as the complete rows (at least two).
+struct Moments {
+    rows: usize,
+    sums: Vec<f64>,
+    mean: Vec<f64>,
+    scatter: Vec<Vec<f64>>,
+}
+
+impl Moments {
+    fn new(rows: &[Vec<f64>], n_cols: usize) -> Self {
+        let sums = (0..n_cols)
+            .map(|col| rows.iter().map(|row| row[col]).sum::<f64>())
+            .collect::<Vec<_>>();
+        let mean = sums
+            .iter()
+            .map(|sum| sum / rows.len() as f64)
+            .collect::<Vec<_>>();
+        let scatter = (0..n_cols)
+            .map(|a| {
+                (0..n_cols)
+                    .map(|b| {
+                        rows.iter()
+                            .map(|row| (row[a] - mean[a]) * (row[b] - mean[b]))
+                            .sum::<f64>()
+                    })
+                    .collect()
+            })
+            .collect();
+        Self {
+            rows: rows.len(),
+            sums,
+            mean,
+            scatter,
         }
     }
-    (mu, cov)
+
+    /// Sample covariance (ddof = 1), as NumPy `np.cov(rows, rowvar=False)`.
+    fn covariance(&self) -> Vec<Vec<f64>> {
+        let denom = (self.rows - 1) as f64;
+        self.scatter
+            .iter()
+            .map(|row| row.iter().map(|value| value / denom).collect())
+            .collect()
+    }
+
+    /// Add one row. The means stay the column sums over the row count; the
+    /// scatter is updated in place (Welford) instead of being recomputed from
+    /// every row, which changes it only by rounding.
+    fn push(&mut self, row: &[f64]) {
+        self.rows += 1;
+        let before = self
+            .mean
+            .iter()
+            .zip(row)
+            .map(|(mean, value)| value - mean)
+            .collect::<Vec<_>>();
+        for (col, value) in row.iter().enumerate() {
+            self.sums[col] += value;
+            self.mean[col] = self.sums[col] / self.rows as f64;
+        }
+        for (a, delta) in before.iter().enumerate() {
+            for (b, (value, mean)) in row.iter().zip(&self.mean).enumerate().skip(a) {
+                self.scatter[a][b] += delta * (value - mean);
+                if b != a {
+                    self.scatter[b][a] = self.scatter[a][b];
+                }
+            }
+        }
+    }
 }
