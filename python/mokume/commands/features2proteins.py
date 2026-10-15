@@ -446,19 +446,19 @@ QUANT_METHOD = QuantMethodParamType()
     show_default=True,
 )
 @click.option(
-    "--impute-shift",
-    "impute_shift",
-    help="MinProb shift in standard deviations",
-    type=float,
-    default=1.6,
+    "--impute-seed",
+    "impute_seed",
+    help="Seed of the MinProb/QRILC draws",
+    type=click.IntRange(min=0),
+    default=42,
     show_default=True,
 )
 @click.option(
-    "--impute-scale",
-    "impute_scale",
-    help="MinProb scale factor for the imputation distribution sigma",
-    type=float,
-    default=0.3,
+    "--impute-tune-sigma",
+    "impute_tune_sigma",
+    help="MinProb/QRILC multiplier of the fitted standard deviation",
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=1.0,
     show_default=True,
 )
 @click.option(
@@ -682,8 +682,8 @@ def features2proteins(
     impute: bool,
     impute_method: str,
     impute_quantile: float,
-    impute_shift: float,
-    impute_scale: float,
+    impute_seed: int,
+    impute_tune_sigma: float,
     impute_n_neighbors: int,
     # DE
     differential_expression: bool,
@@ -859,8 +859,8 @@ def features2proteins(
         impute=impute,
         impute_method=impute_method,
         impute_quantile=impute_quantile,
-        impute_shift=impute_shift,
-        impute_scale=impute_scale,
+        impute_seed=impute_seed,
+        impute_tune_sigma=impute_tune_sigma,
         impute_n_neighbors=impute_n_neighbors,
         # Plots
         plot_output_dir=plot_output_dir,

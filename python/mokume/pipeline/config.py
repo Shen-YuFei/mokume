@@ -317,10 +317,11 @@ class ImputationConfig:
 
     enabled: bool = False
     method: str = "none"
-    # MinProb parameters
+    # MinProb / MinDet parameter
     quantile: float = 0.01
-    shift: float = 1.6
-    scale: float = 0.3
+    # MinProb / QRILC draws
+    seed: int = 42
+    tune_sigma: float = 1.0
     # KNN parameters
     n_neighbors: int = 5
 

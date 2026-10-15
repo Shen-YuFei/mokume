@@ -153,8 +153,8 @@ are errors rather than successful uncorrected outputs.
 |--------|---------|-------------|
 | `--impute-method` | none | Select a method and enable imputation; use `zero` for zero filling |
 | `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet |
-| `--impute-shift` | 1.6 | MinProb shift in standard deviations |
-| `--impute-scale` | 0.3 | MinProb scale factor for the imputation distribution sigma |
+| `--impute-tune-sigma` | 1.0 | MinProb/QRILC multiplier of the fitted standard deviation |
+| `--impute-seed` | 42 | Seed of the MinProb/QRILC draws |
 | `--impute-n-neighbors` | 5 | Number of neighbours for KNN/SeqKNN |
 
 Imputation runs in log2 space (the matrix is transformed before imputation and back to linear afterwards) so that censored-aware methods like MinProb/MinDet/QRILC behave correctly. The imputation step is applied after coverage filtering and before batch correction in the pipeline.

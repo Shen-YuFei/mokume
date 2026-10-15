@@ -1425,7 +1425,10 @@ class ImputationStage:
             from mokume.imputation.censored import impute_minprob
 
             return impute_minprob(
-                wide, quantile=cfg.quantile, shift=cfg.shift, scale=cfg.scale
+                wide,
+                quantile=cfg.quantile,
+                tune_sigma=cfg.tune_sigma,
+                random_state=cfg.seed,
             )
 
         if method == "mindet":
@@ -1436,7 +1439,7 @@ class ImputationStage:
         if method == "qrilc":
             from mokume.imputation.qrilc import impute_qrilc
 
-            return impute_qrilc(wide)
+            return impute_qrilc(wide, tune_sigma=cfg.tune_sigma, random_state=cfg.seed)
 
         if method == "missforest":
             from mokume.imputation.missforest import impute_missforest

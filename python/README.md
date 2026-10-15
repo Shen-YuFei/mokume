@@ -261,8 +261,8 @@ Standalone API examples:
 ```python
 from mokume.imputation.censored import impute_censored
 
-# MinProb: draw from left-shifted normal (recommended for MNAR)
-imputed = impute_censored(log2_matrix, method="minprob", quantile=0.01, shift=1.6, scale=0.3)
+# MinProb: draw from a normal at a low per-sample quantile (recommended for MNAR)
+imputed = impute_censored(log2_matrix, method="minprob", quantile=0.01, tune_sigma=1.0)
 
 # MinDet: replace NaN with per-column quantile
 imputed = impute_censored(log2_matrix, method="mindet", quantile=0.01)

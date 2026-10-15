@@ -216,8 +216,8 @@ class QuantificationPipeline:
             (
                 self.config.imputation.method.lower() != "none",
                 self.config.imputation.quantile != 0.01,
-                self.config.imputation.shift != 1.6,
-                self.config.imputation.scale != 0.3,
+                self.config.imputation.seed != 42,
+                self.config.imputation.tune_sigma != 1.0,
                 self.config.imputation.n_neighbors != 5,
             )
         )
@@ -645,8 +645,8 @@ def features_to_proteins(
     impute: bool = False,
     impute_method: str = "none",
     impute_quantile: float = 0.01,
-    impute_shift: float = 1.6,
-    impute_scale: float = 0.3,
+    impute_seed: int = 42,
+    impute_tune_sigma: float = 1.0,
     impute_n_neighbors: int = 5,
     # Interactive report parameters
     interactive_report: bool = False,
@@ -833,8 +833,8 @@ def features_to_proteins(
             enabled=impute,
             method=impute_method,
             quantile=impute_quantile,
-            shift=impute_shift,
-            scale=impute_scale,
+            seed=impute_seed,
+            tune_sigma=impute_tune_sigma,
             n_neighbors=impute_n_neighbors,
         ),
         de=DEConfig(

@@ -428,12 +428,12 @@ Imputation runs in log2 space so that censored-aware methods (MinProb,
 MinDet, QRILC) behave correctly.
 
 ```bash
-# MinProb low-tail draw (Perseus style)
+# MinProb low-quantile draw (imputeLCMD)
 mokume quantify features2proteins \
     -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
     --quant-method maxlfq \
     --impute-method minprob \
-    --impute-quantile 0.01 --impute-shift 1.6 --impute-scale 0.3
+    --impute-quantile 0.01 --impute-tune-sigma 1.0
 
 # KNN imputation
 mokume quantify features2proteins \
@@ -446,13 +446,13 @@ mokume quantify features2proteins \
 |-------------------|---------|-------------|
 | `--impute-method` | none | Select a method and enable imputation; use `zero` for zero filling |
 | `--impute-quantile` | 0.01 | Quantile for MinProb/MinDet |
-| `--impute-shift` | 1.6 | MinProb shift in standard deviations |
-| `--impute-scale` | 0.3 | MinProb scale factor for sigma |
+| `--impute-tune-sigma` | 1.0 | MinProb/QRILC multiplier of the fitted SD |
+| `--impute-seed` | 42 | Seed of the MinProb/QRILC draws |
 | `--impute-n-neighbors` | 5 | Neighbours for KNN/SeqKNN |
 
 Imputation tuning options are method-scoped: quantile applies to MinDet/MinProb,
-shift and scale to MinProb, and neighbour count to KNN/SeqKNN. Passing them to
-another method is rejected.
+tune sigma and seed to MinProb/QRILC, and neighbour count to KNN/SeqKNN.
+Passing them to another method is rejected.
 
 !!! warning "`missforest` is Python analysis periphery"
     `missforest` is not offered by the Rust compute command because it wraps

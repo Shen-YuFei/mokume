@@ -56,7 +56,7 @@ class BPCAImputation(ImputationMethod):
 
 @PluginRegistry.register("imputation", "qrilc")
 class QRILCImputation(ImputationMethod):
-    """QRILC-style left-tail imputation (delegates to ``impute_qrilc``).
+    """imputeLCMD QRILC imputation (delegates to ``impute_qrilc``).
 
     Left-censored (MNAR) fill; expects log-space input.
 
