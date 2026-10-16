@@ -1828,16 +1828,29 @@ impl MaxLfqFeatureAggregation {
         } else {
             &self.ion_to_canonical
         };
-        for (cell, peptides) in cells {
-            for (canonical, intensity) in collapse_to_canonical(peptides, mapping) {
-                self.peptide_traces.insert(
-                    PeptideCellKey {
-                        protein: cell.protein,
-                        sample: cell.sample,
-                        peptide: canonical,
-                    },
-                    intensity,
-                );
+        // Collapse a block of cells in parallel, then insert it in cell order;
+        // blocks bound the memory of collapsed cells awaiting insertion.
+        let mut cells = cells.into_iter();
+        loop {
+            let block = cells.by_ref().take(COLLAPSE_BLOCK).collect::<Vec<_>>();
+            if block.is_empty() {
+                break;
+            }
+            let collapsed = block
+                .into_par_iter()
+                .map(|(cell, peptides)| (cell, collapse_to_canonical(peptides, mapping)))
+                .collect::<Vec<_>>();
+            for (cell, canonical) in collapsed {
+                for (peptide, intensity) in canonical {
+                    self.peptide_traces.insert(
+                        PeptideCellKey {
+                            protein: cell.protein,
+                            sample: cell.sample,
+                            peptide,
+                        },
+                        intensity,
+                    );
+                }
             }
         }
     }
@@ -1866,7 +1879,7 @@ impl MaxLfqFeatureAggregation {
         self.peptide_traces
     }
 
-    fn into_directlfq_sums(self) -> HashMap<DirectLfqCellKey, f64> {
+    fn into_directlfq_sums(self) -> Vec<(DirectLfqCellKey, f64)> {
         self.into_peptide_traces()
             .into_iter()
             .map(|(key, intensity)| {
@@ -1882,7 +1895,7 @@ impl MaxLfqFeatureAggregation {
             .collect()
     }
 
-    fn directlfq_sums(&self) -> HashMap<DirectLfqCellKey, f64> {
+    fn directlfq_sums(&self) -> Vec<(DirectLfqCellKey, f64)> {
         let mut sums = self
             .peptide_traces
             .iter()
@@ -1913,7 +1926,7 @@ impl MaxLfqFeatureAggregation {
                 );
             }
         }
-        sums
+        sums.into_iter().collect()
     }
 }
 
@@ -3341,17 +3354,17 @@ fn apply_hierarchical_to_peptide_cells(
 
     // (2) One column per sample maps each (protein, canonical) row to its log2
     // value; compute per-column log2 shifts with the official DirectLFQ algorithm.
-    let mut columns = HashMap::<SampleId, HashMap<QuantilePeptideKey, f64>>::new();
+    let mut columns = HashMap::<SampleId, Vec<(QuantilePeptideKey, f64)>>::new();
     for (cell, peptides) in &log2_cells {
         let column = columns.entry(cell.sample).or_default();
         for (peptide, value) in peptides {
-            column.insert(
+            column.push((
                 QuantilePeptideKey {
                     protein: cell.protein,
                     peptide: *peptide,
                 },
                 *value,
-            );
+            ));
         }
     }
     let shifts = hierarchical_shifts_by_sample(columns, sample_registry);
@@ -3374,13 +3387,13 @@ fn apply_hierarchical_to_peptide_cells(
     }
 }
 
-/// DirectLFQ log2 shift of each sample in `columns` (sample -> row -> log2
-/// value). Samples are ordered ascending by NAME (then SampleId as a tie-break),
+/// DirectLFQ log2 shift of each sample in `columns` (sample -> distinct rows
+/// with their log2 values). Samples are ordered ascending by NAME (then SampleId as a tie-break),
 /// matching the Python `pivot_table(columns=SAMPLE_ID)` column order. The
 /// ordering is load-bearing: it drives the pairwise distance indices, merge
 /// tie-breaking, and the anchor sample.
 fn hierarchical_shifts_by_sample(
-    mut columns: HashMap<SampleId, HashMap<QuantilePeptideKey, f64>>,
+    mut columns: HashMap<SampleId, Vec<(QuantilePeptideKey, f64)>>,
     sample_registry: &StringIdRegistry<SampleId>,
 ) -> HashMap<SampleId, f64> {
     let mut samples = columns.keys().copied().collect::<Vec<_>>();
@@ -3401,22 +3414,22 @@ fn hierarchical_shifts_by_sample(
 /// Preserve the sparse pivot's feature order when using the shared DirectLFQ
 /// sample-alignment kernel. Missing canonical peptides remain NaN.
 fn hierarchical_compute_shifts(
-    columns: &[HashMap<QuantilePeptideKey, f64>],
+    columns: &[Vec<(QuantilePeptideKey, f64)>],
     num_samples_quadratic: usize,
 ) -> Vec<f64> {
     let mut keys = columns
         .iter()
-        .flat_map(|column| column.keys().copied())
+        .flat_map(|column| column.iter().map(|&(key, _)| key))
         .collect::<Vec<_>>();
-    keys.sort_unstable();
+    keys.par_sort_unstable();
     keys.dedup();
     // One pass per column fills the dense rows; a lookup per (key, column)
     // costs keys x samples hash probes on large studies.
     let mut rows = vec![vec![f64::NAN; columns.len()]; keys.len()];
     for (sample, column) in columns.iter().enumerate() {
-        for (key, &value) in column {
+        for (key, value) in column {
             if let Ok(row) = keys.binary_search(key) {
-                rows[row][sample] = value;
+                rows[row][sample] = *value;
             }
         }
     }
@@ -3499,27 +3512,37 @@ fn apply_hierarchical_to_lfq_traces(
             sample: key.sample,
         })
     };
-    let mut columns = HashMap::<SampleId, HashMap<QuantilePeptideKey, f64>>::new();
-    for (key, intensity) in traces.iter() {
-        if allowed(key) && intensity.is_finite() && *intensity > 0.0 {
-            columns.entry(key.sample).or_default().insert(
-                QuantilePeptideKey {
-                    protein: key.protein,
-                    peptide: key.peptide,
-                },
-                intensity.log2(),
-            );
-        }
-    }
+    let columns = traces
+        .par_iter()
+        .filter(|(key, intensity)| allowed(key) && intensity.is_finite() && **intensity > 0.0)
+        .fold(
+            HashMap::<SampleId, Vec<(QuantilePeptideKey, f64)>>::new,
+            |mut columns, (key, intensity)| {
+                columns.entry(key.sample).or_default().push((
+                    QuantilePeptideKey {
+                        protein: key.protein,
+                        peptide: key.peptide,
+                    },
+                    intensity.log2(),
+                ));
+                columns
+            },
+        )
+        .reduce(HashMap::new, |mut merged, columns| {
+            for (sample, mut values) in columns {
+                merged.entry(sample).or_default().append(&mut values);
+            }
+            merged
+        });
     if columns.is_empty() {
         return;
     }
     let shifts = hierarchical_shifts_by_sample(columns, sample_registry);
-    for (key, intensity) in traces.iter_mut() {
+    traces.par_iter_mut().for_each(|(key, intensity)| {
         if let Some(shift) = shifts.get(&key.sample).filter(|_| allowed(key)) {
             *intensity *= shift.exp2();
         }
-    }
+    });
 }
 
 /// Quantile-normalize each sample (column) by mapping every value to a mean
@@ -5297,6 +5320,9 @@ fn run_features_to_proteins_inner(
 
 /// Accepted features per message of a pipelined ingest.
 const INGEST_BATCH: usize = 8192;
+
+/// Protein-sample cells per parallel block of [`MaxLfqFeatureAggregation::collapse_ions`].
+const COLLAPSE_BLOCK: usize = 65_536;
 
 /// Ingest every feature into `state`. With three or more threads and an
 /// aggregation whose `push` reads only ids, ingest runs as a pipeline: this
@@ -7610,7 +7636,7 @@ fn remap_directlfq_ion(
 /// participate in DirectLFQ tie-breaking, so encounter-order registry ids must
 /// not leak into the solver.
 fn prepare_directlfq_ions(
-    directlfq_sums: HashMap<DirectLfqCellKey, f64>,
+    directlfq_sums: Vec<(DirectLfqCellKey, f64)>,
     allowed_cells: &HashSet<CellKey>,
     proteins: &StringIdRegistry<ProteinId>,
     canonical_peptides: &StringIdRegistry<PeptideId>,
@@ -7620,7 +7646,7 @@ fn prepare_directlfq_ions(
     let (sample_to_lexical, lexical_to_sample) = lexical_id_remap(samples);
     let seq_rank = canonical_sequence_ranks(&directlfq_sums, canonical_peptides);
     let mut ions = directlfq_sums
-        .into_iter()
+        .into_par_iter()
         .filter(|(key, _)| {
             allowed_cells.contains(&CellKey {
                 protein: key.protein,
@@ -7635,7 +7661,8 @@ fn prepare_directlfq_ions(
             remap_directlfq_ion(entry, rank, &protein_to_lexical, &sample_to_lexical)
         })
         .collect::<Vec<_>>();
-    ions.sort_by_key(|ion| {
+    // Each (protein, ion, sample) occurs once, so the keys are distinct.
+    ions.par_sort_unstable_by_key(|ion| {
         (
             ion.protein.get(),
             ion.ion_seq_rank,
@@ -7791,15 +7818,15 @@ fn write_directlfq_ions(
 /// strings cannot occur; canonical ids missing from the registry sort last by
 /// their id so the order stays deterministic.
 fn canonical_sequence_ranks(
-    directlfq_sums: &HashMap<DirectLfqCellKey, f64>,
+    directlfq_sums: &[(DirectLfqCellKey, f64)],
     canonical_peptides: &StringIdRegistry<PeptideId>,
 ) -> HashMap<PeptideId, u32> {
     let mut canonicals = directlfq_sums
-        .keys()
-        .map(|key| key.canonical)
-        .collect::<HashSet<_>>()
-        .into_iter()
+        .par_iter()
+        .map(|(key, _)| key.canonical)
         .collect::<Vec<_>>();
+    canonicals.par_sort_unstable();
+    canonicals.dedup();
     canonicals.sort_by(|a, b| {
         let seq_a = canonical_peptides.resolve(*a);
         let seq_b = canonical_peptides.resolve(*b);
