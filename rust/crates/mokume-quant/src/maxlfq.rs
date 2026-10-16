@@ -6,6 +6,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use faer::dyn_stack::{MemBuffer, MemStack};
+use faer::linalg::cholesky::llt;
+use faer::{Mat, Par};
 use mokume_core::{MokumeError, Result, SampleId};
 
 use crate::{median, sample_order, PeptideMeasurement};
@@ -288,63 +291,48 @@ fn solve_component(component: &[usize], edges: &[RatioEdge], samples: usize) -> 
     }
     // Fix the first log intensity to zero. The reduced graph Laplacian is
     // positive definite for a connected component; no ridge or fallback is used.
-    let mut matrix = vec![vec![0.0; n]; n];
-    let mut rhs = vec![0.0; n];
+    // Edges join ascending samples, so (j, i) lies in the lower triangle, the
+    // only part the factorization reads.
+    let mut matrix = Mat::<f64>::zeros(n, n);
+    let mut rhs = Mat::<f64>::zeros(n, 1);
     for &(left, right, ratio) in edges {
         if let (Some(i), Some(j)) = (indices[left], indices[right]) {
             if i > 0 {
-                matrix[i - 1][i - 1] += 1.0;
-                rhs[i - 1] -= ratio;
+                matrix[(i - 1, i - 1)] += 1.0;
+                rhs[(i - 1, 0)] -= ratio;
             }
             if j > 0 {
-                matrix[j - 1][j - 1] += 1.0;
-                rhs[j - 1] += ratio;
+                matrix[(j - 1, j - 1)] += 1.0;
+                rhs[(j - 1, 0)] += ratio;
             }
             if i > 0 && j > 0 {
-                matrix[i - 1][j - 1] -= 1.0;
-                matrix[j - 1][i - 1] -= 1.0;
+                matrix[(j - 1, i - 1)] -= 1.0;
             }
         }
     }
-    let solution = cholesky_solve(matrix, rhs)?;
-    Ok(std::iter::once(0.0).chain(solution).collect())
-}
-
-fn cholesky_solve(mut matrix: Vec<Vec<f64>>, mut rhs: Vec<f64>) -> Result<Vec<f64>> {
-    let n = rhs.len();
-    for i in 0..n {
-        for j in 0..=i {
-            let product: f64 = matrix[i][..j]
-                .iter()
-                .zip(&matrix[j][..j])
-                .map(|(a, b)| a * b)
-                .sum();
-            let value = matrix[i][j] - product;
-            matrix[i][j] = if i == j {
-                if value <= 0.0 || !value.is_finite() {
-                    return Err(invalid("connected-component linear solve failed"));
-                }
-                value.sqrt()
-            } else {
-                value / matrix[j][j]
-            };
-        }
-        let product: f64 = matrix[i][..i]
-            .iter()
-            .zip(&rhs[..i])
-            .map(|(a, b)| a * b)
-            .sum();
-        rhs[i] = (rhs[i] - product) / matrix[i][i];
-    }
-    for i in (0..n).rev() {
-        let product: f64 = matrix[i + 1..]
-            .iter()
-            .zip(&rhs[i + 1..])
-            .map(|(row, value)| row[i] * value)
-            .sum();
-        rhs[i] = (rhs[i] - product) / matrix[i][i];
-    }
-    Ok(rhs)
+    // Proteins are solved in parallel, so each factorization runs on one thread.
+    let par = Par::Seq;
+    let mut buffer = MemBuffer::new(
+        llt::factor::cholesky_in_place_scratch::<f64>(n, par, Default::default())
+            .or(llt::solve::solve_in_place_scratch::<f64>(n, 1, par)),
+    );
+    llt::factor::cholesky_in_place(
+        matrix.as_mut(),
+        Default::default(),
+        par,
+        MemStack::new(&mut buffer),
+        Default::default(),
+    )
+    .map_err(|_| invalid("connected-component linear solve failed"))?;
+    llt::solve::solve_in_place(
+        matrix.as_ref(),
+        rhs.as_mut(),
+        par,
+        MemStack::new(&mut buffer),
+    );
+    Ok(std::iter::once(0.0)
+        .chain(rhs.col(0).iter().copied())
+        .collect())
 }
 
 fn log_sum_exp2(values: &[f64]) -> f64 {
