@@ -82,35 +82,59 @@ fn local_fit(
     radius: f64,
     original: f64,
 ) -> f64 {
-    let mut nonzero = 0;
-    let mut sum = 0.0;
     for ((weight, &xj), &robust) in weights.iter_mut().zip(x).zip(robustness) {
         let distance = (xj - xval).abs() / radius;
         let tricube = 1.0 - distance * distance * distance;
         *weight = tricube * tricube * tricube * robust;
-        nonzero += usize::from(*weight > 1e-12);
-        sum += *weight;
     }
-    if nonzero < 2 {
+    if weights.iter().filter(|&&weight| weight > 1e-12).count() < 2 {
         return original;
     }
-    let mut center = 0.0;
-    for (weight, &xj) in weights.iter_mut().zip(x) {
-        *weight /= sum;
-        center += *weight * xj;
+    // Upstream divides every weight by their sum before the moments below;
+    // dividing the unnormalized moments once is the same fit up to rounding.
+    let [sum, weighted_x] = lane_sums(weights, x, y, |w, xj, _| [w, w * xj]);
+    let center = weighted_x / sum;
+    let [spread, level, slope] = lane_sums(weights, x, y, |w, xj, yj| {
+        let offset = w * (xj - center);
+        [offset * (xj - center), w * yj, offset * yj]
+    });
+    let variance = (spread / sum).max(1e-12);
+    (level + (xval - center) * slope / variance) / sum
+}
+
+const LANES: usize = 8;
+
+/// Window sums of `terms(w, x, y)` in eight interleaved accumulators each; one
+/// accumulator would serialize the window on floating-point add latency.
+fn lane_sums<const N: usize>(
+    weights: &[f64],
+    x: &[f64],
+    y: &[f64],
+    terms: impl Fn(f64, f64, f64) -> [f64; N],
+) -> [f64; N] {
+    let mut lanes = [[0.0; LANES]; N];
+    let chunks = weights
+        .chunks_exact(LANES)
+        .zip(x.chunks_exact(LANES))
+        .zip(y.chunks_exact(LANES));
+    for ((w, xs), ys) in chunks {
+        for lane in 0..LANES {
+            for (sums, term) in lanes.iter_mut().zip(terms(w[lane], xs[lane], ys[lane])) {
+                sums[lane] += term;
+            }
+        }
     }
-    let variance = weights
-        .iter()
-        .zip(x)
-        .map(|(&w, &xj)| w * (xj - center).powi(2))
-        .sum::<f64>()
-        .max(1e-12);
-    weights
-        .iter()
-        .zip(x)
-        .zip(y)
-        .map(|((&w, &xj), &yj)| w * (1.0 + (xval - center) * (xj - center) / variance) * yj)
-        .sum()
+    let start = weights.len() / LANES * LANES;
+    let mut tail = [0.0; N];
+    for ((&w, &xj), &yj) in weights[start..].iter().zip(&x[start..]).zip(&y[start..]) {
+        for (sum, term) in tail.iter_mut().zip(terms(w, xj, yj)) {
+            *sum += term;
+        }
+    }
+    std::array::from_fn(|k| {
+        let [a, b, c, d, e, f, g, h] = lanes[k];
+        ((a + b) + (c + d)) + ((e + f) + (g + h)) + tail[k]
+    })
 }
 
 fn update_robustness(y: &[f64], fitted: &[f64], robustness: &mut [f64]) {
