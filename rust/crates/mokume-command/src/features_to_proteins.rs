@@ -125,6 +125,13 @@ mean-center, rlr, loess, tmm]"
     pibaq_max_aa: Option<usize>,
 
     #[arg(
+        long = "pibaq-missed-cleavages",
+        value_name = "N",
+        help = "piBAQ only [default: 0]"
+    )]
+    pibaq_missed_cleavages: Option<usize>,
+
+    #[arg(
         long = "pibaq-min-shared",
         value_name = "N",
         help = "piBAQ only [default: 2]"
@@ -228,6 +235,13 @@ mean-center, rlr, loess, tmm]"
 
     #[arg(long = "irs-remove-reference")]
     irs_remove_reference: bool,
+
+    #[arg(
+        long = "irs-plex-column",
+        value_name = "COLUMN",
+        help = "SDRF column naming each channel's plex (default: channels sharing data files)"
+    )]
+    irs_plex_column: Option<String>,
 
     #[arg(
         long = "coverage-threshold",
@@ -400,7 +414,9 @@ impl Features2ProteinsArgs {
             enzyme: self.pibaq_enzyme.unwrap_or(defaults.enzyme),
             min_aa: self.min_aa,
             max_aa: self.pibaq_max_aa.unwrap_or(defaults.max_aa),
-            missed_cleavages: 0,
+            missed_cleavages: self
+                .pibaq_missed_cleavages
+                .unwrap_or(defaults.missed_cleavages),
         })
     }
 }

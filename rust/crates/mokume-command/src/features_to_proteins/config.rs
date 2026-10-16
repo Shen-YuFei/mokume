@@ -197,6 +197,7 @@ fn pibaq_options_supplied(args: &Features2ProteinsArgs) -> bool {
         || args.pibaq_min_shared.is_some()
         || args.pibaq_families_yaml.is_some()
         || args.pibaq_min_anchors.is_some()
+        || args.pibaq_missed_cleavages.is_some()
 }
 
 fn validate_normalization_options(
@@ -346,6 +347,7 @@ fn resolve_irs(
             .unwrap_or(defaults.reference_regex),
         stat: args.irs_stat.clone().unwrap_or(defaults.stat),
         remove_reference: args.irs_remove_reference,
+        plex_column: args.irs_plex_column.clone(),
     })
 }
 
@@ -387,11 +389,12 @@ fn validate_irs_mode(
     if quantification == QuantMethod::Ratio {
         validate_ratio_reference_options(args)?;
     } else if !args.irs
-        && (selector_count > 0 || args.irs_stat.is_some() || args.irs_remove_reference)
+        && (selector_count > 0
+            || args.irs_stat.is_some()
+            || args.irs_remove_reference
+            || args.irs_plex_column.is_some())
     {
-        return Err(MokumeError::InvalidInput {
-            message: "IRS options require --irs".to_owned(),
-        });
+        return Err(invalid_input("IRS options require --irs"));
     }
     if args.irs && args.sdrf.is_none() {
         return Err(invalid_input("IRS options require --sdrf option"));
@@ -402,9 +405,7 @@ fn validate_irs_mode(
 /// Ratio takes its reference samples from the IRS selectors but runs no IRS.
 fn validate_ratio_reference_options(args: &Features2ProteinsArgs) -> mokume_core::Result<()> {
     if args.irs {
-        return Err(MokumeError::InvalidInput {
-            message: "Ratio quantification cannot also apply IRS".to_owned(),
-        });
+        return Err(invalid_input("Ratio quantification cannot also apply IRS"));
     }
     if args.irs_sdrf_column.is_some()
         || !args.irs_sdrf_value.is_empty()
@@ -512,6 +513,9 @@ fn pibaq_config(args: &Features2ProteinsArgs) -> PibaqConfig {
         families_yaml: args.pibaq_families_yaml.clone(),
         min_anchors: args.pibaq_min_anchors.unwrap_or(defaults.min_anchors),
         high_anchor_threshold: defaults.high_anchor_threshold,
+        missed_cleavages: args
+            .pibaq_missed_cleavages
+            .unwrap_or(defaults.missed_cleavages),
     }
 }
 

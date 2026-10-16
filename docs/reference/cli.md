@@ -57,7 +57,7 @@ PSM-level QPX evidence and does not accept MSstats feature tables.
 | `-s/--sdrf` | none | SDRF file for sample metadata |
 | `--min-aa` | 7 | Minimum amino acid length |
 | `--min-unique` | 2 | Minimum unique peptides per protein/sample; piBAQ uses its method-specific value 0 and rejects this option |
-| `--keep-contaminants` | off | Keep contaminants; rows marked `is_decoy=true` are always removed |
+| `--keep-contaminants` | off | Keep contaminants (a group is a contaminant only if all its accessions are); rows marked `is_decoy=true` are always removed |
 
 ### Quantification
 
@@ -73,6 +73,7 @@ PSM-level QPX evidence and does not accept MSstats feature tables.
 | `--directlfq-no-sample-normalization` | off | Skip DirectLFQ's global sample normalization (directlfq `deactivate_normalization`) |
 | `--pibaq-enzyme` | `Trypsin` | Protease name from the installed pyOpenMS catalog |
 | `--pibaq-max-aa` | 30 | Maximum theoretical peptide length |
+| `--pibaq-missed-cleavages` | 0 | Missed cleavages in the theoretical digest |
 | `--pibaq-min-shared` | 2 | Minimum shared peptides for automatic family discovery |
 | `--pibaq-families` | none | YAML file with explicit family overrides |
 | `--pibaq-min-anchors` | 1 | Minimum unique-peptide anchors required before proportional family allocation |
@@ -109,6 +110,7 @@ composition, while hierarchical alignment compares the peptides that samples sha
 | `--irs-reference-regex` | `pool\|powder\|ref\|reference\|bridge` | Regex for reference auto-detection |
 | `--irs-stat` | `median` | Plex reference statistic: median or mean |
 | `--irs-remove-reference` | off | Remove reference samples from output |
+| `--irs-plex-column` | auto | SDRF column naming each channel's plex (default: channels sharing data files) |
 
 IRS options require `--irs` and an SDRF. Reference detection must find usable
 reference samples and plex assignments; otherwise the command fails. IRS is
