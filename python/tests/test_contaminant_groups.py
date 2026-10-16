@@ -47,5 +47,6 @@ def test_sql_filter_keeps_twins():
     con.execute("CREATE TABLE t (pg_accessions VARCHAR[], intensity DOUBLE)")
     for group in GROUPS:
         con.execute("INSERT INTO t VALUES (?, 1.0)", [group.split(";")])
+    con.execute("INSERT INTO t VALUES (NULL, 1.0)")
     rows = con.execute(f"SELECT pg_accessions FROM t WHERE {clause}", params).fetchall()
     assert [";".join(row[0]) for row in rows] == KEPT

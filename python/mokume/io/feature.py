@@ -257,7 +257,8 @@ class SQLFilterBuilder:
 
     def build_contaminant_filter(self) -> tuple[list[str], list]:
         """Build contaminant/decoy filter conditions and params."""
-        conditions: list[str] = []
+        # Rows without a protein group are dropped, as Rust does.
+        conditions: list[str] = ["pg_accessions IS NOT NULL"]
         params: list = []
 
         def any_member(patterns: list[str]) -> str:
