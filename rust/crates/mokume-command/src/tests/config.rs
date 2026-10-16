@@ -477,6 +477,7 @@ fn rejects_option_combinations_before_running() {
         ("-p in.parquet --batch-correction --batch-covariate sex", "Batch correction with --batch-column or --batch-covariate requires --sdrf option"),
         ("-p in.parquet --quant-method directlfq --export-peptides peptides.csv", "export-peptides is not supported by directlfq quantification"),
         ("-p in.parquet --irs", "IRS options require --sdrf option"),
+        ("-p in.parquet -s s.tsv --quant-method ratio --irs-plex-column comment[plex]", "IRS-only options require --irs"),
         ("-p in.parquet --coverage-threshold 0.5", "coverage-threshold requires --sdrf option"),
         ("-p in.parquet --de-contrast A B --de-output de.csv", "differential expression requires an SDRF file (--sdrf)"),
         ("-p in.parquet -s s.tsv --de-contrast A B", "differential expression requires --de-output"),

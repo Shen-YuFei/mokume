@@ -411,11 +411,11 @@ fn validate_ratio_reference_options(args: &Features2ProteinsArgs) -> mokume_core
         || !args.irs_sdrf_value.is_empty()
         || args.irs_stat.is_some()
         || args.irs_remove_reference
+        || args.irs_plex_column.is_some()
     {
-        return Err(MokumeError::InvalidInput {
-            message: "Ratio accepts --irs-reference-sample or --irs-reference-regex; IRS-only options require --irs"
-                .to_owned(),
-        });
+        return Err(invalid_input(
+            "Ratio accepts --irs-reference-sample or --irs-reference-regex; IRS-only options require --irs",
+        ));
     }
     Ok(())
 }
