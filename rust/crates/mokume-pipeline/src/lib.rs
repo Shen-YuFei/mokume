@@ -3286,15 +3286,16 @@ fn hierarchical_compute_shifts(
         .collect::<Vec<_>>();
     keys.sort_unstable();
     keys.dedup();
-    let rows = keys
-        .iter()
-        .map(|key| {
-            columns
-                .iter()
-                .map(|column| column.get(key).copied().unwrap_or(f64::NAN))
-                .collect()
-        })
-        .collect::<Vec<_>>();
+    // One pass per column fills the dense rows; a lookup per (key, column)
+    // costs keys x samples hash probes on large studies.
+    let mut rows = vec![vec![f64::NAN; columns.len()]; keys.len()];
+    for (sample, column) in columns.iter().enumerate() {
+        for (key, &value) in column {
+            if let Ok(row) = keys.binary_search(key) {
+                rows[row][sample] = value;
+            }
+        }
+    }
     hierarchical_sample_shifts(&rows, columns.len(), num_samples_quadratic)
 }
 
