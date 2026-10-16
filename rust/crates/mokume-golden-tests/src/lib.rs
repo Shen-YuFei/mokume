@@ -1172,6 +1172,49 @@ fn features2peptides_cv_filter_drops_high_cv_canonical() -> Result<(), Box<dyn E
     Ok(())
 }
 
+// The CV pre-pass keys a group by its raw name, while ingest renames a mixed
+// `CONTAM_<ACC>;<ACC>` group to `<ACC>`; the high-CV canonical must still drop.
+#[test]
+fn features2peptides_cv_filter_drops_high_cv_canonical_in_contaminant_twin_group(
+) -> Result<(), Box<dyn Error>> {
+    let (_tempdir, root) = temp_root()?;
+    create_dir_all(&root)?;
+    let parquet = root.join("peptides.cv-twin.features.parquet");
+    let output = root.join("peptides.cv-twin.csv");
+    let group = ["CONTAM_P05787", "P05787"];
+    write_qpx_rows(
+        &parquet,
+        &[
+            QpxRow::new_with_charge("PEPTIDEAK", "run1", 100.0, 2, &group),
+            QpxRow::new_with_charge("PEPTIDEAK", "run1", 120.0, 3, &group),
+            QpxRow::new_with_charge("PEPTIDEAK", "run1", 140.0, 4, &group),
+            QpxRow::new_with_charge("PEPTIDEBK", "run1", 10.0, 2, &group),
+            QpxRow::new_with_charge("PEPTIDEBK", "run1", 990.0, 3, &group),
+            QpxRow::new_with_charge("PEPTIDECK", "run1", 300.0, 2, &group),
+        ],
+    )?;
+    let mut config = default_peptides_config(parquet, output.clone());
+    config.filter_pipeline = Some(PreprocessingFilterConfig {
+        intensity: IntensityFilterConfig {
+            cv_threshold: Some(0.2),
+            ..IntensityFilterConfig::default()
+        },
+        ..PreprocessingFilterConfig::default()
+    });
+    run_features_to_peptides(&config)?;
+
+    let table = read_csv(&output)?;
+    assert_eq!(
+        table.rows.len(),
+        2,
+        "CV 0.2 drops PEPTIDEBK from the renamed twin group:\n{:#?}",
+        table.rows
+    );
+    assert_peptide_cell(&table, "P05787", "PEPTIDEAK", "run1", 360.0)?;
+    assert_peptide_cell(&table, "P05787", "PEPTIDECK", "run1", 300.0)?;
+    Ok(())
+}
+
 // Boundary guard for the float32 CV decision: Python computes the CV on the
 // float32 `NormIntensity` column, so the Rust pre-pass rounds its f64 CV to f32
 // before comparing to the threshold. This fixture's BOUNDARYAK group has a

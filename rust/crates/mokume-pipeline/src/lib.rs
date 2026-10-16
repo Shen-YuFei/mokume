@@ -215,6 +215,9 @@ impl FeatureToProteinState {
         let Some(protein_group) = self.aggregation.protein_name(feature) else {
             return Ok(());
         };
+        // The CV pre-pass keys groups by the name before the twin and
+        // contaminant-member rewrites below.
+        let cv_group = (!self.cv_dropped.is_empty()).then(|| protein_group.clone());
         // Ingest-time contaminant removal mirrors Python's `ContaminantFilter`:
         // match the parsed `protein_group` (uppercased, literal substring) against
         // the filter pipeline's patterns. With no pipeline (or the default list)
@@ -274,13 +277,10 @@ impl FeatureToProteinState {
         // cleavage), so the CV input includes rows those later filters would drop
         // -- the pre-pass mirrors that by buffering the same load-gated rows. Empty
         // unless `cv_threshold` is set.
-        if !self.cv_dropped.is_empty()
-            && self.cv_dropped.contains(&(
-                sample_name.clone(),
-                protein_group.clone(),
-                feature.sequence.clone(),
-            ))
-        {
+        if cv_group.is_some_and(|group| {
+            self.cv_dropped
+                .contains(&(sample_name.clone(), group, feature.sequence.clone()))
+        }) {
             return Ok(());
         }
         // QuantileFilter (Python `intensity.py:296-297`): drop rows whose raw
