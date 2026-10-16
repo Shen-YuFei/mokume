@@ -87,7 +87,9 @@ _SQLFIRST_LOAD_QUERY_PREFIX = """
             SELECT
                 array_to_string(
                     list_transform(
-                        pg_accessions,
+                        """
+
+_SQLFIRST_LOAD_QUERY_AFTER_MEMBERS = """,
                         x -> CASE
                             WHEN length(string_split(x, '|')) = 3
                                 THEN string_split(x, '|')[2]
@@ -182,7 +184,9 @@ _RUN_SCALE_QUERY_PREFIX = """
             SELECT
                 array_to_string(
                     list_transform(
-                        pg_accessions,
+                        """
+
+_RUN_SCALE_QUERY_AFTER_MEMBERS = """,
                         x -> CASE
                             WHEN length(string_split(x, '|')) = 3
                                 THEN string_split(x, '|')[2]
@@ -275,16 +279,20 @@ _RUN_SCALE_QUERY_SUFFIX = """ AS rm
 
 
 def _build_sqlfirst_load_query(
-    where_clause: str,
+    filter_builder: SQLFilterBuilder,
     scale_select: str,
     scale_orderby: str,
     scale_join_clause: str,
     query_suffix: str = _SQLFIRST_LOAD_QUERY_SUFFIX,
-) -> str:
-    """Build the SQL-first peptide loading query from trusted fragments."""
-    return "".join(
+) -> tuple[str, list]:
+    """Build the SQL-first peptide loading query and its filter parameters."""
+    members, member_params = filter_builder.build_protein_members()
+    where_clause, where_params = filter_builder.build_where_clause()
+    query = "".join(
         [
             _SQLFIRST_LOAD_QUERY_PREFIX,
+            members,
+            _SQLFIRST_LOAD_QUERY_AFTER_MEMBERS,
             where_clause,
             _SQLFIRST_LOAD_QUERY_AFTER_WHERE,
             scale_select,
@@ -295,19 +303,27 @@ def _build_sqlfirst_load_query(
             query_suffix,
         ]
     )
+    return query, [*member_params, *where_params]
 
 
-def _build_run_scale_query(where_clause: str, metric_expr: str) -> str:
-    """Build the run normalization scale-factor query from trusted fragments."""
-    return "".join(
+def _build_run_scale_query(
+    filter_builder: SQLFilterBuilder, metric_expr: str
+) -> tuple[str, list]:
+    """Build the run normalization scale-factor query and its filter parameters."""
+    members, member_params = filter_builder.build_protein_members()
+    where_clause, where_params = filter_builder.build_where_clause()
+    query = "".join(
         [
             _RUN_SCALE_QUERY_PREFIX,
+            members,
+            _RUN_SCALE_QUERY_AFTER_MEMBERS,
             where_clause,
             _RUN_SCALE_QUERY_AFTER_WHERE,
             metric_expr,
             _RUN_SCALE_QUERY_SUFFIX,
         ]
     )
+    return query, [*member_params, *where_params]
 
 
 def _sum_maxlfq_species(dataset_df: pd.DataFrame) -> pd.DataFrame:
@@ -480,7 +496,6 @@ class LoadingStage:
         registered SQL metric and ``technical_repetitions > 1`` (matching the
         global guard in :meth:`FeatureNormalizationMethod.normalize_runs`).
         """
-        where_clause, where_params = feature.filter_builder.build_where_clause()
         min_aa = self.config.filtering.min_aa
         min_unique = (
             0
@@ -512,8 +527,8 @@ class LoadingStage:
 
         # Protein-accession parsing is shared with _compute_run_scale_map via
         # the SQL query builders above.
-        query = _build_sqlfirst_load_query(
-            where_clause,
+        query, filter_params = _build_sqlfirst_load_query(
+            feature.filter_builder,
             scale_select,
             scale_orderby,
             scale_join_clause,
@@ -523,7 +538,7 @@ class LoadingStage:
                 else _SQLFIRST_LOAD_QUERY_SUFFIX
             ),
         )
-        query_params = [*where_params, min_aa, min_unique]
+        query_params = [*filter_params, min_aa, min_unique]
         try:
             combined_df = feature.parquet_db.execute(query, query_params).df()
         finally:
@@ -567,7 +582,6 @@ class LoadingStage:
         table and never materialises a full-sized scaled-intensity CTE, which
         is what drove the >95 GB peak resident set on PXD030304.
         """
-        where_clause, where_params = feature.filter_builder.build_where_clause()
         min_aa = self.config.filtering.min_aa
         min_unique = (
             0
@@ -583,8 +597,8 @@ class LoadingStage:
         #
         # Protein-accession parsing mirrors _load_for_mokume_sqlfirst through
         # the shared SQL query builders.
-        sql = _build_run_scale_query(where_clause, metric_expr)
-        sql_params = [*where_params, min_aa, min_unique]
+        sql, filter_params = _build_run_scale_query(feature.filter_builder, metric_expr)
+        sql_params = [*filter_params, min_aa, min_unique]
         return feature.parquet_db.execute(sql, sql_params).df()
 
     def _load_for_mokume_legacy_pandas(
@@ -756,16 +770,15 @@ class LoadingStage:
             if self.config.input.sdrf:
                 feature.enrich_with_sdrf(self.config.input.sdrf)
 
-            where_clause, where_params = filter_builder.build_where_clause()
-            query = _build_sqlfirst_load_query(
-                where_clause,
+            query, filter_params = _build_sqlfirst_load_query(
+                filter_builder,
                 "mu.*",
                 'mu."Intensity"',
                 "",
                 query_suffix=_LFQ_DIRECTLFQ_QUERY_SUFFIX,
             )
             query_params = [
-                *where_params,
+                *filter_params,
                 self.config.filtering.min_aa,
                 self.config.filtering.min_unique_peptides,
             ]

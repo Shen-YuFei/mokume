@@ -304,6 +304,24 @@ def test_null_unique_flag_means_a_one_protein_group(lfq_dataset):
         assert set(df[PROTEIN_NAME].astype(str)) == {"P12345"}
 
 
+def test_contaminant_twin_group_is_named_without_contaminant_members(lfq_dataset):
+    """A kept ``CONTAM_<ACC>;<ACC>`` group is named ``<ACC>``, as in Rust."""
+    parquet, sdrf = lfq_dataset
+    table = pq.read_table(parquet)
+    groups = table["pg_accessions"].to_pylist()
+    for row, sequence in enumerate(table["sequence"].to_pylist()):
+        if sequence in {"KEPTPEPAR", "KEPTPEPBR"}:
+            twin = {**groups[row][0], "accession": "CONTAM_P99999"}
+            groups[row] = [twin] + groups[row]
+    column = table.schema.get_field_index("pg_accessions")
+    groups = pa.array(groups, type=_PG_PROTEIN_TYPE)
+    pq.write_table(table.set_column(column, "pg_accessions", groups), parquet)
+    cfg = _make_config(parquet, sdrf)
+
+    for df in (LoadingStage(cfg).load_for_mokume(), _legacy_path_output(cfg)):
+        assert set(df[PROTEIN_NAME].astype(str)) == {"P12345", "P99999"}
+
+
 def test_load_fails_when_no_feature_passes_the_filters(lfq_dataset):
     """Input that the filters empty fails early with a message naming them."""
     parquet, sdrf = lfq_dataset
