@@ -51,12 +51,18 @@ pub(crate) fn median(values: &mut Vec<f64>) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
-    values.sort_by(f64::total_cmp);
+    // Selection yields the same order statistics as a full sort.
+    let even = values.len().is_multiple_of(2);
     let midpoint = values.len() / 2;
-    if values.len().is_multiple_of(2) {
-        Some((values[midpoint - 1] + values[midpoint]) / 2.0)
+    let (below, &mut upper, _) = values.select_nth_unstable_by(midpoint, f64::total_cmp);
+    if even {
+        below
+            .iter()
+            .copied()
+            .max_by(f64::total_cmp)
+            .map(|lower| (lower + upper) / 2.0)
     } else {
-        Some(values[midpoint])
+        Some(upper)
     }
 }
 

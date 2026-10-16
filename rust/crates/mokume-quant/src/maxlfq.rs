@@ -140,35 +140,91 @@ fn intensity_rows(
     Ok(rows.into_values().collect())
 }
 
+/// Sample-major logs and per-sample bitsets of observed species: each pair
+/// reads two contiguous columns and skips pairs that share too few species.
+struct SampleColumns {
+    species: usize,
+    words: usize,
+    logs: Vec<f64>,
+    observed: Vec<u64>,
+}
+
+impl SampleColumns {
+    fn new(rows: &[Vec<f64>], n: usize) -> Self {
+        let species = rows.len();
+        let words = species.div_ceil(64);
+        let mut logs = vec![0.0; n * species];
+        let mut observed = vec![0_u64; n * words];
+        for (row_index, row) in rows.iter().enumerate() {
+            for (sample, value) in row.iter().enumerate() {
+                let log = value.log2();
+                logs[sample * species + row_index] = log;
+                if log.is_finite() {
+                    observed[sample * words + row_index / 64] |= 1 << (row_index % 64);
+                }
+            }
+        }
+        Self {
+            species,
+            words,
+            logs,
+            observed,
+        }
+    }
+
+    fn seen(&self, sample: usize) -> &[u64] {
+        &self.observed[sample * self.words..(sample + 1) * self.words]
+    }
+
+    fn shared(&self, i: usize, j: usize) -> usize {
+        self.seen(i)
+            .iter()
+            .zip(self.seen(j))
+            .map(|(a, b)| (a & b).count_ones() as usize)
+            .sum()
+    }
+
+    /// Log ratios of `j` over `i` for the species both observe, in species order.
+    fn ratios_into(&self, i: usize, j: usize, ratios: &mut Vec<f64>) {
+        let logs_i = &self.logs[i * self.species..(i + 1) * self.species];
+        let logs_j = &self.logs[j * self.species..(j + 1) * self.species];
+        ratios.clear();
+        for (word, (a, b)) in self.seen(i).iter().zip(self.seen(j)).enumerate() {
+            let mut both = a & b;
+            while both != 0 {
+                let row = word * 64 + both.trailing_zeros() as usize;
+                ratios.push(logs_j[row] - logs_i[row]);
+                both &= both - 1;
+            }
+        }
+    }
+}
+
 fn pairwise_ratios(
     rows: &[Vec<f64>],
     n: usize,
     min_count: usize,
     stabilize: bool,
 ) -> (Vec<RatioEdge>, usize) {
-    let logs = rows
-        .iter()
-        .map(|row| row.iter().map(|x| x.log2()).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
+    let columns = SampleColumns::new(rows, n);
     let mut edges = Vec::new();
     let mut stabilized_pairs = 0;
     let mut ratios = Vec::with_capacity(rows.len());
     for i in 0..n {
         for j in i + 1..n {
-            ratios.clear();
-            ratios.extend(logs.iter().filter_map(|row| {
-                (row[i].is_finite() && row[j].is_finite()).then_some(row[j] - row[i])
-            }));
-            if ratios.len() >= min_count {
-                if let Some(ratio) = median(&mut ratios) {
-                    let (ratio, applied) = if stabilize {
-                        stabilized_ratio(rows, (i, j), ratios.len(), ratio)
-                    } else {
-                        (ratio, false)
-                    };
-                    stabilized_pairs += usize::from(applied);
-                    edges.push((i, j, ratio));
-                }
+            let shared = columns.shared(i, j);
+            if shared < min_count {
+                continue;
+            }
+            columns.ratios_into(i, j, &mut ratios);
+            if let Some(ratio) = median(&mut ratios) {
+                let (ratio, applied) = if stabilize {
+                    stabilized_ratio(rows, (i, j), shared, ratio)
+                } else {
+                    (ratio, false)
+                };
+                stabilized_pairs += usize::from(applied);
+                edges.push((i, j, ratio));
             }
         }
     }
@@ -193,33 +249,35 @@ fn stabilized_ratio(
 }
 
 fn connected_components(edges: &[RatioEdge], n: usize) -> Vec<Vec<usize>> {
-    let mut neighbors = vec![Vec::new(); n];
+    // Union-find keeps memory linear in the samples, however many edges there are.
+    let mut parent = (0..n).collect::<Vec<_>>();
+    let mut linked = vec![false; n];
     for &(i, j, _) in edges {
-        neighbors[i].push(j);
-        neighbors[j].push(i);
+        linked[i] = true;
+        linked[j] = true;
+        let (a, b) = (find_root(&mut parent, i), find_root(&mut parent, j));
+        parent[a.max(b)] = a.min(b);
     }
-    let mut seen = vec![false; n];
-    let mut components = Vec::new();
-    for start in 0..n {
-        if seen[start] || neighbors[start].is_empty() {
-            continue;
+    // Components in the order of their first sample, each sorted ascending.
+    let mut slot = vec![usize::MAX; n];
+    let mut components = Vec::<Vec<usize>>::new();
+    for sample in (0..n).filter(|&sample| linked[sample]) {
+        let root = find_root(&mut parent, sample);
+        if slot[root] == usize::MAX {
+            slot[root] = components.len();
+            components.push(Vec::new());
         }
-        let mut pending = vec![start];
-        let mut component = Vec::new();
-        seen[start] = true;
-        while let Some(i) = pending.pop() {
-            component.push(i);
-            for &j in &neighbors[i] {
-                if !seen[j] {
-                    seen[j] = true;
-                    pending.push(j);
-                }
-            }
-        }
-        component.sort_unstable();
-        components.push(component);
+        components[slot[root]].push(sample);
     }
     components
+}
+
+fn find_root(parent: &mut [usize], mut node: usize) -> usize {
+    while parent[node] != node {
+        parent[node] = parent[parent[node]];
+        node = parent[node];
+    }
+    node
 }
 
 fn solve_component(component: &[usize], edges: &[RatioEdge], samples: usize) -> Result<Vec<f64>> {
