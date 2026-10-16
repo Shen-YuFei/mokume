@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{create_dir_all, read_to_string, File};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{sync_channel, Receiver};
 
 use csv::WriterBuilder;
 use mokume_core::{
@@ -84,12 +85,9 @@ struct FeatureToProteinState {
     canonical_peptides: StringIdRegistry<PeptideId>,
     conditions: StringIdRegistry<u32>,
     loading_contexts: HashMap<(u32, u32), u32>,
-    contextual_peptides: HashMap<(PeptideId, u32), PeptideId>,
-    contextual_canonical_peptides: HashMap<(PeptideId, u32), PeptideId>,
+    contextual: ContextualIds,
     samples: StringIdRegistry<SampleId>,
-    peptide_to_canonical: HashMap<PeptideId, PeptideId>,
-    peptide_to_contextual_canonical: HashMap<PeptideId, PeptideId>,
-    unique_peptides: HashMap<CellKey, HashSet<PeptideId>>,
+    index: PeptideIndex,
     export_rows: IntermediateExports,
     aggregation: FeatureAggregation,
     accepted_features: usize,
@@ -157,6 +155,108 @@ struct FeatureToProteinState {
     replicate_agreement_wipes_all: bool,
 }
 
+/// Per-peptide canonical lookups and the unique canonical peptides of each
+/// (protein, sample) cell, filled by ingest.
+#[derive(Debug, Default)]
+struct PeptideIndex {
+    peptide_to_canonical: HashMap<PeptideId, PeptideId>,
+    peptide_to_contextual_canonical: HashMap<PeptideId, PeptideId>,
+    unique_peptides: HashMap<CellKey, HashSet<PeptideId>>,
+}
+
+impl PeptideIndex {
+    fn add(&mut self, record: &IngestRecord, contextual: bool) {
+        self.peptide_to_canonical
+            .entry(record.peptide)
+            .or_insert(record.canonical);
+        if contextual {
+            self.peptide_to_contextual_canonical
+                .entry(record.peptide)
+                .or_insert(record.contextual_canonical);
+        }
+        self.unique_peptides
+            .entry(CellKey {
+                protein: record.protein,
+                sample: record.sample,
+            })
+            .or_default()
+            .insert(record.canonical);
+    }
+
+    fn add_batches(&mut self, batches: Receiver<Vec<IngestRecord>>, contextual: bool) {
+        for batch in batches {
+            for record in &batch {
+                self.add(record, contextual);
+            }
+        }
+    }
+}
+
+/// Peptide and canonical peptide ids within a loading context, numbered in
+/// first-seen order.
+#[derive(Debug, Default)]
+struct ContextualIds {
+    peptides: HashMap<(PeptideId, u32), PeptideId>,
+    canonical_peptides: HashMap<(PeptideId, u32), PeptideId>,
+}
+
+impl ContextualIds {
+    /// Replace the record's peptide ids by their ids within its pending
+    /// loading context, if any.
+    fn resolve(&mut self, record: &mut IngestRecord, canonical: bool) -> Result<()> {
+        let Some(context) = record.context.take() else {
+            return Ok(());
+        };
+        record.peptide =
+            register_contextual_peptide(&mut self.peptides, (record.peptide, context), "peptide")?;
+        if canonical {
+            record.contextual_canonical = register_contextual_peptide(
+                &mut self.canonical_peptides,
+                (record.canonical, context),
+                "contextual canonical peptide",
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// The ids of one accepted feature: all the aggregation and the peptide index
+/// need once ingest has resolved its names and filters.
+#[derive(Debug, Clone, Copy)]
+struct IngestRecord {
+    protein: ProteinId,
+    sample: SampleId,
+    peptide: PeptideId,
+    canonical: PeptideId,
+    contextual_canonical: PeptideId,
+    species: PeptideId,
+    /// Loading context whose peptide ids [`ContextualIds::resolve`] has yet
+    /// to assign.
+    context: Option<u32>,
+    intensity: f64,
+    charge: i32,
+}
+
+impl IngestRecord {
+    fn measurement<'a>(
+        &self,
+        ion_name: &'a str,
+        sample_name: &'a str,
+    ) -> AggregationMeasurement<'a> {
+        AggregationMeasurement {
+            protein: self.protein,
+            sample: self.sample,
+            peptide: self.peptide,
+            canonical: self.canonical,
+            species: self.species,
+            intensity: self.intensity,
+            ion_name,
+            sample_name,
+            charge: self.charge,
+        }
+    }
+}
+
 impl FeatureToProteinState {
     fn new(
         config: &FeatureToProteinsConfig,
@@ -170,12 +270,9 @@ impl FeatureToProteinState {
             canonical_peptides: StringIdRegistry::new(),
             conditions: StringIdRegistry::new(),
             loading_contexts: HashMap::new(),
-            contextual_peptides: HashMap::new(),
-            contextual_canonical_peptides: HashMap::new(),
+            contextual: ContextualIds::default(),
             samples: StringIdRegistry::new(),
-            peptide_to_canonical: HashMap::new(),
-            peptide_to_contextual_canonical: HashMap::new(),
-            unique_peptides: HashMap::new(),
+            index: PeptideIndex::default(),
             export_rows: IntermediateExports::new(config),
             aggregation: FeatureAggregation::from_config(config, sdrf, raw_sdrf, pibaq_digest)?,
             accepted_features: 0,
@@ -193,12 +290,16 @@ impl FeatureToProteinState {
         })
     }
 
+    /// Ingest one feature. With `deferred`, the accepted feature's ids are
+    /// appended there for [`ingest_features`]'s pipeline threads instead of
+    /// being applied to the peptide index and the aggregation here.
     fn ingest(
         &mut self,
         feature: &QpxFeatureRecord,
         sdrf: Option<&mut SdrfLookupCache<'_>>,
         filtering: FilterConfig,
         intensity_factors: Option<&IntensityFactors>,
+        deferred: Option<&mut Vec<IngestRecord>>,
     ) -> Result<()> {
         // ReplicateAgreementFilter degeneracy (Python `intensity.py:194-242` under
         // the per-sample pipeline): `min_replicate_agreement > 1` drops every row
@@ -303,7 +404,7 @@ impl FeatureToProteinState {
             &feature.sequence,
             "canonical peptide",
         )?;
-        let (peptide, contextual_canonical_peptide) = if self.aggregation.preserves_loading_rows() {
+        let context = if self.aggregation.preserves_loading_rows() {
             let biological_replicate = sdrf_record
                 .and_then(|record| record.biological_replicate)
                 .unwrap_or(1);
@@ -312,50 +413,38 @@ impl FeatureToProteinState {
                 .conditions
                 .get_or_insert(&condition)
                 .ok_or_else(|| invalid_input("condition id registry overflow"))?;
-            let context = register_loading_context(
+            Some(register_loading_context(
                 &mut self.loading_contexts,
                 (biological_replicate, condition_id),
-            )?;
-            let peptide = register_contextual_peptide(
-                &mut self.contextual_peptides,
-                (base_peptide, context),
-                "peptide",
-            )?;
-            let contextual_canonical = if self.aggregation.preserves_contextual_canonical_rows() {
-                register_contextual_peptide(
-                    &mut self.contextual_canonical_peptides,
-                    (canonical_peptide, context),
-                    "contextual canonical peptide",
-                )?
-            } else {
-                canonical_peptide
-            };
-            (peptide, contextual_canonical)
+            )?)
         } else {
-            (base_peptide, canonical_peptide)
+            None
         };
-        self.peptide_to_canonical
-            .entry(peptide)
-            .or_insert(canonical_peptide);
-        if self.aggregation.preserves_contextual_canonical_rows() {
-            self.peptide_to_contextual_canonical
-                .entry(peptide)
-                .or_insert(contextual_canonical_peptide);
-        }
         let protein = register_id(&mut self.proteins, &protein_group, "protein")?;
-        let cell = CellKey { protein, sample };
-
-        self.unique_peptides
-            .entry(cell)
-            .or_default()
-            .insert(canonical_peptide);
         let intensity = intensity_factors.map_or(feature.intensity, |factors| {
             factors.normalize(feature.intensity, &sample_name, &feature.run_file_name)
         });
+        let mut record = IngestRecord {
+            protein,
+            sample,
+            peptide: base_peptide,
+            canonical: canonical_peptide,
+            contextual_canonical: canonical_peptide,
+            species: base_peptide,
+            context,
+            intensity,
+            charge: feature.charge,
+        };
+        let contextual = self.aggregation.preserves_contextual_canonical_rows();
+        // Exported peptide rows need the contextual ids here; otherwise a
+        // pipelined ingest leaves them to its aggregation worker.
+        if deferred.is_none() || self.export_rows.peptides.is_some() {
+            self.contextual.resolve(&mut record, contextual)?;
+        }
         self.export_rows.push(IntermediateMeasurement {
             protein,
             sample,
-            peptide,
+            peptide: record.peptide,
             intensity,
             protein_name: &protein_group,
             peptide_canonical: &feature.sequence,
@@ -363,17 +452,13 @@ impl FeatureToProteinState {
             run_file_name: &feature.run_file_name,
             sdrf_record,
         });
-        self.aggregation.push(AggregationMeasurement {
-            protein,
-            sample,
-            peptide,
-            canonical: canonical_peptide,
-            species: base_peptide,
-            intensity,
-            ion_name: &feature.sequence,
-            sample_name: &sample_name,
-            charge: feature.charge,
-        })?;
+        if let Some(records) = deferred {
+            records.push(record);
+        } else {
+            self.index.add(&record, contextual);
+            self.aggregation
+                .push(record.measurement(&feature.sequence, &sample_name))?;
+        }
         if let Some(tracker) = &mut self.low_frequency {
             tracker.observe(&protein_group, &feature.sequence, sample);
         }
@@ -525,7 +610,7 @@ impl FeatureToProteinState {
             &mut cells,
             method,
             allowed_cells,
-            &self.peptide_to_canonical,
+            &self.index.peptide_to_canonical,
             &self.samples,
         );
         for (cell, canonical_values) in cells {
@@ -552,7 +637,7 @@ impl FeatureToProteinState {
                 self.aggregation.apply_dataset_normalization(
                     method,
                     &allowed_cells,
-                    &self.peptide_to_canonical,
+                    &self.index.peptide_to_canonical,
                     &self.samples,
                 );
             }
@@ -566,7 +651,7 @@ impl FeatureToProteinState {
         {
             &empty_mapping
         } else {
-            &self.peptide_to_contextual_canonical
+            &self.index.peptide_to_contextual_canonical
         };
         let values = self.aggregation.finalize(
             &allowed_cells,
@@ -590,14 +675,16 @@ impl FeatureToProteinState {
     /// sample) cell over the whole ingested set, with no `min_unique_peptides`
     /// filter applied.
     fn cell_peptide_counts(&self) -> HashMap<CellKey, usize> {
-        self.unique_peptides
+        self.index
+            .unique_peptides
             .iter()
             .map(|(cell, peptides)| (*cell, peptides.len()))
             .collect()
     }
 
     fn allowed_cells(&self, min_unique_peptides: usize) -> HashSet<CellKey> {
-        self.unique_peptides
+        self.index
+            .unique_peptides
             .iter()
             .filter_map(|(cell, peptides)| (peptides.len() >= min_unique_peptides).then_some(*cell))
             .collect()
@@ -1461,6 +1548,43 @@ impl FeatureAggregation {
 
     fn keeps_shared_peptides(&self) -> bool {
         matches!(self, Self::Pibaq(_))
+    }
+
+    /// The same method without data, for a pipelined ingest: it answers
+    /// ingest's per-feature queries while this one is filled on a worker
+    /// thread. `None` for piBAQ and Ratio, whose `push` reads names.
+    fn empty_like(&self) -> Option<Self> {
+        Some(match self {
+            Self::Sum(_) => Self::Sum(HashMap::new()),
+            Self::Median(_) => Self::Median(HashMap::new()),
+            Self::Abd(_) => Self::Abd(HashMap::new()),
+            Self::PeptideCount(_) => Self::PeptideCount(HashMap::new()),
+            Self::TopN { topn, .. } => Self::TopN {
+                topn: *topn,
+                cells: HashMap::new(),
+            },
+            Self::Lfq {
+                method,
+                route_to_directlfq,
+                maxlfq_min_ratio_count,
+                stabilize,
+                directlfq_min_nonan,
+                directlfq_num_samples_quadratic,
+                directlfq_normalize_samples,
+                ..
+            } => Self::Lfq {
+                method: *method,
+                route_to_directlfq: *route_to_directlfq,
+                maxlfq_min_ratio_count: *maxlfq_min_ratio_count,
+                stabilize: *stabilize,
+                directlfq_min_nonan: *directlfq_min_nonan,
+                directlfq_num_samples_quadratic: *directlfq_num_samples_quadratic,
+                directlfq_normalize_samples: *directlfq_normalize_samples,
+                traces: MaxLfqFeatureAggregation::default(),
+                cached_directlfq_values: None,
+            },
+            Self::Pibaq(_) | Self::Ratio(_) => return None,
+        })
     }
 
     fn preserves_loading_rows(&self) -> bool {
@@ -5134,15 +5258,13 @@ fn run_features_to_proteins_inner(
     let dataset_normalization = dataset_sample_normalization_method(config)?;
     let mut state =
         FeatureToProteinState::new(config, sdrf.as_ref(), raw_sdrf.as_ref(), pibaq_digest)?;
-    let mut sdrf_lookup = sdrf.as_ref().map(SdrfLookupCache::new);
-    stream_input_features(&config.input, sdrf.as_ref(), &memory, None, |feature| {
-        state.ingest(
-            &feature,
-            sdrf_lookup.as_mut(),
-            config.filtering,
-            intensity_factors,
-        )
-    })?;
+    ingest_features(
+        &mut state,
+        config,
+        sdrf.as_ref(),
+        &memory,
+        intensity_factors,
+    )?;
     memory.check("feature aggregation")?;
 
     info!(
@@ -5171,6 +5293,145 @@ fn run_features_to_proteins_inner(
     let matrix = state.into_matrix(min_unique_peptides, dataset_normalization)?;
     memory.check("protein matrix materialization")?;
     finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix)
+}
+
+/// Accepted features per message of a pipelined ingest.
+const INGEST_BATCH: usize = 8192;
+
+/// Ingest every feature into `state`. With three or more threads and an
+/// aggregation whose `push` reads only ids, ingest runs as a pipeline: this
+/// thread resolves filters, names and ids while [`IngestSinks::fill`] fills
+/// the aggregation and the peptide index. Each structure still receives every
+/// feature in file order, so the result equals the serial ingest.
+fn ingest_features(
+    state: &mut FeatureToProteinState,
+    config: &FeatureToProteinsConfig,
+    sdrf: Option<&SdrfTable>,
+    memory: &MemoryPlan,
+    intensity_factors: Option<&IntensityFactors>,
+) -> Result<()> {
+    let mut sdrf_lookup = sdrf.map(SdrfLookupCache::new);
+    let placeholder = if rayon::current_num_threads() >= 3 {
+        state.aggregation.empty_like()
+    } else {
+        None
+    };
+    let Some(placeholder) = placeholder else {
+        return stream_input_features(&config.input, sdrf, memory, None, |feature| {
+            state.ingest(
+                &feature,
+                sdrf_lookup.as_mut(),
+                config.filtering,
+                intensity_factors,
+                None,
+            )
+        });
+    };
+    let mut sinks = IngestSinks::take(state, placeholder);
+    let result = sinks.fill(|send| {
+        let mut batch = Vec::with_capacity(INGEST_BATCH);
+        stream_input_features(&config.input, sdrf, memory, None, |feature| {
+            state.ingest(
+                &feature,
+                sdrf_lookup.as_mut(),
+                config.filtering,
+                intensity_factors,
+                Some(&mut batch),
+            )?;
+            if batch.len() < INGEST_BATCH {
+                return Ok(());
+            }
+            send(std::mem::replace(
+                &mut batch,
+                Vec::with_capacity(INGEST_BATCH),
+            ))
+        })
+        .and_then(|()| send(batch))
+    });
+    sinks.restore(state);
+    result
+}
+
+/// The structures that a pipelined ingest fills off the reading thread.
+struct IngestSinks {
+    aggregation: FeatureAggregation,
+    index: PeptideIndex,
+    contextual_ids: ContextualIds,
+    /// Whether the aggregation keeps contextual canonical peptide rows.
+    contextual: bool,
+    /// Whether the contextual ids moved here; `ingest` assigns them itself
+    /// when it exports peptide rows.
+    defer_context: bool,
+}
+
+impl IngestSinks {
+    fn take(state: &mut FeatureToProteinState, placeholder: FeatureAggregation) -> Self {
+        let defer_context = state.export_rows.peptides.is_none();
+        Self {
+            contextual: state.aggregation.preserves_contextual_canonical_rows(),
+            aggregation: std::mem::replace(&mut state.aggregation, placeholder),
+            index: std::mem::take(&mut state.index),
+            contextual_ids: if defer_context {
+                std::mem::take(&mut state.contextual)
+            } else {
+                ContextualIds::default()
+            },
+            defer_context,
+        }
+    }
+
+    fn restore(self, state: &mut FeatureToProteinState) {
+        state.aggregation = self.aggregation;
+        state.index = self.index;
+        if self.defer_context {
+            state.contextual = self.contextual_ids;
+        }
+    }
+
+    /// Run `produce`, which sends batches of accepted features, while one
+    /// worker assigns their contextual ids and fills the aggregation, then
+    /// hands each batch to another worker that fills the peptide index.
+    fn fill<P>(&mut self, produce: P) -> Result<()>
+    where
+        P: FnOnce(&mut dyn FnMut(Vec<IngestRecord>) -> Result<()>) -> Result<()>,
+    {
+        let (aggregation, index) = (&mut self.aggregation, &mut self.index);
+        let (contextual_ids, contextual) = (&mut self.contextual_ids, self.contextual);
+        std::thread::scope(|scope| {
+            let (to_aggregation, aggregation_batches) = sync_channel::<Vec<IngestRecord>>(4);
+            let (to_index, index_batches) = sync_channel::<Vec<IngestRecord>>(4);
+            let aggregation_worker = scope.spawn(move || -> Result<()> {
+                for mut batch in aggregation_batches {
+                    for record in &mut batch {
+                        contextual_ids.resolve(record, contextual)?;
+                        // These methods read only the ids of a measurement.
+                        aggregation.push(record.measurement("", ""))?;
+                    }
+                    if to_index.send(batch).is_err() {
+                        break;
+                    }
+                }
+                Ok(())
+            });
+            let index_worker = scope.spawn(move || index.add_batches(index_batches, contextual));
+            let mut send = move |batch: Vec<IngestRecord>| {
+                to_aggregation
+                    .send(batch)
+                    .map_err(|_| invalid_input("pipelined ingest worker stopped"))
+            };
+            let produced = produce(&mut send);
+            // Closing the channels lets the workers finish before they are joined.
+            drop(send);
+            let aggregated = aggregation_worker
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+            index_worker
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+            // A worker error is the cause of a failed send, so it is reported first.
+            aggregated.and(produced)
+        })
+    }
 }
 
 fn finish_protein_matrix(
@@ -5708,6 +5969,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
             sdrf_lookup.as_mut(),
             proteins_config.filtering,
             intensity_factors,
+            None,
         )
     })?;
 
@@ -7247,14 +7509,15 @@ fn load_remove_ids(path: &Path) -> Result<HashSet<String>> {
         .filter(|line| !line.is_empty())
         .map(parse_protein_accession)
         .filter(|accession| !accession.is_empty())
+        .map(str::to_owned)
         .collect())
 }
 
 fn has_removed_accession(accessions: &[String], removed: &HashSet<String>) -> bool {
-    accessions
-        .iter()
-        .map(|accession| parse_protein_accession(accession))
-        .any(|accession| removed.contains(&accession))
+    !removed.is_empty()
+        && accessions
+            .iter()
+            .any(|accession| removed.contains(parse_protein_accession(accession)))
 }
 
 fn load_normalization_proteins(path: &Path) -> Result<HashSet<String>> {
@@ -7268,6 +7531,7 @@ fn load_normalization_proteins(path: &Path) -> Result<HashSet<String>> {
         .filter(|line| !line.is_empty())
         .map(parse_protein_accession)
         .filter(|protein| !protein.is_empty())
+        .map(str::to_owned)
         .collect::<HashSet<_>>();
     if proteins.is_empty() {
         return Err(invalid_input(format!(
@@ -7563,22 +7827,22 @@ fn first_protein_name(accessions: &[String]) -> Option<String> {
         .first()
         .map(|accession| parse_protein_accession(accession))
         .filter(|accession| !accession.is_empty() && !accession.contains(';'))
+        .map(str::to_owned)
 }
 
-fn parse_protein_accession(accession: &str) -> String {
+fn parse_protein_accession(accession: &str) -> &str {
     let accession = accession.trim();
-    let parts = accession.split('|').collect::<Vec<_>>();
-    if parts.len() == 1 {
-        return accession.to_owned();
-    }
-    if matches!(
-        parts[0].to_ascii_lowercase().as_str(),
-        "sp" | "tr" | "sw" | "nxp" | "ups"
-    ) && parts.len() >= 2
+    let Some((database, rest)) = accession.split_once('|') else {
+        return accession;
+    };
+    if ["sp", "tr", "sw", "nxp", "ups"]
+        .iter()
+        .any(|prefix| database.eq_ignore_ascii_case(prefix))
     {
-        parts[1].to_owned()
+        rest.split_once('|')
+            .map_or(rest, |(accession, _)| accession)
     } else {
-        parts[0].to_owned()
+        database
     }
 }
 
@@ -7842,7 +8106,7 @@ fn load_fasta_mw(fasta: &Path) -> Result<HashMap<String, f64>> {
     })?;
     let mut mw_map = HashMap::<String, f64>::new();
     for (identifier, sequence) in parse_fasta_entries(&contents) {
-        let accession = canonicalize_isoform(&parse_protein_accession(&identifier));
+        let accession = canonicalize_isoform(parse_protein_accession(&identifier));
         let weight = protein_mono_weight(&strip_nonstandard_amino_acids(&sequence));
         mw_map.entry(accession).or_insert(weight);
     }
