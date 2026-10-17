@@ -11,7 +11,7 @@ sources:
     kind: cross_dataset_ground_truth_benchmark
     title: Mokume spike-in Grid benchmark (mokumebench, 81 datasets, 31 studies)
     locator: sources/spike-in-mokumebench
-    captured_at: '2026-10-15'
+    captured_at: '2026-10-17'
     trust: locally_reproduced_ground_truth
     status: benchmark_candidates_not_published
     artifacts:
@@ -20,7 +20,7 @@ sources:
     kind: cross_study_consistency_benchmark
     title: Mokume CPTAC TMT Grid benchmark (mokumebench, CDAP PSM reports, 24 PDC studies)
     locator: https://pdc.cancer.gov/pdc/
-    captured_at: '2026-10-15'
+    captured_at: '2026-10-17'
     trust: locally_reproduced_consistency
     status: benchmark_candidates_not_published
     artifacts: {}
@@ -58,6 +58,7 @@ evidence:
       service_candidates_per_study: 310
       gated_service_candidates: 310
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 9.0e-06
       mean_f1: 0.7692
       mean_spearman: 0.8666
@@ -83,12 +84,13 @@ evidence:
         xenograft reference samples), quantified by Mokume from CDAP PSM reports with RefSeq proteins
         mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
-        the same configuration on the other studies, after a gate of at most 1% false-positive calls on
-        null contrasts.
+        the same configuration on the other studies, after gates of at most 1% false-positive calls on
+        null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config is the best configuration with them included.
       - Quantification is frozen when the workflow starts from a protein matrix.
-      - The clinical cohort (cptac-clinical-preset) also selected maxlfq but none of the other choices.
+      - The clinical cohort (cptac-clinical-preset) also selected maxlfq with median normalization, but
+        no imputation and DEqMS.
   - id: cptac-compref-directlfq-preset
     source_id: cptac-mokumebench
     kind: quantification_preset
@@ -122,6 +124,7 @@ evidence:
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 6.0e-06
       mean_f1: 0.758
       mean_spearman: 0.8643
@@ -147,8 +150,8 @@ evidence:
         xenograft reference samples), quantified by Mokume from CDAP PSM reports with RefSeq proteins
         mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
-        the same configuration on the other studies, after a gate of at most 1% false-positive calls on
-        null contrasts.
+        the same configuration on the other studies, after gates of at most 1% false-positive calls on
+        null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config is the best configuration with them included.
       - Applies only to protein matrices quantified with directlfq; near-best and held-out rates compare
@@ -186,6 +189,7 @@ evidence:
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 9.0e-06
       mean_f1: 0.7692
       mean_spearman: 0.8666
@@ -211,8 +215,8 @@ evidence:
         xenograft reference samples), quantified by Mokume from CDAP PSM reports with RefSeq proteins
         mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
-        the same configuration on the other studies, after a gate of at most 1% false-positive calls on
-        null contrasts.
+        the same configuration on the other studies, after gates of at most 1% false-positive calls on
+        null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config is the best configuration with them included.
       - Applies only to protein matrices quantified with maxlfq; near-best and held-out rates compare
@@ -250,6 +254,7 @@ evidence:
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 8.0e-06
       mean_f1: 0.7294
       mean_spearman: 0.8428
@@ -275,8 +280,8 @@ evidence:
         xenograft reference samples), quantified by Mokume from CDAP PSM reports with RefSeq proteins
         mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
-        the same configuration on the other studies, after a gate of at most 1% false-positive calls on
-        null contrasts.
+        the same configuration on the other studies, after gates of at most 1% false-positive calls on
+        null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config is the best configuration with them included.
       - Applies only to protein matrices quantified with pibaq; near-best and held-out rates compare only
@@ -314,6 +319,7 @@ evidence:
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 8.0e-06
       mean_f1: 0.7644
       mean_spearman: 0.8622
@@ -339,8 +345,8 @@ evidence:
         xenograft reference samples), quantified by Mokume from CDAP PSM reports with RefSeq proteins
         mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
-        the same configuration on the other studies, after a gate of at most 1% false-positive calls on
-        null contrasts.
+        the same configuration on the other studies, after gates of at most 1% false-positive calls on
+        null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config is the best configuration with them included.
       - Applies only to protein matrices quantified with sum; near-best and held-out rates compare only
@@ -378,6 +384,7 @@ evidence:
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 1.2e-05
       mean_f1: 0.7545
       mean_spearman: 0.8573
@@ -403,8 +410,8 @@ evidence:
         xenograft reference samples), quantified by Mokume from CDAP PSM reports with RefSeq proteins
         mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
-        the same configuration on the other studies, after a gate of at most 1% false-positive calls on
-        null contrasts.
+        the same configuration on the other studies, after gates of at most 1% false-positive calls on
+        null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config is the best configuration with them included.
       - Applies only to protein matrices quantified with top3; near-best and held-out rates compare only
@@ -413,7 +420,7 @@ evidence:
     source_id: cptac-mokumebench
     kind: setting_preset
     status: candidate_for_review
-    confidence: low
+    confidence: moderate
     priority: 12
     eligible_as_prior: true
     applicability:
@@ -429,7 +436,7 @@ evidence:
       missing_rate: [0.181189, 0.311261]
     pipeline:
       quantification: maxlfq
-      normalization: none
+      normalization: median
       imputation: none
       de_method: deqms
       fdr_method: bh
@@ -440,39 +447,46 @@ evidence:
       studies: 12
       candidates_per_study: 1152
       service_candidates_per_study: 160
-      gated_service_candidates: 160
+      gated_service_candidates: 96
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 0.0
-      mean_f1: 0.737
-      mean_spearman: 0.8098
-      mean_study_deficit: 0.0349
-      median_study_deficit: 0.0227
-      iqr_study_deficit: 0.0159
+      mean_f1: 0.7214
+      mean_spearman: 0.8237
+      mean_study_deficit: 0.0129
+      median_study_deficit: 0.0105
+      iqr_study_deficit: 0.0101
       near_best: 0.01
-      near_best_rate: 0.25
+      near_best_rate: 0.4167
       tied_at_best: 1
       position_in_general_ranking: 1
-      general_ranking_size: 160
-      overall_best_config: maxlfq|none|impseqrob|irs|half|limma
+      general_ranking_size: 96
+      overall_best_config: maxlfq|median|none|irs|half|deqms
       lodo_unit: study
       lodo_folds: 12
-      lodo_folds_selecting_preset: 7
-      lodo_near_best_rate: 0.0833
-      mean_lodo_regret: 0.055167
-      max_lodo_regret: 0.167068
-      mean_lodo_rank_spearman: 0.639
+      lodo_folds_selecting_preset: 12
+      lodo_near_best_rate: 0.4167
+      mean_lodo_regret: 0.012857
+      max_lodo_regret: 0.042303
+      mean_lodo_rank_spearman: 0.746
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
         from CDAP PSM reports with RefSeq proteins mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree between
-        two halves of the plexes of a study, after a gate of at most 1% false-positive calls on null contrasts.
+        two halves of the plexes of a study, after gates of at most 1% false-positive calls on null contrasts
+        and a mean absolute median log2FC of at most 0.2 on tumor versus normal.
+      - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
+        average; both halves share such a shift, which raised their call agreement, so the shift gate
+        leaves these configurations out.
       - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
       - Quantification is frozen when the workflow starts from a protein matrix.
-      - Held-out transfer is weak; most held-out studies had a configuration that scored clearly better.
-      - The CompRef cohort (cptac-compref-preset) also selected maxlfq but none of the other choices.
+      - Leave-one-study-out selected this preset in every fold, but it was near-best in only 5 of the
+        12 held-out studies (largest shortfall 0.042).
+      - The CompRef cohort (cptac-compref-preset) also selected maxlfq with median normalization, but
+        impseqrob imputation and LimROTS.
   - id: cptac-clinical-directlfq-preset
     source_id: cptac-mokumebench
     kind: quantification_preset
@@ -506,6 +520,7 @@ evidence:
       service_candidates_per_study: 32
       gated_service_candidates: 32
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 0.0
       mean_f1: 0.6945
       mean_spearman: 0.7943
@@ -515,9 +530,9 @@ evidence:
       near_best: 0.01
       near_best_rate: 0.25
       tied_at_best: 1
-      position_in_general_ranking: 21
-      general_ranking_size: 160
-      overall_best_config: maxlfq|none|impseqrob|irs|half|limma
+      position_in_general_ranking: 9
+      general_ranking_size: 96
+      overall_best_config: maxlfq|median|none|irs|half|deqms
       lodo_unit: study
       lodo_folds: 12
       lodo_folds_selecting_preset: 11
@@ -530,7 +545,11 @@ evidence:
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
         from CDAP PSM reports with RefSeq proteins mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree between
-        two halves of the plexes of a study, after a gate of at most 1% false-positive calls on null contrasts.
+        two halves of the plexes of a study, after gates of at most 1% false-positive calls on null contrasts
+        and a mean absolute median log2FC of at most 0.2 on tumor versus normal.
+      - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
+        average; both halves share such a shift, which raised their call agreement, so the shift gate
+        leaves these configurations out.
       - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
@@ -540,7 +559,7 @@ evidence:
     source_id: cptac-mokumebench
     kind: quantification_preset
     status: candidate_for_review
-    confidence: low
+    confidence: moderate
     priority: 13
     eligible_as_prior: true
     applicability:
@@ -556,7 +575,7 @@ evidence:
       missing_rate: [0.181189, 0.311261]
     pipeline:
       quantification: maxlfq
-      normalization: none
+      normalization: median
       imputation: none
       de_method: deqms
       fdr_method: bh
@@ -567,33 +586,38 @@ evidence:
       studies: 12
       candidates_per_study: 1152
       service_candidates_per_study: 32
-      gated_service_candidates: 32
+      gated_service_candidates: 16
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 0.0
-      mean_f1: 0.737
-      mean_spearman: 0.8098
-      mean_study_deficit: 0.0277
-      median_study_deficit: 0.0195
-      iqr_study_deficit: 0.0162
+      mean_f1: 0.7214
+      mean_spearman: 0.8237
+      mean_study_deficit: 0.0098
+      median_study_deficit: 0.0061
+      iqr_study_deficit: 0.012
       near_best: 0.01
-      near_best_rate: 0.4167
+      near_best_rate: 0.6667
       tied_at_best: 1
       position_in_general_ranking: 1
-      general_ranking_size: 160
-      overall_best_config: maxlfq|none|impseqrob|irs|half|limma
+      general_ranking_size: 96
+      overall_best_config: maxlfq|median|none|irs|half|deqms
       lodo_unit: study
       lodo_folds: 12
-      lodo_folds_selecting_preset: 7
-      lodo_near_best_rate: 0.25
-      mean_lodo_regret: 0.047972
-      max_lodo_regret: 0.167068
-      mean_lodo_rank_spearman: 0.47
+      lodo_folds_selecting_preset: 12
+      lodo_near_best_rate: 0.6667
+      mean_lodo_regret: 0.00979
+      max_lodo_regret: 0.042303
+      mean_lodo_rank_spearman: 0.735
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
         from CDAP PSM reports with RefSeq proteins mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree between
-        two halves of the plexes of a study, after a gate of at most 1% false-positive calls on null contrasts.
+        two halves of the plexes of a study, after gates of at most 1% false-positive calls on null contrasts
+        and a mean absolute median log2FC of at most 0.2 on tumor versus normal.
+      - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
+        average; both halves share such a shift, which raised their call agreement, so the shift gate
+        leaves these configurations out.
       - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
@@ -619,7 +643,7 @@ evidence:
       missing_rate: [0.210698, 0.354008]
     pipeline:
       quantification: pibaq
-      normalization: none
+      normalization: median
       imputation: none
       de_method: deqms
       fdr_method: bh
@@ -630,33 +654,38 @@ evidence:
       studies: 12
       candidates_per_study: 1152
       service_candidates_per_study: 32
-      gated_service_candidates: 32
+      gated_service_candidates: 16
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 0.0
-      mean_f1: 0.696
-      mean_spearman: 0.7267
-      mean_study_deficit: 0.0252
-      median_study_deficit: 0.0136
-      iqr_study_deficit: 0.0114
+      mean_f1: 0.6542
+      mean_spearman: 0.7355
+      mean_study_deficit: 0.0124
+      median_study_deficit: 0.0064
+      iqr_study_deficit: 0.0149
       near_best: 0.01
-      near_best_rate: 0.3333
+      near_best_rate: 0.5833
       tied_at_best: 1
-      position_in_general_ranking: 79
-      general_ranking_size: 160
-      overall_best_config: maxlfq|none|impseqrob|irs|half|limma
+      position_in_general_ranking: 63
+      general_ranking_size: 96
+      overall_best_config: maxlfq|median|none|irs|half|deqms
       lodo_unit: study
       lodo_folds: 12
-      lodo_folds_selecting_preset: 11
-      lodo_near_best_rate: 0.3333
-      mean_lodo_regret: 0.025675
-      max_lodo_regret: 0.166017
-      mean_lodo_rank_spearman: 0.56
+      lodo_folds_selecting_preset: 12
+      lodo_near_best_rate: 0.5833
+      mean_lodo_regret: 0.012443
+      max_lodo_regret: 0.050727
+      mean_lodo_rank_spearman: 0.514
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
         from CDAP PSM reports with RefSeq proteins mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree between
-        two halves of the plexes of a study, after a gate of at most 1% false-positive calls on null contrasts.
+        two halves of the plexes of a study, after gates of at most 1% false-positive calls on null contrasts
+        and a mean absolute median log2FC of at most 0.2 on tumor versus normal.
+      - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
+        average; both halves share such a shift, which raised their call agreement, so the shift gate
+        leaves these configurations out.
       - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
@@ -682,7 +711,7 @@ evidence:
       missing_rate: [0.18136, 0.311429]
     pipeline:
       quantification: sum
-      normalization: none
+      normalization: median
       imputation: none
       de_method: deqms
       fdr_method: bh
@@ -693,33 +722,38 @@ evidence:
       studies: 12
       candidates_per_study: 1152
       service_candidates_per_study: 32
-      gated_service_candidates: 32
+      gated_service_candidates: 16
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 0.0
-      mean_f1: 0.7225
-      mean_spearman: 0.7722
-      mean_study_deficit: 0.0271
-      median_study_deficit: 0.0156
-      iqr_study_deficit: 0.0106
+      mean_f1: 0.6824
+      mean_spearman: 0.7828
+      mean_study_deficit: 0.0117
+      median_study_deficit: 0.0073
+      iqr_study_deficit: 0.0149
       near_best: 0.01
-      near_best_rate: 0.25
+      near_best_rate: 0.6667
       tied_at_best: 1
-      position_in_general_ranking: 13
-      general_ranking_size: 160
-      overall_best_config: maxlfq|none|impseqrob|irs|half|limma
+      position_in_general_ranking: 21
+      general_ranking_size: 96
+      overall_best_config: maxlfq|median|none|irs|half|deqms
       lodo_unit: study
       lodo_folds: 12
-      lodo_folds_selecting_preset: 11
-      lodo_near_best_rate: 0.25
-      mean_lodo_regret: 0.027504
-      max_lodo_regret: 0.173244
-      mean_lodo_rank_spearman: 0.62
+      lodo_folds_selecting_preset: 12
+      lodo_near_best_rate: 0.6667
+      mean_lodo_regret: 0.01172
+      max_lodo_regret: 0.039366
+      mean_lodo_rank_spearman: 0.728
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
         from CDAP PSM reports with RefSeq proteins mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree between
-        two halves of the plexes of a study, after a gate of at most 1% false-positive calls on null contrasts.
+        two halves of the plexes of a study, after gates of at most 1% false-positive calls on null contrasts
+        and a mean absolute median log2FC of at most 0.2 on tumor versus normal.
+      - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
+        average; both halves share such a shift, which raised their call agreement, so the shift gate
+        leaves these configurations out.
       - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
@@ -745,9 +779,9 @@ evidence:
       missing_rate: [0.18136, 0.311429]
     pipeline:
       quantification: top3
-      normalization: none
+      normalization: median
       imputation: none
-      de_method: limma
+      de_method: deqms
       fdr_method: bh
       log2fc_threshold: 0.584963
       ensemble: none
@@ -756,33 +790,38 @@ evidence:
       studies: 12
       candidates_per_study: 1152
       service_candidates_per_study: 32
-      gated_service_candidates: 32
+      gated_service_candidates: 16
       fp_gate: 0.01
+      shift_gate: 0.2
       mean_fp_rate: 0.0
-      mean_f1: 0.7172
-      mean_spearman: 0.7595
-      mean_study_deficit: 0.0276
-      median_study_deficit: 0.0185
-      iqr_study_deficit: 0.0134
+      mean_f1: 0.6796
+      mean_spearman: 0.7698
+      mean_study_deficit: 0.01
+      median_study_deficit: 0.005
+      iqr_study_deficit: 0.0149
       near_best: 0.01
-      near_best_rate: 0.25
+      near_best_rate: 0.5833
       tied_at_best: 1
       position_in_general_ranking: 27
-      general_ranking_size: 160
-      overall_best_config: maxlfq|none|impseqrob|irs|half|limma
+      general_ranking_size: 96
+      overall_best_config: maxlfq|median|none|irs|half|deqms
       lodo_unit: study
       lodo_folds: 12
       lodo_folds_selecting_preset: 12
-      lodo_near_best_rate: 0.25
-      mean_lodo_regret: 0.027624
-      max_lodo_regret: 0.160438
-      mean_lodo_rank_spearman: 0.534
+      lodo_near_best_rate: 0.5833
+      mean_lodo_regret: 0.010025
+      max_lodo_regret: 0.037876
+      mean_lodo_rank_spearman: 0.675
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
         from CDAP PSM reports with RefSeq proteins mapped to genes.
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree between
-        two halves of the plexes of a study, after a gate of at most 1% false-positive calls on null contrasts.
+        two halves of the plexes of a study, after gates of at most 1% false-positive calls on null contrasts
+        and a mean absolute median log2FC of at most 0.2 on tumor versus normal.
+      - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
+        average; both halves share such a shift, which raised their call agreement, so the shift gate
+        leaves these configurations out.
       - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
       - Configurations with batch correction or a protein filter are left out because the service cannot
         run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
@@ -1604,7 +1643,7 @@ evidence:
       - Quantification is frozen when the workflow starts from a protein matrix.
       - Held-out transfer is weak; with PXD040449 held out, the two other studies selected maxlfq instead.
       - On the CPTAC TMT studies (cptac-mokumebench) this configuration ranked 75th of 310 service configurations
-        in the CompRef cohort and 25th of 160 in the clinical cohort, and was near-best in none of the
+        in the CompRef cohort and 13th of 96 in the clinical cohort, and was near-best in none of the
         24 studies.
   - id: grid-tmt-directlfq-preset
     source_id: spike-in-mokumebench
