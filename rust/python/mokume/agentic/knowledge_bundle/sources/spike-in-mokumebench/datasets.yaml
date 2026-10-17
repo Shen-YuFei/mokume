@@ -4609,7 +4609,7 @@
       - id: S2_vs_S5
         group1: S2
         group2: S5
-        role: primary
+        role: diagnostic
         expected_direction: DOWN
         expected_log2fc: -3.1930548762808675
         expected_log2fc_by_component:
@@ -4650,8 +4650,8 @@
       fdr_method: bh
       log2fc_threshold: 0.584963
     held_out_benchmark_rank: 110
-    held_out_deficit: 0.134032
-    deficit_regret: 0.119967
+    held_out_deficit: 0.201236
+    deficit_regret: 0.1801
     oracle_config_id: maxlfq|none|impseq|none|limma
 - id: PXD011691__FLI
   project_accession: PXD011691
@@ -4676,7 +4676,7 @@
       - id: S2_vs_S5
         group1: S2
         group2: S5
-        role: primary
+        role: diagnostic
         expected_direction: DOWN
         expected_log2fc: -3.1930548762808675
         expected_log2fc_by_component:
@@ -4707,7 +4707,7 @@
     held_out_study: PXD011691
     training_datasets: 2
     ranked_workflows: 310
-    held_out_rank_spearman: 0.6473
+    held_out_rank_spearman: 0.651
     selected_pipeline:
       id: directlfq|none|seqknn|none|deqms
       quantification: directlfq
@@ -4716,9 +4716,9 @@
       de_method: deqms
       fdr_method: bh
       log2fc_threshold: 0.584963
-    held_out_benchmark_rank: 82
-    held_out_deficit: 0.109019
-    deficit_regret: 0.092287
+    held_out_benchmark_rank: 77
+    held_out_deficit: 0.163699
+    deficit_regret: 0.138516
     oracle_config_id: sum|none|none|none|deqms
 - id: PXD020815
   project_accession: PXD020815
@@ -4780,7 +4780,7 @@
     held_out_study: PXD020815
     training_datasets: 3
     ranked_workflows: 310
-    held_out_rank_spearman: 0.3551
+    held_out_rank_spearman: 0.4502
     selected_pipeline:
       id: directlfq|none|impseqrob|none|rots
       quantification: directlfq
@@ -4843,7 +4843,7 @@
     held_out_study: PXD040449
     training_datasets: 3
     ranked_workflows: 310
-    held_out_rank_spearman: -0.3589
+    held_out_rank_spearman: -0.3871
     selected_pipeline:
       id: maxlfq|none|seqknn|none|deqms
       quantification: maxlfq

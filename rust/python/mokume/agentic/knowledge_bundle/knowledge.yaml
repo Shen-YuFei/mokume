@@ -15,7 +15,7 @@ sources:
     trust: locally_reproduced_ground_truth
     status: benchmark_candidates_not_published
     artifacts:
-      datasets.yaml: 3f08ce0141d49fe50abf34971920e591d33117b19bd7cd312c19971ea0572c50
+      datasets.yaml: d1c654fdeed118ddb2b809f7a8de50cef1b952f892ed8ae0dfcbe7cc3f924142
   - id: cptac-mokumebench
     kind: cross_study_consistency_benchmark
     title: Mokume CPTAC TMT Grid benchmark (mokumebench, CDAP PSM reports, 24 PDC studies)
@@ -1617,23 +1617,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 310
-      mean_study_deficit: 0.0459
+      mean_study_deficit: 0.0661
       median_study_deficit: 0.0165
-      iqr_study_deficit: 0.0604
+      iqr_study_deficit: 0.0907
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.6667
-      mean_score_a: 0.7543
+      mean_score_a: 0.7773
       mean_coverage: 0.7988
       overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 0
       lodo_near_best_rate: 0.0
-      mean_lodo_regret: 0.09281
+      mean_lodo_regret: 0.10693
       max_lodo_regret: 0.150022
-      mean_lodo_rank_spearman: 0.216
+      mean_lodo_rank_spearman: 0.241
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1676,23 +1676,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0459
+      mean_study_deficit: 0.0661
       median_study_deficit: 0.0165
-      iqr_study_deficit: 0.0604
+      iqr_study_deficit: 0.0907
       near_best: 0.01
       near_best_rate: 1.0
       top_fraction: 0.05
       top_rate: 0.0
-      mean_score_a: 0.7543
+      mean_score_a: 0.7773
       mean_coverage: 0.7988
       overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 1
       lodo_near_best_rate: 0.6667
-      mean_lodo_regret: 0.014822
+      mean_lodo_regret: 0.015389
       max_lodo_regret: 0.040816
-      mean_lodo_rank_spearman: 0.83
+      mean_lodo_rank_spearman: 0.832
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1732,23 +1732,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.075
-      median_study_deficit: 0.0375
+      mean_study_deficit: 0.0812
+      median_study_deficit: 0.0562
       iqr_study_deficit: 0.0563
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.3333
-      mean_score_a: 0.7047
+      mean_score_a: 0.7291
       mean_coverage: 0.8001
       overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 2
       lodo_near_best_rate: 0.3333
-      mean_lodo_regret: 0.027333
+      mean_lodo_regret: 0.030682
       max_lodo_regret: 0.06071
-      mean_lodo_rank_spearman: 0.027
+      mean_lodo_rank_spearman: 0.056
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1789,23 +1789,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0781
-      median_study_deficit: 0.0853
+      mean_study_deficit: 0.094
+      median_study_deficit: 0.133
       iqr_study_deficit: 0.0613
       near_best: 0.01
-      near_best_rate: 0.6667
+      near_best_rate: 0.3333
       top_fraction: 0.05
       top_rate: 0.3333
-      mean_score_a: 0.714
+      mean_score_a: 0.7338
       mean_coverage: 0.9954
       overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 2
-      lodo_near_best_rate: 0.3333
-      mean_lodo_regret: 0.035119
+      lodo_near_best_rate: 0.0
+      mean_lodo_regret: 0.036288
       max_lodo_regret: 0.06483
-      mean_lodo_rank_spearman: 0.117
+      mean_lodo_rank_spearman: 0.087
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1847,23 +1847,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0832
+      mean_study_deficit: 0.0893
       median_study_deficit: 0.0757
-      iqr_study_deficit: 0.0496
+      iqr_study_deficit: 0.0403
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.3333
-      mean_score_a: 0.6926
+      mean_score_a: 0.7172
       mean_coverage: 0.8003
       overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 2
       lodo_near_best_rate: 0.3333
-      mean_lodo_regret: 0.023113
+      mean_lodo_regret: 0.027589
       max_lodo_regret: 0.042081
-      mean_lodo_rank_spearman: 0.042
+      mean_lodo_rank_spearman: 0.067
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1904,23 +1904,23 @@ evidence:
       datasets: 4
       candidates_per_dataset: 744
       service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0927
-      median_study_deficit: 0.0744
-      iqr_study_deficit: 0.0306
+      mean_study_deficit: 0.1045
+      median_study_deficit: 0.1068
+      iqr_study_deficit: 0.029
       near_best: 0.01
       near_best_rate: 0.6667
       top_fraction: 0.05
       top_rate: 0.6667
-      mean_score_a: 0.6939
+      mean_score_a: 0.7183
       mean_coverage: 0.7988
       overall_best_config: directlfq|none|none|half|deqms
       lodo_unit: study
       lodo_folds: 3
       lodo_folds_selecting_preset: 2
       lodo_near_best_rate: 0.3333
-      mean_lodo_regret: 0.020779
+      mean_lodo_regret: 0.020787
       max_lodo_regret: 0.048
-      mean_lodo_rank_spearman: 0.042
+      mean_lodo_rank_spearman: 0.061
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
