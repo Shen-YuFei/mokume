@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Args;
-use mokume_core::{QuantMethod, TmtInterferenceFloor};
+use mokume_core::{FilterConfig, PibaqConfig, QuantMethod, TmtInterferenceFloor};
 
 use crate::parsers::{
     parse_correlation, parse_de_log2fc, parse_finite_f64, parse_fraction, parse_memory,
@@ -19,7 +19,7 @@ pub(crate) struct Features2ProteinsArgs {
         value_name = "FILE",
         required_unless_present_any = ["msstats", "psm"],
         conflicts_with = "msstats",
-        help = "Feature-level QPX input; also supplies protein groups for spectral-count"
+        help = "Feature-level QPX input for protein quantification; also supplies protein-group assignments for spectral-count"
     )]
     parquet: Option<PathBuf>,
 
@@ -28,7 +28,8 @@ pub(crate) struct Features2ProteinsArgs {
         value_name = "FILE",
         required_unless_present_any = ["parquet", "psm"],
         conflicts_with_all = ["parquet", "psm"],
-        requires = "sdrf"
+        requires = "sdrf",
+        help = "Feature-level MSstats input for protein quantification; requires SDRF metadata"
     )]
     msstats: Option<PathBuf>,
 
@@ -58,7 +59,7 @@ intensity, peptide-count, spectral-count, top<N> (e.g. top3)]"
     )]
     quant_method: QuantMethodArg,
 
-    #[arg(long = "min-aa", value_name = "N", default_value_t = 7)]
+    #[arg(long = "min-aa", value_name = "N", default_value_t = FilterConfig::default().min_aa)]
     min_aa: usize,
 
     #[arg(
@@ -93,7 +94,8 @@ intensity, peptide-count, spectral-count, top<N> (e.g. top3)]"
         "tmm",
     ], ignore_case = true,
     hide_possible_values = true,
-    help = "[default: global-median; directlfq, ratio, peptide-count, spectral-count: none]\n\
+    help = "[default: global-median; maxlfq without --normalization-proteins: hierarchical;\n\
+directlfq, ratio, peptide-count, spectral-count: none]\n\
 [possible values: none, global-median, condition-median, hierarchical, quantile, median-center, \
 mean-center, rlr, loess, tmm]"
     )]
@@ -109,23 +111,43 @@ mean-center, rlr, loess, tmm]"
     #[arg(short = 'f', long = "fasta", value_name = "FILE")]
     fasta: Option<PathBuf>,
 
-    #[arg(long = "pibaq-enzyme", value_name = "NAME", default_value = "Trypsin")]
-    pibaq_enzyme: String,
+    #[arg(
+        long = "pibaq-enzyme",
+        value_name = "NAME",
+        help = "piBAQ only [default: Trypsin]"
+    )]
+    pibaq_enzyme: Option<String>,
 
-    #[arg(long = "pibaq-max-aa", value_name = "N", default_value_t = 30)]
-    pibaq_max_aa: usize,
+    #[arg(
+        long = "pibaq-max-aa",
+        value_name = "N",
+        help = "piBAQ only [default: 30]"
+    )]
+    pibaq_max_aa: Option<usize>,
 
-    #[arg(long = "pibaq-missed-cleavages", value_name = "N", default_value_t = 0)]
-    pibaq_missed_cleavages: usize,
+    #[arg(
+        long = "pibaq-missed-cleavages",
+        value_name = "N",
+        help = "piBAQ only [default: 0]"
+    )]
+    pibaq_missed_cleavages: Option<usize>,
 
-    #[arg(long = "pibaq-min-shared", value_name = "N", default_value_t = 2)]
-    pibaq_min_shared: usize,
+    #[arg(
+        long = "pibaq-min-shared",
+        value_name = "N",
+        help = "piBAQ only [default: 2]"
+    )]
+    pibaq_min_shared: Option<usize>,
 
     #[arg(long = "pibaq-families", value_name = "FILE")]
     pibaq_families_yaml: Option<PathBuf>,
 
-    #[arg(long = "pibaq-min-anchors", value_name = "N", default_value_t = 1)]
-    pibaq_min_anchors: usize,
+    #[arg(
+        long = "pibaq-min-anchors",
+        value_name = "N",
+        help = "piBAQ only [default: 1]"
+    )]
+    pibaq_min_anchors: Option<usize>,
 
     #[arg(
         long = "directlfq-min-nonan",
@@ -134,12 +156,28 @@ mean-center, rlr, loess, tmm]"
     )]
     directlfq_min_nonan: Option<usize>,
 
+    #[arg(long = "maxlfq-min-ratio-count", value_name = "N", value_parser = parse_positive_usize,
+        help = "MaxLFQ only: minimum shared peptide species per sample pair [default: 2]")]
+    maxlfq_min_ratio_count: Option<usize>,
+
+    #[arg(
+        long,
+        help = "Enable large-ratio stabilization (MaxLFQ only; default: off)"
+    )]
+    stabilize: bool,
+
     #[arg(
         long = "directlfq-num-samples-quadratic",
         value_name = "N",
         value_parser = parse_positive_usize
     )]
     directlfq_num_samples_quadratic: Option<usize>,
+
+    #[arg(
+        long = "directlfq-no-sample-normalization",
+        help = "DirectLFQ only: skip its global sample normalization"
+    )]
+    directlfq_no_sample_normalization: bool,
 
     #[arg(long = "export-peptides", value_name = "FILE")]
     export_peptides: Option<PathBuf>,
@@ -297,6 +335,7 @@ mean-center, rlr, loess, tmm]"
 
     #[arg(
         long = "impute-shift",
+        hide = true,
         value_name = "VALUE",
         value_parser = parse_finite_f64
     )]
@@ -304,6 +343,7 @@ mean-center, rlr, loess, tmm]"
 
     #[arg(
         long = "impute-scale",
+        hide = true,
         value_name = "VALUE",
         value_parser = parse_nonnegative_f64
     )]
@@ -315,6 +355,12 @@ mean-center, rlr, loess, tmm]"
         value_parser = parse_positive_usize
     )]
     impute_n_neighbors: Option<usize>,
+
+    #[arg(long = "impute-seed", value_name = "N")]
+    impute_seed: Option<u64>,
+
+    #[arg(long = "impute-tune-sigma", value_name = "VALUE", value_parser = parse_nonnegative_f64)]
+    impute_tune_sigma: Option<f64>,
 
     #[arg(
         long = "de-contrast",
@@ -404,12 +450,15 @@ impl Features2ProteinsArgs {
             return None;
         }
         let fasta = self.fasta?;
+        let defaults = PibaqConfig::default();
         fasta.is_file().then_some(PibaqDigestRequest {
             fasta,
-            enzyme: self.pibaq_enzyme,
+            enzyme: self.pibaq_enzyme.unwrap_or(defaults.enzyme),
             min_aa: self.min_aa,
-            max_aa: self.pibaq_max_aa,
-            missed_cleavages: self.pibaq_missed_cleavages,
+            max_aa: self.pibaq_max_aa.unwrap_or(defaults.max_aa),
+            missed_cleavages: self
+                .pibaq_missed_cleavages
+                .unwrap_or(defaults.missed_cleavages),
         })
     }
 }
