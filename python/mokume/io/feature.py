@@ -255,9 +255,24 @@ class SQLFilterBuilder:
             self.named_score_threshold,
         ]
 
+    def build_protein_members(self) -> tuple[str, list]:
+        """Build the ``pg_accessions`` list that names a protein group.
+
+        With the contaminant filter on, mixed groups drop their contaminant
+        members, as Rust does; the filter already removed groups that would
+        lose every member.
+        """
+        if not (self.remove_contaminants and self.contaminant_patterns):
+            return "pg_accessions", []
+        tests = " OR ".join("strpos(a::text, ?) > 0" for _ in self.contaminant_patterns)
+        return f"list_filter(pg_accessions, a -> NOT ({tests}))", list(
+            self.contaminant_patterns
+        )
+
     def build_contaminant_filter(self) -> tuple[list[str], list]:
         """Build contaminant/decoy filter conditions and params."""
-        conditions: list[str] = []
+        # Rows without a protein group are dropped, as Rust does.
+        conditions: list[str] = ["pg_accessions IS NOT NULL"]
         params: list = []
 
         def any_member(patterns: list[str]) -> str:
@@ -280,6 +295,13 @@ class SQLFilterBuilder:
                 f"list_bool_and({any_member(contams)}), false)"
             )
         return conditions, params
+
+
+def unique_peptide_rows(features: pd.DataFrame) -> pd.Series:
+    """Rows of unique peptides; a null flag means a one-protein group, as in SQLFilterBuilder."""
+    return features["unique"].eq(1) | (
+        features["unique"].isna() & features["pg_accessions"].map(len).eq(1)
+    )
 
 
 class Feature:
