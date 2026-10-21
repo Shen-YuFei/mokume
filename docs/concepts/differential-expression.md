@@ -173,6 +173,19 @@ mokume quantify features2proteins -p features.parquet -o proteins.csv -s experim
     --de-output de_results.csv
 ```
 
+### Covariates and paired designs
+
+With `--de-covariate`, limma and DEqMS fit `~0 + condition + covariates` on all
+samples with a condition (limma's `lmFit`, `contrasts.fit` and `eBayes`), so a
+batch, a numeric covariate such as age, or the subject of a paired design is
+estimated jointly with the conditions. Each protein is fitted on its observed
+samples; a protein with no residual degrees of freedom takes the prior variance,
+as in limma. The fits match limma 3.66.0 and DEqMS 1.28.0 to rounding; with
+unequal residual degrees of freedom (missing values) the prior degrees of
+freedom can differ from R in the fifth significant digit, because the prior is
+fitted with a different one-dimensional optimizer. Subject-level random effects
+(limma's `duplicateCorrelation`) are not available.
+
 ## ROTS
 
 **ROTS** (Suomi et al., 2017) optimizes a test statistic for maximal reproducibility across bootstrap resamples. Unlike LimROTS (which also incorporates limma empirical Bayes), ROTS uses only the bootstrap-optimized statistic without shrinkage priors.

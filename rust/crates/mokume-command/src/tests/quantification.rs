@@ -319,6 +319,37 @@ fn filter_protein_fdr_rejects_values_outside_unit_interval() {
     }
 }
 
+#[test]
+fn de_covariates_are_kept_in_order() -> mokume_core::Result<()> {
+    let argv = [
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "-p",
+        "features.parquet",
+        "-o",
+        "proteins.csv",
+        "-s",
+        "samples.sdrf.tsv",
+        "--de-contrast",
+        "A",
+        "B",
+        "--de-output",
+        "de.csv",
+        "--de-covariate",
+        "characteristics[individual]",
+        "--de-covariate",
+        "batch",
+    ];
+    let config = features_to_proteins_args(Cli::parse_from(argv)).into_config()?;
+    assert_eq!(
+        config.differential_expression.covariates,
+        ["characteristics[individual]", "batch"]
+    );
+    assert_eq!(config.differential_expression.method, "auto");
+    Ok(())
+}
+
 fn features_to_proteins_args(cli: Cli) -> Box<Features2ProteinsArgs> {
     let Commands::Quantify(quantify) = cli.command else {
         panic!("expected quantify command");

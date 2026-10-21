@@ -402,6 +402,7 @@ enables differential expression without a separate switch.
 | `--de-contrast` | — | Two condition labels; repeat the option for multiple contrasts |
 | `--de-contrast-file` | — | TSV file with columns `group1`, `group2` |
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
+| `--de-covariate` | — | SDRF column added to the limma/DEqMS design; repeat for several columns |
 | `--de-ensemble-method` | `limrots`, `deqms`, `proda` | Ensemble member; repeat to override the defaults |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction (ensemble only) |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
@@ -432,6 +433,28 @@ enables differential expression without a separate switch.
     See [Differential Expression
     concepts](../concepts/differential-expression.md) for a
     detailed comparison of methods.
+
+### Covariates and paired designs
+
+`--de-covariate` adds SDRF columns to a limma or DEqMS design
+(`~0 + condition + covariates`). All samples with a condition are fitted
+together, and each contrast compares two condition coefficients. Numeric
+columns stay numeric; other columns are categorical. A paired design passes the
+subject column:
+
+```bash
+mokume quantify features2proteins \
+    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "treated" "control" \
+    --de-method limma \
+    --de-covariate "characteristics[individual]" \
+    --de-covariate "comment[batch]" \
+    --de-output de_results.csv
+```
+
+A constant, missing, or confounded covariate is rejected. With covariates
+`--de-method auto` selects `deqms`; ROTS, LimROTS, proDA, and ensemble reject
+the option.
 
 ```bash
 # Top-k consensus across multiple methods

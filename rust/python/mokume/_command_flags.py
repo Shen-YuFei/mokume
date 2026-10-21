@@ -32,7 +32,7 @@ _ALLOWED = {
         "ratio_fraction_merge impute_method impute_quantile "
         "impute_seed impute_tune_sigma impute_shift "
         "impute_scale impute_n_neighbors de_contrast "
-        "de_contrast_file de_method de_ensemble_method de_ensemble_min_k "
+        "de_contrast_file de_method de_covariate de_ensemble_method de_ensemble_min_k "
         "de_log2fc de_effect_size_gate de_fdr "
         "de_fdr_method de_output memory threads".split()
     ),
@@ -96,6 +96,7 @@ _REPEAT = {
         "irs_reference_sample",
         "irs_sdrf_value",
         "de_ensemble_method",
+        "de_covariate",
     },
     "tissuemap": {"tmt_dataset"},
 }

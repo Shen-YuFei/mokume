@@ -4100,7 +4100,7 @@ fn extract_sdrf_covariates(
 fn encode_covariate(column: &str, values: &[String]) -> Result<Vec<Vec<f64>>> {
     if values.iter().any(|value| value.trim().is_empty()) {
         return Err(invalid_input(format!(
-            "batch covariate column `{column}` contains a missing value"
+            "covariate column `{column}` contains a missing value"
         )));
     }
     let parsed = values
@@ -4114,7 +4114,7 @@ fn encode_covariate(column: &str, values: &[String]) -> Result<Vec<Vec<f64>>> {
             .collect::<Vec<_>>();
         if numeric.iter().any(|value| !value.is_finite()) {
             return Err(invalid_input(format!(
-                "batch covariate column `{column}` contains a non-finite value"
+                "covariate column `{column}` contains a non-finite value"
             )));
         }
         return Ok(vec![numeric]);
@@ -5719,6 +5719,7 @@ fn finish_protein_matrix(
         de::run_differential_expression(
             &matrix,
             sdrf,
+            raw_sdrf,
             &differential_expression,
             drop_empty_samples,
         )?;
@@ -6989,8 +6990,9 @@ fn validate_de_ensemble_options(config: &FeatureToProteinsConfig) -> Result<()> 
 /// quantification selects `deqms`, every other quantification selects
 /// `limrots`. The LimROTS kernel accepts only complete finite log2 matrices, so
 /// `auto` selects `deqms` instead when `matrix_is_complete` reports a missing
-/// cell; Python's LimROTS accepts missing values and keeps `limrots`. A
-/// non-`auto` method is returned unchanged. Resolved just before the DE stage so
+/// cell; Python's LimROTS accepts missing values and keeps `limrots`. With
+/// `--de-covariate`, which only limma and DEqMS support, `auto` selects `deqms`.
+/// A non-`auto` method is returned unchanged. Resolved just before the DE stage so
 /// both the validation and the `de::run_differential_expression` dispatch
 /// observe a concrete method.
 fn resolve_de_method(
@@ -7001,7 +7003,10 @@ fn resolve_de_method(
     if !method.eq_ignore_ascii_case("auto") {
         return method.to_string();
     }
-    let resolved = if config.quantification != QuantMethod::DirectLfq && matrix_is_complete() {
+    let resolved = if config.differential_expression.covariates.is_empty()
+        && config.quantification != QuantMethod::DirectLfq
+        && matrix_is_complete()
+    {
         "limrots"
     } else {
         "deqms"

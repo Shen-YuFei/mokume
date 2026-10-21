@@ -10,7 +10,7 @@ pub(super) fn resolve_differential_expression(
     let defaults = DifferentialExpressionConfig::default();
     let enabled = de_options_supplied(args);
     let method = args.de_method.clone().unwrap_or(defaults.method);
-    let resolved_method = resolved_de_method(&method, quantification);
+    let resolved_method = resolved_de_method(&method, quantification, &args.de_covariate);
     validate_de_method_options(args, &method, resolved_method)?;
     if enabled {
         validate_de_requirements(args, &method)?;
@@ -36,6 +36,7 @@ pub(super) fn resolve_differential_expression(
         fdr_threshold: args.de_fdr_threshold.unwrap_or(defaults.fdr_threshold),
         fdr_method: args.de_fdr_method.clone().unwrap_or(defaults.fdr_method),
         output: args.de_output.clone(),
+        covariates: args.de_covariate.clone(),
     })
 }
 
@@ -43,6 +44,7 @@ fn de_options_supplied(args: &Features2ProteinsArgs) -> bool {
     !args.de_contrast.is_empty()
         || args.de_contrast_file.is_some()
         || args.de_method.is_some()
+        || !args.de_covariate.is_empty()
         || !args.de_ensemble_method.is_empty()
         || args.de_ensemble_min_k.is_some()
         || args.de_log2fc_threshold.is_some()
@@ -61,9 +63,13 @@ fn de_contrasts(args: &Features2ProteinsArgs) -> Option<Vec<String>> {
     })
 }
 
-fn resolved_de_method(method: &str, quantification: QuantMethod) -> &str {
+fn resolved_de_method<'a>(
+    method: &'a str,
+    quantification: QuantMethod,
+    covariates: &[String],
+) -> &'a str {
     if method.eq_ignore_ascii_case("auto") {
-        if quantification == QuantMethod::DirectLfq {
+        if quantification == QuantMethod::DirectLfq || !covariates.is_empty() {
             "deqms"
         } else {
             "limrots"
@@ -82,6 +88,16 @@ fn validate_de_method_options(
         return Err(MokumeError::InvalidInput {
             message: "--de-ensemble-min-k only applies to --de-method ensemble".to_owned(),
         });
+    }
+    if !args.de_covariate.is_empty()
+        && !matches!(
+            resolved_method.to_ascii_lowercase().as_str(),
+            "limma" | "deqms"
+        )
+    {
+        return Err(invalid_input(
+            "--de-covariate requires --de-method limma or deqms",
+        ));
     }
     if args.de_fdr_method.is_some()
         && matches!(

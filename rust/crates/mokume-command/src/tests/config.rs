@@ -488,6 +488,8 @@ fn rejects_option_combinations_before_running() {
         ("-p in.parquet -s s.tsv --de-contrast A B", "differential expression requires --de-output"),
         (&format!("{SDRF_DE} --de-method limma --de-ensemble-method deqms"), "--de-ensemble-method only applies to --de-method ensemble"),
         (&format!("{SDRF_DE} --de-method rots --de-fdr-method ihw"), "--de-fdr-method does not apply to rots"),
+        (&format!("{SDRF_DE} --de-method limrots --de-covariate batch"), "--de-covariate requires --de-method limma or deqms"),
+        (&format!("{SDRF_DE} --de-method ensemble --de-covariate batch"), "--de-covariate requires --de-method limma or deqms"),
     ];
     for (options, expected) in cases {
         let argv = [

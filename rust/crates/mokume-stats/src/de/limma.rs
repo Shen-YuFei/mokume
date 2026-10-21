@@ -46,7 +46,7 @@ pub(crate) struct LimmaStats {
 }
 
 /// Minimum finite observations required per group to test a protein.
-const MIN_PER_GROUP: usize = 2;
+pub(super) const MIN_PER_GROUP: usize = 2;
 
 /// Per-protein cell-means fit and moderated statistics used by DEqMS.
 /// LimROTS uses its own QR fit and shares only the variance-moderation helper.

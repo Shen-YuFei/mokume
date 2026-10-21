@@ -735,6 +735,10 @@ pub struct DifferentialExpressionConfig {
     pub fdr_threshold: f64,
     pub fdr_method: String,
     pub output: Option<PathBuf>,
+    /// SDRF columns entering a fixed-effects design with the conditions; empty
+    /// keeps the two-group tests.
+    #[serde(default)]
+    pub covariates: Vec<String>,
 }
 
 impl Default for DifferentialExpressionConfig {
@@ -751,6 +755,7 @@ impl Default for DifferentialExpressionConfig {
             fdr_threshold: 0.05,
             fdr_method: "bh".to_string(),
             output: None,
+            covariates: Vec::new(),
         }
     }
 }

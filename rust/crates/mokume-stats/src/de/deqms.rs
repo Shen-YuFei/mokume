@@ -9,8 +9,11 @@
 #[path = "deqms_loess.rs"]
 mod loess;
 
+use mokume_core::Result;
+
 use super::correct::bh_adjust;
 use super::limma::{run_limma_moderation, LimmaModeration};
+use super::limma_design::{reportable, run_design_moderation, DesignContrast};
 use super::special::{digamma, trigamma};
 use super::student_t::{student_t_sf, student_t_two_sided_log_pvalue};
 use super::{classify, DeResult};
@@ -51,19 +54,72 @@ pub fn deqms_two_group(
 
     // Align counts to the kept proteins by original row index (defaulting to 1,
     // matching `_build_count_vector`'s default fill).
-    let kept_counts = moderations
+    let kept_counts = aligned_counts(&moderations, counts);
+    let stats = spectra_count_ebayes(&moderations, &kept_counts, df_prior);
+    deqms_results(
+        proteins,
+        moderations.into_iter().zip(stats),
+        fdr_threshold,
+        log2fc_threshold,
+    )
+}
+
+/// DEqMS for one contrast of a fixed-effects design (see [`limma_design`]).
+///
+/// `counts[i]` is aligned to `rows[i]`. As in DEqMS, the count-variance trend
+/// and the prior df use the proteins with positive residual df; the reported
+/// proteins follow [`limma_design`].
+///
+/// [`limma_design`]: super::limma_design
+pub fn deqms_design(
+    proteins: &[String],
+    rows: &[&[f64]],
+    spec: &DesignContrast<'_>,
+    counts: &[f64],
+    fdr_threshold: f64,
+    log2fc_threshold: f64,
+) -> Result<Vec<DeResult>> {
+    let (moderations, df_prior) = run_design_moderation(rows, spec)?;
+    let fitted = moderations
+        .into_iter()
+        .filter(|(_, fit)| fit.df_residual > 0.0)
+        .collect::<Vec<_>>();
+    let kept_counts = aligned_counts(&fitted, counts);
+    let stats = spectra_count_ebayes(&fitted, &kept_counts, df_prior);
+    Ok(deqms_results(
+        proteins,
+        fitted
+            .into_iter()
+            .zip(stats)
+            .filter(|((_, fit), stat)| reportable(fit) && stat.sca_pvalue.is_finite()),
+        fdr_threshold,
+        log2fc_threshold,
+    ))
+}
+
+fn aligned_counts(moderations: &[(usize, LimmaModeration)], counts: &[f64]) -> Vec<f64> {
+    moderations
         .iter()
         .map(|(index, _)| counts.get(*index).copied().unwrap_or(1.0))
+        .collect()
+}
+
+/// BH-adjust the count-moderated p-values and build the sorted result rows.
+fn deqms_results(
+    proteins: &[String],
+    rows: impl Iterator<Item = ((usize, LimmaModeration), ScaStat)>,
+    fdr_threshold: f64,
+    log2fc_threshold: f64,
+) -> Vec<DeResult> {
+    let rows = rows.collect::<Vec<_>>();
+    let p_values = rows
+        .iter()
+        .map(|(_, stat)| stat.sca_pvalue)
         .collect::<Vec<_>>();
-
-    let stats = spectra_count_ebayes(&moderations, &kept_counts, df_prior);
-
-    let p_values = stats.iter().map(|stat| stat.sca_pvalue).collect::<Vec<_>>();
     let adjusted = bh_adjust(&p_values);
 
-    let mut results = moderations
+    let mut results = rows
         .iter()
-        .zip(&stats)
         .zip(adjusted)
         .filter_map(|(((index, moderation), stat), adj_p_value)| {
             let protein = proteins.get(*index)?.clone();

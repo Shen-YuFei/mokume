@@ -416,6 +416,13 @@ mean-center, rlr, loess, tmm]"
     ], ignore_case = true)]
     de_method: Option<String>,
 
+    #[arg(
+        long = "de-covariate",
+        value_name = "COLUMN",
+        help = "SDRF column added to a limma/DEqMS design with the conditions (repeatable)"
+    )]
+    de_covariate: Vec<String>,
+
     #[arg(long = "de-ensemble-method", value_name = "METHOD")]
     de_ensemble_method: Vec<String>,
 

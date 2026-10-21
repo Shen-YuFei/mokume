@@ -18,6 +18,9 @@
 //!      `sca_t`/`sca_pvalue`/`sca_adj_pvalue` plus a `peptide_count` column, and
 //!      rots carries a single `d_stat` column).
 //!
+//! With `--de-covariate`, limma and DEqMS fit one fixed-effects model over all
+//! samples with a condition instead (see `design`).
+//!
 //! `--de-method ensemble` is also wired: it runs each configured member method
 //! (default members `[limrots, deqms, proda]`, with `limma` in place of
 //! `limrots` on a contrast with missing values; overridable via
@@ -52,7 +55,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use mokume_core::{DifferentialExpressionConfig, MokumeError, Result, SampleId};
-use mokume_io::{normalize_file_key, SdrfTable};
+use mokume_io::{normalize_file_key, SdrfRawTable, SdrfTable};
 use mokume_stats::de::{
     adaptive_adjust, combine_de_results, deqms_two_group, estimate_effect_size_gate,
     ihw_correction, limma_two_group, limrots_two_group, proda_two_group, rots_two_group,
@@ -61,6 +64,8 @@ use mokume_stats::de::{
 };
 
 use crate::{create_parent_dir, invalid_input, ProteinMatrix};
+
+mod design;
 
 /// A parsed contrast: condition A versus condition B.
 struct Contrast {
@@ -83,6 +88,7 @@ impl Contrast {
 pub(crate) fn run_differential_expression(
     matrix: &ProteinMatrix,
     sdrf: Option<&SdrfTable>,
+    raw_sdrf: Option<&SdrfRawTable>,
     config: &DifferentialExpressionConfig,
     drop_empty_samples: bool,
 ) -> Result<()> {
@@ -99,6 +105,17 @@ pub(crate) fn run_differential_expression(
     let method = de_method(config)?;
     let condition_by_sample = condition_by_sample(sdrf);
     let samples = matrix.sample_columns(drop_empty_samples);
+    if !config.covariates.is_empty() {
+        return design::run_contrasts(
+            matrix,
+            raw_sdrf,
+            &samples,
+            &condition_by_sample,
+            &contrasts,
+            method,
+            config,
+        );
+    }
 
     for contrast in &contrasts {
         let output = de_output_path(config, contrast, contrasts.len());
@@ -1229,7 +1246,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use mokume_core::{DifferentialExpressionConfig, ProteinId, SampleId};
-    use mokume_io::SdrfTable;
+    use mokume_io::{SdrfRawTable, SdrfTable};
     use mokume_stats::de::{DeResult, EnsembleResult, Significance};
 
     use super::{
@@ -1859,7 +1876,8 @@ mod tests {
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
 
-        run_differential_expression(&matrix, Some(&sdrf), &de_config(&output, "limma"), false)?;
+        let config = de_config(&output, "limma");
+        run_differential_expression(&matrix, Some(&sdrf), None, &config, false)?;
 
         let text = std::fs::read_to_string(&output)?;
         let mut lines = text.lines();
@@ -1923,6 +1941,131 @@ mod tests {
         Ok(())
     }
 
+    // `--de-covariate batch`: one ~0 + condition + batch fit over the six
+    // samples. Expected (log2FC, pvalue, adj_pvalue, t) from R 4.5.3 / limma
+    // 3.66.0 on log2(RAW):
+    //   batch <- factor(c("b1","b1","b2","b1","b2","b2"))
+    //   design <- model.matrix(~0 + condition + batch)
+    //   fit <- eBayes(contrasts.fit(lmFit(y, design),
+    //                 makeContrasts(conditiongroupA - conditiongroupB, levels = design)))
+    //   topTable(fit, number = Inf, sort.by = "none")
+    const EXPECTED_BATCH: &[(&str, f64, f64, f64, f64)] = &[
+        (
+            "P1",
+            -2.050_593_305_945_616_5,
+            1.607_675_472_643_838_8e-4,
+            4.823_026_417_931_516e-4,
+            -16.652_382_183_648_18,
+        ),
+        (
+            "P2",
+            1.983_518_856_233_685,
+            3.519_666_284_833_612_7e-4,
+            7.039_332_569_667_225e-4,
+            13.339_154_690_627_4,
+        ),
+        (
+            "P3",
+            -0.006_788_784_149_508_231,
+            0.876_113_971_495_986_9,
+            0.937_535_721_134_293_4,
+            -0.167_353_941_749_986_08,
+        ),
+        (
+            "P4",
+            -1.5,
+            0.420_479_726_747_895,
+            0.630_719_590_121_842_4,
+            -0.908_741_206_962_765_3,
+        ),
+        (
+            "P5",
+            -1.002_261_284_900_752_6,
+            3.535_864_039_868_584e-6,
+            2.121_518_423_921_150_6e-5,
+            -48.603_533_437_402_52,
+        ),
+        (
+            "P6",
+            -0.032_944_214_011_390_47,
+            0.937_535_721_134_293_4,
+            0.937_535_721_134_293_4,
+            -0.084_007_229_142_228_34,
+        ),
+    ];
+
+    /// The fixture SDRF plus a batch column. `run_level` keys the samples by
+    /// data file only, as run-level matrices are.
+    fn batch_sdrf(run_level: bool) -> TestResult<(SdrfTable, SdrfRawTable)> {
+        let mut tsv = String::from(
+            "source name\tcomment[data file]\tcharacteristics[batch]\tfactor value[phenotype]\n",
+        );
+        for (name, batch) in SAMPLES.iter().zip(["b1", "b1", "b2", "b1", "b2", "b2"]) {
+            let source = if run_level {
+                format!("source-{name}")
+            } else {
+                (*name).to_owned()
+            };
+            let condition = if name.starts_with('A') {
+                "groupA"
+            } else {
+                "groupB"
+            };
+            tsv.push_str(&format!("{source}\t{name}.raw\t{batch}\t{condition}\n"));
+        }
+        Ok((
+            SdrfTable::from_reader(tsv.as_bytes())?,
+            SdrfRawTable::from_reader(tsv.as_bytes())?,
+        ))
+    }
+
+    fn assert_batch_table(path: &std::path::Path) -> TestResult<()> {
+        let text = std::fs::read_to_string(path)?;
+        let rows = text
+            .lines()
+            .skip(1)
+            .map(|line| line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), EXPECTED_BATCH.len());
+        for &(protein, log2fc, pvalue, adj, t_stat) in EXPECTED_BATCH {
+            let fields = rows
+                .iter()
+                .find(|fields| fields[0] == protein)
+                .ok_or_else(|| format!("missing {protein}"))?;
+            assert_exact(parse(fields, 1)?, log2fc, "log2FC", protein);
+            assert_exact(parse(fields, 2)?, pvalue, "pvalue", protein);
+            assert_exact(parse(fields, 3)?, adj, "adj_pvalue", protein);
+            assert_exact(parse(fields, 4)?, t_stat, "t_stat", protein);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn de_covariate_design_matches_r_limma() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("covariate")?;
+        let output = dir.join("de_results.csv");
+        let matrix = fixture_matrix()?;
+        let config = DifferentialExpressionConfig {
+            covariates: vec!["batch".to_owned()],
+            ..de_config(&output, "limma")
+        };
+        for run_level in [false, true] {
+            let (sdrf, raw) = batch_sdrf(run_level)?;
+            run_differential_expression(&matrix, Some(&sdrf), Some(&raw), &config, false)?;
+            assert_batch_table(&output)?;
+        }
+
+        let (sdrf, raw) = batch_sdrf(false)?;
+        let rots = DifferentialExpressionConfig {
+            covariates: vec!["batch".to_owned()],
+            ..de_config(&output, "rots")
+        };
+        assert!(
+            run_differential_expression(&matrix, Some(&sdrf), Some(&raw), &rots, false).is_err()
+        );
+        Ok(())
+    }
+
     // Pipeline wiring test for `--de-method deqms`. The 6-protein fixture has
     // fewer than 10 valid points, so the in-pipeline deqms (with its all-ones
     // default counts) falls back to plain eBayes and reproduces the limma oracle
@@ -1939,7 +2082,8 @@ mod tests {
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
 
-        run_differential_expression(&matrix, Some(&sdrf), &de_config(&output, "deqms"), false)?;
+        let config = de_config(&output, "deqms");
+        run_differential_expression(&matrix, Some(&sdrf), None, &config, false)?;
 
         let text = std::fs::read_to_string(&output)?;
         let mut lines = text.lines();
@@ -2003,7 +2147,8 @@ mod tests {
         let matrix = fixture_matrix()?;
         let sdrf = fixture_sdrf()?;
 
-        run_differential_expression(&matrix, Some(&sdrf), &de_config(&output, "rots"), false)?;
+        let config = de_config(&output, "rots");
+        run_differential_expression(&matrix, Some(&sdrf), None, &config, false)?;
 
         let text = std::fs::read_to_string(&output)?;
         let mut lines = text.lines();
@@ -2041,6 +2186,7 @@ mod tests {
         let result = run_differential_expression(
             &fixture_matrix()?,
             Some(&fixture_sdrf()?),
+            None,
             &de_config(&output, "limrots"),
             false,
         );
@@ -2273,6 +2419,7 @@ mod tests {
         run_differential_expression(
             &matrix,
             Some(&sdrf),
+            None,
             &ensemble_config(&output, &["limma", "rots"]),
             false,
         )?;
