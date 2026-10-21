@@ -468,6 +468,8 @@ fn rejects_option_combinations_before_running() {
     let cases = [
         ("--msstats in.csv -s s.tsv --quant-method ratio", "Ratio quantification requires PSM-level QPX input"),
         ("--msstats in.csv -s s.tsv --tmt-row-merge best-row", "TMT reporter corrections (--tmt-row-merge best-row, --tmt-impurity, --tmt-interference-floor) require QPX input"),
+        ("--msstats in.csv -s s.tsv --filter-protein-fdr 0.01", "--filter-protein-fdr requires QPX --parquet input"),
+        ("-p in.parquet --psm in.psm.parquet -s s.tsv --quant-method spectral-count --filter-protein-fdr 0.01", "--filter-protein-fdr is not supported with --quant-method spectral-count"),
         ("-p in.parquet -s s.tsv --normalization-proteins np.txt --sample-normalization quantile", "--normalization-proteins requires globalmedian or conditionmedian"),
         ("-p in.parquet --quant-method pibaq", "piBAQ quantification requires --fasta option"),
         ("-p in.parquet --pibaq-max-aa 30", "piBAQ FASTA/digestion options require --quant-method pibaq"),

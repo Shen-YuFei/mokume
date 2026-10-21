@@ -87,3 +87,11 @@ def test_tmt_correction_options_translate() -> None:
         "--irs-missing-reference",
         "plex-median",
     ]
+
+
+def test_features2proteins_protein_fdr_keyword_maps_to_flag() -> None:
+    """The protein FDR keyword reaches the features2proteins CLI flag."""
+    assert flags_for("features2proteins", {"filter_protein_fdr": 0.01}) == [
+        "--filter-protein-fdr",
+        "0.01",
+    ]

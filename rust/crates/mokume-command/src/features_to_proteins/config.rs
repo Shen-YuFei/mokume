@@ -74,6 +74,7 @@ fn resolve_quantification(
         });
     }
     validate_input_for_quantification(args, method)?;
+    validate_protein_fdr_request(args, method)?;
     validate_method_requirements(args, method)?;
     let manages_normalization = matches!(
         method,
@@ -152,6 +153,30 @@ fn validate_input_for_quantification(
         return Err(MokumeError::InvalidInput {
             message: "conditionmedian sample normalization requires --sdrf option".to_owned(),
         });
+    }
+    Ok(())
+}
+
+/// `--filter-protein-fdr` needs QPX feature input with `pg_global_qvalue`; the
+/// MSstats table carries no protein q-values and spectral-count builds its
+/// matrix outside the feature ingest, so both are rejected rather than silently
+/// ignoring the requested filter.
+fn validate_protein_fdr_request(
+    args: &Features2ProteinsArgs,
+    method: QuantMethod,
+) -> mokume_core::Result<()> {
+    if args.filter_protein_fdr.is_none() {
+        return Ok(());
+    }
+    if args.msstats.is_some() {
+        return Err(invalid_input(
+            "--filter-protein-fdr requires QPX --parquet input with a populated `pg_global_qvalue` column; MSstats input carries no protein q-values",
+        ));
+    }
+    if method == QuantMethod::SpectralCount {
+        return Err(invalid_input(
+            "--filter-protein-fdr is not supported with --quant-method spectral-count",
+        ));
     }
     Ok(())
 }
@@ -388,6 +413,7 @@ fn build_config(
         tmt: resolved.tmt,
         coverage_threshold: args.coverage_threshold,
         sample_correlation_threshold: args.min_sample_correlation,
+        protein_fdr_threshold: args.filter_protein_fdr,
         ratio: resolved.ratio,
         imputation: resolved.imputation,
         differential_expression: resolved.differential_expression,
