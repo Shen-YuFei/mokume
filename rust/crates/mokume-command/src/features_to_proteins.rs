@@ -67,6 +67,14 @@ intensity, peptide-count, spectral-count, top<N> (e.g. top3)]"
     )]
     min_unique: Option<usize>,
 
+    #[arg(
+        long = "filter-protein-fdr",
+        value_name = "FRACTION",
+        value_parser = parse_fraction,
+        help = "Keep protein groups whose best QPX pg_global_qvalue is <= FRACTION (e.g. 0.01)"
+    )]
+    filter_protein_fdr: Option<f64>,
+
     #[arg(long = "keep-contaminants", help = "Decoys are always removed")]
     keep_contaminants: bool,
 
@@ -113,6 +121,9 @@ mean-center, rlr, loess, tmm]"
 
     #[arg(long = "pibaq-max-aa", value_name = "N", default_value_t = 30)]
     pibaq_max_aa: usize,
+
+    #[arg(long = "pibaq-missed-cleavages", value_name = "N", default_value_t = 0)]
+    pibaq_missed_cleavages: usize,
 
     #[arg(long = "pibaq-min-shared", value_name = "N", default_value_t = 2)]
     pibaq_min_shared: usize,
@@ -194,6 +205,13 @@ mean-center, rlr, loess, tmm]"
 
     #[arg(long = "irs-remove-reference")]
     irs_remove_reference: bool,
+
+    #[arg(
+        long = "irs-plex-column",
+        value_name = "COLUMN",
+        help = "SDRF column naming each channel's plex (default: channels sharing data files)"
+    )]
+    irs_plex_column: Option<String>,
 
     #[arg(
         long = "coverage-threshold",
@@ -357,7 +375,7 @@ impl Features2ProteinsArgs {
             enzyme: self.pibaq_enzyme,
             min_aa: self.min_aa,
             max_aa: self.pibaq_max_aa,
-            missed_cleavages: 0,
+            missed_cleavages: self.pibaq_missed_cleavages,
         })
     }
 }
