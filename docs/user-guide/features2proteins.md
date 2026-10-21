@@ -180,6 +180,38 @@ no populated `pg_global_qvalue` column, and it is rejected for MSstats input
 and `spectral-count`. The log reports the protein groups before/after the
 filter for every run and for the whole experiment.
 
+## Transferred Features (Match Between Runs)
+
+With match between runs, a DDA workflow quantifies a precursor in runs where
+it was not identified by transferring the identification from another run.
+quantms QPX feature tables record the identifying run in `id_run_file_name`,
+which is null (or names another run) for transferred features. Pass
+`--transferred-features drop` to quantify only features identified in their
+own run:
+
+```bash
+mokume quantify features2proteins \
+    -p features.parquet \
+    -o proteins.csv \
+    -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --transferred-features drop
+```
+
+The default is `keep`. Dropped features are removed before normalization and
+quantification, and the log reports how many were dropped. The command fails
+when the QPX input has no `id_run_file_name` column or lists several runs in
+one row, and the option is rejected for MSstats input and `spectral-count`.
+quantms DIA-NN and isobaric exports set `id_run_file_name` to the feature's
+own run, so `drop` keeps every feature there.
+
+Keep the default unless you need identification-only quantities. On 39
+label-free DDA spike-in datasets (18 studies, 2–54% transferred features),
+`drop` removed a median 18% of the MaxLFQ proteins and lowered the Score A of
+the leading `directlfq` and `maxlfq` configurations by about 0.02, also on
+the proteins that `drop` still quantifies; `sum`, `top3` and `pibaq` were
+about unchanged.
+
 ## Normalization Options
 
 ### Run-Level Normalization

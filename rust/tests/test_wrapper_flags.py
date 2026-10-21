@@ -114,3 +114,11 @@ def test_pibaq_shared_peptide_options_translate() -> None:
         "--pibaq-evidence",
         "e.tsv",
     ]
+
+
+def test_features2proteins_transferred_features_keyword_maps_to_flag() -> None:
+    """The transferred-features keyword reaches the features2proteins CLI flag."""
+    assert flags_for("features2proteins", {"transferred_features": "drop"}) == [
+        "--transferred-features",
+        "drop",
+    ]

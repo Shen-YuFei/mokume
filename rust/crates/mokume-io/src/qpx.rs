@@ -28,6 +28,7 @@ const DECOY_COLUMNS: &[&str] = &["is_decoy", "decoy"];
 const PEPTIDE_QVALUE_COLUMNS: &[&str] = &["peptide_qvalue", "peptide_q_value"];
 const PG_QVALUE_COLUMNS: &[&str] = &["pg_global_qvalue", "protein_qvalue"];
 const SCORE_COLUMNS: &[&str] = &["additional_scores"];
+const ID_RUN_COLUMNS: &[&str] = &["id_run_file_name"];
 const FEATURE_COLUMNS: [&[&str]; 11] = [
     SEQUENCE_COLUMNS,
     PEPTIDOFORM_COLUMNS,
@@ -42,7 +43,7 @@ const FEATURE_COLUMNS: [&[&str]; 11] = [
     PG_QVALUE_COLUMNS,
 ];
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct QpxFeatureRecord {
     pub sequence: String,
     pub peptidoform: String,
@@ -58,6 +59,9 @@ pub struct QpxFeatureRecord {
     /// The requested `additional_scores` entry, populated only by
     /// [`flatten_qpx_batch_with_score`].
     pub selected_score: Option<QpxScoreValue>,
+    /// `id_run_file_name` is null or names another run; always false when the
+    /// reader did not decode that column.
+    pub transferred: bool,
     pub label: Option<String>,
     pub intensity: f64,
     /// First record flattened from one parquet row (rows of TMT channels follow it).
@@ -93,8 +97,14 @@ impl QpxParquetReader {
 
     /// Opens `path`, decoding only the columns [`flatten_qpx_batch`] reads.
     /// `with_scores` also decodes `additional_scores` for
-    /// [`flatten_qpx_batch_with_score`].
-    pub fn open(path: impl AsRef<Path>, batch_size: usize, with_scores: bool) -> Result<Self> {
+    /// [`flatten_qpx_batch_with_score`]; `with_id_runs` decodes
+    /// `id_run_file_name` for [`QpxFeatureRecord::transferred`] and requires it.
+    pub fn open(
+        path: impl AsRef<Path>,
+        batch_size: usize,
+        with_scores: bool,
+        with_id_runs: bool,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if !path.exists() {
             return Err(MokumeError::MissingInput { path });
@@ -110,7 +120,20 @@ impl QpxParquetReader {
                 path.display()
             ))
         })?;
-        let projection = feature_projection(builder.parquet_schema(), with_scores);
+        let schema = builder.parquet_schema();
+        if with_id_runs
+            && !schema
+                .root_schema()
+                .get_fields()
+                .iter()
+                .any(|field| ID_RUN_COLUMNS.contains(&field.name()))
+        {
+            return Err(invalid_input(format!(
+                "QPX parquet `{}` has no id_run_file_name column to mark transferred features",
+                path.display()
+            )));
+        }
+        let projection = feature_projection(schema, with_scores, with_id_runs);
         let inner = builder
             .with_projection(projection)
             .with_batch_size(batch_size)
@@ -126,8 +149,13 @@ impl QpxParquetReader {
     }
 }
 
-fn feature_projection(schema: &SchemaDescriptor, with_scores: bool) -> ProjectionMask {
+fn feature_projection(
+    schema: &SchemaDescriptor,
+    with_scores: bool,
+    with_id_runs: bool,
+) -> ProjectionMask {
     let score_columns: &[&str] = if with_scores { SCORE_COLUMNS } else { &[] };
+    let id_run_columns: &[&str] = if with_id_runs { ID_RUN_COLUMNS } else { &[] };
     let roots = schema
         .root_schema()
         .get_fields()
@@ -139,6 +167,7 @@ fn feature_projection(schema: &SchemaDescriptor, with_scores: bool) -> Projectio
                 .copied()
                 .flatten()
                 .chain(score_columns)
+                .chain(id_run_columns)
                 .any(|candidate| *candidate == field.name())
         })
         .map(|(index, _)| index)
@@ -221,6 +250,7 @@ struct QpxBatchColumns<'a> {
     peptide_qvalue: Option<&'a dyn Array>,
     pg_global_qvalue: Option<&'a dyn Array>,
     additional_scores: Option<&'a dyn Array>,
+    id_run_file_name: Option<&'a dyn Array>,
 }
 
 impl<'a> QpxBatchColumns<'a> {
@@ -238,6 +268,7 @@ impl<'a> QpxBatchColumns<'a> {
             peptide_qvalue: optional_column_by_names(batch, PEPTIDE_QVALUE_COLUMNS),
             pg_global_qvalue: optional_column_by_names(batch, PG_QVALUE_COLUMNS),
             additional_scores: requested_score_column(batch, score_name)?,
+            id_run_file_name: optional_column_by_names(batch, ID_RUN_COLUMNS),
         })
     }
 }
@@ -315,16 +346,50 @@ fn flatten_qpx_row(
     let metadata = QpxRowMetadata::from_columns(columns, score_name, row)?;
     let entries = intensity_entries(columns.intensities, row)?;
     let labels_are_runs = intensity_labels_are_runs(&entries, &metadata.run_file_name, run_keys);
+    let transferred =
+        row_transferred(columns, row, &metadata, &entries, labels_are_runs, run_keys)?;
     records.extend(
         entries
             .into_iter()
             .filter(|entry| entry.intensity.is_finite())
             .enumerate()
             .map(|(index, entry)| {
-                qpx_feature_record(&metadata, entry, labels_are_runs, index == 0)
+                qpx_feature_record(&metadata, entry, labels_are_runs, transferred, index == 0)
             }),
     );
     Ok(())
+}
+
+/// Whether the row's run has no identification of its own (`id_run_file_name`
+/// null or another run, as for match between runs); false unless the reader
+/// decoded that column. A row listing several runs has one identification run
+/// for all of them, so it cannot mark each run.
+fn row_transferred(
+    columns: &QpxBatchColumns<'_>,
+    row: usize,
+    metadata: &QpxRowMetadata,
+    entries: &[QpxIntensityEntry],
+    labels_are_runs: bool,
+    run_keys: &mut RunKeys,
+) -> Result<bool> {
+    let Some(column) = columns.id_run_file_name else {
+        return Ok(false);
+    };
+    let run = metadata.run_file_name.as_str();
+    if labels_are_runs
+        && entries.iter().any(|entry| {
+            entry
+                .label
+                .as_deref()
+                .is_some_and(|label| !run_keys.same_run(label, run))
+        })
+    {
+        return Err(invalid_input(
+            "QPX rows list several runs, so id_run_file_name cannot mark transferred features",
+        ));
+    }
+    Ok(optional_string_value(column, row, "id_run_file_name")?
+        .is_none_or(|id_run| !run_keys.same_run(&id_run, run)))
 }
 
 /// LFQ intensities are labeled by run file; isobaric intensities are labeled
@@ -346,6 +411,7 @@ fn qpx_feature_record(
     metadata: &QpxRowMetadata,
     entry: QpxIntensityEntry,
     labels_are_runs: bool,
+    transferred: bool,
     row_start: bool,
 ) -> QpxFeatureRecord {
     let (run_file_name, label) = if labels_are_runs {
@@ -371,6 +437,7 @@ fn qpx_feature_record(
         peptide_qvalue: metadata.peptide_qvalue,
         pg_global_qvalue: metadata.pg_global_qvalue,
         selected_score: metadata.selected_score,
+        transferred,
         label,
         intensity: entry.intensity,
         row_start,
@@ -851,7 +918,7 @@ mod tests {
         // LFQ: the intensity labels are run files (the row's anchor run appears
         // among them), so each intensity must map to its own run/sample instead of
         // collapsing onto the anchor `run_file_name`.
-        let intensities = lfq_run_intensities()?;
+        let intensities = labeled_intensities(&LFQ_RUNS)?;
         let proteins = new_qpx_proteins()?;
         let schema = Arc::new(Schema::new(vec![
             Field::new("sequence", DataType::Utf8, false),
@@ -942,7 +1009,67 @@ mod tests {
 
         assert_eq!(records[0].unique, Some(true));
         assert_eq!(records[0].is_decoy, Some(false));
+        // Without id_run_file_name every feature reads as identified.
+        assert!(!records[0].transferred);
         Ok(())
+    }
+
+    #[test]
+    fn marks_features_without_an_identification_in_their_run(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // quantms leaves id_run_file_name null for match-between-runs features.
+        for (id_run, transferred) in [
+            (Some("Run_A_01.mzML"), false),
+            (Some("run_a_01.raw"), false),
+            (None, true),
+            (Some("Run_B_01.mzML"), true),
+        ] {
+            let batch = id_run_batch(id_run, labeled_intensities(&[("LFQ", 10.0)])?)?;
+            let records = flatten_qpx_batch(&batch)?;
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].transferred, transferred, "{id_run:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_identification_runs_for_rows_with_several_runs(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let batch = id_run_batch(Some("Run_A_01.mzML"), labeled_intensities(&LFQ_RUNS)?)?;
+        assert!(flatten_qpx_batch(&batch).is_err());
+        // A row labeled with its own run is still one run.
+        let batch = id_run_batch(None, labeled_intensities(&LFQ_RUNS[..1])?)?;
+        assert!(flatten_qpx_batch(&batch)?[0].transferred);
+        Ok(())
+    }
+
+    /// One `Run_A_01.mzML` row with an `id_run_file_name` column.
+    fn id_run_batch(
+        id_run: Option<&str>,
+        intensities: ArrayRef,
+    ) -> Result<arrow::record_batch::RecordBatch, Box<dyn std::error::Error>> {
+        let proteins = new_qpx_proteins()?;
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("sequence", DataType::Utf8, false),
+            Field::new("peptidoform", DataType::Utf8, false),
+            Field::new("charge", DataType::Int16, false),
+            Field::new("run_file_name", DataType::Utf8, false),
+            Field::new("id_run_file_name", DataType::Utf8, true),
+            Field::new("intensities", intensities.data_type().clone(), true),
+            Field::new("pg_accessions", proteins.data_type().clone(), true),
+        ]));
+        Ok(arrow::record_batch::RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec!["PEPTIDEK"])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["PEPTIDEK"])) as ArrayRef,
+                Arc::new(Int16Array::from(vec![2])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["Run_A_01.mzML"])) as ArrayRef,
+                Arc::new(StringArray::from(vec![id_run])) as ArrayRef,
+                intensities,
+                proteins,
+            ],
+        )?)
     }
 
     fn legacy_intensities() -> Result<ArrayRef, Box<dyn std::error::Error>> {
@@ -998,8 +1125,17 @@ mod tests {
         Ok(Arc::new(builder.finish()) as ArrayRef)
     }
 
-    fn lfq_run_intensities() -> Result<ArrayRef, Box<dyn std::error::Error>> {
-        // Labels are run files; the anchor run (`Run_A_01.mzML`) appears among them.
+    /// LFQ labels that are run files; the anchor run (`Run_A_01.mzML`) is first.
+    const LFQ_RUNS: [(&str, f32); 3] = [
+        ("Run_A_01.mzML", 10.0),
+        ("Run_B_01.mzML", 20.0),
+        ("Run_B_02.mzML", 30.0),
+    ];
+
+    /// One row whose intensities carry the given labels.
+    fn labeled_intensities(
+        entries: &[(&str, f32)],
+    ) -> Result<ArrayRef, Box<dyn std::error::Error>> {
         let fields = Fields::from(vec![
             Field::new("label", DataType::Utf8, false),
             Field::new("intensity", DataType::Float32, false),
@@ -1012,11 +1148,7 @@ mod tests {
             ],
         );
         let mut builder = ListBuilder::new(struct_builder);
-        for (label, value) in [
-            ("Run_A_01.mzML", 10.0f32),
-            ("Run_B_01.mzML", 20.0),
-            ("Run_B_02.mzML", 30.0),
-        ] {
+        for &(label, value) in entries {
             append_string_field(builder.values(), 0, label)?;
             append_f32_field(builder.values(), 1, value)?;
             builder.values().append(true);

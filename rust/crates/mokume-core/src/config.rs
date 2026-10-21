@@ -156,13 +156,27 @@ impl AggregationLevel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct InputConfig {
     pub parquet: Option<PathBuf>,
     pub msstats: Option<PathBuf>,
     pub psm: Option<PathBuf>,
     pub sdrf: Option<PathBuf>,
     pub fasta: Option<PathBuf>,
+    /// QPX features quantified in a run without an identification in that run
+    /// (match-between-runs transfers).
+    #[serde(default)]
+    pub transferred_features: TransferredFeatures,
+}
+
+/// Whether QPX feature input keeps transferred features. A feature is
+/// transferred when its `id_run_file_name` is null or names another run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TransferredFeatures {
+    #[default]
+    Keep,
+    Drop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -11,7 +11,7 @@ use mokume_core::{
     NamedScoreFilterConfig, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
     PibaqConfig, PibaqFamilyRows, PibaqSharedMode, PreprocessingFilterConfig, ProteinId,
     QuantMethod, RatioConfig, Result, RunQcFilterConfig, RuntimeConfig, SampleId, StringIdRegistry,
-    TmtConfig,
+    TmtConfig, TransferredFeatures,
 };
 use mokume_imputation::imputed_values;
 use mokume_io::{
@@ -5320,11 +5320,8 @@ fn finalize_pibaq_observations(
 fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfig {
     FeatureToProteinsConfig {
         input: InputConfig {
-            parquet: None,
-            msstats: None,
-            psm: None,
-            sdrf: None,
             fasta: Some(params.fasta.clone()),
+            ..InputConfig::default()
         },
         output: OutputConfig {
             protein_matrix: PathBuf::new(),
@@ -6517,29 +6514,71 @@ fn stream_qpx_features<F>(
 where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
-    let mut reader = QpxParquetReader::open(parquet, memory.qpx_batch_size(), score.is_some())?;
+    let mut reader =
+        QpxParquetReader::open(parquet, memory.qpx_batch_size(), score.is_some(), false)?;
+    stream_qpx_reader(&mut reader, memory, score, &mut consume)
+}
+
+/// [`stream_qpx_features`] for quantification input: `TransferredFeatures::Drop`
+/// skips features without an identification in their run.
+fn stream_quant_qpx_features<F>(
+    parquet: &Path,
+    transferred: TransferredFeatures,
+    memory: &MemoryPlan,
+    score: Option<&NamedScoreFilterConfig>,
+    mut consume: F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
+    if transferred == TransferredFeatures::Keep {
+        return stream_qpx_features(parquet, memory, score, consume);
+    }
+    let mut reader =
+        QpxParquetReader::open(parquet, memory.qpx_batch_size(), score.is_some(), true)?;
+    let mut dropped = 0usize;
+    stream_qpx_reader(
+        &mut reader,
+        memory,
+        score,
+        &mut |feature: QpxFeatureRecord| {
+            if feature.transferred {
+                dropped += 1;
+                return Ok(());
+            }
+            consume(feature)
+        },
+    )?;
+    info!(dropped, "dropped transferred QPX features");
+    Ok(())
+}
+
+fn stream_qpx_reader<F>(
+    reader: &mut QpxParquetReader,
+    memory: &MemoryPlan,
+    score: Option<&NamedScoreFilterConfig>,
+    consume: &mut F,
+) -> Result<()>
+where
+    F: FnMut(QpxFeatureRecord) -> Result<()>,
+{
     let Some(score) = score else {
-        return read_qpx_features(&mut reader, memory, None, &mut consume);
+        return read_qpx_features(reader, memory, None, consume);
     };
     let mut filter = ScoreFilter {
         score,
         seen: 0,
         higher_better: None,
     };
-    read_qpx_features(
-        &mut reader,
-        memory,
-        Some(score.name.as_str()),
-        &mut |feature| {
-            let Some(value) = feature.selected_score else {
-                return Ok(());
-            };
-            if filter.passes(value)? {
-                consume(feature)?;
-            }
-            Ok(())
-        },
-    )?;
+    read_qpx_features(reader, memory, Some(score.name.as_str()), &mut |feature| {
+        let Some(value) = feature.selected_score else {
+            return Ok(());
+        };
+        if filter.passes(value)? {
+            consume(feature)?;
+        }
+        Ok(())
+    })?;
     if filter.seen == 0 {
         return Err(invalid_input(format!(
             "--filter-score requires QPX `additional_scores` entry `{}`",
@@ -6793,7 +6832,9 @@ where
     F: FnMut(QpxFeatureRecord) -> Result<()>,
 {
     match (&input.parquet, &input.msstats) {
-        (Some(parquet), None) => stream_qpx_features(parquet, memory, score, consume),
+        (Some(parquet), None) => {
+            stream_quant_qpx_features(parquet, input.transferred_features, memory, score, consume)
+        }
         (None, Some(msstats)) => {
             let sdrf = sdrf.ok_or_else(|| invalid_input("MSstats input requires --sdrf option"))?;
             for (index, feature) in MsstatsReader::open(msstats, sdrf)?.enumerate() {
@@ -10205,7 +10246,7 @@ mod tests {
         FeatureToProteinsConfig, FilterConfig, ImputationConfig, InputConfig, IrsConfig,
         MaxLfqConfig, MokumeError, NormalizationConfig, OutputConfig, OutputFormat, PeptideId,
         PibaqConfig, PibaqFamilyRows, PibaqSharedMode, ProteinId, QuantMethod, RatioConfig,
-        RuntimeConfig, SampleId, StringIdRegistry, TmtConfig,
+        RuntimeConfig, SampleId, StringIdRegistry, TmtConfig, TransferredFeatures,
     };
     use mokume_io::{QpxFeatureRecord, SdrfRawTable, SdrfTable};
     use mokume_normalization::SampleNormalizationMethod;
@@ -10616,6 +10657,7 @@ mod tests {
                 peptide_qvalue: None,
                 pg_global_qvalue: None,
                 selected_score: None,
+                transferred: false,
                 label: None,
                 intensity: 100.0,
                 row_start: true,
@@ -10646,6 +10688,7 @@ mod tests {
             peptide_qvalue: None,
             pg_global_qvalue: None,
             selected_score: None,
+            transferred: false,
             label: None,
             intensity: 100.0,
             row_start: true,
@@ -12143,6 +12186,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                 psm: None,
                 sdrf: None,
                 fasta: None,
+                transferred_features: TransferredFeatures::Keep,
             },
             output: OutputConfig {
                 protein_matrix: PathBuf::from("protein.csv"),

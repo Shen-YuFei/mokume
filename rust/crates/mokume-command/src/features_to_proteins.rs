@@ -77,6 +77,15 @@ intensity, peptide-count, spectral-count, top<N> (e.g. top3)]"
     )]
     filter_protein_fdr: Option<f64>,
 
+    #[arg(
+        long = "transferred-features",
+        value_name = "MODE",
+        value_parser = ["keep", "drop"],
+        ignore_case = true,
+        help = "QPX features without an identification in their run (match between runs): keep or drop [default: keep]"
+    )]
+    transferred_features: Option<String>,
+
     #[arg(long = "keep-contaminants", help = "Decoys are always removed")]
     keep_contaminants: bool,
 

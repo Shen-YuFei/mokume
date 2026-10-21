@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use clap::Parser;
+use mokume_core::TransferredFeatures;
 
 use crate::{Cli, Commands, Features2ProteinsArgs, QuantifyCommands};
 
@@ -299,6 +300,36 @@ fn filter_protein_fdr_is_off_by_default_and_parsed_when_given() {
         panic!("expected a valid protein FDR config");
     };
     assert_eq!(config.protein_fdr_threshold, Some(0.01));
+}
+
+#[test]
+fn transferred_features_are_kept_unless_dropped() {
+    let base = [
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "--parquet",
+        "input.parquet",
+        "--output",
+        "protein.csv",
+    ];
+    for (extra, expected) in [
+        (&[][..], TransferredFeatures::Keep),
+        (
+            &["--transferred-features", "keep"][..],
+            TransferredFeatures::Keep,
+        ),
+        (
+            &["--transferred-features", "DROP"][..],
+            TransferredFeatures::Drop,
+        ),
+    ] {
+        let cli = Cli::parse_from(base.iter().chain(extra).copied());
+        let Ok(config) = features_to_proteins_args(cli).into_config() else {
+            panic!("expected a valid config for {extra:?}");
+        };
+        assert_eq!(config.input.transferred_features, expected, "{extra:?}");
+    }
 }
 
 #[test]

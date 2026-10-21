@@ -7,6 +7,7 @@ use clap::Args;
 use mokume_core::{
     AggregationLevel, FeatureToPeptidesConfig, FilterConfig, InputConfig, IrsChannelConfig,
     IrsScope, IrsStat, MokumeError, NamedScoreFilterConfig, PreprocessingFilterConfig,
+    TransferredFeatures,
 };
 use mokume_pipeline::{resolve_irs_autodetect_channel, run_features_to_peptides};
 
@@ -281,6 +282,7 @@ fn feature_to_peptides_config(
             psm: None,
             sdrf: args.sdrf.clone(),
             fasta: None,
+            transferred_features: TransferredFeatures::Keep,
         },
         output,
         filtering: FilterConfig {

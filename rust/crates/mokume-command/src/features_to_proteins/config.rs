@@ -2,7 +2,7 @@ use mokume_core::{
     BatchCorrectionConfig, DifferentialExpressionConfig, DirectLfqConfig, FeatureToProteinsConfig,
     FilterConfig, ImputationConfig, InputConfig, IrsConfig, MaxLfqConfig, MokumeError,
     NormalizationConfig, OutputConfig, OutputFormat, QuantMethod, RatioConfig, RuntimeConfig,
-    TmtConfig, TmtRowMerge,
+    TmtConfig, TmtRowMerge, TransferredFeatures,
 };
 
 mod differential_expression;
@@ -77,6 +77,7 @@ fn resolve_quantification(
     }
     validate_input_for_quantification(args, method)?;
     validate_protein_fdr_request(args, method)?;
+    validate_transferred_features_request(args, method)?;
     validate_method_requirements(args, method)?;
     let manages_normalization = matches!(
         method,
@@ -178,6 +179,22 @@ fn validate_protein_fdr_request(
     if method == QuantMethod::SpectralCount {
         return Err(invalid_input(
             "--filter-protein-fdr is not supported with --quant-method spectral-count",
+        ));
+    }
+    Ok(())
+}
+
+/// `--transferred-features` reads `id_run_file_name` from QPX feature input;
+/// MSstats input has no such column and spectral-count does not read features.
+fn validate_transferred_features_request(
+    args: &Features2ProteinsArgs,
+    method: QuantMethod,
+) -> mokume_core::Result<()> {
+    if args.transferred_features.is_some()
+        && (args.msstats.is_some() || method == QuantMethod::SpectralCount)
+    {
+        return Err(invalid_input(
+            "--transferred-features requires QPX --parquet feature input and a feature-based quantification method",
         ));
     }
     Ok(())
@@ -414,6 +431,15 @@ fn input_config(args: &Features2ProteinsArgs) -> InputConfig {
         psm: args.psm.clone(),
         sdrf: args.sdrf.clone(),
         fasta: args.fasta.clone(),
+        transferred_features: if args
+            .transferred_features
+            .as_deref()
+            .is_some_and(|mode| mode.eq_ignore_ascii_case("drop"))
+        {
+            TransferredFeatures::Drop
+        } else {
+            TransferredFeatures::Keep
+        },
     }
 }
 
