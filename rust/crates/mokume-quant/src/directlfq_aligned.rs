@@ -411,6 +411,66 @@ pub fn sample_shifts(rows: &[Vec<f64>], n_samples: usize, quadratic_limit: usize
     shifts
 }
 
+/// [`sample_shifts`] on sparse sample columns: `columns[s]` lists the finite
+/// log2 values of sample `s` as `(row, value)`, each of the `n_rows` rows at
+/// most once. Only the quadratic subset is made dense; a linear sample takes
+/// the same median over the rows it observes, so no rows x samples matrix is
+/// built.
+pub fn sparse_sample_shifts(
+    columns: &[Vec<(usize, f64)>],
+    n_rows: usize,
+    quadratic_limit: usize,
+) -> Vec<f64> {
+    let dense = |column: &[(usize, f64)]| {
+        let mut values = vec![f64::NAN; n_rows];
+        for &(row, value) in column {
+            values[row] = value;
+        }
+        values
+    };
+    if columns.len() <= quadratic_limit {
+        let sample_major = columns
+            .iter()
+            .map(|column| dense(column))
+            .collect::<Vec<_>>();
+        let mut work = drop_na_columns(&sample_major);
+        return get_normfacts(&mut work);
+    }
+
+    // Stable by missing rows, like `rows_sorted_by_nan_count` on the dense matrix.
+    let mut order = (0..columns.len()).collect::<Vec<_>>();
+    order.sort_by_key(|&index| n_rows - columns[index].len());
+    let (quadratic, linear) = order.split_at(quadratic_limit);
+
+    let mut subset = quadratic
+        .iter()
+        .map(|&index| dense(&columns[index]))
+        .collect::<Vec<_>>();
+    let mut work = drop_na_columns(&subset);
+    let subset_shifts = get_normfacts(&mut work);
+
+    let mut shifts = vec![0.0; columns.len()];
+    for ((&sample_index, values), shift) in quadratic.iter().zip(&mut subset).zip(subset_shifts) {
+        shifts[sample_index] = shift;
+        for value in values {
+            *value += shift;
+        }
+    }
+
+    let reference = per_column_median(&subset, &(0..quadratic_limit).collect::<Vec<_>>());
+    for &sample_index in linear {
+        let diffs = columns[sample_index]
+            .iter()
+            .map(|&(row, value)| reference[row] - value)
+            .collect::<Vec<_>>();
+        let shift = nanmedian(&diffs);
+        if shift.is_finite() {
+            shifts[sample_index] = shift;
+        }
+    }
+    shifts
+}
+
 /// Align one protein's ions and derive its optional linear protein profile.
 fn align_protein(block: &[Vec<f64>], n_samples: usize, min_nonan: usize) -> ProteinAlignment {
     let (selected_rows, trimmed) = trim_ions(block);

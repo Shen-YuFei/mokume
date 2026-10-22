@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{create_dir_all, read_to_string, File};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::Mutex;
 
 use csv::WriterBuilder;
 use mokume_core::{
@@ -640,6 +641,8 @@ impl FeatureToProteinState {
         // Per-(protein, sample) unique-canonical-peptide counts for the DEqMS DE
         // path, captured BEFORE the `min_unique_peptides` cell filter.
         let peptide_counts = self.cell_peptide_counts();
+        // The per-cell unique-peptide sets only feed the two lookups above.
+        self.index.unique_peptides = HashMap::new();
         if let Some(method) = dataset_normalization {
             if self.aggregation.applies_dataset_normalization() {
                 self.aggregation.apply_dataset_normalization(
@@ -1835,6 +1838,10 @@ impl MaxLfqFeatureAggregation {
             .collect::<Vec<_>>();
         cells.sort_by_key(|(cell, _)| (cell.protein.get(), cell.sample.get()));
         let mapping = if preserve_species {
+            // A cell has one loading context, so its ions are distinct species:
+            // reserve them all rather than hold old and new tables on growth.
+            self.peptide_traces
+                .reserve(cells.iter().map(|(_, peptides)| peptides.len()).sum());
             &self.ion_to_species
         } else {
             &self.ion_to_canonical
@@ -3486,51 +3493,67 @@ fn hierarchical_shifts_by_sample(
         .iter()
         .map(|sample| columns.remove(sample).unwrap_or_default())
         .collect::<Vec<_>>();
-    let shifts = hierarchical_compute_shifts(&ordered, HIERARCHICAL_NUM_SAMPLES_QUADRATIC);
+    let shifts = hierarchical_compute_shifts(ordered, HIERARCHICAL_NUM_SAMPLES_QUADRATIC);
     samples.into_iter().zip(shifts).collect()
 }
 
 /// Preserve the sparse pivot's feature order when using the shared DirectLFQ
 /// sample-alignment kernel. Missing canonical peptides remain NaN.
 fn hierarchical_compute_shifts(
-    columns: &[Vec<(QuantilePeptideKey, f64)>],
+    columns: Vec<Vec<(QuantilePeptideKey, f64)>>,
     num_samples_quadratic: usize,
 ) -> Vec<f64> {
+    // Distinct keys without first collecting every value's key.
     let mut keys = columns
-        .iter()
-        .flat_map(|column| column.iter().map(|&(key, _)| key))
+        .par_iter()
+        .fold(HashSet::new, |mut keys, column| {
+            keys.extend(column.iter().map(|&(key, _)| key));
+            keys
+        })
+        .reduce(HashSet::new, |mut left, right| {
+            left.extend(right);
+            left
+        })
+        .into_iter()
         .collect::<Vec<_>>();
     keys.par_sort_unstable();
-    keys.dedup();
-    // One pass per column fills the dense rows; a lookup per (key, column)
-    // costs keys x samples hash probes on large studies.
-    let mut rows = vec![vec![f64::NAN; columns.len()]; keys.len()];
-    for (sample, column) in columns.iter().enumerate() {
-        for (key, value) in column {
-            if let Ok(row) = keys.binary_search(key) {
-                rows[row][sample] = *value;
-            }
-        }
-    }
-    hierarchical_sample_shifts(&rows, columns.len(), num_samples_quadratic)
+    // Columns keep only their observed rows; a dense keys x samples matrix
+    // dominated peak memory on large studies.
+    let columns = columns
+        .into_par_iter()
+        .map(|column| {
+            column
+                .into_iter()
+                .filter_map(|(key, value)| keys.binary_search(&key).ok().map(|row| (row, value)))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let counts = columns.iter().map(Vec::len).collect();
+    let shifts =
+        mokume_quant::direct_lfq_sparse_sample_shifts(&columns, keys.len(), num_samples_quadratic);
+    mask_unaligned_samples(shifts, counts, num_samples_quadratic)
 }
 
-/// Upstream quadratic alignment masks samples with fewer than two observed
-/// features. Linear-to-reference samples are not subject to that masking.
 fn hierarchical_sample_shifts(
     rows: &[Vec<f64>],
     n_samples: usize,
     quadratic_limit: usize,
 ) -> Vec<f64> {
-    let mut shifts = mokume_quant::direct_lfq_sample_shifts(rows, n_samples, quadratic_limit);
-    let mut counts: Vec<_> = (0..n_samples)
-        .map(|sample| {
-            (
-                sample,
-                rows.iter().filter(|row| row[sample].is_finite()).count(),
-            )
-        })
+    let shifts = mokume_quant::direct_lfq_sample_shifts(rows, n_samples, quadratic_limit);
+    let counts = (0..n_samples)
+        .map(|sample| rows.iter().filter(|row| row[sample].is_finite()).count())
         .collect();
+    mask_unaligned_samples(shifts, counts, quadratic_limit)
+}
+
+/// Upstream quadratic alignment masks samples with fewer than two observed
+/// features. Linear-to-reference samples are not subject to that masking.
+fn mask_unaligned_samples(
+    mut shifts: Vec<f64>,
+    counts: Vec<usize>,
+    quadratic_limit: usize,
+) -> Vec<f64> {
+    let mut counts = counts.into_iter().enumerate().collect::<Vec<_>>();
     counts.sort_by(|(i, a), (j, b)| b.cmp(a).then(i.cmp(j)));
     for (sample, count) in counts.into_iter().take(quadratic_limit) {
         if count < 2 {
@@ -3591,28 +3614,9 @@ fn apply_hierarchical_to_lfq_traces(
             sample: key.sample,
         })
     };
-    let columns = traces
-        .par_iter()
-        .filter(|(key, intensity)| allowed(key) && intensity.is_finite() && **intensity > 0.0)
-        .fold(
-            HashMap::<SampleId, Vec<(QuantilePeptideKey, f64)>>::new,
-            |mut columns, (key, intensity)| {
-                columns.entry(key.sample).or_default().push((
-                    QuantilePeptideKey {
-                        protein: key.protein,
-                        peptide: key.peptide,
-                    },
-                    intensity.log2(),
-                ));
-                columns
-            },
-        )
-        .reduce(HashMap::new, |mut merged, columns| {
-            for (sample, mut values) in columns {
-                merged.entry(sample).or_default().append(&mut values);
-            }
-            merged
-        });
+    let columns = log2_trace_columns(traces, |key, intensity| {
+        allowed(key) && intensity.is_finite() && intensity > 0.0
+    });
     if columns.is_empty() {
         return;
     }
@@ -3622,6 +3626,51 @@ fn apply_hierarchical_to_lfq_traces(
             *intensity *= shift.exp2();
         }
     });
+}
+
+/// The log2 values of the `kept` traces, one column per sample, in no
+/// particular order. Every column is sized before it is filled: growing
+/// per-thread columns and appending them held several copies of all values at
+/// once.
+fn log2_trace_columns(
+    traces: &HashMap<PeptideCellKey, f64>,
+    kept: impl Fn(&PeptideCellKey, f64) -> bool + Sync,
+) -> HashMap<SampleId, Vec<(QuantilePeptideKey, f64)>> {
+    let counts = traces
+        .par_iter()
+        .filter(|(key, intensity)| kept(key, **intensity))
+        .fold(HashMap::<SampleId, usize>::new, |mut counts, (key, _)| {
+            *counts.entry(key.sample).or_default() += 1;
+            counts
+        })
+        .reduce(HashMap::new, |mut merged, counts| {
+            for (sample, count) in counts {
+                *merged.entry(sample).or_default() += count;
+            }
+            merged
+        });
+    let columns = counts
+        .into_iter()
+        .map(|(sample, count)| (sample, Mutex::new(Vec::with_capacity(count))))
+        .collect::<HashMap<_, _>>();
+    traces
+        .par_iter()
+        .filter(|(key, intensity)| kept(key, **intensity))
+        .for_each(|(key, intensity)| {
+            if let Some(Ok(mut column)) = columns.get(&key.sample).map(Mutex::lock) {
+                column.push((
+                    QuantilePeptideKey {
+                        protein: key.protein,
+                        peptide: key.peptide,
+                    },
+                    intensity.log2(),
+                ));
+            }
+        });
+    columns
+        .into_iter()
+        .filter_map(|(sample, column)| Some((sample, column.into_inner().ok()?)))
+        .collect()
 }
 
 /// Quantile-normalize each sample (column) by mapping every value to a mean
