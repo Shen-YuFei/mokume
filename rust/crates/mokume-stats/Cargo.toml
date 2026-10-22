@@ -13,8 +13,8 @@ workspace = true
 [dependencies]
 mokume-core = { path = "../mokume-core" }
 libm = "0.2.16"
-microlp = "0.4.0"
-nalgebra = { version = "0.34.1", default-features = false, features = ["std"] }
+microlp = "0.6.0"
+nalgebra = { version = "0.35.0", default-features = false, features = ["std"] }
 rayon = "1.12.0"
 
 [dev-dependencies]
