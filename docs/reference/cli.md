@@ -222,6 +222,7 @@ wraps scikit-learn. Install `mokume[analysis]` and call the wheel's Python
 | `--de-contrast-file` | — | TSV file with columns `group1`, `group2` |
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
 | `--de-covariate` | none | SDRF column added to the limma/DEqMS design; repeat for several columns |
+| `--de-block` | none | SDRF column whose levels are random blocks (e.g. the subject) in the limma/DEqMS design |
 | `--de-ensemble-method` | `limrots`, `deqms`, `proda` | Ensemble member; repeat to override the defaults |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
@@ -253,6 +254,15 @@ subject column. Values are looked up like the conditions (source name, then data
 file). A constant, missing, or confounded covariate is rejected. With covariates
 `auto` selects `deqms`, and the other methods reject the option. Without
 covariates each contrast keeps the two-group fit on its own samples.
+
+`--de-block` treats the levels of an SDRF column as random blocks of that
+design, as limma's `duplicateCorrelation` and `lmFit(block =, correlation =)`
+do: one intra-block correlation is estimated from all proteins and design
+samples, and every contrast uses the generalized least-squares fit. Use it for
+repeated measures of a subject or for technical replicates nested in biological
+replicates; it combines with `--de-covariate`. Blocks of one sample each, or a
+block column already in the fixed design, give a zero correlation with a
+warning, as in limma. The same method rules as for covariates apply.
 
 `--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Fisher-combined p-value passes the FDR threshold. Eligible non-ROTS members use the requested correction; ROTS and LimROTS retain their native permutation FDR. The Fisher-combined p-values use BH by default, with BKY or Storey applied when requested and reliable; IHW remains a member-level correction because the combined rows have no IHW covariate. The default members are `limrots`, `deqms`, and `proda`; on a contrast with missing values they run `limma` in place of `limrots`, because LimROTS needs a complete matrix. An explicit `--de-ensemble-method limrots` member still needs a complete matrix.
 

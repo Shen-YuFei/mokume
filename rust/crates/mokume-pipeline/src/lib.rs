@@ -7081,7 +7081,8 @@ fn validate_de_ensemble_options(config: &FeatureToProteinsConfig) -> Result<()> 
 /// `limrots`. The LimROTS kernel accepts only complete finite log2 matrices, so
 /// `auto` selects `deqms` instead when `matrix_is_complete` reports a missing
 /// cell; Python's LimROTS accepts missing values and keeps `limrots`. With
-/// `--de-covariate`, which only limma and DEqMS support, `auto` selects `deqms`.
+/// `--de-covariate` or `--de-block`, which only limma and DEqMS support, `auto`
+/// selects `deqms`.
 /// A non-`auto` method is returned unchanged. Resolved just before the DE stage so
 /// both the validation and the `de::run_differential_expression` dispatch
 /// observe a concrete method.
@@ -7094,6 +7095,7 @@ fn resolve_de_method(
         return method.to_string();
     }
     let resolved = if config.differential_expression.covariates.is_empty()
+        && config.differential_expression.block.is_none()
         && config.quantification != QuantMethod::DirectLfq
         && matrix_is_complete()
     {

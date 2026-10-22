@@ -492,6 +492,7 @@ fn rejects_option_combinations_before_running() {
         (&format!("{SDRF_DE} --de-method rots --de-fdr-method ihw"), "--de-fdr-method does not apply to rots"),
         (&format!("{SDRF_DE} --de-method limrots --de-covariate batch"), "--de-covariate requires --de-method limma or deqms"),
         (&format!("{SDRF_DE} --de-method ensemble --de-covariate batch"), "--de-covariate requires --de-method limma or deqms"),
+        (&format!("{SDRF_DE} --de-method rots --de-block characteristics[individual]"), "--de-block requires --de-method limma or deqms"),
     ];
     for (options, expected) in cases {
         let argv = [

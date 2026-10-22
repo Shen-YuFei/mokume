@@ -63,6 +63,7 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--de-contrast-file",
     "--de-method",
     "--de-covariate",
+    "--de-block",
     "--de-ensemble-method",
     "--de-ensemble-min-k",
     "--de-log2fc",

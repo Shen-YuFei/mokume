@@ -183,8 +183,18 @@ samples; a protein with no residual degrees of freedom takes the prior variance,
 as in limma. The fits match limma 3.66.0 and DEqMS 1.28.0 to rounding; with
 unequal residual degrees of freedom (missing values) the prior degrees of
 freedom can differ from R in the fifth significant digit, because the prior is
-fitted with a different one-dimensional optimizer. Subject-level random effects
-(limma's `duplicateCorrelation`) are not available.
+fitted with a different one-dimensional optimizer.
+
+With `--de-block`, the levels of an SDRF column (for example the subject, or
+the biological replicate of technical replicates) are random blocks instead,
+as limma's `duplicateCorrelation` followed by `lmFit(block =, correlation =)`.
+REML on each protein's residuals (statmod's `mixedModel2Fit`) gives an
+intra-block correlation; the tanh of their 15% trimmed mean on the atanh scale
+is the consensus, and every protein is fitted by generalized least squares
+with it. The per-protein correlations match limma 3.66.0 and statmod 1.5.2 to
+rounding. A protein whose residual variance lies entirely between blocks is
+the exception: R gives it either NA or the clamped correlation depending on
+rounding, so the consensus can then differ from R.
 
 ## ROTS
 

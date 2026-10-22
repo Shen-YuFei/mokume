@@ -378,6 +378,36 @@ fn de_covariates_are_kept_in_order() -> mokume_core::Result<()> {
         ["characteristics[individual]", "batch"]
     );
     assert_eq!(config.differential_expression.method, "auto");
+    assert_eq!(config.differential_expression.block, None);
+    Ok(())
+}
+
+#[test]
+fn de_block_enables_differential_expression() -> mokume_core::Result<()> {
+    let argv = [
+        "mokume",
+        "quantify",
+        "features2proteins",
+        "-p",
+        "features.parquet",
+        "-o",
+        "proteins.csv",
+        "-s",
+        "samples.sdrf.tsv",
+        "--de-contrast",
+        "A",
+        "B",
+        "--de-output",
+        "de.csv",
+        "--de-block",
+        "characteristics[individual]",
+    ];
+    let config = features_to_proteins_args(Cli::parse_from(argv)).into_config()?;
+    assert!(config.differential_expression.enabled);
+    assert_eq!(
+        config.differential_expression.block.as_deref(),
+        Some("characteristics[individual]")
+    );
     Ok(())
 }
 

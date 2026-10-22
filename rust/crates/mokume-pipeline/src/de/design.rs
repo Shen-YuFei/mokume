@@ -6,14 +6,21 @@
 //! `model.matrix(~0 + condition + covariates)`. Each contrast is the difference
 //! of its two condition coefficients. A paired design passes the subject column
 //! as a covariate.
+//!
+//! `--de-block` makes an SDRF column's levels random blocks instead, as limma's
+//! `duplicateCorrelation` + `lmFit(block =, correlation =)`: one intra-block
+//! correlation is estimated over all proteins and design samples, then every
+//! contrast uses the generalized least-squares fit.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use mokume_core::{DifferentialExpressionConfig, Result, SampleId};
 use mokume_io::{normalize_file_key, SdrfRawTable};
-use mokume_stats::de::{deqms_design, limma_design, validate_design, DesignContrast};
-use tracing::info;
+use mokume_stats::de::{
+    deqms_design, duplicate_correlation, limma_design, validate_design, DesignContrast, RandomBlock,
+};
+use tracing::{info, warn};
 
 use super::{
     available_conditions, build_count_vector, de_output_path, finalize_member_results,
@@ -34,6 +41,9 @@ pub(super) struct ModelDesign<'a> {
     conditions: Vec<&'a str>,
     /// One row per model sample.
     rows: Vec<Vec<f64>>,
+    /// Random-block label per model sample, numbered by first appearance.
+    blocks: Option<Vec<usize>>,
+    block_correlation: f64,
 }
 
 impl<'a> ModelDesign<'a> {
@@ -42,6 +52,7 @@ impl<'a> ModelDesign<'a> {
         samples: &[(SampleId, &str)],
         condition_by_sample: &'a HashMap<String, String>,
         covariates: &[String],
+        block: Option<&str>,
     ) -> Result<Self> {
         let mut ids = Vec::new();
         let mut names = Vec::new();
@@ -56,32 +67,26 @@ impl<'a> ModelDesign<'a> {
         let mut conditions = sample_conditions.clone();
         conditions.sort_unstable();
         conditions.dedup();
-        let mut rows = sample_conditions
-            .iter()
-            .map(|condition| {
-                conditions
-                    .iter()
-                    .map(|level| f64::from(level == condition))
-                    .collect::<Vec<_>>()
+        let rows = design_rows(raw, &names, &sample_conditions, &conditions, covariates)?;
+        let blocks = block
+            .map(|column| {
+                covariate_values(raw, column, &names, "block").map(|values| block_labels(&values))
             })
-            .collect::<Vec<_>>();
-        for column in covariates {
-            let encoded = encode_covariate(column, &covariate_values(raw, column, &names)?)?;
-            info!(
-                covariate = %column,
-                design_columns = encoded.len(),
-                "DE covariate"
-            );
-            for (sample, row) in rows.iter_mut().enumerate() {
-                row.extend(encoded.iter().map(|values| values[sample]));
-            }
-        }
-        validate_design(&rows)?;
+            .transpose()?;
         Ok(Self {
             samples: ids,
             sample_conditions,
             conditions,
             rows,
+            blocks,
+            block_correlation: 0.0,
+        })
+    }
+
+    fn random_block(&self) -> Option<RandomBlock<'_>> {
+        self.blocks.as_deref().map(|blocks| RandomBlock {
+            blocks,
+            correlation: self.block_correlation,
         })
     }
 
@@ -108,14 +113,78 @@ impl<'a> ModelDesign<'a> {
     }
 }
 
-/// Values of one covariate column per model sample, keyed like the conditions:
-/// the source name first, then the matrix column normalized as a data file.
-fn covariate_values(raw: &SdrfRawTable, column: &str, names: &[&str]) -> Result<Vec<String>> {
+/// One design row per model sample: the condition indicators, then each
+/// encoded covariate.
+fn design_rows(
+    raw: &SdrfRawTable,
+    names: &[&str],
+    sample_conditions: &[&str],
+    conditions: &[&str],
+    covariates: &[String],
+) -> Result<Vec<Vec<f64>>> {
+    let mut rows = sample_conditions
+        .iter()
+        .map(|condition| {
+            conditions
+                .iter()
+                .map(|level| f64::from(level == condition))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    for column in covariates {
+        let values = covariate_values(raw, column, names, "covariate")?;
+        let encoded = encode_covariate(column, &values)?;
+        info!(
+            covariate = %column,
+            design_columns = encoded.len(),
+            "DE covariate"
+        );
+        for (sample, row) in rows.iter_mut().enumerate() {
+            row.extend(encoded.iter().map(|values| values[sample]));
+        }
+    }
+    validate_design(&rows)?;
+    Ok(rows)
+}
+
+/// Values of one covariate or block column per model sample, keyed like the
+/// conditions: the source name first, then the matrix column normalized as a
+/// data file. `role` names the column in errors.
+fn covariate_values(
+    raw: &SdrfRawTable,
+    column: &str,
+    names: &[&str],
+    role: &str,
+) -> Result<Vec<String>> {
     let value_col = match_sdrf_column(raw.headers(), column).ok_or_else(|| {
-        invalid_input(format!(
-            "DE covariate column `{column}` was not found in SDRF"
-        ))
+        invalid_input(format!("DE {role} column `{column}` was not found in SDRF"))
     })?;
+    let by_sample = values_by_sample(raw, value_col);
+    let values = names
+        .iter()
+        .map(|name| {
+            by_sample
+                .get(*name)
+                .or_else(|| by_sample.get(&normalize_file_key(name)))
+                .map(|value| (*value).to_owned())
+                .ok_or_else(|| {
+                    invalid_input(format!(
+                        "DE {role} column `{column}` has no SDRF row for sample `{name}`"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if values.iter().all(|value| *value == values[0]) {
+        return Err(invalid_input(format!(
+            "DE {role} column `{column}` is constant across the DE samples"
+        )));
+    }
+    Ok(values)
+}
+
+/// One SDRF column's values keyed by source name and by normalized data file;
+/// the first row of a key wins.
+fn values_by_sample(raw: &SdrfRawTable, value_col: usize) -> HashMap<String, &str> {
     let mut by_sample = HashMap::new();
     if let Some(source_col) = SDRF_SAMPLE_COLUMNS
         .iter()
@@ -137,26 +206,48 @@ fn covariate_values(raw: &SdrfRawTable, column: &str, names: &[&str]) -> Result<
             }
         }
     }
-    let values = names
+    by_sample
+}
+
+/// Number block values by first appearance.
+fn block_labels(values: &[String]) -> Vec<usize> {
+    let mut levels: Vec<&str> = Vec::new();
+    values
         .iter()
-        .map(|name| {
-            by_sample
-                .get(*name)
-                .or_else(|| by_sample.get(&normalize_file_key(name)))
-                .map(|value| (*value).to_owned())
-                .ok_or_else(|| {
-                    invalid_input(format!(
-                        "DE covariate column `{column}` has no SDRF row for sample `{name}`"
-                    ))
+        .map(|value| {
+            levels
+                .iter()
+                .position(|level| level == value)
+                .unwrap_or_else(|| {
+                    levels.push(value);
+                    levels.len() - 1
                 })
         })
-        .collect::<Result<Vec<_>>>()?;
-    if values.iter().all(|value| *value == values[0]) {
-        return Err(invalid_input(format!(
-            "DE covariate column `{column}` is constant across the DE samples"
-        )));
+        .collect()
+}
+
+/// limma's consensus intra-block correlation over every protein of the design
+/// samples.
+fn block_correlation(
+    matrix: &ProteinMatrix,
+    design: &ModelDesign<'_>,
+    column: &str,
+) -> Result<f64> {
+    let Some(blocks) = design.blocks.as_deref() else {
+        return Ok(0.0);
+    };
+    let (_, rows) = matrix.log2_rows(&design.samples)?;
+    let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let estimate = duplicate_correlation(&refs, &design.rows, blocks)?;
+    if let Some(warning) = estimate.warning {
+        warn!(block = %column, "{warning}");
     }
-    Ok(values)
+    info!(
+        block = %column,
+        correlation = estimate.consensus,
+        "DE block correlation"
+    );
+    Ok(estimate.consensus)
 }
 
 /// Build the design once and run every contrast on it.
@@ -171,12 +262,21 @@ pub(super) fn run_contrasts(
 ) -> Result<()> {
     let DeMethod::Member(method @ (MemberMethod::Limma | MemberMethod::Deqms)) = method else {
         return Err(invalid_input(
-            "--de-covariate requires --de-method limma or deqms",
+            "--de-covariate and --de-block require --de-method limma or deqms",
         ));
     };
     let raw_sdrf = raw_sdrf
         .ok_or_else(|| invalid_input("differential expression requires an SDRF file (--sdrf)"))?;
-    let design = ModelDesign::new(raw_sdrf, samples, condition_by_sample, &config.covariates)?;
+    let mut design = ModelDesign::new(
+        raw_sdrf,
+        samples,
+        condition_by_sample,
+        &config.covariates,
+        config.block.as_deref(),
+    )?;
+    if let Some(column) = config.block.as_deref() {
+        design.block_correlation = block_correlation(matrix, &design, column)?;
+    }
     for contrast in contrasts {
         let output = de_output_path(config, contrast, contrasts.len());
         run_contrast(
@@ -214,6 +314,7 @@ fn run_contrast(
         weights: &weights,
         group_a: &group_a,
         group_b: &group_b,
+        block: design.random_block(),
     };
 
     let (proteins, rows) = matrix.log2_rows(&design.samples)?;

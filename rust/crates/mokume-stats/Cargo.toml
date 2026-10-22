@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 mokume-core = { path = "../mokume-core" }
+faer = { version = "0.24", default-features = false, features = ["std"] }
 libm = "0.2.16"
 microlp = "0.4.0"
 nalgebra = { version = "0.34.1", default-features = false, features = ["std"] }

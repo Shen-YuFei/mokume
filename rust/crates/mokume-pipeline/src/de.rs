@@ -18,8 +18,8 @@
 //!      `sca_t`/`sca_pvalue`/`sca_adj_pvalue` plus a `peptide_count` column, and
 //!      rots carries a single `d_stat` column).
 //!
-//! With `--de-covariate`, limma and DEqMS fit one fixed-effects model over all
-//! samples with a condition instead (see `design`).
+//! With `--de-covariate` or `--de-block`, limma and DEqMS fit one model over
+//! all samples with a condition instead (see `design`).
 //!
 //! `--de-method ensemble` is also wired: it runs each configured member method
 //! (default members `[limrots, deqms, proda]`, with `limma` in place of
@@ -105,7 +105,7 @@ pub(crate) fn run_differential_expression(
     let method = de_method(config)?;
     let condition_by_sample = condition_by_sample(sdrf);
     let samples = matrix.sample_columns(drop_empty_samples);
-    if !config.covariates.is_empty() {
+    if !config.covariates.is_empty() || config.block.is_some() {
         return design::run_contrasts(
             matrix,
             raw_sdrf,
@@ -1994,13 +1994,75 @@ mod tests {
         ),
     ];
 
-    /// The fixture SDRF plus a batch column. `run_level` keys the samples by
-    /// data file only, as run-level matrices are.
+    // `--de-block individual`: the individuals pair A1/B2, A2/B3 and A3/B1.
+    // Expected (log2FC, pvalue, adj_pvalue, t) from R 4.5.3 / limma 3.66.0 on
+    // log2(RAW); the consensus correlation is -0.22904427344429432:
+    //   pair <- c("p1","p2","p3","p3","p1","p2")
+    //   design <- model.matrix(~0 + condition)
+    //   dc <- duplicateCorrelation(y, design, block = pair)
+    //   fit <- eBayes(contrasts.fit(lmFit(y, design, block = pair,
+    //                 correlation = dc$consensus.correlation),
+    //                 makeContrasts(conditiongroupA - conditiongroupB, levels = design)))
+    //   topTable(fit, number = Inf, sort.by = "none")
+    // Pairing A1/B1, A2/B2, A3/B3 instead leaves P5 no residual variance, where
+    // R's NA or a clamped correlation for it depends on rounding.
+    const EXPECTED_BLOCK: &[(&str, f64, f64, f64, f64)] = &[
+        (
+            "P1",
+            -2.000_486_843_285_49,
+            4.481_983_699_022_344e-5,
+            1.121_010_719_082_057_1e-4,
+            -15.084_917_879_127_838,
+        ),
+        (
+            "P2",
+            2.009_061_609_775_408,
+            5.605_053_595_410_286e-5,
+            1.121_010_719_082_057_1e-4,
+            14.352_543_293_066_294,
+        ),
+        (
+            "P3",
+            0.015_910_691_677_653_688,
+            0.767_566_097_969_161,
+            0.825_376_880_108_116_8,
+            0.313_672_840_858_025_9,
+        ),
+        (
+            "P4",
+            -1.000_000_000_000_007,
+            0.611_535_723_300_775_6,
+            0.825_376_880_108_116_8,
+            -0.544_561_835_004_548_7,
+        ),
+        (
+            "P5",
+            -1.000_000_000_000_000_9,
+            1.265_932_580_240_996e-7,
+            7.595_595_481_445_976e-7,
+            -54.868_315_513_307_65,
+        ),
+        (
+            "P6",
+            0.091_755_950_826_584_61,
+            0.825_376_880_108_116_8,
+            0.825_376_880_108_116_8,
+            0.233_614_263_623_038_8,
+        ),
+    ];
+
+    /// The fixture SDRF plus a batch and an individual column. `run_level`
+    /// keys the samples by data file only, as run-level matrices are.
     fn batch_sdrf(run_level: bool) -> TestResult<(SdrfTable, SdrfRawTable)> {
         let mut tsv = String::from(
-            "source name\tcomment[data file]\tcharacteristics[batch]\tfactor value[phenotype]\n",
+            "source name\tcomment[data file]\tcharacteristics[batch]\tcharacteristics[individual]\tfactor value[phenotype]\n",
         );
-        for (name, batch) in SAMPLES.iter().zip(["b1", "b1", "b2", "b1", "b2", "b2"]) {
+        let individuals = ["p1", "p2", "p3", "p3", "p1", "p2"];
+        for ((name, batch), individual) in SAMPLES
+            .iter()
+            .zip(["b1", "b1", "b2", "b1", "b2", "b2"])
+            .zip(individuals)
+        {
             let source = if run_level {
                 format!("source-{name}")
             } else {
@@ -2011,7 +2073,9 @@ mod tests {
             } else {
                 "groupB"
             };
-            tsv.push_str(&format!("{source}\t{name}.raw\t{batch}\t{condition}\n"));
+            tsv.push_str(&format!(
+                "{source}\t{name}.raw\t{batch}\t{individual}\t{condition}\n"
+            ));
         }
         Ok((
             SdrfTable::from_reader(tsv.as_bytes())?,
@@ -2019,15 +2083,18 @@ mod tests {
         ))
     }
 
-    fn assert_batch_table(path: &std::path::Path) -> TestResult<()> {
+    fn assert_design_table(
+        path: &std::path::Path,
+        expected: &[(&str, f64, f64, f64, f64)],
+    ) -> TestResult<()> {
         let text = std::fs::read_to_string(path)?;
         let rows = text
             .lines()
             .skip(1)
             .map(|line| line.split(',').map(ToOwned::to_owned).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        assert_eq!(rows.len(), EXPECTED_BATCH.len());
-        for &(protein, log2fc, pvalue, adj, t_stat) in EXPECTED_BATCH {
+        assert_eq!(rows.len(), expected.len());
+        for &(protein, log2fc, pvalue, adj, t_stat) in expected {
             let fields = rows
                 .iter()
                 .find(|fields| fields[0] == protein)
@@ -2052,12 +2119,38 @@ mod tests {
         for run_level in [false, true] {
             let (sdrf, raw) = batch_sdrf(run_level)?;
             run_differential_expression(&matrix, Some(&sdrf), Some(&raw), &config, false)?;
-            assert_batch_table(&output)?;
+            assert_design_table(&output, EXPECTED_BATCH)?;
         }
 
         let (sdrf, raw) = batch_sdrf(false)?;
         let rots = DifferentialExpressionConfig {
             covariates: vec!["batch".to_owned()],
+            ..de_config(&output, "rots")
+        };
+        assert!(
+            run_differential_expression(&matrix, Some(&sdrf), Some(&raw), &rots, false).is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn de_block_design_matches_r_limma() -> TestResult<()> {
+        let (_tempdir, dir) = temp_dir("block")?;
+        let output = dir.join("de_results.csv");
+        let matrix = fixture_matrix()?;
+        let config = DifferentialExpressionConfig {
+            block: Some("individual".to_owned()),
+            ..de_config(&output, "limma")
+        };
+        for run_level in [false, true] {
+            let (sdrf, raw) = batch_sdrf(run_level)?;
+            run_differential_expression(&matrix, Some(&sdrf), Some(&raw), &config, false)?;
+            assert_design_table(&output, EXPECTED_BLOCK)?;
+        }
+
+        let (sdrf, raw) = batch_sdrf(false)?;
+        let rots = DifferentialExpressionConfig {
+            block: Some("individual".to_owned()),
             ..de_config(&output, "rots")
         };
         assert!(

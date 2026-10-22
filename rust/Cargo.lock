@@ -1494,6 +1494,7 @@ dependencies = [
 name = "mokume-stats"
 version = "0.2.0"
 dependencies = [
+ "faer",
  "libm",
  "microlp",
  "mokume-core",

@@ -8,6 +8,9 @@
 //!   with LINPACK `dqrdc2` (R's `lm.fit`: limited column pivoting at
 //!   `tol = 1e-7`), so a coefficient without support among the protein's cells
 //!   is not estimable, as in R.
+//! - `gls.series`: with a random block, each protein's cells and design rows
+//!   are first whitened by the Cholesky factor of their block correlation
+//!   matrix (the intra-block correlation from `duplicateCorrelation`).
 //! - `contrasts.fit`: the contrast standard error combines the protein's own
 //!   unscaled standard errors with the coefficient correlations of the full
 //!   design (limma's approximation when cells are missing).
@@ -33,6 +36,15 @@ pub struct DesignContrast<'a> {
     pub weights: &'a [f64],
     pub group_a: &'a [usize],
     pub group_b: &'a [usize],
+    pub block: Option<RandomBlock<'a>>,
+}
+
+/// `lmFit(block =, correlation =)`: the block of each design row and the
+/// intra-block correlation.
+#[derive(Clone, Copy)]
+pub struct RandomBlock<'a> {
+    pub blocks: &'a [usize],
+    pub correlation: f64,
 }
 
 /// Reject a design that is not of full column rank: a covariate confounded
@@ -116,17 +128,17 @@ pub(super) fn run_design_moderation(
     rows: &[&[f64]],
     spec: &DesignContrast<'_>,
 ) -> Result<(Vec<(usize, LimmaModeration)>, f64)> {
-    validate_design(spec.design)?;
-    if spec.weights.len() != spec.design[0].len() {
-        return Err(invalid(
-            "the DE contrast needs one weight per design coefficient",
-        ));
-    }
-    let correlation = design_correlation(spec.design);
+    validate_contrast(spec)?;
+    let correlation = design_correlation(spec.design, spec.block)?;
     let fits = rows
         .iter()
         .enumerate()
-        .filter_map(|(index, row)| fit_row(spec.design, row).map(|fit| (index, *row, fit)))
+        .map(
+            |(index, row)| Ok(fit_row(spec.design, row, spec.block)?.map(|fit| (index, *row, fit))),
+        )
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect::<Vec<_>>();
 
     // squeezeVar leaves zero-df rows out of the prior fit.
@@ -153,6 +165,26 @@ pub(super) fn run_design_moderation(
         })
         .collect();
     Ok((moderations, df_prior))
+}
+
+fn validate_contrast(spec: &DesignContrast<'_>) -> Result<()> {
+    validate_design(spec.design)?;
+    if spec.weights.len() != spec.design[0].len() {
+        return Err(invalid(
+            "the DE contrast needs one weight per design coefficient",
+        ));
+    }
+    if let Some(block) = spec.block {
+        if block.blocks.len() != spec.design.len() {
+            return Err(invalid("the DE block needs one label per design row"));
+        }
+        if block.correlation.is_nan() || block.correlation.abs() >= 1.0 {
+            return Err(invalid(
+                "the intra-block correlation is 1 or -1, so the model is degenerate",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `contrasts.fit` and the moderated t for one fitted row.
@@ -201,20 +233,26 @@ struct RowFit {
     df_residual: f64,
 }
 
-fn fit_row(design: &[Vec<f64>], row: &[f64]) -> Option<RowFit> {
+fn fit_row(
+    design: &[Vec<f64>],
+    row: &[f64],
+    block: Option<RandomBlock<'_>>,
+) -> Result<Option<RowFit>> {
     let observed = (0..row.len())
         .filter(|&sample| row[sample].is_finite())
         .collect::<Vec<_>>();
     if observed.is_empty() {
-        return None;
+        return Ok(None);
     }
     let p = design[0].len();
     let n = observed.len();
-    let qr = Qr::new(column_major(design, Some(&observed)), n, p);
-    let mut effects = observed
-        .iter()
-        .map(|&sample| row[sample])
-        .collect::<Vec<_>>();
+    let mut columns = column_major(design, Some(&observed));
+    columns.extend(observed.iter().map(|&sample| row[sample]));
+    if let Some(block) = block {
+        whiten(&mut columns, &observed, block)?;
+    }
+    let mut effects = columns.split_off(n * p);
+    let qr = Qr::new(columns, n, p);
     qr.apply_qt(&mut effects);
     let solution = qr.solve(&effects);
     let unscaled = qr.inverse_cross_product();
@@ -232,19 +270,83 @@ fn fit_row(design: &[Vec<f64>], row: &[f64]) -> Option<RowFit> {
     } else {
         f64::NAN
     };
-    Some(RowFit {
+    Ok(Some(RowFit {
         coefficients,
         stdev_unscaled,
         sigma,
         df_residual,
-    })
+    }))
 }
 
-/// `cov2cor(chol2inv(qr(design)))` for a full-rank design.
-fn design_correlation(design: &[Vec<f64>]) -> Vec<Vec<f64>> {
+/// `backsolve(chol(V), x, transpose = TRUE)` for every column of the
+/// column-major `columns` (one row per sample of `samples`), where `V` is the
+/// samples' block correlation matrix. `V` is block diagonal, so each block's
+/// rows are whitened by the Cholesky factor of its own compound-symmetric
+/// matrix, in sample order.
+fn whiten(columns: &mut [f64], samples: &[usize], block: RandomBlock<'_>) -> Result<()> {
+    let n = samples.len();
+    let mut members: Vec<Vec<usize>> = Vec::new();
+    let mut seen = Vec::new();
+    for (position, &sample) in samples.iter().enumerate() {
+        let label = block.blocks[sample];
+        match seen.iter().position(|&known| known == label) {
+            Some(index) => members[index].push(position),
+            None => {
+                seen.push(label);
+                members.push(vec![position]);
+            }
+        }
+    }
+    for positions in members {
+        let factor = compound_symmetric_cholesky(positions.len(), block.correlation)?;
+        for column in columns.chunks_exact_mut(n) {
+            for (i, &target) in positions.iter().enumerate() {
+                let sum: f64 = (0..i).map(|k| factor[i][k] * column[positions[k]]).sum();
+                column[target] = (column[target] - sum) / factor[i][i];
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Lower Cholesky factor of the `m x m` matrix with unit diagonal and
+/// `correlation` elsewhere.
+fn compound_symmetric_cholesky(m: usize, correlation: f64) -> Result<Vec<Vec<f64>>> {
+    let mut factor = vec![vec![0.0; m]; m];
+    for i in 0..m {
+        for j in 0..=i {
+            let target = if i == j { 1.0 } else { correlation };
+            let sum: f64 = (0..j).map(|k| factor[i][k] * factor[j][k]).sum();
+            if i == j {
+                let pivot = target - sum;
+                if pivot <= 0.0 {
+                    return Err(invalid(
+                        "the block correlation matrix is not positive definite",
+                    ));
+                }
+                factor[i][i] = pivot.sqrt();
+            } else {
+                factor[i][j] = (target - sum) / factor[j][j];
+            }
+        }
+    }
+    Ok(factor)
+}
+
+/// `cov2cor(chol2inv(qr(design)))` for a full-rank design, after whitening by
+/// the block correlation when there is one.
+fn design_correlation(
+    design: &[Vec<f64>],
+    block: Option<RandomBlock<'_>>,
+) -> Result<Vec<Vec<f64>>> {
     let p = design[0].len();
-    let covariance = Qr::new(column_major(design, None), design.len(), p).inverse_cross_product();
-    (0..p)
+    let mut columns = column_major(design, None);
+    if let Some(block) = block {
+        let samples = (0..design.len()).collect::<Vec<_>>();
+        whiten(&mut columns, &samples, block)?;
+    }
+    let covariance = Qr::new(columns, design.len(), p).inverse_cross_product();
+    Ok((0..p)
         .map(|left| {
             (0..p)
                 .map(|right| {
@@ -253,7 +355,7 @@ fn design_correlation(design: &[Vec<f64>]) -> Vec<Vec<f64>> {
                 })
                 .collect()
         })
-        .collect()
+        .collect())
 }
 
 /// `contrasts.fit` for one contrast: coefficients with a zero weight drop out;
@@ -283,7 +385,7 @@ fn contrast(fit: &RowFit, weights: &[f64], correlation: &[Vec<f64>]) -> (f64, f6
 }
 
 /// Column-major copy of the design, optionally restricted to some samples.
-fn column_major(design: &[Vec<f64>], samples: Option<&[usize]>) -> Vec<f64> {
+pub(super) fn column_major(design: &[Vec<f64>], samples: Option<&[usize]>) -> Vec<f64> {
     let rows = match samples {
         Some(samples) => samples.iter().map(|&sample| &design[sample]).collect(),
         None => design.iter().collect::<Vec<_>>(),
@@ -296,17 +398,17 @@ fn column_major(design: &[Vec<f64>], samples: Option<&[usize]>) -> Vec<f64> {
 /// LINPACK `dqrdc2` Householder QR with R's limited column pivoting: a column
 /// whose remaining norm falls below `tol` times its original norm moves to the
 /// end, and the leading `rank` columns keep their original order.
-struct Qr {
+pub(super) struct Qr {
     /// Column-major `n x p`: R in the upper triangle, Householder vectors below.
     qr: Vec<f64>,
     n: usize,
-    rank: usize,
-    pivot: Vec<usize>,
+    pub(super) rank: usize,
+    pub(super) pivot: Vec<usize>,
     qraux: Vec<f64>,
 }
 
 impl Qr {
-    fn new(mut x: Vec<f64>, n: usize, p: usize) -> Self {
+    pub(super) fn new(mut x: Vec<f64>, n: usize, p: usize) -> Self {
         let mut pivot = (0..p).collect::<Vec<_>>();
         let mut qraux = (0..p)
             .map(|column| norm2(&x[column * n..(column + 1) * n]))
@@ -344,24 +446,40 @@ impl Qr {
     }
 
     /// `dqrsl`'s `qty`: overwrite `y` with `Q' y` (the `lm.fit` effects).
-    fn apply_qt(&self, y: &mut [f64]) {
+    pub(super) fn apply_qt(&self, y: &mut [f64]) {
         for j in 0..self.rank.min(self.n - 1) {
-            let head = self.qraux[j];
-            if head == 0.0 {
-                continue;
-            }
-            let start = j * self.n + j;
-            let vector = |i: usize| if i == 0 { head } else { self.qr[start + i] };
-            let dot: f64 = (0..self.n - j).map(|i| vector(i) * y[j + i]).sum();
-            let t = -dot / head;
-            for i in 0..self.n - j {
-                y[j + i] += t * vector(i);
-            }
+            self.reflect(j, y);
+        }
+    }
+
+    /// `dqrsl`'s `rsd` from the effects: `Q (0, effects[rank..])`, so `lm.fit`'s
+    /// fitted values are `y - residuals`.
+    pub(super) fn residuals(&self, effects: &[f64]) -> Vec<f64> {
+        let mut residuals = effects.to_vec();
+        residuals[..self.rank].fill(0.0);
+        for j in (0..self.rank.min(self.n - 1)).rev() {
+            self.reflect(j, &mut residuals);
+        }
+        residuals
+    }
+
+    /// Apply the `j`th Householder reflection to `y`.
+    fn reflect(&self, j: usize, y: &mut [f64]) {
+        let head = self.qraux[j];
+        if head == 0.0 {
+            return;
+        }
+        let start = j * self.n + j;
+        let vector = |i: usize| if i == 0 { head } else { self.qr[start + i] };
+        let dot: f64 = (0..self.n - j).map(|i| vector(i) * y[j + i]).sum();
+        let t = -dot / head;
+        for i in 0..self.n - j {
+            y[j + i] += t * vector(i);
         }
     }
 
     /// Back-substitute `R b = (Q' y)[..rank]`; `b` is in pivot order.
-    fn solve(&self, effects: &[f64]) -> Vec<f64> {
+    pub(super) fn solve(&self, effects: &[f64]) -> Vec<f64> {
         let mut solution = effects[..self.rank].to_vec();
         for j in (0..self.rank).rev() {
             solution[j] /= self.at(j, j);

@@ -435,6 +435,7 @@ enables differential expression without a separate switch.
 | `--de-contrast-file` | — | TSV file with columns `group1`, `group2` |
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
 | `--de-covariate` | — | SDRF column added to the limma/DEqMS design; repeat for several columns |
+| `--de-block` | — | SDRF column whose levels are random blocks (e.g. the subject) in the limma/DEqMS design |
 | `--de-ensemble-method` | `limrots`, `deqms`, `proda` | Ensemble member; repeat to override the defaults |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction (ensemble only) |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
@@ -487,6 +488,20 @@ mokume quantify features2proteins \
 A constant, missing, or confounded covariate is rejected. With covariates
 `--de-method auto` selects `deqms`; ROTS, LimROTS, proDA, and ensemble reject
 the option.
+
+`--de-block` models a column's levels as random blocks instead of fixed effects
+(limma's `duplicateCorrelation`), for example the subject of a repeated-measures
+design or the biological replicate of technical replicates. The consensus
+intra-block correlation is written to the log, and the same method rules apply:
+
+```bash
+mokume quantify features2proteins \
+    -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --de-contrast "treated" "control" \
+    --de-method limma \
+    --de-block "characteristics[individual]" \
+    --de-output de_results.csv
+```
 
 ```bash
 # Top-k consensus across multiple methods

@@ -753,6 +753,10 @@ pub struct DifferentialExpressionConfig {
     /// keeps the two-group tests.
     #[serde(default)]
     pub covariates: Vec<String>,
+    /// SDRF column whose levels are random blocks of that design (limma's
+    /// `duplicateCorrelation` + `lmFit(block =)`); `None` fits no block.
+    #[serde(default)]
+    pub block: Option<String>,
 }
 
 impl Default for DifferentialExpressionConfig {
@@ -770,6 +774,7 @@ impl Default for DifferentialExpressionConfig {
             fdr_method: "bh".to_string(),
             output: None,
             covariates: Vec::new(),
+            block: None,
         }
     }
 }

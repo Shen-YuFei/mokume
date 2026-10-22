@@ -428,6 +428,7 @@ fn differential_expression_config(
         fdr_method: options.fdr_method.clone(),
         output: None,
         covariates: Vec::new(),
+        block: None,
     }
 }
 

@@ -432,6 +432,13 @@ mean-center, rlr, loess, tmm]"
     )]
     de_covariate: Vec<String>,
 
+    #[arg(
+        long = "de-block",
+        value_name = "COLUMN",
+        help = "SDRF column whose levels are random blocks in a limma/DEqMS design (e.g. the subject)"
+    )]
+    de_block: Option<String>,
+
     #[arg(long = "de-ensemble-method", value_name = "METHOD")]
     de_ensemble_method: Vec<String>,
 

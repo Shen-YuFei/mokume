@@ -20,6 +20,9 @@ struct Case {
     name: String,
     matrix: Vec<Vec<Option<f64>>>,
     design: Vec<Vec<f64>>,
+    /// Random-block cases: block labels and R's consensus correlation.
+    block: Option<Vec<usize>>,
+    consensus: Option<f64>,
     counts: Option<Vec<f64>>,
     sigma: Vec<Option<f64>>,
     df_residual: Vec<f64>,
@@ -37,6 +40,14 @@ fn fixture() -> Fixture {
         .unwrap_or_else(|e| panic!("invalid official JSON fixture: {e}"))
 }
 
+/// Fixed-effects cases followed by the random-block cases.
+fn all_cases() -> Vec<Case> {
+    let block: Fixture =
+        serde_json::from_str(include_str!("../../tests/data/limma_block_official.json"))
+            .unwrap_or_else(|e| panic!("invalid official JSON fixture: {e}"));
+    fixture().cases.into_iter().chain(block.cases).collect()
+}
+
 fn matrix(case: &Case) -> Vec<Vec<f64>> {
     case.matrix
         .iter()
@@ -50,15 +61,20 @@ fn spec<'a>(case: &'a Case, contrast: &'a Contrast) -> DesignContrast<'a> {
         weights: &contrast.weights,
         group_a: &contrast.group_a,
         group_b: &contrast.group_b,
+        block: case.block.as_deref().map(|blocks| RandomBlock {
+            blocks,
+            correlation: case.consensus.unwrap_or(f64::NAN),
+        }),
     }
 }
 
-// Fit quantities match lm.series to rounding. With unequal residual df the
-// prior df comes from the shared squeezeVar, whose bounded Brent minimiser
-// (SciPy's, xatol 1e-5) stops at a slightly different point than R's
-// optimize() (tol 1.2e-4); moderated quantities then differ by up to ~4e-5.
+// Fit quantities match lm.series and gls.series to rounding. With unequal
+// residual df the prior df comes from the shared squeezeVar, whose bounded
+// Brent minimiser (SciPy's, xatol 1e-5) stops at a slightly different point
+// than R's optimize() (tol 1.2e-4): the prior df differs by up to ~5e-5 and
+// small moderated p-values by up to ~2e-4 (relative).
 const FIT_TOL: f64 = 1e-9;
-const MODERATED_TOL: f64 = 1e-4;
+const MODERATED_TOL: f64 = 3e-4;
 
 fn assert_close(actual: f64, expected: Option<f64>, tol: f64, label: &str) {
     match expected {
@@ -72,7 +88,7 @@ fn assert_close(actual: f64, expected: Option<f64>, tol: f64, label: &str) {
 
 #[test]
 fn fits_match_limma_3_66_0() {
-    for case in fixture().cases {
+    for case in all_cases() {
         let rows = matrix(&case);
         let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
         for (j, contrast) in case.contrasts.iter().enumerate() {
@@ -110,7 +126,7 @@ fn fits_match_limma_3_66_0() {
 
 #[test]
 fn deqms_matches_spectra_count_ebayes_1_28_0() {
-    for case in fixture().cases {
+    for case in all_cases() {
         let Some(counts) = &case.counts else {
             continue;
         };
@@ -123,7 +139,16 @@ fn deqms_matches_spectra_count_ebayes_1_28_0() {
             };
             let results = deqms_design(&proteins, &refs, &spec(&case, contrast), counts, 0.05, 0.5)
                 .unwrap_or_else(|e| panic!("{}: {e}", case.name));
-            assert_eq!(results.len(), rows.len(), "{}", case.name);
+            // Reported: a residual df and two finite values in each group.
+            let reported = (0..rows.len())
+                .filter(|&i| {
+                    case.df_residual[i] > 0.0
+                        && [&contrast.group_a, &contrast.group_b].iter().all(|group| {
+                            group.iter().filter(|&&s| rows[i][s].is_finite()).count() >= 2
+                        })
+                })
+                .count();
+            assert_eq!(results.len(), reported, "{}", case.name);
             for row in results {
                 let i = row
                     .protein
