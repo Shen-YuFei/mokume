@@ -83,7 +83,7 @@ pub struct DirectLfqResult {
 /// fixed at 10 to match mokume's streaming caller. `normalize_samples = false`
 /// skips the global sample stage, like directlfq's `deactivate_normalization`.
 pub fn direct_lfq_aligned(
-    ions: &[DirectLfqIon],
+    ions: Vec<DirectLfqIon>,
     min_nonan: usize,
     sample_quadratic_limit: usize,
     normalize_samples: bool,
@@ -104,7 +104,7 @@ pub fn direct_lfq_aligned(
 /// Ion rows survive even when `min_nonan` prevents a protein profile from being
 /// reported, matching Python's streamed `shifted_peptides` export.
 pub fn direct_lfq_aligned_with_ions(
-    ions: &[DirectLfqIon],
+    ions: Vec<DirectLfqIon>,
     min_nonan: usize,
     sample_quadratic_limit: usize,
     normalize_samples: bool,
@@ -119,13 +119,16 @@ pub fn direct_lfq_aligned_with_ions(
 }
 
 fn direct_lfq_aligned_impl(
-    ions: &[DirectLfqIon],
+    ions: Vec<DirectLfqIon>,
     min_nonan: usize,
     sample_quadratic_limit: usize,
     normalize_samples: bool,
     retain_ions: bool,
 ) -> DirectLfqResult {
-    let matrix = IonMatrix::build(ions);
+    // The matrix holds every value, so the ions are released before the
+    // normalization and estimation stages.
+    let matrix = IonMatrix::build(&ions);
+    drop(ions);
     if matrix.samples.is_empty() || matrix.rows.is_empty() {
         return DirectLfqResult::default();
     }
@@ -220,12 +223,40 @@ impl IonMatrix {
     /// Stage 1: shift each sample column by an additive log2 factor so the
     /// sample distributions overlay (`NormalizationManagerSamples...`).
     fn normalize_samples(&mut self, sample_quadratic_limit: usize) {
-        let shifts = sample_shifts(&self.rows, self.samples.len(), sample_quadratic_limit);
+        let shifts = sparse_sample_shifts(
+            &self.sample_columns(),
+            self.rows.len(),
+            sample_quadratic_limit,
+        );
         for row in &mut self.rows {
             for (column, value) in row.iter_mut().enumerate() {
                 *value += shifts[column];
             }
         }
+    }
+
+    /// The non-NaN values of each sample column as `(row, value)`, for
+    /// [`sparse_sample_shifts`]: a sparse copy instead of a second dense
+    /// samples x rows matrix.
+    fn sample_columns(&self) -> Vec<Vec<(usize, f64)>> {
+        let mut counts = vec![0; self.samples.len()];
+        for row in &self.rows {
+            for (count, value) in counts.iter_mut().zip(row) {
+                *count += usize::from(!value.is_nan());
+            }
+        }
+        let mut columns = counts
+            .into_iter()
+            .map(Vec::with_capacity)
+            .collect::<Vec<_>>();
+        for (index, row) in self.rows.iter().enumerate() {
+            for (column, &value) in columns.iter_mut().zip(row) {
+                if !value.is_nan() {
+                    column.push((index, value));
+                }
+            }
+        }
+        columns
     }
 
     /// Stage 2: per-protein intensity estimation over contiguous protein blocks.
@@ -411,7 +442,7 @@ pub fn sample_shifts(rows: &[Vec<f64>], n_samples: usize, quadratic_limit: usize
     shifts
 }
 
-/// [`sample_shifts`] on sparse sample columns: `columns[s]` lists the finite
+/// [`sample_shifts`] on sparse sample columns: `columns[s]` lists the non-NaN
 /// log2 values of sample `s` as `(row, value)`, each of the `n_rows` rows at
 /// most once. Only the quadratic subset is made dense; a linear sample takes
 /// the same median over the rows it observes, so no rows x samples matrix is
@@ -976,7 +1007,8 @@ fn nanvar(values: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        direct_lfq_aligned, direct_lfq_aligned_with_ions, get_normfacts, trim_ions, DirectLfqIon,
+        direct_lfq_aligned, direct_lfq_aligned_with_ions, get_normfacts, sample_shifts,
+        sparse_sample_shifts, trim_ions, DirectLfqIon,
     };
     use mokume_core::{PeptideId, ProteinId, SampleId};
 
@@ -1001,6 +1033,46 @@ mod tests {
                 "row {index}: actual={actual} expected={want}"
             );
         }
+    }
+
+    #[test]
+    fn sparse_sample_shifts_match_dense_beyond_quadratic_limit() {
+        // 9 rows x 7 samples with missing cells; 3 quadratic + 4 linear samples.
+        let rows = (0..9)
+            .map(|row| {
+                (0..7)
+                    .map(|sample| {
+                        if (row * 7 + sample) % 5 == 3 {
+                            f64::NAN
+                        } else {
+                            20.0 + (row as f64) * 0.37 + ((row * sample) % 4) as f64 * 0.11
+                                - sample as f64 * 0.23
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let columns = (0..7)
+            .map(|sample| {
+                rows.iter()
+                    .enumerate()
+                    .filter(|(_, row)| !row[sample].is_nan())
+                    .map(|(index, row)| (index, row[sample]))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let dense = sample_shifts(&rows, 7, 3);
+        let sparse = sparse_sample_shifts(&columns, rows.len(), 3);
+        assert_eq!(
+            dense
+                .iter()
+                .map(|shift| shift.to_bits())
+                .collect::<Vec<_>>(),
+            sparse
+                .iter()
+                .map(|shift| shift.to_bits())
+                .collect::<Vec<_>>()
+        );
     }
 
     fn ion(protein: u32, ion: u32, sample: u32, intensity: f64) -> DirectLfqIon {
@@ -1058,7 +1130,7 @@ mod tests {
             ion(1, 4, 3, 30000.0),
         ];
 
-        let result = direct_lfq_aligned(&ions, 1, 50, true);
+        let result = direct_lfq_aligned(ions, 1, 50, true);
         let Some((_, prot_a)) = result
             .iter()
             .find(|(protein, _)| *protein == ProteinId::new(0))
@@ -1092,7 +1164,7 @@ mod tests {
             ion(0, 1, 1, 200.0),
         ];
 
-        let result = direct_lfq_aligned_with_ions(&ions, 3, 50, true);
+        let result = direct_lfq_aligned_with_ions(ions, 3, 50, true);
         assert!(result.protein_quantities.is_empty());
         assert_eq!(result.normalized_ions.len(), 2);
 
@@ -1122,7 +1194,7 @@ mod tests {
             ion(1, 3, 1, 1400.0),
         ];
         let ratio = |normalize_samples| {
-            let result = direct_lfq_aligned(&ions, 1, 50, normalize_samples);
+            let result = direct_lfq_aligned(ions.clone(), 1, 50, normalize_samples);
             value_for(&result[0].1, 1) / value_for(&result[0].1, 0)
         };
 
@@ -1133,7 +1205,7 @@ mod tests {
     #[test]
     fn single_observation_ion_is_masked_like_directlfq() {
         let result = direct_lfq_aligned_with_ions(
-            &[
+            vec![
                 ion(0, 0, 0, 100.0),
                 ion(1, 1, 0, 200.0),
                 ion(1, 1, 1, 300.0),
@@ -1208,7 +1280,7 @@ mod tests {
             }
         }
 
-        let result = direct_lfq_aligned_with_ions(&ions, 1, 50, true);
+        let result = direct_lfq_aligned_with_ions(ions, 1, 50, true);
         let Some((_, profile)) = result
             .protein_quantities
             .iter()

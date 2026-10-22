@@ -1526,7 +1526,7 @@ impl FeatureAggregation {
             return Ok(());
         };
 
-        let prepared = prepare_directlfq_ions(
+        let mut prepared = prepare_directlfq_ions(
             traces.directlfq_sums(),
             allowed_cells,
             proteins,
@@ -1534,7 +1534,7 @@ impl FeatureAggregation {
             samples,
         );
         let result = direct_lfq_aligned_with_ions(
-            &prepared.ions,
+            std::mem::take(&mut prepared.ions),
             *directlfq_min_nonan,
             *directlfq_num_samples_quadratic,
             *directlfq_normalize_samples,
@@ -1730,7 +1730,7 @@ impl FeatureAggregation {
                 let values = if let Some(values) = cached_directlfq_values {
                     values
                 } else {
-                    let prepared = prepare_directlfq_ions(
+                    let mut prepared = prepare_directlfq_ions(
                         traces.into_directlfq_sums(),
                         allowed_cells,
                         proteins,
@@ -1738,7 +1738,7 @@ impl FeatureAggregation {
                         samples,
                     );
                     let values = direct_lfq_aligned(
-                        &prepared.ions,
+                        std::mem::take(&mut prepared.ions),
                         directlfq_min_nonan,
                         directlfq_num_samples_quadratic,
                         directlfq_normalize_samples,
@@ -5166,7 +5166,7 @@ pub fn run_lfq_from_peptides(
     }
 
     let mut result = Vec::new();
-    for (protein, per_sample) in direct_lfq_aligned(&ions, min_nonan, num_samples_quadratic, true) {
+    for (protein, per_sample) in direct_lfq_aligned(ions, min_nonan, num_samples_quadratic, true) {
         let Some(protein_name) = proteins.resolve(protein) else {
             continue;
         };
