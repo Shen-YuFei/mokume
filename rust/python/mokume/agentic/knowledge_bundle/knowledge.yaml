@@ -11,16 +11,16 @@ sources:
     kind: cross_dataset_ground_truth_benchmark
     title: Mokume spike-in Grid benchmark (mokumebench, 86 datasets, 32 studies)
     locator: sources/spike-in-mokumebench
-    captured_at: '2026-10-22'
+    captured_at: '2026-10-25'
     trust: locally_reproduced_ground_truth
     status: benchmark_candidates_not_published
     artifacts:
-      datasets.yaml: 3851a56745e7607d6310b182046cca89e5ffb6915c673ded6dade187661b9c13
+      datasets.yaml: 7a3869a95995d457c7c7d480c54784f80e9ccf996fca8f4c471deff13d0068f8
   - id: cptac-mokumebench
     kind: cross_study_consistency_benchmark
     title: Mokume CPTAC TMT Grid benchmark (mokumebench, CDAP PSM reports, 24 PDC studies)
     locator: https://pdc.cancer.gov/pdc/
-    captured_at: '2026-10-22'
+    captured_at: '2026-10-25'
     trust: locally_reproduced_consistency
     status: benchmark_candidates_not_published
     artifacts: {}
@@ -54,7 +54,7 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1488
+      candidates_per_study: 1860
       service_candidates_per_study: 310
       gated_service_candidates: 310
       fp_gate: 0.01
@@ -86,8 +86,9 @@ evidence:
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
         the same configuration on the other studies, after gates of at most 1% false-positive calls on
         null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config is the best configuration with them included.
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config is the best configuration
+        with them included.
       - Quantification is frozen when the workflow starts from a protein matrix.
       - The clinical cohort (cptac-clinical-preset) also selected maxlfq with median normalization, but
         no imputation and DEqMS.
@@ -120,7 +121,7 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1488
+      candidates_per_study: 1860
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
@@ -152,8 +153,9 @@ evidence:
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
         the same configuration on the other studies, after gates of at most 1% false-positive calls on
         null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config is the best configuration with them included.
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config is the best configuration
+        with them included.
       - Applies only to protein matrices quantified with directlfq; near-best and held-out rates compare
         only directlfq configurations.
   - id: cptac-compref-maxlfq-preset
@@ -185,7 +187,7 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1488
+      candidates_per_study: 1860
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
@@ -217,8 +219,9 @@ evidence:
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
         the same configuration on the other studies, after gates of at most 1% false-positive calls on
         null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config is the best configuration with them included.
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config is the best configuration
+        with them included.
       - Applies only to protein matrices quantified with maxlfq; near-best and held-out rates compare
         only maxlfq configurations.
   - id: cptac-compref-pibaq-preset
@@ -250,7 +253,7 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1488
+      candidates_per_study: 1860
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
@@ -282,8 +285,9 @@ evidence:
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
         the same configuration on the other studies, after gates of at most 1% false-positive calls on
         null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config is the best configuration with them included.
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config is the best configuration
+        with them included.
       - Applies only to protein matrices quantified with pibaq; near-best and held-out rates compare only
         pibaq configurations.
   - id: cptac-compref-sum-preset
@@ -315,7 +319,7 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1488
+      candidates_per_study: 1860
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
@@ -347,8 +351,9 @@ evidence:
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
         the same configuration on the other studies, after gates of at most 1% false-positive calls on
         null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config is the best configuration with them included.
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config is the best configuration
+        with them included.
       - Applies only to protein matrices quantified with sum; near-best and held-out rates compare only
         sum configurations.
   - id: cptac-compref-top3-preset
@@ -380,7 +385,7 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1488
+      candidates_per_study: 1860
       service_candidates_per_study: 62
       gated_service_candidates: 62
       fp_gate: 0.01
@@ -412,8 +417,9 @@ evidence:
       - There is no per-gene truth; a configuration is scored by how well its calls and log2FC agree with
         the same configuration on the other studies, after gates of at most 1% false-positive calls on
         null contrasts and a mean absolute median log2FC of at most 0.2 on the real contrast.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config is the best configuration with them included.
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config is the best configuration
+        with them included.
       - Applies only to protein matrices quantified with top3; near-best and held-out rates compare only
         top3 configurations.
   - id: cptac-clinical-preset
@@ -445,30 +451,30 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1152
-      service_candidates_per_study: 160
-      gated_service_candidates: 96
+      candidates_per_study: 2040
+      service_candidates_per_study: 250
+      gated_service_candidates: 186
       fp_gate: 0.01
       shift_gate: 0.2
       mean_fp_rate: 0.0
       mean_f1: 0.7214
       mean_spearman: 0.8237
-      mean_study_deficit: 0.0129
-      median_study_deficit: 0.0105
-      iqr_study_deficit: 0.0101
+      mean_study_deficit: 0.0145
+      median_study_deficit: 0.0121
+      iqr_study_deficit: 0.0145
       near_best: 0.01
-      near_best_rate: 0.4167
+      near_best_rate: 0.3333
       tied_at_best: 1
       position_in_general_ranking: 1
-      general_ranking_size: 96
-      overall_best_config: maxlfq|median|none|irs|half|deqms
+      general_ranking_size: 186
+      overall_best_config: maxlfq|hierarchical|none|irs|half|rots
       lodo_unit: study
       lodo_folds: 12
       lodo_folds_selecting_preset: 12
-      lodo_near_best_rate: 0.4167
-      mean_lodo_regret: 0.012857
-      max_lodo_regret: 0.042303
-      mean_lodo_rank_spearman: 0.739
+      lodo_near_best_rate: 0.3333
+      mean_lodo_regret: 0.014452
+      max_lodo_regret: 0.042898
+      mean_lodo_rank_spearman: 0.737
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
@@ -479,12 +485,14 @@ evidence:
       - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
         average; both halves share such a shift, which raised their call agreement, so the shift gate
         leaves these configurations out.
-      - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
+      - ROTS and LimROTS were run only for configurations that can enter the ranking (no ComBat, and normalized
+        unless the quantification is directlfq).
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config, the best configuration
+        with them included, uses hierarchical normalization and IRS across plexes.
       - Quantification is frozen when the workflow starts from a protein matrix.
-      - Leave-one-study-out selected this preset in every fold, but it was near-best in only 5 of the
-        12 held-out studies (largest shortfall 0.042).
+      - Leave-one-study-out selected this preset in every fold, but it was near-best in only 4 of the
+        12 held-out studies (largest shortfall 0.043).
       - The CompRef cohort (cptac-compref-preset) also selected maxlfq with median normalization, but
         impseqrob imputation and LimROTS.
   - id: cptac-clinical-directlfq-preset
@@ -516,30 +524,30 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1152
-      service_candidates_per_study: 32
-      gated_service_candidates: 32
+      candidates_per_study: 2040
+      service_candidates_per_study: 62
+      gated_service_candidates: 62
       fp_gate: 0.01
       shift_gate: 0.2
       mean_fp_rate: 0.0
       mean_f1: 0.6945
       mean_spearman: 0.7943
-      mean_study_deficit: 0.019
-      median_study_deficit: 0.0187
-      iqr_study_deficit: 0.013
+      mean_study_deficit: 0.0201
+      median_study_deficit: 0.0191
+      iqr_study_deficit: 0.0125
       near_best: 0.01
       near_best_rate: 0.25
       tied_at_best: 1
-      position_in_general_ranking: 9
-      general_ranking_size: 96
-      overall_best_config: maxlfq|median|none|irs|half|deqms
+      position_in_general_ranking: 16
+      general_ranking_size: 186
+      overall_best_config: maxlfq|hierarchical|none|irs|half|rots
       lodo_unit: study
       lodo_folds: 12
       lodo_folds_selecting_preset: 11
       lodo_near_best_rate: 0.25
-      mean_lodo_regret: 0.028949
+      mean_lodo_regret: 0.030065
       max_lodo_regret: 0.141423
-      mean_lodo_rank_spearman: 0.624
+      mean_lodo_rank_spearman: 0.607
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
@@ -550,9 +558,11 @@ evidence:
       - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
         average; both halves share such a shift, which raised their call agreement, so the shift gate
         leaves these configurations out.
-      - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
+      - ROTS and LimROTS were run only for configurations that can enter the ranking (no ComBat, and normalized
+        unless the quantification is directlfq).
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config, the best configuration
+        with them included, uses hierarchical normalization and IRS across plexes.
       - Applies only to protein matrices quantified with directlfq; near-best and held-out rates compare
         only directlfq configurations.
   - id: cptac-clinical-maxlfq-preset
@@ -584,30 +594,30 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1152
-      service_candidates_per_study: 32
-      gated_service_candidates: 16
+      candidates_per_study: 2040
+      service_candidates_per_study: 47
+      gated_service_candidates: 31
       fp_gate: 0.01
       shift_gate: 0.2
       mean_fp_rate: 0.0
       mean_f1: 0.7214
       mean_spearman: 0.8237
-      mean_study_deficit: 0.0098
-      median_study_deficit: 0.0061
-      iqr_study_deficit: 0.012
+      mean_study_deficit: 0.0119
+      median_study_deficit: 0.0079
+      iqr_study_deficit: 0.0101
       near_best: 0.01
-      near_best_rate: 0.6667
+      near_best_rate: 0.5833
       tied_at_best: 1
       position_in_general_ranking: 1
-      general_ranking_size: 96
-      overall_best_config: maxlfq|median|none|irs|half|deqms
+      general_ranking_size: 186
+      overall_best_config: maxlfq|hierarchical|none|irs|half|rots
       lodo_unit: study
       lodo_folds: 12
       lodo_folds_selecting_preset: 12
-      lodo_near_best_rate: 0.6667
-      mean_lodo_regret: 0.00979
-      max_lodo_regret: 0.042303
-      mean_lodo_rank_spearman: 0.735
+      lodo_near_best_rate: 0.5833
+      mean_lodo_regret: 0.011925
+      max_lodo_regret: 0.042898
+      mean_lodo_rank_spearman: 0.702
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
@@ -618,9 +628,11 @@ evidence:
       - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
         average; both halves share such a shift, which raised their call agreement, so the shift gate
         leaves these configurations out.
-      - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
+      - ROTS and LimROTS were run only for configurations that can enter the ranking (no ComBat, and normalized
+        unless the quantification is directlfq).
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config, the best configuration
+        with them included, uses hierarchical normalization and IRS across plexes.
       - Applies only to protein matrices quantified with maxlfq; near-best and held-out rates compare
         only maxlfq configurations.
   - id: cptac-clinical-pibaq-preset
@@ -652,30 +664,30 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1152
-      service_candidates_per_study: 32
-      gated_service_candidates: 16
+      candidates_per_study: 2040
+      service_candidates_per_study: 47
+      gated_service_candidates: 31
       fp_gate: 0.01
       shift_gate: 0.2
       mean_fp_rate: 0.0
       mean_f1: 0.6576
       mean_spearman: 0.7408
-      mean_study_deficit: 0.0113
-      median_study_deficit: 0.0075
-      iqr_study_deficit: 0.0115
+      mean_study_deficit: 0.0142
+      median_study_deficit: 0.0079
+      iqr_study_deficit: 0.0131
       near_best: 0.01
-      near_best_rate: 0.75
+      near_best_rate: 0.5833
       tied_at_best: 1
-      position_in_general_ranking: 53
-      general_ranking_size: 96
-      overall_best_config: maxlfq|median|none|irs|half|deqms
+      position_in_general_ranking: 104
+      general_ranking_size: 186
+      overall_best_config: maxlfq|hierarchical|none|irs|half|rots
       lodo_unit: study
       lodo_folds: 12
       lodo_folds_selecting_preset: 12
-      lodo_near_best_rate: 0.75
-      mean_lodo_regret: 0.011277
-      max_lodo_regret: 0.048112
-      mean_lodo_rank_spearman: 0.53
+      lodo_near_best_rate: 0.5833
+      mean_lodo_regret: 0.014238
+      max_lodo_regret: 0.048757
+      mean_lodo_rank_spearman: 0.509
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
@@ -686,9 +698,11 @@ evidence:
       - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
         average; both halves share such a shift, which raised their call agreement, so the shift gate
         leaves these configurations out.
-      - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
+      - ROTS and LimROTS were run only for configurations that can enter the ranking (no ComBat, and normalized
+        unless the quantification is directlfq).
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config, the best configuration
+        with them included, uses hierarchical normalization and IRS across plexes.
       - Applies only to protein matrices quantified with pibaq; near-best and held-out rates compare only
         pibaq configurations.
   - id: cptac-clinical-sum-preset
@@ -720,30 +734,30 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1152
-      service_candidates_per_study: 32
-      gated_service_candidates: 16
+      candidates_per_study: 2040
+      service_candidates_per_study: 47
+      gated_service_candidates: 31
       fp_gate: 0.01
       shift_gate: 0.2
       mean_fp_rate: 0.0
       mean_f1: 0.6824
       mean_spearman: 0.7828
-      mean_study_deficit: 0.0117
-      median_study_deficit: 0.0073
-      iqr_study_deficit: 0.0149
+      mean_study_deficit: 0.0144
+      median_study_deficit: 0.0103
+      iqr_study_deficit: 0.0148
       near_best: 0.01
-      near_best_rate: 0.6667
+      near_best_rate: 0.4167
       tied_at_best: 1
-      position_in_general_ranking: 21
-      general_ranking_size: 96
-      overall_best_config: maxlfq|median|none|irs|half|deqms
+      position_in_general_ranking: 39
+      general_ranking_size: 186
+      overall_best_config: maxlfq|hierarchical|none|irs|half|rots
       lodo_unit: study
       lodo_folds: 12
-      lodo_folds_selecting_preset: 12
-      lodo_near_best_rate: 0.6667
-      mean_lodo_regret: 0.01172
-      max_lodo_regret: 0.039366
-      mean_lodo_rank_spearman: 0.728
+      lodo_folds_selecting_preset: 11
+      lodo_near_best_rate: 0.3333
+      mean_lodo_regret: 0.019753
+      max_lodo_regret: 0.064855
+      mean_lodo_rank_spearman: 0.717
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
@@ -754,9 +768,11 @@ evidence:
       - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
         average; both halves share such a shift, which raised their call agreement, so the shift gate
         leaves these configurations out.
-      - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
+      - ROTS and LimROTS were run only for configurations that can enter the ranking (no ComBat, and normalized
+        unless the quantification is directlfq).
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config, the best configuration
+        with them included, uses hierarchical normalization and IRS across plexes.
       - Applies only to protein matrices quantified with sum; near-best and held-out rates compare only
         sum configurations.
   - id: cptac-clinical-top3-preset
@@ -788,30 +804,30 @@ evidence:
       ensemble_k: null
     metrics:
       studies: 12
-      candidates_per_study: 1152
-      service_candidates_per_study: 32
-      gated_service_candidates: 16
+      candidates_per_study: 2040
+      service_candidates_per_study: 47
+      gated_service_candidates: 31
       fp_gate: 0.01
       shift_gate: 0.2
       mean_fp_rate: 0.0
       mean_f1: 0.6796
       mean_spearman: 0.7698
-      mean_study_deficit: 0.01
-      median_study_deficit: 0.005
-      iqr_study_deficit: 0.0149
+      mean_study_deficit: 0.0128
+      median_study_deficit: 0.01
+      iqr_study_deficit: 0.0105
       near_best: 0.01
-      near_best_rate: 0.5833
+      near_best_rate: 0.5
       tied_at_best: 1
-      position_in_general_ranking: 27
-      general_ranking_size: 96
-      overall_best_config: maxlfq|median|none|irs|half|deqms
+      position_in_general_ranking: 49
+      general_ranking_size: 186
+      overall_best_config: maxlfq|hierarchical|none|irs|half|rots
       lodo_unit: study
       lodo_folds: 12
-      lodo_folds_selecting_preset: 12
-      lodo_near_best_rate: 0.5833
-      mean_lodo_regret: 0.010025
-      max_lodo_regret: 0.037876
-      mean_lodo_rank_spearman: 0.675
+      lodo_folds_selecting_preset: 11
+      lodo_near_best_rate: 0.4167
+      mean_lodo_regret: 0.019018
+      max_lodo_regret: 0.07419
+      mean_lodo_rank_spearman: 0.677
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark data are 12 CPTAC clinical TMT cohorts compared tumor versus normal, quantified by Mokume
@@ -822,9 +838,11 @@ evidence:
       - Without normalization (except directlfq) tumor versus normal shifted by 0.5-0.7 log2 units on
         average; both halves share such a shift, which raised their call agreement, so the shift gate
         leaves these configurations out.
-      - Only limma and DEqMS were run; ROTS and LimROTS were not evaluated in this cohort.
-      - Configurations with batch correction or a protein filter are left out because the service cannot
-        run them; overall_best_config, the best configuration with them included, uses IRS across plexes.
+      - ROTS and LimROTS were run only for configurations that can enter the ranking (no ComBat, and normalized
+        unless the quantification is directlfq).
+      - Configurations with batch correction, a protein filter or feature-level hierarchical normalization
+        are left out because the service cannot run them; overall_best_config, the best configuration
+        with them included, uses hierarchical normalization and IRS across plexes.
       - Applies only to protein matrices quantified with top3; near-best and held-out rates compare only
         top3 configurations.
   - id: grid-lfq-preset
@@ -863,13 +881,13 @@ evidence:
     metrics:
       studies: 18
       datasets: 39
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 310
-      mean_study_deficit: 0.0555
-      median_study_deficit: 0.0342
-      iqr_study_deficit: 0.0325
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 390
+      mean_study_deficit: 0.0633
+      median_study_deficit: 0.0373
+      iqr_study_deficit: 0.0495
       near_best: 0.01
-      near_best_rate: 0.2778
+      near_best_rate: 0.2222
       top_fraction: 0.05
       top_rate: 0.3333
       mean_score_a: 0.8224
@@ -878,16 +896,16 @@ evidence:
       lodo_unit: study
       lodo_folds: 18
       lodo_folds_selecting_preset: 17
-      lodo_near_best_rate: 0.2778
-      mean_lodo_regret: 0.041762
+      lodo_near_best_rate: 0.2222
+      mean_lodo_regret: 0.041987
       max_lodo_regret: 0.187337
-      mean_lodo_rank_spearman: 0.497
+      mean_lodo_rank_spearman: 0.535
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
       - Quantification is frozen when the workflow starts from a protein matrix.
       - Many configurations fall within the study-bootstrap interval of this preset, and on held-out studies
-        it was within 0.01 of the best deficit in 5 of 18 studies.
+        it was within 0.01 of the best deficit in 4 of 18 studies.
       - DirectLFQ normalizes samples internally; where many proteins change in one direction (PXD000279),
         maxlfq or DirectLFQ without sample normalization (mokume --directlfq-no-sample-normalization)
         scored far higher.
@@ -928,13 +946,13 @@ evidence:
     metrics:
       studies: 18
       datasets: 39
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0555
-      median_study_deficit: 0.0342
-      iqr_study_deficit: 0.0325
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0633
+      median_study_deficit: 0.0373
+      iqr_study_deficit: 0.0495
       near_best: 0.01
-      near_best_rate: 0.4444
+      near_best_rate: 0.3889
       top_fraction: 0.05
       top_rate: 0.1111
       mean_score_a: 0.8224
@@ -943,10 +961,10 @@ evidence:
       lodo_unit: study
       lodo_folds: 18
       lodo_folds_selecting_preset: 17
-      lodo_near_best_rate: 0.4444
-      mean_lodo_regret: 0.024702
+      lodo_near_best_rate: 0.3889
+      mean_lodo_regret: 0.024849
       max_lodo_regret: 0.110021
-      mean_lodo_rank_spearman: 0.302
+      mean_lodo_rank_spearman: 0.344
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
@@ -992,11 +1010,11 @@ evidence:
     metrics:
       studies: 18
       datasets: 39
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0649
-      median_study_deficit: 0.0524
-      iqr_study_deficit: 0.0452
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0727
+      median_study_deficit: 0.0596
+      iqr_study_deficit: 0.0557
       near_best: 0.01
       near_best_rate: 0.4444
       top_fraction: 0.05
@@ -1010,7 +1028,7 @@ evidence:
       lodo_near_best_rate: 0.3333
       mean_lodo_regret: 0.055716
       max_lodo_regret: 0.30717
-      mean_lodo_rank_spearman: 0.251
+      mean_lodo_rank_spearman: 0.334
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
@@ -1053,11 +1071,11 @@ evidence:
     metrics:
       studies: 18
       datasets: 39
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.112
-      median_study_deficit: 0.0946
-      iqr_study_deficit: 0.1024
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.1198
+      median_study_deficit: 0.1086
+      iqr_study_deficit: 0.0975
       near_best: 0.01
       near_best_rate: 0.2222
       top_fraction: 0.05
@@ -1069,9 +1087,9 @@ evidence:
       lodo_folds: 18
       lodo_folds_selecting_preset: 12
       lodo_near_best_rate: 0.0556
-      mean_lodo_regret: 0.058222
+      mean_lodo_regret: 0.0583
       max_lodo_regret: 0.195896
-      mean_lodo_rank_spearman: 0.36
+      mean_lodo_rank_spearman: 0.488
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
@@ -1115,11 +1133,11 @@ evidence:
     metrics:
       studies: 18
       datasets: 39
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0985
-      median_study_deficit: 0.0818
-      iqr_study_deficit: 0.0831
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.1063
+      median_study_deficit: 0.0855
+      iqr_study_deficit: 0.0866
       near_best: 0.01
       near_best_rate: 0.4444
       top_fraction: 0.05
@@ -1133,7 +1151,7 @@ evidence:
       lodo_near_best_rate: 0.3333
       mean_lodo_regret: 0.045941
       max_lodo_regret: 0.230887
-      mean_lodo_rank_spearman: 0.25
+      mean_lodo_rank_spearman: 0.404
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
@@ -1177,11 +1195,11 @@ evidence:
     metrics:
       studies: 18
       datasets: 39
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.1284
-      median_study_deficit: 0.1126
-      iqr_study_deficit: 0.0435
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.1362
+      median_study_deficit: 0.1209
+      iqr_study_deficit: 0.0475
       near_best: 0.01
       near_best_rate: 0.2222
       top_fraction: 0.05
@@ -1195,7 +1213,7 @@ evidence:
       lodo_near_best_rate: 0.2222
       mean_lodo_regret: 0.051872
       max_lodo_regret: 0.226423
-      mean_lodo_rank_spearman: 0.247
+      mean_lodo_rank_spearman: 0.369
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DDA data were searched and quantified with quantms and converted to QPX.
@@ -1241,25 +1259,25 @@ evidence:
     metrics:
       studies: 14
       datasets: 38
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 310
-      mean_study_deficit: 0.0333
-      median_study_deficit: 0.0228
-      iqr_study_deficit: 0.0154
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 390
+      mean_study_deficit: 0.0363
+      median_study_deficit: 0.0254
+      iqr_study_deficit: 0.0145
       near_best: 0.01
       near_best_rate: 0.5
       top_fraction: 0.05
-      top_rate: 0.4286
+      top_rate: 0.5
       mean_score_a: 0.8953
       mean_coverage: 0.745
-      overall_best_config: directlfq|none|mindet|none|deqms
+      overall_best_config: maxlfq|hierarchical|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 6
       lodo_near_best_rate: 0.0714
       mean_lodo_regret: 0.035269
       max_lodo_regret: 0.104318
-      mean_lodo_rank_spearman: 0.518
+      mean_lodo_rank_spearman: 0.538
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -1305,25 +1323,25 @@ evidence:
     metrics:
       studies: 14
       datasets: 38
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0333
-      median_study_deficit: 0.0228
-      iqr_study_deficit: 0.0154
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0363
+      median_study_deficit: 0.0254
+      iqr_study_deficit: 0.0145
       near_best: 0.01
       near_best_rate: 0.7143
       top_fraction: 0.05
       top_rate: 0.2857
       mean_score_a: 0.8953
       mean_coverage: 0.745
-      overall_best_config: directlfq|none|mindet|none|deqms
+      overall_best_config: maxlfq|hierarchical|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 13
       lodo_near_best_rate: 0.6429
       mean_lodo_regret: 0.008983
       max_lodo_regret: 0.026253
-      mean_lodo_rank_spearman: 0.368
+      mean_lodo_rank_spearman: 0.422
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -1369,25 +1387,25 @@ evidence:
     metrics:
       studies: 14
       datasets: 38
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0337
-      median_study_deficit: 0.0308
-      iqr_study_deficit: 0.0185
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0367
+      median_study_deficit: 0.0339
+      iqr_study_deficit: 0.0234
       near_best: 0.01
       near_best_rate: 0.6429
       top_fraction: 0.05
       top_rate: 0.2857
       mean_score_a: 0.8909
       mean_coverage: 0.739
-      overall_best_config: directlfq|none|mindet|none|deqms
+      overall_best_config: maxlfq|hierarchical|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 13
       lodo_near_best_rate: 0.5714
       mean_lodo_regret: 0.01194
       max_lodo_regret: 0.052564
-      mean_lodo_rank_spearman: 0.365
+      mean_lodo_rank_spearman: 0.402
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -1432,25 +1450,25 @@ evidence:
     metrics:
       studies: 14
       datasets: 38
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0828
-      median_study_deficit: 0.0734
-      iqr_study_deficit: 0.0534
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0858
+      median_study_deficit: 0.0783
+      iqr_study_deficit: 0.0516
       near_best: 0.01
       near_best_rate: 0.2857
       top_fraction: 0.05
       top_rate: 0.0714
       mean_score_a: 0.8471
       mean_coverage: 0.997
-      overall_best_config: directlfq|none|mindet|none|deqms
+      overall_best_config: maxlfq|hierarchical|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 14
       lodo_near_best_rate: 0.2857
       mean_lodo_regret: 0.025855
       max_lodo_regret: 0.091261
-      mean_lodo_rank_spearman: 0.027
+      mean_lodo_rank_spearman: 0.193
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -1496,25 +1514,25 @@ evidence:
     metrics:
       studies: 14
       datasets: 38
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0819
-      median_study_deficit: 0.0815
-      iqr_study_deficit: 0.0507
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0849
+      median_study_deficit: 0.0839
+      iqr_study_deficit: 0.0449
       near_best: 0.01
       near_best_rate: 0.3571
       top_fraction: 0.05
       top_rate: 0.1429
       mean_score_a: 0.8453
       mean_coverage: 0.773
-      overall_best_config: directlfq|none|mindet|none|deqms
+      overall_best_config: maxlfq|hierarchical|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 14
       lodo_near_best_rate: 0.3571
       mean_lodo_regret: 0.022136
       max_lodo_regret: 0.091294
-      mean_lodo_rank_spearman: 0.101
+      mean_lodo_rank_spearman: 0.245
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -1560,25 +1578,25 @@ evidence:
     metrics:
       studies: 14
       datasets: 38
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.1064
-      median_study_deficit: 0.0997
-      iqr_study_deficit: 0.0496
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.1094
+      median_study_deficit: 0.1071
+      iqr_study_deficit: 0.0476
       near_best: 0.01
       near_best_rate: 0.2857
       top_fraction: 0.05
       top_rate: 0.1429
       mean_score_a: 0.8209
       mean_coverage: 0.773
-      overall_best_config: directlfq|none|mindet|none|deqms
+      overall_best_config: maxlfq|hierarchical|mindet|none|deqms
       lodo_unit: study
       lodo_folds: 14
       lodo_folds_selecting_preset: 14
       lodo_near_best_rate: 0.2857
       mean_lodo_regret: 0.021485
       max_lodo_regret: 0.087719
-      mean_lodo_rank_spearman: 0.102
+      mean_lodo_rank_spearman: 0.274
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark DIA data were quantified with DIA-NN through quantmsdiann and converted to QPX.
@@ -1616,25 +1634,25 @@ evidence:
     metrics:
       studies: 5
       datasets: 9
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 310
-      mean_study_deficit: 0.0481
-      median_study_deficit: 0.016
-      iqr_study_deficit: 0.0394
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 390
+      mean_study_deficit: 0.0581
+      median_study_deficit: 0.0308
+      iqr_study_deficit: 0.0339
       near_best: 0.01
-      near_best_rate: 0.6
+      near_best_rate: 0.4
       top_fraction: 0.05
-      top_rate: 0.6
+      top_rate: 0.4
       mean_score_a: 0.842
       mean_coverage: 0.8032
-      overall_best_config: directlfq|none|impseqrob|none|deqms
+      overall_best_config: maxlfq|hierarchical|impseq|none|deqms
       lodo_unit: study
       lodo_folds: 5
       lodo_folds_selecting_preset: 2
       lodo_near_best_rate: 0.2
-      mean_lodo_regret: 0.073105
+      mean_lodo_regret: 0.078797
       max_lodo_regret: 0.152407
-      mean_lodo_rank_spearman: 0.372
+      mean_lodo_rank_spearman: 0.32
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1643,10 +1661,9 @@ evidence:
         and qrilc scored lower; median normalization lowered the scores.
       - Quantification is frozen when the workflow starts from a protein matrix.
       - Held-out transfer is weak; the preset comes from PXD014750 (with it held out, the other studies
-        selected no imputation with the half filter), and with PXD040449 held out the other studies selected
-        maxlfq.
+        selected no imputation and proDA), and with PXD040449 held out the other studies selected maxlfq.
       - On the CPTAC TMT studies (cptac-mokumebench) this configuration ranked 50th of 310 service configurations
-        in the CompRef cohort and 51st of 96 in the clinical cohort, and was near-best in 1 of the 24
+        in the CompRef cohort and 102nd of 186 in the clinical cohort, and was near-best in 1 of the 24
         studies.
   - id: grid-tmt-directlfq-preset
     source_id: spike-in-mokumebench
@@ -1678,25 +1695,25 @@ evidence:
     metrics:
       studies: 5
       datasets: 9
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0481
-      median_study_deficit: 0.016
-      iqr_study_deficit: 0.0394
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0581
+      median_study_deficit: 0.0308
+      iqr_study_deficit: 0.0339
       near_best: 0.01
       near_best_rate: 1.0
       top_fraction: 0.05
       top_rate: 0.2
       mean_score_a: 0.842
       mean_coverage: 0.8032
-      overall_best_config: directlfq|none|impseqrob|none|deqms
+      overall_best_config: maxlfq|hierarchical|impseq|none|deqms
       lodo_unit: study
       lodo_folds: 5
       lodo_folds_selecting_preset: 3
       lodo_near_best_rate: 0.6
-      mean_lodo_regret: 0.012524
+      mean_lodo_regret: 0.012888
       max_lodo_regret: 0.038254
-      mean_lodo_rank_spearman: 0.716
+      mean_lodo_rank_spearman: 0.697
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1735,25 +1752,25 @@ evidence:
     metrics:
       studies: 5
       datasets: 9
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0564
-      median_study_deficit: 0.0333
-      iqr_study_deficit: 0.0352
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0664
+      median_study_deficit: 0.0481
+      iqr_study_deficit: 0.0643
       near_best: 0.01
-      near_best_rate: 0.6
+      near_best_rate: 0.4
       top_fraction: 0.05
-      top_rate: 0.4
+      top_rate: 0.0
       mean_score_a: 0.8153
       mean_coverage: 0.8032
-      overall_best_config: directlfq|none|impseqrob|none|deqms
+      overall_best_config: maxlfq|hierarchical|impseq|none|deqms
       lodo_unit: study
       lodo_folds: 5
       lodo_folds_selecting_preset: 3
       lodo_near_best_rate: 0.2
-      mean_lodo_regret: 0.023716
-      max_lodo_regret: 0.05873
-      mean_lodo_rank_spearman: 0.238
+      mean_lodo_regret: 0.054082
+      max_lodo_regret: 0.128532
+      mean_lodo_rank_spearman: 0.161
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1793,25 +1810,25 @@ evidence:
     metrics:
       studies: 5
       datasets: 9
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0748
-      median_study_deficit: 0.0734
-      iqr_study_deficit: 0.1167
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0847
+      median_study_deficit: 0.0735
+      iqr_study_deficit: 0.1123
       near_best: 0.01
       near_best_rate: 0.6
       top_fraction: 0.05
-      top_rate: 0.4
+      top_rate: 0.2
       mean_score_a: 0.8107
       mean_coverage: 0.9954
-      overall_best_config: directlfq|none|impseqrob|none|deqms
+      overall_best_config: maxlfq|hierarchical|impseq|none|deqms
       lodo_unit: study
       lodo_folds: 5
       lodo_folds_selecting_preset: 4
       lodo_near_best_rate: 0.4
-      mean_lodo_regret: 0.028769
-      max_lodo_regret: 0.062771
-      mean_lodo_rank_spearman: 0.423
+      mean_lodo_regret: 0.02968
+      max_lodo_regret: 0.067052
+      mean_lodo_rank_spearman: 0.343
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1852,25 +1869,25 @@ evidence:
     metrics:
       studies: 5
       datasets: 9
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0686
-      median_study_deficit: 0.0589
-      iqr_study_deficit: 0.0181
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0786
+      median_study_deficit: 0.0881
+      iqr_study_deficit: 0.0328
       near_best: 0.01
-      near_best_rate: 0.6
+      near_best_rate: 0.4
       top_fraction: 0.05
-      top_rate: 0.4
+      top_rate: 0.2
       mean_score_a: 0.8012
       mean_coverage: 0.8035
-      overall_best_config: directlfq|none|impseqrob|none|deqms
+      overall_best_config: maxlfq|hierarchical|impseq|none|deqms
       lodo_unit: study
       lodo_folds: 5
-      lodo_folds_selecting_preset: 4
-      lodo_near_best_rate: 0.6
-      mean_lodo_regret: 0.016269
-      max_lodo_regret: 0.042339
-      mean_lodo_rank_spearman: 0.233
+      lodo_folds_selecting_preset: 3
+      lodo_near_best_rate: 0.2
+      mean_lodo_regret: 0.054981
+      max_lodo_regret: 0.126134
+      mean_lodo_rank_spearman: 0.184
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.
@@ -1910,25 +1927,25 @@ evidence:
     metrics:
       studies: 5
       datasets: 9
-      candidates_per_dataset: 744
-      service_candidates_per_dataset: 62
-      mean_study_deficit: 0.0801
-      median_study_deficit: 0.0731
-      iqr_study_deficit: 0.0378
+      candidates_per_dataset: 1410
+      service_candidates_per_dataset: 78
+      mean_study_deficit: 0.0901
+      median_study_deficit: 0.0878
+      iqr_study_deficit: 0.0669
       near_best: 0.01
-      near_best_rate: 0.6
+      near_best_rate: 0.4
       top_fraction: 0.05
-      top_rate: 0.6
+      top_rate: 0.4
       mean_score_a: 0.8006
       mean_coverage: 0.8007
-      overall_best_config: directlfq|none|impseqrob|none|deqms
+      overall_best_config: maxlfq|hierarchical|impseq|none|deqms
       lodo_unit: study
       lodo_folds: 5
       lodo_folds_selecting_preset: 3
-      lodo_near_best_rate: 0.4
-      mean_lodo_regret: 0.019774
-      max_lodo_regret: 0.04942
-      mean_lodo_rank_spearman: 0.276
+      lodo_near_best_rate: 0.2
+      mean_lodo_regret: 0.045622
+      max_lodo_regret: 0.079559
+      mean_lodo_rank_spearman: 0.22
     limitations:
       - Candidate preset has not been published as a Mokume default.
       - Benchmark TMT data were searched and quantified with quantms and converted to QPX.

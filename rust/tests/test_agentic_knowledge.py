@@ -57,7 +57,7 @@ def test_bundled_knowledge_exposes_dataset_summaries_without_promoting_them() ->
     assert len(graph.datasets) == 88
     assert dataset.data_type == "DIA"
     assert dataset.preset_eligible is False
-    assert dataset.benchmark["successful_candidates"] == 744
+    assert dataset.benchmark["successful_candidates"] == 1410
     assert dataset.benchmark["failed_candidates"] == 0
     assert dataset.held_out_evaluation is None
     assert all(
