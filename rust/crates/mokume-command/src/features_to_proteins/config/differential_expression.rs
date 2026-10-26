@@ -9,56 +9,59 @@ pub(super) fn resolve_differential_expression(
 ) -> mokume_core::Result<DifferentialExpressionConfig> {
     let defaults = DifferentialExpressionConfig::default();
     let enabled = de_options_supplied(args);
-    let method = args.de_method.clone().unwrap_or(defaults.method);
+    let method = args.de.de_method.clone().unwrap_or(defaults.method);
     let resolved_method = resolved_de_method(&method, quantification, args);
     validate_de_method_options(args, &method, resolved_method)?;
     if enabled {
         validate_de_requirements(args, &method)?;
     }
     let (log2fc_threshold, auto_effect_size_gate) = args
+        .de
         .de_log2fc_threshold
         .unwrap_or(DeLog2FcArg::Fixed(defaults.log2fc_threshold))
         .into_config();
     Ok(DifferentialExpressionConfig {
         enabled,
         contrasts: de_contrasts(args),
-        contrasts_file: args.de_contrast_file.clone(),
+        contrasts_file: args.de.de_contrast_file.clone(),
         method,
-        ensemble_methods: (!args.de_ensemble_method.is_empty())
-            .then(|| args.de_ensemble_method.clone()),
-        ensemble_min_k: args.de_ensemble_min_k.unwrap_or(defaults.ensemble_min_k),
+        ensemble_methods: (!args.de.de_ensemble_method.is_empty())
+            .then(|| args.de.de_ensemble_method.clone()),
+        ensemble_min_k: args.de.de_ensemble_min_k.unwrap_or(defaults.ensemble_min_k),
         log2fc_threshold,
         effect_size_gate: args
+            .de
             .de_effect_size_gate
             .clone()
             .map(|value| value.replace('-', "_"))
             .or(auto_effect_size_gate),
-        fdr_threshold: args.de_fdr_threshold.unwrap_or(defaults.fdr_threshold),
-        fdr_method: args.de_fdr_method.clone().unwrap_or(defaults.fdr_method),
-        output: args.de_output.clone(),
-        covariates: args.de_covariate.clone(),
-        block: args.de_block.clone(),
+        fdr_threshold: args.de.de_fdr_threshold.unwrap_or(defaults.fdr_threshold),
+        fdr_method: args.de.de_fdr_method.clone().unwrap_or(defaults.fdr_method),
+        output: args.de.de_output.clone(),
+        covariates: args.de.de_covariate.clone(),
+        block: args.de.de_block.clone(),
     })
 }
 
 fn de_options_supplied(args: &Features2ProteinsArgs) -> bool {
-    !args.de_contrast.is_empty()
-        || args.de_contrast_file.is_some()
-        || args.de_method.is_some()
-        || !args.de_covariate.is_empty()
-        || args.de_block.is_some()
-        || !args.de_ensemble_method.is_empty()
-        || args.de_ensemble_min_k.is_some()
-        || args.de_log2fc_threshold.is_some()
-        || args.de_effect_size_gate.is_some()
-        || args.de_fdr_threshold.is_some()
-        || args.de_fdr_method.is_some()
-        || args.de_output.is_some()
+    !args.de.de_contrast.is_empty()
+        || args.de.de_contrast_file.is_some()
+        || args.de.de_method.is_some()
+        || !args.de.de_covariate.is_empty()
+        || args.de.de_block.is_some()
+        || !args.de.de_ensemble_method.is_empty()
+        || args.de.de_ensemble_min_k.is_some()
+        || args.de.de_log2fc_threshold.is_some()
+        || args.de.de_effect_size_gate.is_some()
+        || args.de.de_fdr_threshold.is_some()
+        || args.de.de_fdr_method.is_some()
+        || args.de.de_output.is_some()
 }
 
 fn de_contrasts(args: &Features2ProteinsArgs) -> Option<Vec<String>> {
-    (!args.de_contrast.is_empty()).then(|| {
-        args.de_contrast
+    (!args.de.de_contrast.is_empty()).then(|| {
+        args.de
+            .de_contrast
             .chunks_exact(2)
             .map(|groups| format!("{} vs {}", groups[0], groups[1]))
             .collect()
@@ -72,8 +75,8 @@ fn resolved_de_method<'a>(
 ) -> &'a str {
     if method.eq_ignore_ascii_case("auto") {
         if quantification == QuantMethod::DirectLfq
-            || !args.de_covariate.is_empty()
-            || args.de_block.is_some()
+            || !args.de.de_covariate.is_empty()
+            || args.de.de_block.is_some()
         {
             "deqms"
         } else {
@@ -89,7 +92,7 @@ fn validate_de_method_options(
     method: &str,
     resolved_method: &str,
 ) -> mokume_core::Result<()> {
-    if args.de_ensemble_min_k.is_some() && !method.eq_ignore_ascii_case("ensemble") {
+    if args.de.de_ensemble_min_k.is_some() && !method.eq_ignore_ascii_case("ensemble") {
         return Err(MokumeError::InvalidInput {
             message: "--de-ensemble-min-k only applies to --de-method ensemble".to_owned(),
         });
@@ -98,17 +101,17 @@ fn validate_de_method_options(
         resolved_method.to_ascii_lowercase().as_str(),
         "limma" | "deqms"
     );
-    if !args.de_covariate.is_empty() && !design_method {
+    if !args.de.de_covariate.is_empty() && !design_method {
         return Err(invalid_input(
             "--de-covariate requires --de-method limma or deqms",
         ));
     }
-    if args.de_block.is_some() && !design_method {
+    if args.de.de_block.is_some() && !design_method {
         return Err(invalid_input(
             "--de-block requires --de-method limma or deqms",
         ));
     }
-    if args.de_fdr_method.is_some()
+    if args.de.de_fdr_method.is_some()
         && matches!(
             resolved_method.to_ascii_lowercase().as_str(),
             "rots" | "limrots"
@@ -129,12 +132,12 @@ fn validate_de_requirements(args: &Features2ProteinsArgs, method: &str) -> mokum
             "differential expression requires an SDRF file (--sdrf)",
         ));
     }
-    if args.de_output.is_none() {
+    if args.de.de_output.is_none() {
         return Err(invalid_input(
             "differential expression requires --de-output so results are not discarded",
         ));
     }
-    if !args.de_ensemble_method.is_empty() && !method.eq_ignore_ascii_case("ensemble") {
+    if !args.de.de_ensemble_method.is_empty() && !method.eq_ignore_ascii_case("ensemble") {
         return Err(invalid_input(
             "--de-ensemble-method only applies to --de-method ensemble",
         ));
