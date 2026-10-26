@@ -43,6 +43,9 @@ SAMPLE_POINT_COLOR = "#52514e"
 TEXT_COLOR = "#333333"
 GRID_COLOR = "#E5E5E5"
 AXIS_COLOR = "#D9D9D9"
+WHITE = "#ffffff"
+PEPTIDE_COLOR = "#D0D0D0"
+INACTIVE_COLOR = "#E5E5E5"
 PLOTLY_AXIS_STYLE = {
     "showgrid": True,
     "gridcolor": GRID_COLOR,
@@ -103,4 +106,8 @@ tr:hover {{ background: #f8f9fa; }}
 .sig-nottested::before {{ background: {SIGNIFICANCE_COLORS["NotTested"]}; }}
 .stat-up {{ border-left: 3px solid {SIGNIFICANCE_COLORS["UP"]}; }}
 .stat-down {{ border-left: 3px solid {SIGNIFICANCE_COLORS["DOWN"]}; }}
+.info-text {{ font-size: 12px; color: #666; margin-top: 8px; }}
+.plot-grid {{ display: grid; gap: 0 20px;
+              grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); }}
+.plot-grid .wide {{ grid-column: 1 / -1; }}
 """

@@ -286,7 +286,25 @@ mokume interactive-report --protein-matrix proteins.csv \
     --contrast c1 A B de.csv
 ```
 
-Pass `--help` to either command for the full flag set.
+`plot de --ma` adds mean-log2-intensity versus log2FC plots (`ma_<key>.png`).
+`--protein-groups FILE` reads a TSV with `ProteinName` and `group` columns.
+Repeat `--expected-log2fc KEY GROUP VALUE` for contrast-specific composition
+reference lines; both require `--ma`. Unknown contrasts or groups fail.
+Multiple contrasts also produce `upset_significant.png`; `--highlight-protein`
+adds a cross-contrast fold-change plot and no longer requires `--volcano` in
+that case.
+
+```bash
+mokume plot profile -p proteins.csv --peptides peptides.csv \
+    -s experiment.sdrf.tsv --protein P00549 --protein P12345 -o profiles
+```
+
+`plot profile` writes one PNG per protein, with peptide trajectories in gray and
+the protein summary in the main color. `interactive-report --peptides FILE`
+adds the same profile to its selected-protein view. Conditions come from SDRF,
+including for four-column peptide exports.
+
+Pass `--help` to any command for the full flag set.
 
 ### Export
 

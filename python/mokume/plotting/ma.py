@@ -1,0 +1,110 @@
+"""MA plots from DE log2 group means or the corresponding protein matrix."""
+
+import pandas as pd
+from matplotlib import pyplot as plt
+
+from mokume.plotting._common import log2_matrix, style_axes
+from mokume.plotting.style import (
+    CONDITION_COLORS,
+    CONDITION_MARKERS,
+    CONDITION_STYLE_INDICES,
+    SAMPLE_POINT_COLOR,
+    SIGNIFICANCE_COLORS,
+    TEXT_COLOR,
+    WHITE,
+)
+
+
+def read_protein_groups(path):
+    """Read the explicit protein-to-group mapping used for spike-in MA plots."""
+    return pd.read_csv(path, sep="\t").set_index("ProteinName")["group"]
+
+
+def ma_values(de, protein_df, conditions, sample_to_condition):
+    """Return A in log2 units; DE mean columns already contain log2 means."""
+    columns = [f"mean_{condition}" for condition in conditions]
+    if all(column in de for column in columns):
+        return de[columns].mean(axis=1)
+    matrix = log2_matrix(protein_df)
+    means = pd.DataFrame(
+        {
+            condition: matrix[
+                [
+                    sample
+                    for sample in matrix
+                    if sample_to_condition.get(sample) == condition
+                ]
+            ].mean(axis=1)
+            for condition in conditions
+        }
+    )
+    return de["ProteinName"].map(means.mean(axis=1))
+
+
+def plot_ma(de, protein_df, sample_to_condition, output_file, options):
+    """Draw significance or composition groups with optional expected ratios."""
+    abundance = ma_values(de, protein_df, options["conditions"], sample_to_condition)
+    groups = options.get("groups")
+    labels = (
+        de["significance"]
+        if groups is None
+        else pd.Series(groups.loc[de["ProteinName"]].to_numpy(), index=de.index)
+    )
+    names = sorted(labels.unique())
+    fig, ax = plt.subplots(figsize=(8, 6))
+    _plot_groups(ax, de, abundance, labels, options)
+    for value in (-options["log2fc"], options["log2fc"]):
+        ax.axhline(value, color="grey", linestyle="--", linewidth=0.8)
+    ax.axhline(0, color=SAMPLE_POINT_COLOR, linewidth=0.6)
+    ax.set(
+        xlabel="Mean log2 intensity (A)",
+        ylabel="log2 fold change (M)",
+        title=options["title"] + (f" ({names[0]})" if len(names) == 1 else ""),
+    )
+    if len(names) > 1:
+        ax.legend(labelcolor=TEXT_COLOR, loc="center left", bbox_to_anchor=(1.02, 0.5))
+    style_axes(ax)
+    fig.tight_layout()
+    fig.savefig(output_file, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_groups(ax, de, abundance, labels, options):
+    """Draw each composition/significance group and its expected-ratio line."""
+    groups = options.get("groups")
+    names = sorted(labels.unique())
+    for index, name in enumerate(names):
+        subset = labels == name
+        color_index, marker_index = CONDITION_STYLE_INDICES[index]
+        color = (
+            SIGNIFICANCE_COLORS[name]
+            if groups is None
+            else CONDITION_COLORS[color_index]
+        )
+        marker = (
+            "o"
+            if groups is None or len(names) <= 3
+            else CONDITION_MARKERS[marker_index]
+        )
+        ax.scatter(
+            abundance[subset],
+            de.loc[subset, "log2FC"],
+            color=color,
+            marker=marker,
+            s=64,
+            linewidths=2,
+            edgecolors=WHITE,
+            label=name,
+        )
+        if name in options.get("expected", {}):
+            value = options["expected"][name]
+            ax.axhline(value, color=color, linestyle="--", linewidth=2)
+            ax.text(
+                0.01,
+                value,
+                f"{name}: {value:g}",
+                color=TEXT_COLOR,
+                transform=ax.get_yaxis_transform(),
+                va="bottom",
+                fontsize=9,
+            )

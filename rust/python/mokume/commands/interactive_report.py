@@ -67,6 +67,7 @@ def _parse_args(argv):
         default=None,
         help="Default: ./report_<key>.html.",
     )
+    parser.add_argument("--peptides", metavar="<FILE>", help="Exported peptide table.")
     add_de_result_arguments(parser)
     return parser.parse_args(argv)
 
@@ -170,6 +171,7 @@ def main(argv=None):
             highlight_genes=highlight,
             log2fc_threshold=args.log2fc,
             fdr_threshold=args.fdr,
+            peptides=args.peptides,
         )
         print("Interactive report saved to {0}".format(output_html))
 

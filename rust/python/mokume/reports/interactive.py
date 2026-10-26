@@ -4,15 +4,16 @@ Volcano heights use raw p-values. Colors use adjusted p-values and fold-change
 cutoffs. The caller supplies the condition mapping for the current contrast.
 """
 
-import json
 from string import Template
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 from plotly.offline import get_plotlyjs
 
+from mokume.reports._plots import compact_json as dump
 from mokume.core.logger import get_logger
+from mokume.plotting._common import ordered_samples
+from mokume.reports._de_diagnostics import PROFILE_CARD, ma_payload, profile_script
 from mokume.plotting.style import (
     PLOTLY_TEMPLATE,
     REPORT_CSS,
@@ -62,7 +63,7 @@ def _intensity_payload(protein_df: pd.DataFrame, exp_samples: list) -> dict:
     intensity_data = {}
     for _, row in protein_df.iterrows():
         intensities = {
-            sample: float(row[sample])
+            sample: round(float(np.log2(row[sample])), 2)
             for sample in exp_samples
             if pd.notna(row[sample]) and row[sample] > 0
         }
@@ -137,7 +138,7 @@ def _highlight_annotations(de: pd.DataFrame, highlight_genes: list) -> list[dict
     ]
 
 
-def _volcano_layout(de, title, highlight_genes, log2fc_threshold, fdr_threshold):
+def _volcano_layout(de, highlight_genes, log2fc_threshold, fdr_threshold):
     """Place the horizontal guide at the raw-p cutoff accepted by adjusted p."""
     shapes = [
         {
@@ -165,24 +166,15 @@ def _volcano_layout(de, title, highlight_genes, log2fc_threshold, fdr_threshold)
                 "line": {"dash": "dash", "color": "grey", "width": 1},
             }
         )
-    categories = de["significance"].unique()
     return {
         "template": PLOTLY_TEMPLATE,
-        "title": {
-            "text": f"Volcano Plot: {title}"
-            + (f" ({categories[0]})" if len(categories) == 1 else ""),
-            "x": 0,
-            "xanchor": "left",
-            "font": {"size": 16},
-        },
         "xaxis": {"title": {"text": "log2 Fold Change"}},
         "yaxis": {"title": {"text": "-log10(p-value)"}},
         "hovermode": "closest",
-        "legend": {"x": 0.01, "y": 0.99},
-        "showlegend": len(categories) > 1,
+        "showlegend": True,
         "shapes": shapes,
         "annotations": _highlight_annotations(de, highlight_genes),
-        "margin": {"t": 60, "b": 50, "l": 60, "r": 20},
+        "margin": {"t": 35, "b": 55, "l": 65, "r": 20},
     }
 
 
@@ -192,40 +184,53 @@ def generate_de_report(
     sample_to_condition: dict,
     output_html: str,
     title: str = "Differential Expression Report",
-    highlight_genes: Optional[list] = None,
     log2fc_threshold: float = 0.5,
     fdr_threshold: float = 0.05,
+    **options,
 ) -> str:
     """Write a standalone report from DE results and contrast-specific samples.
 
     DE results require ProteinName, log2FC, pvalue, adj_pvalue and significance.
     Intensities are linear and converted to log2 for per-protein expression.
+    Optional keyword inputs are ``highlight_genes`` (proteins to label) and
+    ``peptides`` (four- or six-column exports; SDRF supplies conditions).
     """
-    highlight_genes = highlight_genes or []
-    samples = _experimental_samples(protein_df, sample_to_condition)
+    highlight_genes, peptides = _report_options(**options)
+    samples = ordered_samples(
+        _experimental_samples(protein_df, sample_to_condition), sample_to_condition
+    )
     de = _prepare_de_results(de_results)
+    traces = _volcano_traces(de, highlight_genes)
     payload = {
         **_summary_counts(de),
         "log2fc_threshold": log2fc_threshold,
         "fdr_threshold": fdr_threshold,
-        "intensity_data": json.dumps(_intensity_payload(protein_df, samples)),
-        "table_rows": json.dumps(_table_rows(de, highlight_genes)),
-        "sample_to_condition": json.dumps(
+        "intensity_data": dump(_intensity_payload(protein_df, samples)),
+        **ma_payload(de, protein_df, sample_to_condition, traces, log2fc_threshold),
+        "diagnostic_script": profile_script(peptides, sample_to_condition),
+        "profile_html": PROFILE_CARD if peptides is not None else "",
+        "table_rows": dump(_table_rows(de, highlight_genes)),
+        "sample_to_condition": dump(
             {sample: sample_to_condition[sample] for sample in samples}
         ),
-        "exp_samples": json.dumps(samples),
-        "plot_template": json.dumps(PLOTLY_TEMPLATE),
-        "point_color": json.dumps(SAMPLE_POINT_COLOR),
-        "text_color": json.dumps(TEXT_COLOR),
-        "volcano_traces": json.dumps(_volcano_traces(de, highlight_genes)),
-        "volcano_layout": json.dumps(
-            _volcano_layout(de, title, highlight_genes, log2fc_threshold, fdr_threshold)
+        "exp_samples": dump(samples),
+        "plot_template": dump(PLOTLY_TEMPLATE),
+        "point_color": dump(SAMPLE_POINT_COLOR),
+        "text_color": dump(TEXT_COLOR),
+        "volcano_traces": dump(traces),
+        "volcano_layout": dump(
+            _volcano_layout(de, highlight_genes, log2fc_threshold, fdr_threshold)
         ),
     }
     with open(output_html, "w", encoding="utf-8") as stream:
         stream.write(_build_html(title, payload))
     logger.info("Interactive report saved to %s", output_html)
     return output_html
+
+
+def _report_options(highlight_genes=None, peptides=None):
+    """Unpack optional report inputs; unknown keywords raise TypeError."""
+    return highlight_genes or [], peptides
 
 
 def _build_html(title, payload):
@@ -259,7 +264,6 @@ $report_css
 #de-table tr { cursor: pointer; }
 #de-table tr.selected { background: #d4edda; }
 .table-wrapper { max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
-.info-text { font-size: 12px; color: #666; margin-top: 8px; }
 </style></head><body>
 <div class="header"><h1>$title</h1><div class="stats">
 <div class="stat-box"><div class="number">$n_total</div>
@@ -283,9 +287,12 @@ _REPORT_BODY = """
 <div class="col-8"><div class="card"><h3>Interactive Volcano Plot</h3>
 <div id="volcano-plot"></div><p class="info-text">Colors use adjusted p-value and |log2FC| cutoffs.
 Click a point to view per-sample expression.</p></div></div>
+<div class="col-8 card"><h3>MA Plot</h3><div id="ma-plot" style="height:500px"></div></div>
+</div><div class="row">
 <div class="col-4"><div class="card"><h3>Protein Expression</h3><div id="expression-plot"></div>
 <p class="info-text" id="expression-info">Select a protein from the volcano plot or table.</p>
 </div></div>
+$profile_html
 </div><div class="card"><h3>Differential Expression Results</h3>
 <div class="table-controls">
 <input type="text" id="search-input" placeholder="Search protein accession...">
@@ -294,8 +301,10 @@ Click a point to view per-sample expression.</p></div></div>
 <option value="significant">Significant (UP + DOWN)</option></select>
 <span id="table-count"></span></div>
 <div class="table-wrapper"><table id="de-table"><thead><tr>
-<th onclick="sortTable(0)">Protein</th><th onclick="sortTable(1)">log2FC</th>
-<th onclick="sortTable(2)">p-value</th><th onclick="sortTable(3)">adj p-value</th>
+<th onclick="sortTable(0)">Protein</th>
+<th onclick="sortTable(1)" style="text-align:right">log2FC</th>
+<th onclick="sortTable(2)" style="text-align:right">p-value</th>
+<th onclick="sortTable(3)" style="text-align:right">adj p-value</th>
 <th onclick="sortTable(4)">Significance</th>
 </tr></thead><tbody id="de-tbody"></tbody></table></div></div></div>
 """
@@ -311,18 +320,20 @@ const pointColor = $point_color;
 const textColor = $text_color;
 const plotConfig = {responsive: true, displaylogo: false, displayModeBar: 'hover'};
 Plotly.newPlot('volcano-plot', $volcano_traces, $volcano_layout, plotConfig);
-document.getElementById('volcano-plot').on('plotly_click', function(data) {
+Plotly.newPlot('ma-plot', $ma_traces, $ma_layout, plotConfig);
+$diagnostic_script
+['volcano-plot', 'ma-plot'].forEach(target => document.getElementById(target).on('plotly_click', function(data) {
     const protein = data.points[0].customdata[0];
     showExpression(protein);
     highlightTableRow(protein);
-});
+}));
 function expressionTraces(data) {
     const samples = expSamples.filter(sample => sample in data);
     const conditions = [...new Set(samples.map(sample => sampleToCondition[sample]))].sort();
     const x = [], y = [], names = [], shapes = [];
     conditions.forEach((condition, index) => {
         const group = samples.filter(sample => sampleToCondition[sample] === condition);
-        const values = group.map(sample => Math.log2(data[sample]));
+        const values = group.map(sample => data[sample]);
         x.push(...group.map((sample, i) => index +
             (group.length > 1 ? (i / (group.length - 1) - 0.5) * 0.18 : 0)));
         y.push(...values);
@@ -337,6 +348,7 @@ function expressionTraces(data) {
     return {traces, shapes, conditions, samples};
 }
 function showExpression(protein) {
+    showProfile(protein);
     const data = intensityData[protein];
     if (!data) {
         Plotly.purge('expression-plot');

@@ -38,7 +38,7 @@ mokume plot de \
     --protein-matrix proteins.csv \
     --outdir plots \
     --sdrf experiment.sdrf.tsv \
-    --volcano --heatmap \
+    --volcano --heatmap --ma \
     --highlight-protein COL10A1 \
     --highlight-protein FN1 \
     --highlight-protein ALB \
@@ -57,10 +57,10 @@ guide marks the largest raw p-value among proteins with adjusted p-value below
 `--fdr`, including those below the fold-change cutoff. It is omitted when no
 protein passes the adjusted p-value cutoff.
 
-The `--volcano` / `--heatmap` flags select which plots to render;
+The `--volcano` / `--heatmap` / `--ma` flags select which plots to render;
 `--log2fc` (default 0.5) and `--fdr` (default 0.05) mirror the
-kernel's `--de-log2fc` / `--de-fdr` so the significance cutoffs match. Volcano
-and heatmap require at least one `--contrast`; heatmap requires `--sdrf`.
+kernel's `--de-log2fc` / `--de-fdr` so the significance cutoffs match. Volcano,
+MA and heatmap require at least one `--contrast`; heatmap requires `--sdrf`.
 Invalid option scopes are rejected instead of producing an empty plot directory.
 
 Render PCA as a separate command because it produces one output file:
@@ -75,7 +75,7 @@ mokume plot pca \
 PCA uses complete-case proteins and reports their count below the title. Small
 plots (at most 30 samples) include sample labels. Conditions use the shared
 six-color palette with distinct color/marker combinations rather than cycling
-through colors. In HTML PCA and t-SNE plots with multiple plexes, shapes identify
+through colors. In HTML PCA plots with multiple plexes, shapes identify
 plexes; the legend and hover text identify conditions.
 
 ## Interactive DE Report
@@ -103,6 +103,9 @@ Each report includes:
   fold-change and FDR cutoffs
 - **Volcano plot** -- hover details and highlighted proteins; click a point to
   show that protein below
+- **MA plot** -- A is the average of the two groups' mean log2 intensities;
+  M is log2FC. Colors and hover details match the volcano plot. DE `mean_<condition>`
+  columns are already log2; if absent, A is computed from the protein matrix.
 - **Protein expression** -- log2 intensities as sample points grouped by
   condition, with neutral gray points and a black mean marker for each condition.
   Only samples from the two
@@ -110,14 +113,46 @@ Each report includes:
 - **Results table** -- raw and adjusted p-values, searchable and filterable by
   significance
 
-For PCA, t-SNE, sample correlation, CV, missing values and variance
+For PCA, sample correlation, CV, missing values and variance
 decomposition, use the QC report below.
+
+## Protein and Peptide Profiles
+
+Supply `--peptides peptides.csv` to `interactive-report` to add a selected-protein
+profile beside the grouped expression points. Both four-column and six-column
+peptide exports are accepted; conditions always come from SDRF. Only the current
+contrast's two conditions are included. Thin gray lines show individual canonical
+peptides; the main colored line shows the protein summary. Their agreement helps
+identify inconsistent peptide trajectories; their absolute levels need not match.
+
+For one static PNG per protein:
+
+```bash
+mokume plot profile -p proteins.csv --peptides peptides.csv \
+    -s experiment.sdrf.tsv --protein COL10A1 --protein FN1 -o profiles
+```
+
+For known-composition spike-ins, color an MA plot by a `ProteinName` / `group`
+TSV and add contrast-specific expected log2 ratios:
+
+```bash
+mokume plot de -p proteins.csv -s experiment.sdrf.tsv -o plots --ma \
+    --protein-groups protein_groups.tsv --expected-log2fc B-A yeast 1 \
+    --contrast B-A B A de_B-A.csv
+```
+
+Unknown contrast or group references fail. With two or more contrasts, `plot de`
+automatically writes `upset_significant.png` with exclusive significant-protein
+intersections. With `--highlight-protein`, it also writes
+`log2fc_across_contrasts.png`: solid markers are significant and hollow markers
+are not. More than six proteins use small multiples. Confidence intervals are
+omitted because DE tables contain no standard errors.
 
 ## Single-Matrix QC Report
 
 For a QC report built directly from a protein matrix CSV (with optional DE
 results and SDRF grouping), use `mokume.qc_report` (`analysis` extra). It computes
-PCA / t-SNE / silhouette / variance decomposition / CV / missing-value and
+PCA / silhouette / variance decomposition / CV / missing-value and
 DE-quality metrics and writes an interactive HTML report:
 
 Sample correlation uses a light-to-dark sequential blue scale, from the minimum
@@ -134,11 +169,34 @@ mokume.qc_report(
     output="qc_report.html",
     title="My Experiment QC Report",
     is_log2=False,
+    peptides="peptides.csv",                    # optional normalized export
+    unnormalized_peptides="peptides_before.csv", # optional pre-normalization export
+    unimputed_matrix="proteins_before.csv",     # optional pre-imputation export
+    highlight_genes=["COL10A1"],
 )
 ```
 
-For volcano gene-highlighting, call
-`mokume.reports.qc_report.generate_qc_report` directly.
+Optional intermediate tables come from `features2proteins --export-peptides`,
+`--export-unnormalized-peptides` and `--export-unimputed`. The QC report adds:
+
+- Peptide boxplots before and after sample normalization, with a shared log2 axis.
+- Missingness versus observed mean abundance: complete and incomplete proteins
+  have separate density curves. Lower abundance among incomplete proteins is
+  evidence compatible with MNAR, not proof of the missingness mechanism.
+- Observed versus filled-cell intensity distributions when an unimputed matrix
+  is supplied. Filled cells were missing before imputation and observed afterward.
+- Quantified protein counts per sample, a completeness histogram (observed in k
+  samples), and a binary missingness heatmap. Missingness uses the unimputed
+  matrix when available. More than 500 incomplete proteins are sampled by
+  missing-count strata for the heatmap.
+- An abundance-rank curve with optional `highlight_genes` labels. The piBAQ QC
+  PDF also includes this curve.
+
+Diagnostic distributions use observed values and log2 intensities. If the main
+matrix has already been filled, supply `unimputed_matrix` to recover missingness.
+The MNAR panel is omitted when its source has no missing values. QC reports
+retain the raw p-value histogram. The standalone `plot tsne` command remains
+available.
 
 ## Workflow Comparison Report
 
@@ -171,7 +229,8 @@ This generates a report with:
 - Summary metrics table (silhouette, CV, DE count, pi1)
 - PCA grids for each workflow
 - DE concordance analysis (Jaccard, log2FC correlation, CAT curves)
-- Marker gene results across workflows
+- Marker gene results across workflows, with each marker's sample profile
+  centered at that workflow's own protein median. Missing markers are noted.
 
 ## t-SNE Visualization Command
 
@@ -208,6 +267,12 @@ returns a matplotlib `Figure` or writes to an `output_file` / `file_name` path.
 | `plot_distributions(dataset, field, class_field, log2=True, ...)` | Per-class quantile/distribution plot |
 | `plot_box_plot(dataset, field, class_field, violin=False, ...)` | Box (or violin) plot of a field grouped by class |
 | `is_plotting_available()` | `True` if matplotlib/seaborn are installed |
+
+`plot_distributions` and `plot_box_plot` use the frame's `Condition` column when
+present and sort samples by condition then name. More than six conditions, or no
+condition information, use neutral sample curves and boxes without a legend.
+`plot_pca` and `plot_tsne` use the shared condition color/shape combinations;
+`plot_pca`'s `palette` argument is ignored.
 
 ```python
 import pandas as pd

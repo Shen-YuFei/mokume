@@ -208,7 +208,9 @@ path = mokume.workflow_comparison(
 )
 ```
 
-Both need the `analysis` extra. For volcano gene-highlighting, call `mokume.reports.qc_report.generate_qc_report` directly.
+Both need the `analysis` extra. `qc_report` also accepts `highlight_genes` and the
+optional `peptides`, `unnormalized_peptides` and `unimputed_matrix` exports
+(see [Visualization](../periphery/visualization.md#single-matrix-qc-report)).
 
 ### Pure-Python method fallback
 

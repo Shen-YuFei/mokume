@@ -7,6 +7,7 @@ import glob
 import importlib
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,14 @@ pytest.importorskip("matplotlib")
 pd = pytest.importorskip("pandas")
 np = pytest.importorskip("numpy")
 plt = pytest.importorskip("matplotlib.pyplot")
+
+profiles = pytest.importorskip("mokume.plotting.profile")
+qc_diagnostics = pytest.importorskip("mokume.reports._qc_diagnostics")
+diagnostics = pytest.importorskip("mokume.plotting.diagnostics")
+ma_plots = pytest.importorskip("mokume.plotting.ma")
+de_diagnostics = pytest.importorskip("mokume.commands._de_diagnostics")
+distributions = pytest.importorskip("mokume.plotting.distributions")
+style = pytest.importorskip("mokume.plotting.style")
 
 DATA = os.path.join(os.path.dirname(__file__), "data")
 
@@ -186,3 +195,93 @@ def test_de_heatmap_selects_adjusted_p_before_absolute_fold_change(
     ]
     assert list(observed["frame"].columns) == ["ProteinName", "S1", "S2"]
     assert observed["mapping"] == {"S1": "A", "S2": "B"}
+
+
+@pytest.mark.parametrize("with_metadata", [False, True])
+def test_peptide_profile_conditions_come_from_sdrf(tmp_path, with_metadata):
+    """Four-column exports and stale six-column metadata use the same SDRF order."""
+    frame = pd.DataFrame(
+        {
+            "ProteinName": ["P1"] * 3,
+            "PeptideCanonical": ["PEPTIDE"] * 3,
+            "SampleID": ["S1", "S2", "S3"],
+            "NormIntensity": [8, 16, 32],
+        }
+    )
+    if with_metadata:
+        frame = frame.assign(BioReplicate=1, Condition="wrong")
+    path = tmp_path / "peptides.csv"
+    frame.to_csv(path, index=False)
+    values = profiles.peptide_matrix(path, {"S1": "B", "S2": "A"})
+    assert list(values.columns) == ["S2", "S1"]
+    np.testing.assert_array_equal(values.loc[("P1", "PEPTIDE")], [4, 3])
+
+
+def test_qc_imputation_mask_and_completeness_counts():
+    """Only newly observed cells are imputed; complete and all-missing rows count."""
+    before = pd.DataFrame(
+        [[1, np.nan, 3], [4, 5, 6], [np.nan] * 3], index=["P1", "P2", "P3"]
+    )
+    after = before.copy()
+    after.loc["P1", 1] = 2
+    observed, filled = qc_diagnostics.imputation_values(before, after.iloc[::-1])
+    np.testing.assert_array_equal(np.sort(observed), [1, 3, 4, 5, 6])
+    np.testing.assert_array_equal(filled, [2])
+    assert qc_diagnostics.completeness_counts(before).to_dict() == {
+        0: 1,
+        1: 0,
+        2: 1,
+        3: 1,
+    }
+
+
+def test_upset_counts_exclusive_intersections():
+    """A protein belongs to exactly one observed membership pattern."""
+    counts = diagnostics.upset_counts(
+        {"A": {"p1", "p2", "p3"}, "B": {"p2", "p3", "p4"}, "C": {"p3"}}
+    )
+    assert counts == {("A",): 1, ("A", "B"): 1, ("A", "B", "C"): 1, ("B",): 1}
+
+
+def test_protein_groups_and_expected_ratio_references(tmp_path):
+    """Read composition groups and reject unknown expected-ratio references."""
+    path = tmp_path / "groups.tsv"
+    path.write_text("ProteinName\tgroup\nP1\thuman\nP2\tyeast\n")
+    groups = ma_plots.read_protein_groups(path)
+    assert groups.to_dict() == {"P1": "human", "P2": "yeast"}
+    args = SimpleNamespace(
+        contrast=[("B-A", "B", "A", "de.csv")], expected_log2fc=[("B-A", "yeast", "1")]
+    )
+    assert de_diagnostics.expected_ratios(args, groups) == {"B-A": {"yeast": 1.0}}
+    for key, group in [("missing", "yeast"), ("B-A", "missing")]:
+        args.expected_log2fc = [(key, group, "1")]
+        with pytest.raises(ValueError, match="unknown"):
+            de_diagnostics.expected_ratios(args, groups)
+
+
+def test_distribution_order_and_large_condition_palette():
+    """Sort samples within conditions and avoid cycling a categorical palette."""
+    frame = pd.DataFrame(
+        {
+            "SampleID": ["S1", "S3", "S2"] * 2,
+            "Condition": ["B", "A", "A"] * 2,
+            "PiBAQ": [1, 2, 3, 4, 5, 6],
+        }
+    )
+    figure = distributions.plot_box_plot(frame, "PiBAQ", "SampleID")
+    assert [tick.get_text() for tick in figure.axes[0].get_xticklabels()] == [
+        "S2",
+        "S3",
+        "S1",
+    ]
+    plt.close(figure)
+    frame = pd.DataFrame(
+        {
+            "SampleID": [f"S{i}" for i in range(7)],
+            "Condition": [f"C{i}" for i in range(7)],
+            "PiBAQ": 1,
+        }
+    )
+    _, colors, palette = distributions.distribution_groups(frame, "SampleID")
+    assert not palette
+    assert set(colors.values()) == {style.SAMPLE_POINT_COLOR}

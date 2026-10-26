@@ -2,7 +2,7 @@
 Quality control report for proteomics quantification workflows.
 
 Generates interactive HTML reports with sample-level and DE-level QC metrics:
-- PCA and t-SNE (colored by condition, shaped by plex)
+- PCA (colored by condition, shaped by plex)
 - Sample correlation heatmap
 - Per-condition CV distributions
 - Intensity/ratio distribution boxplots
@@ -20,9 +20,7 @@ import numpy as np
 import pandas as pd
 from plotly.offline import get_plotlyjs
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score as sklearn_silhouette_score
-from threadpoolctl import threadpool_limits
 
 from mokume.plotting.style import (
     CONDITION_COLORS,
@@ -38,6 +36,9 @@ from mokume.plotting.style import (
     TEXT_COLOR,
 )
 from mokume.core.logger import get_logger
+from mokume.plotting._common import log2_matrix as prepare_log2, read_frame
+from mokume.reports._plots import plot_cards
+from mokume.reports._qc_diagnostics import diagnostic_plots
 
 logger = get_logger("mokume.reports.qc")
 
@@ -94,11 +95,6 @@ def compute_qc_metrics(
 
     # 1. PCA
     metrics["pca"] = _compute_pca(
-        log2_matrix, exp_samples, sample_to_condition, sample_to_plex
-    )
-
-    # 2. t-SNE
-    metrics["tsne"] = _compute_tsne(
         log2_matrix, exp_samples, sample_to_condition, sample_to_plex
     )
 
@@ -185,30 +181,6 @@ def _compute_pca(log2_matrix, samples, sample_to_condition, sample_to_plex):
         result["pc3"] = coords[:, 2].tolist()
 
     return result
-
-
-def _compute_tsne(log2_matrix, samples, sample_to_condition, sample_to_plex):
-    """Compute t-SNE coordinates."""
-    data = log2_matrix[samples].T.dropna(axis=1)
-    data = data.fillna(data.median())
-
-    if data.shape[0] < 4:
-        return None
-
-    perplexity = min(5, data.shape[0] - 1)
-    tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
-    # t-SNE embeds samples (a few to a few hundred points), so extra OpenMP threads
-    # only contend; on a busy many-core host they stall every iteration.
-    with threadpool_limits(limits=1):
-        coords = tsne.fit_transform(data)
-
-    return {
-        "samples": list(data.index),
-        "conditions": [sample_to_condition.get(s, "Unknown") for s in data.index],
-        "plexes": [sample_to_plex.get(s, "plex1") for s in data.index],
-        "x": coords[:, 0].tolist(),
-        "y": coords[:, 1].tolist(),
-    }
 
 
 def _compute_sample_correlation(log2_matrix, samples):
@@ -452,10 +424,9 @@ def _compute_de_quality(de_results):
             "mean": float(sig_fc.mean()),
             "q25": float(sig_fc.quantile(0.25)),
             "q75": float(sig_fc.quantile(0.75)),
-            "values": sig_fc.tolist(),
         }
     else:
-        effect_size = {"median": 0, "mean": 0, "q25": 0, "q75": 0, "values": []}
+        effect_size = {"median": 0, "mean": 0, "q25": 0, "q75": 0}
 
     # Direction balance (UP/DOWN ratio)
     if n_de > 0:
@@ -489,7 +460,7 @@ def generate_qc_report(
     output_html: str = "qc_report.html",
     title: str = "QC Report",
     is_log2: bool = False,
-    highlight_genes: Optional[list[str]] = None,
+    **options,
 ) -> str:
     """
     Generate interactive HTML QC report.
@@ -510,8 +481,14 @@ def generate_qc_report(
         Report title.
     is_log2 : bool
         If True, data is already in log2 space.
-    highlight_genes : list, optional
-        Protein accessions to highlight.
+    **options
+        Optional keyword inputs:
+
+        - ``highlight_genes`` (list): protein accessions to highlight.
+        - ``peptides``, ``unnormalized_peptides`` (path or DataFrame): normalized
+          and pre-normalization peptide exports for paired distributions.
+        - ``unimputed_matrix`` (path or DataFrame): protein matrix before
+          imputation, used for missingness and filled-cell diagnostics.
 
     Returns
     -------
@@ -526,7 +503,17 @@ def generate_qc_report(
         is_log2,
     )
 
-    html = _build_qc_html(title, metrics, highlight_genes, de_results)
+    if options.get("unimputed_matrix") is not None:
+        options["unimputed_matrix"] = read_frame(options["unimputed_matrix"])
+        metrics["missing"] = _compute_missing_values(
+            prepare_log2(options["unimputed_matrix"], is_log2),
+            metrics["pca"]["samples"],
+            sample_to_condition,
+        )
+    metrics["diagnostics"] = diagnostic_plots(
+        protein_df, sample_to_condition, is_log2, **options
+    )
+    html = _build_qc_html(title, metrics, options.get("highlight_genes"), de_results)
 
     with open(output_html, "w", encoding="utf-8") as f:
         f.write(html)
@@ -610,9 +597,9 @@ def _plex_sections(n_plexes, pvca):
 def _build_qc_html(title, metrics, highlight_genes, de_results):
     """Build the complete QC report HTML."""
     _ = highlight_genes, de_results
+    cards, diagnostic_js = plot_cards(metrics.get("diagnostics", []))
     summary = metrics["summary"]
     pca = metrics["pca"]
-    tsne = metrics["tsne"]
     corr = metrics["correlation"]
     condition_cv = metrics["condition_cv"]
     intra_corr = metrics["intra_condition_corr"]
@@ -682,7 +669,6 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
             </div>
             <div class="row" style="margin-top:16px">
                 <div style="flex:1"><div id="pval-hist" style="height:300px"></div></div>
-                <div style="flex:1"><div id="effect-hist" style="height:300px"></div></div>
             </div>
         </div>
         """
@@ -773,7 +759,6 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
         <div id="tab-sample-qc" class="tab-content active">
             <div class="row">
                 <div style="flex:1"><div id="pca-plot" style="height:450px"></div></div>
-                <div style="flex:1"><div id="tsne-plot" style="height:450px"></div></div>
             </div>
             {
         '<p style="font-size:12px; margin-bottom:16px">Markers encode plex. For more '
@@ -808,6 +793,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
                 <div style="flex:1"><div id="corr-plot" style="height:450px"></div></div>
                 <div style="flex:1"><div id="boxplot" style="height:450px"></div></div>
             </div>
+            {cards}
         </div>
 
         <!-- Tab 2: Reproducibility -->
@@ -831,7 +817,6 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
                             {missing_summary_rows}
                         </table>
                     </div>
-                    <div id="missing-plot" style="height:250px; margin-top:16px"></div>
                 </div>
             </div>
         </div>
@@ -861,7 +846,6 @@ function showTab(tabId) {{
 
 const multiPlex = {_safe_json(plex["multi_plex"])};
 const sampleConditions = {_safe_json(dict(zip(pca["samples"], pca["conditions"])))};
-const significanceColors = {_safe_json(SIGNIFICANCE_COLORS)};
 const missingColor = {_safe_json(MISSING_COLOR)};
 function paddedRange(values) {{
     const low = Math.min(...values), high = Math.max(...values);
@@ -887,7 +871,6 @@ const condSymbols = {{}};
 
 // Shared embedding styles and plots
 const pca = {_safe_json(pca)};
-const tsne = {_safe_json(tsne)};
 [...new Set(pca.conditions)].sort().forEach((condition, index) => {{
     const [color, shape] = styleIndices[index];
     condColors[condition] = palette[color];
@@ -936,12 +919,6 @@ function drawEmbedding(target, data, axes, title) {{
 drawEmbedding('pca-plot', pca,
     [['pc1', 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)'],
      ['pc2', 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)']], 'PCA');
-if (tsne) {{
-    drawEmbedding('tsne-plot', tsne, [['x', 't-SNE 1'], ['y', 't-SNE 2']], 't-SNE');
-}} else {{
-    document.getElementById('tsne-plot').textContent = 't-SNE requires at least four samples';
-}}
-
 // PVCA bar chart
 (function() {{
 const pvcaBars = {_safe_json(plex["pvca_bars"])};
@@ -1051,28 +1028,7 @@ Plotly.newPlot('pvca-plot', [{{
     }}, plotConfig);
 }})();
 
-// Missing values per sample
-(function() {{
-    const missing = {json.dumps(missing["per_sample"])};
-    const samples = Object.keys(missing).sort();
-    Plotly.newPlot('missing-plot', [{{
-        type: 'bar',
-        x: samples,
-        y: samples.map(s => (missing[s].rate * 100).toFixed(1)),
-        marker: {{ color: samples.map(s => missing[s].rate > 0.3
-            ? significanceColors.UP : significanceColors.Unchanged) }},
-        text: samples.map(s => (missing[s].rate * 100).toFixed(1) + '%'),
-        textposition: 'auto',
-    }}], {{
-        template: plotTemplate,
-        showlegend: false,
-        title: {{ x: 0, xanchor: 'left', text: 'Missing Value Rate per Sample',
-                  font: {{ size: 14 }} }},
-        xaxis: {{ tickangle: 45, tickfont: {{ size: 9 }} }},
-        yaxis: {{ title: {{ text: '% Missing' }}, autorange: true }},
-        margin: {{ t: 50, b: 100, l: 60, r: 20 }},
-    }}, plotConfig);
-}})();
+{diagnostic_js}
 
 // DE quality plots
 {_build_de_quality_js(de_quality) if de_quality else ""}
@@ -1122,27 +1078,6 @@ def _build_de_quality_js(de_quality):
             text: 'Expected under null',
             showarrow: false, font: {{ size: 10 }}
         }}],
-    }}, plotConfig);
-}})();
-"""
-
-    # Effect size histogram
-    if de_quality.get("effect_size", {}).get("values"):
-        js += f"""
-(function() {{
-    Plotly.newPlot('effect-hist', [{{
-        type: 'histogram',
-        x: {json.dumps(de_quality["effect_size"]["values"])},
-        nbinsx: 30,
-        marker: {{ color: singleColor }},
-    }}], {{
-        template: plotTemplate,
-        showlegend: false,
-        title: {{ x: 0, xanchor: 'left', text: 'Effect Size Distribution (significant DE)',
-                  font: {{ size: 13 }} }},
-        xaxis: {{ title: {{ text: '|log2FC|' }} }},
-        yaxis: {{ title: {{ text: 'Count' }} }},
-        margin: {{ t: 40, b: 50, l: 50, r: 20 }},
     }}, plotConfig);
 }})();
 """

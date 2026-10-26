@@ -317,14 +317,16 @@ def qc_report(
     de_results=None,
     title="QC Report",
     is_log2=False,
+    **options,
 ):
     """Build a single-matrix QC HTML report (``analysis`` extra).
 
-    Computes PCA / t-SNE / silhouette / variance decomposition / CV / missing-value
+    Computes PCA / silhouette / variance decomposition / CV / missing-value
     and DE-quality metrics from a protein matrix CSV and writes an interactive HTML
     report. ``sdrf`` supplies the sample -> condition grouping; ``de_results`` is an
     optional DE result CSV. Returns the output path. For volcano gene-highlighting
-    call :func:`mokume.reports.qc_report.generate_qc_report` directly.
+    pass ``highlight_genes``. Optional ``peptides``, ``unnormalized_peptides``
+    and ``unimputed_matrix`` accept exported table paths or DataFrames.
     """
     _bootstrap()
     import pandas as pd
@@ -347,6 +349,7 @@ def qc_report(
         output_html=str(output),
         title=title,
         is_log2=is_log2,
+        **options,
     )
 
 

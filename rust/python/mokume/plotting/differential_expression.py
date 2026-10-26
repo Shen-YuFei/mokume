@@ -13,12 +13,11 @@ import matplotlib
 import seaborn as sns
 from sklearn.decomposition import PCA
 
+from mokume.plotting._common import style_axes as _style_axes
 from mokume.plotting.style import (
-    AXIS_COLOR,
     CONDITION_COLORS,
     CONDITION_MARKERS,
     CONDITION_STYLE_INDICES,
-    GRID_COLOR,
     MISSING_COLOR,
     SIGNIFICANCE_COLORS,
     TEXT_COLOR,
@@ -309,21 +308,6 @@ def _condition_palette(conditions):
         condition: CONDITION_COLORS[CONDITION_STYLE_INDICES[index][0]]
         for index, condition in enumerate(sorted(set(conditions)))
     }
-
-
-def _style_axes(ax):
-    """Use neutral text and light solid axes without changing global defaults."""
-    ax.set_axisbelow(True)
-    ax.grid(color=GRID_COLOR, linestyle="-", linewidth=0.6)
-    ax.tick_params(colors=TEXT_COLOR)
-    ax.xaxis.label.set_color(TEXT_COLOR)
-    ax.yaxis.label.set_color(TEXT_COLOR)
-    ax.title.set_color(TEXT_COLOR)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("bottom", "left"):
-        ax.spines[side].set_color(AXIS_COLOR)
-        ax.spines[side].set_linewidth(0.6)
 
 
 def _label_pca_samples(ax, pca_df):

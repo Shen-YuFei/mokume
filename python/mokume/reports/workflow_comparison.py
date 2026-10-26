@@ -29,6 +29,8 @@ from mokume.plotting.style import (
     TEXT_COLOR,
 )
 from mokume.core.logger import get_logger
+from mokume.reports._comparison_profiles import marker_profiles
+from mokume.reports._plots import plot_cards
 
 logger = get_logger("mokume.reports.comparison")
 
@@ -85,18 +87,20 @@ def generate_comparison_report(
     # Compute cross-workflow concordance
     concordance = _compute_concordance(workflow_metrics)
 
-    # Compute marker gene results
-    marker_results = None
-    if marker_genes:
-        marker_results = _compute_marker_results(workflow_metrics, marker_genes)
+    # Marker gene table and per-workflow marker profiles
+    marker_html, profiles = "", ("", "")
+    marker_results = (
+        _compute_marker_results(workflow_metrics, marker_genes) if marker_genes else {}
+    )
+    if marker_results:
+        marker_html = _build_marker_table(
+            marker_results, marker_genes, workflow_metrics
+        )
+        profiles = plot_cards(marker_profiles(workflows, marker_genes))
 
     # Build HTML
     html_text = _build_comparison_html(
-        title,
-        workflow_metrics,
-        concordance,
-        marker_results,
-        marker_genes,
+        title, workflow_metrics, concordance, marker_html, profiles
     )
 
     with open(output_html, "w", encoding="utf-8") as f:
@@ -280,9 +284,7 @@ def _plex_display(workflow_metrics):
     }
 
 
-def _build_comparison_html(
-    title, workflow_metrics, concordance, marker_results, marker_genes
-):
+def _build_comparison_html(title, workflow_metrics, concordance, marker_html, profiles):
     """Build the comparison report HTML."""
     n_workflows = len(workflow_metrics)
 
@@ -342,13 +344,6 @@ def _build_comparison_html(
             fc_scatter_data[key] = data["fc_scatter"]
 
     plex = _plex_display(workflow_metrics)
-
-    # Marker gene table
-    marker_html = ""
-    if marker_results and marker_genes:
-        marker_html = _build_marker_table(
-            marker_results, marker_genes, workflow_metrics
-        )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -470,6 +465,7 @@ def _build_comparison_html(
             </p>
             {marker_html}
         </div>
+        {profiles[0]}
     </div>
     '''
         if marker_html
@@ -699,6 +695,7 @@ function drawPca(wfName, index) {{
         margin: {{ t: 50, b: 50, l: 60, r: 20 }},
     }}, plotConfig);
 }})();
+{profiles[1]}
 </script>
 
 <div style="text-align:center; padding:20px; color:#999; font-size:11px;">

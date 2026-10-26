@@ -1,14 +1,56 @@
-"""
-PCA and t-SNE plotting functions for the mokume package.
-
-This module provides functions for visualizing PCA and t-SNE results.
-"""
+"""Locally styled PCA and t-SNE plots with shared condition color/shape codes."""
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.decomposition import PCA
+
+from mokume.plotting._common import style_axes
+from mokume.plotting.style import (
+    CONDITION_COLORS,
+    CONDITION_MARKERS,
+    CONDITION_STYLE_INDICES,
+    SAMPLE_POINT_COLOR,
+    SINGLE_SERIES_COLOR,
+    WHITE,
+)
+
+
+def _embedding_plot(frame, axes, group_column, options):
+    """Plot existing coordinates without modifying their calculation."""
+    fig, ax = plt.subplots(figsize=options.get("figsize", (8, 6)))
+    groups = sorted(frame[group_column].unique())
+    if len(groups) > len(CONDITION_STYLE_INDICES):
+        # Beyond the color/shape combinations groups are indistinguishable.
+        ax.scatter(
+            frame[axes[0]],
+            frame[axes[1]],
+            color=SAMPLE_POINT_COLOR,
+            s=64,
+            linewidths=2,
+            edgecolors=WHITE,
+        )
+        groups = []
+    for index, group in enumerate(groups):
+        color, shape = CONDITION_STYLE_INDICES[index]
+        subset = frame[frame[group_column] == group]
+        ax.scatter(
+            subset[axes[0]],
+            subset[axes[1]],
+            label=group,
+            color=CONDITION_COLORS[color],
+            s=64,
+            linewidths=2,
+            edgecolors=WHITE,
+            marker=CONDITION_MARKERS[shape] if len(groups) > 3 else "o",
+        )
+    ax.set(xlabel=axes[0], ylabel=axes[1], title=options["title"])
+    if len(groups) > 1:
+        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8)
+    style_axes(ax)
+    fig.tight_layout()
+    fig.savefig(options["output"], bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_pca(
@@ -24,6 +66,8 @@ def plot_pca(
     """
     Plot a PCA scatter plot and save it to a file.
 
+    Groups use the shared condition color/shape combinations.
+
     Parameters
     ----------
     df_pca : pd.DataFrame
@@ -37,21 +81,19 @@ def plot_pca(
     hue_col : str, optional
         Column name for color grouping (default: "batch").
     palette : str, optional
-        Color palette to use (default: "Set2").
+        Ignored; kept for backward compatibility.
     title : str, optional
         Plot title (default: "PCA plot").
     figsize : tuple, optional
         Figure size in inches (default: (8, 6)).
     """
-    fig, ax = plt.subplots(figsize=figsize)
-    sns.scatterplot(x=x_col, y=y_col, hue=hue_col, data=df_pca, palette=palette, ax=ax)
-    ax.set_title(title)
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
-    ax.legend(loc="center left", bbox_to_anchor=(1.05, 0.5))
-    plt.tight_layout()
-    plt.savefig(output_file, bbox_inches="tight")
-    plt.close(fig)
+    del palette
+    _embedding_plot(
+        df_pca,
+        (x_col, y_col),
+        hue_col,
+        {"output": output_file, "title": title, "figsize": figsize},
+    )
 
 
 def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFrame:
@@ -79,33 +121,35 @@ def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFra
     df_pca = pd.DataFrame(
         df_pca, index=df.index, columns=[f"PC{i}" for i in range(1, n_components + 1)]
     )
-
-    plt.rcParams["figure.figsize"] = (12, 6)
-    _, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(8, 5))
     xi = np.arange(1, n_components + 1, step=1)
-    y = np.cumsum(pca.explained_variance_ratio_)
-
-    plt.ylim(0.0, 1.1)
-    plt.plot(xi, y, marker="o", linestyle="--", color="b")
-    plt.xlabel("Number of Components")
-    plt.xticks(np.arange(0, n_components, step=1))
-    plt.ylabel("Cumulative variance (%)")
-    plt.title("The number of components needed to explain variance")
-
-    plt.axhline(y=0.95, color="r", linestyle="-")
-    plt.text(0.5, 0.85, "95% cut-off threshold", color="red", fontsize=16)
-    ax.grid(axis="x")
+    ax.plot(
+        xi,
+        np.cumsum(pca.explained_variance_ratio_),
+        marker="o",
+        linewidth=2,
+        color=SINGLE_SERIES_COLOR,
+        markersize=8,
+        markeredgecolor=WHITE,
+        markeredgewidth=2,
+    )
+    ax.set(
+        ylim=(0, 1.1),
+        xlabel="Number of components",
+        ylabel="Cumulative variance",
+        title="PCA explained variance",
+        xticks=xi,
+    )
+    ax.axhline(0.95, color=SAMPLE_POINT_COLOR, linestyle="--", linewidth=2)
+    ax.text(0.02, 0.9, "95% reference", transform=ax.transAxes)
+    style_axes(ax)
+    fig.tight_layout()
     plt.show()
-
     return df_pca
 
 
 def plot_tsne(
-    df: pd.DataFrame,
-    x_col: str,
-    y_col: str,
-    hue_col: str,
-    file_name: str,
+    df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, file_name: str
 ) -> None:
     """
     Generate and save a t-SNE scatter plot from a DataFrame.
@@ -123,14 +167,9 @@ def plot_tsne(
     file_name : str
         Output file path for the saved plot.
     """
-    fig, ax = plt.subplots(1, 1, figsize=(20, 10))
-    sns.scatterplot(
-        x=x_col, y=y_col, hue=hue_col, data=df, ax=ax, markers=["o", "+", "x"]
+    _embedding_plot(
+        df,
+        (x_col, y_col),
+        hue_col,
+        {"title": f"t-SNE of {len(df)} samples", "output": file_name},
     )
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
-    ax.set_title(f"{x_col} vs {y_col} with {hue_col} information")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.0, fontsize=8)
-    plt.subplots_adjust(right=0.8)
-    plt.savefig(file_name)
-    plt.close(fig)
