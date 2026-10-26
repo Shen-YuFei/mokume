@@ -223,8 +223,8 @@ mokume quantify features2proteins -p features.parquet -o proteins.csv -s experim
 The `ensemble` method runs several individual DE methods on the same
 contrast and combines their per-protein verdicts using a top-k consensus
 rule: a protein is called significant only when at least `min_k` member
-methods agree on direction (UP or DOWN) and the Fisher-combined p-value
-passes the FDR threshold.
+methods agree on direction (UP or DOWN) and the combined p-value passes the
+FDR threshold.
 
 The default members are LimROTS, DEqMS, and proDA. LimROTS needs a complete
 matrix, so on a contrast with missing values the default members run limma,
@@ -232,8 +232,16 @@ the moderated t-test that LimROTS builds on, in place of LimROTS. A member
 list given with `--de-ensemble-method` is used as given, so a `limrots` member
 then needs a complete (for example, imputed) matrix.
 
+The member p-values are combined with the Cauchy combination test (Liu & Xie
+2020). The members test the same contrast on the same matrix, so their
+p-values are strongly dependent. Fisher's method, which assumes independent
+p-values, made the combined p-values too small: on the label-free DDA
+spike-in studies of mokumebench, the ensemble's median false discovery
+proportion was 37%, against 13% for DEqMS. The Cauchy combination stays
+valid under dependence for small p-values and gives 11%.
+
 **Output columns** include the median log2FC across members, the
-Fisher-combined p-value (adjusted with the requested FDR method), `n_methods_up`, `n_methods_down`,
+Cauchy-combined p-value (adjusted with the requested FDR method), `n_methods_up`, `n_methods_down`,
 and `methods_significant` (comma-separated list of members that called
 the protein).
 
@@ -279,7 +287,7 @@ it with another requested correction.
     fall back to BH when their null-fraction estimate is not reliable.
 
 For an ensemble, eligible non-ROTS members use the requested correction while
-ROTS and LimROTS keep their native permutation FDR. Fisher-combined p-values use
+ROTS and LimROTS keep their native permutation FDR. Cauchy-combined p-values use
 BH by default; BKY or Storey replaces that ensemble-level BH adjustment when
 requested and reliable. IHW remains a member-level correction because the
 combined rows have no IHW covariate.
