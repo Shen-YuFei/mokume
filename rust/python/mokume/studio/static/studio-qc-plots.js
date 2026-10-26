@@ -3,6 +3,17 @@ import { setTranslatedText, translate, translatedElement } from "./studio-i18n.j
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const AREA = { left: 70, top: 26, width: 240, height: 174 };
+const CONDITION_SLOTS = 6;
+const SEQUENTIAL_STEPS = 6;
+// Shapes join colour once a scatter shows more than three conditions,
+// so every condition keeps a distinct colour-shape pair.
+const SHAPES = [
+  (x, y) => `M${x - 4} ${y}a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z`,
+  (x, y) => `M${x - 3.5} ${y - 3.5}h7v7h-7Z`,
+  (x, y) => `M${x} ${y - 4.6}L${x + 4.2} ${y + 3}H${x - 4.2}Z`,
+  (x, y) => `M${x} ${y - 5}L${x + 5} ${y}L${x} ${y + 5}L${x - 5} ${y}Z`,
+  (x, y) => `M${x} ${y + 4.6}L${x + 4.2} ${y - 3}H${x - 4.2}Z`,
+];
 
 function svgNode(name, attributes = {}, text = null) {
   const node = document.createElementNS(SVG_NS, name);
@@ -22,22 +33,27 @@ function sampleLabel(svg, sample, x, y, attributes = {}) {
   node.append(svgNode("title", {}, sample));
 }
 
-function plotFrame(title, xLabel, yLabel) {
+function plotFrame(title, xLabel, yLabel, { xLabelY = 308, height = 320 } = {}) {
   const figure = document.createElement("figure");
   figure.className = "qc-plot";
   figure.append(translatedElement("figcaption", "", title));
-  const svg = svgNode("svg", { viewBox: "0 0 360 320", role: "img" });
+  const svg = svgNode("svg", { viewBox: `0 0 360 ${height}`, role: "img" });
   const heading = svgNode("title");
   setTranslatedText(heading, title);
   svg.append(heading, svgNode("path", {
     d: "M70 26V200H310", class: "qc-plot-axis",
   }));
-  setTranslatedText(label(svg, "", 190, 308, { "text-anchor": "middle" }), xLabel);
+  setTranslatedText(label(svg, "", 190, xLabelY, { "text-anchor": "middle" }), xLabel);
   setTranslatedText(label(svg, "", 14, 113, {
     "text-anchor": "middle", transform: "rotate(-90 14 113)",
   }), yLabel);
   figure.append(svg);
   return { figure, svg };
+}
+
+function gridLine(svg, y) {
+  svg.append(svgNode("path", { d: `M${AREA.left} ${y}H${AREA.left + AREA.width}`,
+    class: "qc-plot-grid" }));
 }
 
 function unavailable(plot) {
@@ -49,14 +65,22 @@ export function missingnessPlot(qc) {
   const plot = plotFrame("Missing values by sample", "Sample", "Missing values (%)");
   if (!qc.missing_by_sample?.length) return unavailable(plot);
   const step = AREA.width / qc.samples.length;
-  [0, 50, 100].forEach((value) => label(plot.svg, value, 64,
-    204 - value * AREA.height / 100, { "text-anchor": "end" }));
+  const width = Math.min(step * 0.7, 18);
+  [0, 50, 100].forEach((value) => {
+    if (value) gridLine(plot.svg, 200 - value * AREA.height / 100);
+    label(plot.svg, value, 64, 204 - value * AREA.height / 100, { "text-anchor": "end" });
+  });
   qc.samples.forEach((sample, index) => {
     const value = qc.missing_by_sample[index];
     const height = value * AREA.height / 100;
     const x = AREA.left + step * (index + 0.5);
-    const bar = svgNode("rect", {
-      x: x - step * 0.4, y: 200 - height, width: step * 0.8, height,
+    const radius = Math.min(3, width / 2, height);
+    // Rounded at the data end, square at the baseline.
+    const bar = svgNode("path", {
+      d: `M${x - width / 2} 200V${200 - height + radius}`
+        + `Q${x - width / 2} ${200 - height} ${x - width / 2 + radius} ${200 - height}`
+        + `H${x + width / 2 - radius}`
+        + `Q${x + width / 2} ${200 - height} ${x + width / 2} ${200 - height + radius}V200Z`,
       fill: "var(--qc-condition-1)",
     });
     bar.append(svgNode("title", {}, `${sample}: ${value}%`));
@@ -79,6 +103,7 @@ function scatterTicks(svg, xRange, yRange) {
   [0, 0.5, 1].forEach((fraction) => {
     const x = AREA.left + AREA.width * fraction;
     const y = 200 - AREA.height * fraction;
+    if (fraction) gridLine(svg, y);
     label(svg, (xRange[0] + fraction * (xRange[1] - xRange[0])).toFixed(1), x, 216,
       { "text-anchor": "middle" });
     label(svg, (yRange[0] + fraction * (yRange[1] - yRange[0])).toFixed(1), 64, y + 3,
@@ -86,15 +111,43 @@ function scatterTicks(svg, xRange, yRange) {
   });
 }
 
-function pcaPoint(svg, point, sample, ranges, colorIndex) {
+function conditionStyle(index, count) {
+  return {
+    fill: `var(--qc-condition-${index % CONDITION_SLOTS + 1})`,
+    shape: SHAPES[count > 3 ? index % SHAPES.length : 0],
+  };
+}
+
+function pcaPoint(svg, point, sample, ranges, style) {
   const [xRange, yRange] = ranges;
   const x = AREA.left + (point[0] - xRange[0]) / (xRange[1] - xRange[0]) * AREA.width;
   const y = 200 - (point[1] - yRange[0]) / (yRange[1] - yRange[0]) * AREA.height;
-  const marker = svgNode("circle", { cx: x, cy: y, r: 4,
-    fill: `var(--qc-condition-${colorIndex + 1})` });
+  const marker = svgNode("path", { d: style.shape(x, y), fill: style.fill,
+    class: "qc-plot-marker" });
   marker.append(svgNode("title", {}, `${sample}: ${point[0].toFixed(2)}, ${point[1].toFixed(2)}`));
   svg.append(marker);
-  sampleLabel(svg, sample, x + 6, y - 5);
+  return [x, y];
+}
+
+function overlaps(a, b) {
+  return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+}
+
+// Outlying samples are labelled first; a label that would collide is left
+// to the marker's hover title instead of stacking unreadable text.
+function pcaLabels(svg, positions, samples) {
+  const centre = [0, 1].map((axis) =>
+    positions.reduce((sum, position) => sum + position[axis], 0) / positions.length);
+  const spread = (index) => Math.hypot(positions[index][0] - centre[0],
+    positions[index][1] - centre[1]);
+  const boxes = positions.map(([x, y]) => [x - 5, y - 5, x + 5, y + 5]);
+  [...positions.keys()].sort((a, b) => spread(b) - spread(a)).forEach((index) => {
+    const [x, y] = positions[index];
+    const box = [x + 6, y - 13, x + 6 + Math.min(samples[index].length, 14) * 5, y - 3];
+    if (boxes.some((other) => overlaps(box, other))) return;
+    boxes.push(box);
+    sampleLabel(svg, samples[index], x + 6, y - 5);
+  });
 }
 
 function conditionLegend(figure, conditions) {
@@ -102,8 +155,9 @@ function conditionLegend(figure, conditions) {
   legend.className = "qc-plot-legend";
   conditions.forEach((condition, index) => {
     const entry = document.createElement("span");
-    const swatch = document.createElement("i");
-    swatch.className = `qc-condition-${index % 8 + 1}`;
+    const style = conditionStyle(index, conditions.length);
+    const swatch = svgNode("svg", { viewBox: "0 0 10 10", "aria-hidden": "true" });
+    swatch.append(svgNode("path", { d: style.shape(5, 5), fill: style.fill }));
     entry.append(swatch, document.createTextNode(condition || translate("Unknown condition")));
     legend.append(entry);
   });
@@ -112,28 +166,29 @@ function conditionLegend(figure, conditions) {
 
 export function pcaPlot(qc) {
   const variance = qc.pca?.variance_percent || [];
-  const plot = plotFrame("PCA by sample", "PC1", "PC2");
+  const plot = plotFrame("PCA by sample", "PC1", "PC2", { xLabelY: 232, height: 262 });
   const points = qc.pca?.scores || [];
   if (!points.length) return unavailable(plot);
   const xRange = coordinateRange(points.map((point) => point[0]));
   const yRange = coordinateRange(points.map((point) => point[1]));
   scatterTicks(plot.svg, xRange, yRange);
   const conditions = [...new Set(qc.samples.map((sample) => qc.conditions?.[sample] || ""))];
-  points.forEach((point, index) => pcaPoint(plot.svg, point, qc.samples[index],
-    [xRange, yRange], conditions.indexOf(qc.conditions?.[qc.samples[index]] || "") % 8));
-  if (conditions.some(Boolean)) conditionLegend(plot.figure, conditions);
+  const positions = points.map((point, index) => pcaPoint(plot.svg, point, qc.samples[index],
+    [xRange, yRange], conditionStyle(
+      conditions.indexOf(qc.conditions?.[qc.samples[index]] || ""), conditions.length)));
+  pcaLabels(plot.svg, positions, qc.samples);
+  if (conditions.length > 1) conditionLegend(plot.figure, conditions);
   label(plot.svg, translate("Explained variance: {pc1}% / {pc2}%", {
     pc1: variance[0] || 0, pc2: variance[1] || 0,
-  }), 190, 245, { "text-anchor": "middle" });
+  }), 190, 252, { "text-anchor": "middle" });
   return plot.figure;
 }
 
 function heatColor(value, minimum) {
   if (value === null) return "var(--border-soft)";
   const fraction = minimum === 1 ? 1 : (value - minimum) / (1 - minimum);
-  const index = Math.max(0, Math.min(10, Math.round(fraction * 10)));
-  // High correlation is red, matching the reversed RdBu scale of the HTML QC report.
-  return `var(--qc-rdbu-${10 - index})`;
+  const index = Math.max(0, Math.min(SEQUENTIAL_STEPS, Math.round(fraction * SEQUENTIAL_STEPS)));
+  return `var(--qc-seq-${index})`;
 }
 
 function heatmapLabels(svg, samples) {
@@ -150,9 +205,10 @@ function heatmapLabels(svg, samples) {
 }
 
 function heatmapLegend(svg, minimum) {
-  for (let index = 0; index <= 10; index += 1) {
-    svg.append(svgNode("rect", { x: 80 + index * 20, y: 272, width: 20, height: 8,
-      fill: `var(--qc-rdbu-${10 - index})` }));
+  const width = 220 / (SEQUENTIAL_STEPS + 1);
+  for (let index = 0; index <= SEQUENTIAL_STEPS; index += 1) {
+    svg.append(svgNode("rect", { x: 80 + index * width, y: 272, width, height: 8,
+      fill: `var(--qc-seq-${index})` }));
   }
   label(svg, minimum.toFixed(2), 80, 294);
   label(svg, "1.00", 300, 294, { "text-anchor": "end" });
@@ -166,9 +222,10 @@ export function correlationPlot(qc) {
     cell === null ? value : Math.min(value, cell), lowest), 1);
   const width = AREA.width / qc.samples.length;
   const height = AREA.height / qc.samples.length;
+  const gap = Math.min(1, width / 10);
   matrix.forEach((row, y) => row.forEach((value, x) => {
     const cell = svgNode("rect", { x: AREA.left + x * width, y: AREA.top + y * height,
-      width, height, fill: heatColor(value, minimum) });
+      width: width - gap, height: height - gap, fill: heatColor(value, minimum) });
     cell.append(svgNode("title", {}, `${qc.samples[y]} / ${qc.samples[x]}: ${value ?? "—"}`));
     plot.svg.append(cell);
   }));
