@@ -18,6 +18,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from plotly.offline import get_plotlyjs
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score as sklearn_silhouette_score
@@ -525,6 +526,64 @@ def _safe_json(obj):
     return json.dumps(obj).replace("</", "<\\/")
 
 
+def _plex_sections(n_plexes, pvca):
+    """Build the PVCA bars and plex-related HTML pieces for the QC report."""
+    # With a single plex there is no batch to assess, so plex variance is not shown.
+    multi_plex = n_plexes > 1
+    pvca_sources = [("Condition", pvca["condition_pct"], "#27ae60")]
+    if multi_plex:
+        pvca_sources.append(("Plex", pvca["plex_pct"], "#e74c3c"))
+    pvca_sources.append(("Residual", pvca["residual_pct"], "#95a5a6"))
+    pvca_bars = {
+        "x": [name for name, _, _ in pvca_sources],
+        "y": [round(value, 1) for _, value, _ in pvca_sources],
+        "colors": [color for _, _, color in pvca_sources],
+    }
+    plex_class = (
+        "good"
+        if pvca["plex_pct"] < 10
+        else "warning"
+        if pvca["plex_pct"] < 25
+        else "bad"
+    )
+    plex_label = (
+        "Good"
+        if pvca["plex_pct"] < 10
+        else "Warning"
+        if pvca["plex_pct"] < 25
+        else "High"
+    )
+    plex_stat = (
+        f"""<div class="header-stat">
+            <div class="number {plex_class}">{pvca["plex_pct"]:.1f}%</div>
+            <div class="label">Var: Plex</div>
+        </div>"""
+        if multi_plex
+        else ""
+    )
+    plex_row = (
+        f"""<tr><td>Plex (batch)</td>
+                                <td><b>{pvca["plex_pct"]:.1f}%</b></td>
+                                <td>{plex_label} batch effect</td></tr>"""
+        if multi_plex
+        else ""
+    )
+    pvca_intro = (
+        "What fraction of total variance is explained by biology (condition) vs technical "
+        "batch (plex)? Good normalization maximizes condition and minimizes plex contribution."
+        if multi_plex
+        else "What fraction of total variance is explained by biology (condition)? All samples "
+        "come from one plex, so batch variance is not assessed."
+    )
+    return {
+        "multi_plex": multi_plex,
+        "pvca_bars": pvca_bars,
+        "plex_stat": plex_stat,
+        "plex_row": plex_row,
+        "pvca_intro": pvca_intro,
+    }
+
+
 def _build_qc_html(title, metrics, highlight_genes, de_results):
     """Build the complete QC report HTML."""
     _ = highlight_genes, de_results
@@ -539,6 +598,8 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
     silhouette = metrics["silhouette"]
     pvca = metrics["pvca"]
     de_quality = metrics.get("de_quality")
+
+    plex = _plex_sections(summary["n_plexes"], pvca)
 
     # Format condition CV summary
     cv_summary_rows = ""
@@ -606,7 +667,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
 <head>
     <meta charset="utf-8">
     <title>{html_module.escape(title)}</title>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script>{get_plotlyjs()}</script>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -684,16 +745,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
             <div class="number">{pvca["condition_pct"]:.1f}%</div>
             <div class="label">Var: Condition</div>
         </div>
-        <div class="header-stat">
-            <div class="number {
-        "good"
-        if pvca["plex_pct"] < 10
-        else "warning"
-        if pvca["plex_pct"] < 25
-        else "bad"
-    }">{pvca["plex_pct"]:.1f}%</div>
-            <div class="label">Var: Plex</div>
-        </div>
+        {plex["plex_stat"]}
     </div>
 </div>
 
@@ -716,9 +768,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
             <div class="card">
                 <h3>Variance Decomposition (PVCA)</h3>
                 <p style="font-size:13px; color:#666; margin-bottom:12px">
-                    What fraction of total variance is explained by biology (condition) vs
-                    technical batch (plex)? Good normalization maximizes condition and
-                    minimizes plex contribution.
+                    {plex["pvca_intro"]}
                 </p>
                 <div class="row">
                     <div style="flex:1"><div id="pvca-plot" style="height:250px"></div></div>
@@ -730,15 +780,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
                                 <td>{
         "Good" if pvca["condition_pct"] > 30 else "Low"
     } biological signal</td></tr>
-                            <tr><td>Plex (batch)</td>
-                                <td><b>{pvca["plex_pct"]:.1f}%</b></td>
-                                <td>{
-        "Good"
-        if pvca["plex_pct"] < 10
-        else "Warning"
-        if pvca["plex_pct"] < 25
-        else "High"
-    } batch effect</td></tr>
+                            {plex["plex_row"]}
                             <tr><td>Residual</td>
                                 <td>{pvca["residual_pct"]:.1f}%</td>
                                 <td>Individual variation + noise</td></tr>
@@ -801,6 +843,8 @@ function showTab(tabId) {{
     window.dispatchEvent(new Event('resize'));
 }}
 
+const multiPlex = {_safe_json(plex["multi_plex"])};
+
 // Color palette
 const condColors = {{}};
 const plexSymbols = {{}};
@@ -835,16 +879,19 @@ const symbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
                     size: 12,
                     line: {{ width: 1, color: '#333' }}
                 }},
-                name: cond + ' / ' + plex,
+                name: multiPlex ? cond + ' / ' + plex : cond,
                 legendgroup: cond,
             }});
         }});
     }});
 
     Plotly.newPlot('pca-plot', traces, {{
-        title: {{ text: 'PCA (color=condition, shape=plex)', font: {{ size: 14 }} }},
-        xaxis: {{ title: 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)' }},
-        yaxis: {{ title: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)' }},
+        title: {{
+            text: multiPlex ? 'PCA (color=condition, shape=plex)' : 'PCA (color=condition)',
+            font: {{ size: 14 }},
+        }},
+        xaxis: {{ title: {{ text: 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)' }} }},
+        yaxis: {{ title: {{ text: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)' }} }},
         legend: {{ font: {{ size: 10 }} }},
         margin: {{ t: 50, b: 50, l: 60, r: 20 }},
     }}, {{responsive: true}});
@@ -878,35 +925,39 @@ const symbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
                     size: 12,
                     line: {{ width: 1, color: '#333' }}
                 }},
-                name: cond + ' / ' + plex,
+                name: multiPlex ? cond + ' / ' + plex : cond,
                 legendgroup: cond,
             }});
         }});
     }});
     Plotly.newPlot('tsne-plot', traces, {{
-        title: {{ text: 't-SNE (color=condition, shape=plex)', font: {{ size: 14 }} }},
-        xaxis: {{ title: 't-SNE 1' }},
-        yaxis: {{ title: 't-SNE 2' }},
+        title: {{
+            text: multiPlex ? 't-SNE (color=condition, shape=plex)' : 't-SNE (color=condition)',
+            font: {{ size: 14 }},
+        }},
+        xaxis: {{ title: {{ text: 't-SNE 1' }} }},
+        yaxis: {{ title: {{ text: 't-SNE 2' }} }},
         legend: {{ font: {{ size: 10 }} }},
         margin: {{ t: 50, b: 50, l: 60, r: 20 }},
     }}, {{responsive: true}});
 }})();
 
 // PVCA bar chart
+(function() {{
+const pvcaBars = {_safe_json(plex["pvca_bars"])};
 Plotly.newPlot('pvca-plot', [{{
     type: 'bar',
-    x: ['Condition', 'Plex', 'Residual'],
-    y: [{pvca["condition_pct"]:.1f}, {pvca["plex_pct"]:.1f}, {
-        pvca["residual_pct"]:.1f}],
-    marker: {{ color: ['#27ae60', '#e74c3c', '#95a5a6'] }},
-    text: ['{pvca["condition_pct"]:.1f}%', '{pvca["plex_pct"]:.1f}%', '{
-        pvca["residual_pct"]:.1f}%'],
+    x: pvcaBars.x,
+    y: pvcaBars.y,
+    marker: {{ color: pvcaBars.colors }},
+    text: pvcaBars.y.map(v => v.toFixed(1) + '%'),
     textposition: 'auto',
 }}], {{
     title: {{ text: 'Variance Decomposition', font: {{ size: 14 }} }},
-    yaxis: {{ title: '% Variance Explained', range: [0, 100] }},
+    yaxis: {{ title: {{ text: '% Variance Explained' }}, range: [0, 100] }},
     margin: {{ t: 50, b: 40, l: 60, r: 20 }},
 }}, {{responsive: true}});
+}})();
 
 // Correlation heatmap
 (function() {{
@@ -967,9 +1018,9 @@ Plotly.newPlot('pvca-plot', [{{
     Plotly.newPlot('boxplot', boxTraces, {{
         title: {{ text: 'Per-Sample Distribution (median + IQR)', font: {{ size: 14 }} }},
         xaxis: {{ tickangle: 45, tickfont: {{ size: 9 }} }},
-        yaxis: {{ title: '{
+        yaxis: {{ title: {{ text: '{
         "log2 ratio" if summary["is_log2"] else "log2 intensity"
-    }' }},
+    }' }} }},
         barmode: 'group',
         margin: {{ t: 50, b: 100, l: 60, r: 20 }},
     }}, {{responsive: true}});
@@ -992,7 +1043,7 @@ Plotly.newPlot('pvca-plot', [{{
     }});
     Plotly.newPlot('cv-violin', traces, {{
         title: {{ text: 'Per-Protein CV Distribution by Condition', font: {{ size: 14 }} }},
-        yaxis: {{ title: 'Coefficient of Variation', range: [0, 3] }},
+        yaxis: {{ title: {{ text: 'Coefficient of Variation' }}, range: [0, 3] }},
         margin: {{ t: 50, b: 40, l: 60, r: 20 }},
     }}, {{responsive: true}});
 }})();
@@ -1011,7 +1062,7 @@ Plotly.newPlot('pvca-plot', [{{
     }}], {{
         title: {{ text: 'Missing Value Rate per Sample', font: {{ size: 14 }} }},
         xaxis: {{ tickangle: 45, tickfont: {{ size: 9 }} }},
-        yaxis: {{ title: '% Missing', range: [0, 100] }},
+        yaxis: {{ title: {{ text: '% Missing' }}, range: [0, 100] }},
         margin: {{ t: 50, b: 100, l: 60, r: 20 }},
     }}, {{responsive: true}});
 }})();
@@ -1049,8 +1100,8 @@ def _build_de_quality_js(de_quality):
         width: 0.045,
     }}], {{
         title: {{ text: 'P-value Distribution (raw)', font: {{ size: 13 }} }},
-        xaxis: {{ title: 'p-value', range: [0, 1] }},
-        yaxis: {{ title: 'Count' }},
+        xaxis: {{ title: {{ text: 'p-value' }}, range: [0, 1] }},
+        yaxis: {{ title: {{ text: 'Count' }} }},
         margin: {{ t: 40, b: 50, l: 50, r: 20 }},
         shapes: [{{
             type: 'line', x0: 0, x1: 1,
@@ -1077,8 +1128,8 @@ def _build_de_quality_js(de_quality):
         marker: {{ color: '#e67e22' }},
     }}], {{
         title: {{ text: 'Effect Size Distribution (significant DE)', font: {{ size: 13 }} }},
-        xaxis: {{ title: '|log2FC|' }},
-        yaxis: {{ title: 'Count' }},
+        xaxis: {{ title: {{ text: '|log2FC|' }} }},
+        yaxis: {{ title: {{ text: 'Count' }} }},
         margin: {{ t: 40, b: 50, l: 50, r: 20 }},
     }}, {{responsive: true}});
 }})();

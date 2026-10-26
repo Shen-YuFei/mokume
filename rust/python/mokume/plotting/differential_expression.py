@@ -15,6 +15,8 @@ from sklearn.decomposition import PCA
 
 matplotlib.use("Agg")
 
+MISSING_COLOR = "#bdbdbd"
+
 
 def plot_volcano(
     de_results: pd.DataFrame,
@@ -206,7 +208,9 @@ def plot_heatmap(
     intensity_z = intensity.subtract(intensity.mean(axis=1), axis=0).divide(
         intensity.std(axis=1), axis=0
     )
-    # Fill remaining per-sample NaN with 0 (neutral in z-score) for clustering
+    # Fill remaining per-sample NaN with 0 (neutral in z-score) for clustering,
+    # but mask those cells so missing values are not drawn as average intensity.
+    missing = intensity_z.isna()
     intensity_z = intensity_z.fillna(0)
 
     if intensity_z.shape[0] < 2 or intensity_z.shape[1] < 2:
@@ -238,6 +242,7 @@ def plot_heatmap(
         intensity_z,
         cmap="RdBu_r",
         center=0,
+        mask=missing,
         col_colors=col_colors,
         figsize=figsize,
         dendrogram_ratio=0.1,
@@ -245,25 +250,34 @@ def plot_heatmap(
         yticklabels=True,
         xticklabels=True,
     )
+    g.ax_heatmap.set_facecolor(MISSING_COLOR)
     g.fig.suptitle(title, y=1.02, fontsize=14)
 
-    # Add condition legend
-    legend_patches = [
-        plt.matplotlib.patches.Patch(color=condition_colors[c], label=c)
-        for c in unique_conditions
-    ]
-    g.ax_heatmap.legend(
-        handles=legend_patches,
-        loc="upper left",
-        bbox_to_anchor=(1.05, 1),
-        title="Condition",
-    )
+    _add_heatmap_legend(g.ax_heatmap, condition_colors, missing.to_numpy().any())
 
     if output_file:
         g.savefig(output_file, dpi=150, bbox_inches="tight")
         plt.close(g.fig)
 
     return g.fig
+
+
+def _add_heatmap_legend(ax, condition_colors, has_missing):
+    """Add the condition legend, plus a Missing entry when cells are masked."""
+    legend_patches = [
+        plt.matplotlib.patches.Patch(color=color, label=cond)
+        for cond, color in condition_colors.items()
+    ]
+    if has_missing:
+        legend_patches.append(
+            plt.matplotlib.patches.Patch(color=MISSING_COLOR, label="Missing")
+        )
+    ax.legend(
+        handles=legend_patches,
+        loc="upper left",
+        bbox_to_anchor=(1.05, 1),
+        title="Condition",
+    )
 
 
 def plot_pca_conditions(

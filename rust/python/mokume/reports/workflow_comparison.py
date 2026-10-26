@@ -15,6 +15,7 @@ import html
 from typing import Optional
 
 import numpy as np
+from plotly.offline import get_plotlyjs
 
 from mokume.reports.qc_report import compute_qc_metrics, _safe_json
 from mokume.core.logger import get_logger
@@ -239,6 +240,36 @@ def _compute_marker_results(workflow_metrics, marker_genes):
     return results
 
 
+def _plex_display(workflow_metrics):
+    """Return the plex-dependent header, note and title text for the comparison report."""
+    # With a single plex in every workflow there is no batch to compare.
+    show_plex = any(wf["metrics"]["summary"]["n_plexes"] > 1 for wf in workflow_metrics)
+    criteria = (
+        "Higher silhouette, higher condition variance, lower plex variance, and lower CV"
+        if show_plex
+        else "Higher silhouette, higher condition variance, and lower CV"
+    )
+    plex_header = (
+        '<th title="% variance explained by technical plex (lower=better)">% Var Plex</th>'
+        if show_plex
+        else ""
+    )
+    pvca_note = (
+        "<b>% Var Condition / Plex</b>: PVCA-style variance decomposition. "
+        "Good workflow has high condition %, low plex %."
+        if show_plex
+        else "<b>% Var Condition</b>: PVCA-style variance decomposition. "
+        "Good workflow has high condition %."
+    )
+    return {
+        "show_plex": show_plex,
+        "criteria": criteria,
+        "plex_header": plex_header,
+        "pvca_note": pvca_note,
+        "pca_title": "PCA by Condition + Plex" if show_plex else "PCA by Condition",
+    }
+
+
 def _build_comparison_html(
     title, workflow_metrics, concordance, marker_results, marker_genes
 ):
@@ -300,6 +331,8 @@ def _build_comparison_html(
         if data.get("fc_scatter"):
             fc_scatter_data[key] = data["fc_scatter"]
 
+    plex = _plex_display(workflow_metrics)
+
     # Marker gene table
     marker_html = ""
     if marker_results and marker_genes:
@@ -312,7 +345,7 @@ def _build_comparison_html(
 <head>
     <meta charset="utf-8">
     <title>{html.escape(title)}</title>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script>{get_plotlyjs()}</script>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -351,10 +384,10 @@ def _build_comparison_html(
 
 <div class="header">
     <h1>{html.escape(title)}</h1>
-    <p>Comparing {
-        n_workflows
-    } quantification workflows. Higher silhouette, higher condition variance,
-       lower plex variance, and lower CV indicate better performance.</p>
+    <p>Comparing {n_workflows} quantification workflows. {
+        plex["criteria"]
+    } indicate better
+       performance.</p>
 </div>
 
 <div class="container">
@@ -369,7 +402,7 @@ def _build_comparison_html(
                     <th>Proteins</th>
                     <th title="Silhouette score: how well samples cluster by condition (-1 to 1, higher=better)">Silhouette</th>
                     <th title="% variance explained by biological condition (higher=better)">% Var Condition</th>
-                    <th title="% variance explained by technical plex (lower=better)">% Var Plex</th>
+                    {plex["plex_header"]}
                     <th title="Median coefficient of variation within conditions (lower=better)">Median CV</th>
                     <th title="Median pairwise Pearson correlation within conditions (higher=better)">Replicate Corr</th>
                     <th>DE (UP/DOWN)</th>
@@ -381,7 +414,7 @@ def _build_comparison_html(
             </table>
             <p class="metric-explanation">
                 <b>Silhouette</b>: Measures how well samples cluster by condition (1=perfect, 0=random, negative=wrong clusters).<br>
-                <b>% Var Condition / Plex</b>: PVCA-style variance decomposition. Good workflow has high condition %, low plex %.<br>
+                {plex["pvca_note"]}<br>
                 <b>Replicate Corr</b>: Median pairwise Pearson r between replicates within same condition (higher=more reproducible).<br>
                 <b>pi1</b>: Estimated fraction of true positives from p-value distribution (Storey's method).<br>
                 <b>Balance</b>: Ratio of smaller to larger DE direction (1=symmetric). Extreme asymmetry may indicate bias.
@@ -391,7 +424,7 @@ def _build_comparison_html(
 
     <!-- Section 2: PCA Comparison -->
     <div class="section">
-        <h2 class="section-title">PCA by Condition + Plex</h2>
+        <h2 class="section-title">{plex["pca_title"]}</h2>
         <div class="pca-grid" id="pca-container"></div>
     </div>
 
@@ -429,8 +462,8 @@ def _build_comparison_html(
         <h2 class="section-title">Known Marker Gene Panel</h2>
         <div class="card">
             <p class="metric-explanation" style="margin-bottom:12px">
-                Known NASH-related genes. A good workflow should detect these with the expected
-                direction and strong significance.
+                Marker proteins with a known expected direction. A good workflow should detect
+                them in that direction with strong significance.
             </p>
             {marker_html}
         </div>
@@ -447,6 +480,7 @@ const summaryRows = {_safe_json(summary_rows)};
 const pcaData = {_safe_json(pca_data)};
 const concordanceData = {_safe_json(concordance_json)};
 const fcScatterData = {_safe_json(fc_scatter_data)};
+const showPlex = {_safe_json(plex["show_plex"])};
 
 const palette = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b'];
 const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
@@ -480,6 +514,12 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
         return '';
     }}
 
+    function plexCell(row) {{
+        if (!showPlex) return '';
+        const cls = cellClass('var_plex', row.var_plex);
+        return `<td class="${{cls}}">${{row.var_plex.toFixed(1)}}%</td>`;
+    }}
+
     summaryRows.forEach(row => {{
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -487,7 +527,7 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
             <td>${{row.n_proteins}}</td>
             <td class="${{cellClass('silhouette', row.silhouette)}}">${{row.silhouette.toFixed(3)}}</td>
             <td class="${{cellClass('var_condition', row.var_condition)}}">${{row.var_condition.toFixed(1)}}%</td>
-            <td class="${{cellClass('var_plex', row.var_plex)}}">${{row.var_plex.toFixed(1)}}%</td>
+            ${{plexCell(row)}}
             <td class="${{cellClass('median_cv', row.median_cv)}}">${{row.median_cv.toFixed(3)}}</td>
             <td class="${{cellClass('replicate_corr', row.replicate_corr)}}">${{row.replicate_corr.toFixed(3)}}</td>
             <td>${{row.n_de}} (${{row.n_up}}/${{row.n_down}})</td>
@@ -535,15 +575,15 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
                         size: 10,
                         line: {{ width: 1, color: '#333' }}
                     }},
-                    name: cond + ' / ' + plex,
+                    name: showPlex ? cond + ' / ' + plex : cond,
                 }});
             }});
         }});
 
         Plotly.newPlot(`pca-${{wfIdx}}`, traces, {{
             title: {{ text: wfName, font: {{ size: 14 }} }},
-            xaxis: {{ title: 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)' }},
-            yaxis: {{ title: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)' }},
+            xaxis: {{ title: {{ text: 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)' }} }},
+            yaxis: {{ title: {{ text: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)' }} }},
             legend: {{ font: {{ size: 9 }}, orientation: 'h', y: -0.15 }},
             margin: {{ t: 50, b: 80, l: 60, r: 20 }},
         }}, {{responsive: true}});
@@ -594,8 +634,8 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
         showlegend: false,
     }}], {{
         title: {{ text: `log2FC: ${{cd.name_a}} vs ${{cd.name_b}} (r=${{cd.fc_pearson.toFixed(3)}})`, font: {{ size: 13 }} }},
-        xaxis: {{ title: cd.name_a + ' log2FC', range: [-8, 8] }},
-        yaxis: {{ title: cd.name_b + ' log2FC', range: [-8, 8] }},
+        xaxis: {{ title: {{ text: cd.name_a + ' log2FC' }}, range: [-8, 8] }},
+        yaxis: {{ title: {{ text: cd.name_b + ' log2FC' }}, range: [-8, 8] }},
         margin: {{ t: 50, b: 50, l: 60, r: 20 }},
     }}, {{responsive: true}});
 }})();
@@ -616,8 +656,8 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
     if (traces.length === 0) return;
     Plotly.newPlot('cat-plot', traces, {{
         title: {{ text: 'Concordance at Top-k', font: {{ size: 14 }} }},
-        xaxis: {{ title: 'Top k proteins (by p-value)' }},
-        yaxis: {{ title: 'Fraction overlap', range: [0, 1] }},
+        xaxis: {{ title: {{ text: 'Top k proteins (by p-value)' }} }},
+        yaxis: {{ title: {{ text: 'Fraction overlap' }}, range: [0, 1] }},
         margin: {{ t: 50, b: 50, l: 60, r: 20 }},
     }}, {{responsive: true}});
 }})();

@@ -65,34 +65,36 @@ mokume plot pca \
     --output pca_conditions.png
 ```
 
-## Interactive HTML Report
+## Interactive DE Report
 
-Generate a comprehensive interactive QC + DE report from the same kernel CSVs:
+Generate one interactive HTML report per contrast from the same kernel CSVs:
 
 ```bash
 mokume interactive-report \
     --protein-matrix proteins.csv \
     --sdrf experiment.sdrf.tsv \
-    --output qc_report.html \
+    --output de_report.html \
     --highlight-protein COL10A1 \
     --highlight-protein FN1 \
     --contrast NASH-HL NASH HL de_results/NASH_vs_HL.csv
 ```
 
-Omit `--output` to write `report_<contrast>.html` in the current directory.
+With one contrast, `--output` is used as given; with several, each report is
+written as `<stem>_<key>.html`. Omit `--output` to write `report_<key>.html` in
+the current directory. The report embeds plotly.js, so it opens without a
+network connection.
 
-The interactive report includes:
+Each report includes:
 
-- **PCA plot** -- Interactive scatter with hover annotations
-- **t-SNE plot** -- Non-linear dimensionality reduction
-- **Sample correlation heatmap** -- Pairwise Pearson correlations
-- **CV distribution** -- Per-condition coefficient of variation
-- **Missing value analysis** -- Missing rate per sample
-- **Distribution box plots** -- Intensity distributions
-- **Silhouette score** -- Condition clustering quality
-- **Variance decomposition** -- PVCA-style analysis (condition vs batch vs residual)
-- **Volcano plot** -- DE results with searchable gene names
-- **Expression heatmap** -- Top DE proteins
+- **Summary** -- proteins tested, up, down, unchanged and not tested, with the
+  fold-change and FDR cutoffs
+- **Volcano plot** -- hover details and highlighted proteins; click a point to
+  show that protein below
+- **Protein expression** -- per-sample intensities of the selected protein
+- **Results table** -- searchable and filterable by significance
+
+For PCA, t-SNE, sample correlation, CV, missing values and variance
+decomposition, use the QC report below.
 
 ## Single-Matrix QC Report
 
@@ -136,7 +138,10 @@ mokume.workflow_comparison(
     ],
     output="comparison.html",
     title="Method Comparison",
-    marker_genes=["COL10A1", "FN1", "ALB"],
+    marker_genes={
+        "Q03692": {"name": "COL10A1", "expected": "UP"},
+        "P02751": {"name": "FN1", "expected": "UP"},
+    },
 )
 ```
 

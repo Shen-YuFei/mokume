@@ -14,6 +14,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from plotly.offline import get_plotlyjs
 
 from mokume.core.logger import get_logger
 
@@ -260,8 +261,8 @@ def _build_html(
 
     volcano_layout = {
         "title": {"text": f"Volcano Plot: {title}", "font": {"size": 16}},
-        "xaxis": {"title": "log2 Fold Change", "zeroline": True},
-        "yaxis": {"title": "-log10(adjusted p-value)"},
+        "xaxis": {"title": {"text": "log2 Fold Change"}, "zeroline": True},
+        "yaxis": {"title": {"text": "-log10(adjusted p-value)"}},
         "hovermode": "closest",
         "legend": {"x": 0.01, "y": 0.99},
         "shapes": [
@@ -317,7 +318,7 @@ def _build_html(
 <head>
     <meta charset="utf-8">
     <title>$title</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script>$plotly_js</script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -496,7 +497,7 @@ function showExpression(protein) {
     const layout = {
         title: { text: protein + fcText, font: { size: 13 } },
         xaxis: { tickangle: 45, tickfont: { size: 9 } },
-        yaxis: { title: 'log2 Intensity' },
+        yaxis: { title: { text: 'log2 Intensity' } },
         margin: { t: 40, b: 80, l: 50, r: 10 },
         showlegend: false,
     };
@@ -590,6 +591,7 @@ if (firstHighlight) showExpression(firstHighlight.protein);
 </body>
 </html>""").substitute(
         title=title,
+        plotly_js=get_plotlyjs(),
         n_total=n_total,
         n_up=n_up,
         n_down=n_down,
