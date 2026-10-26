@@ -15,6 +15,8 @@ import {
 import { translate, translatedElement } from "./studio-i18n.js";
 import { updateActionStates } from "./studio-menus.js";
 import { resizeWorkspace } from "./studio-layout.js";
+import { artifactItem } from "./studio-artifacts.js";
+import { refreshFiles } from "./studio-files.js";
 import {
   loadLatestQc,
   openRunComparison,
@@ -65,6 +67,8 @@ export async function addReviewedToQueue() {
   state.batchQueue.push({
     id: crypto.randomUUID(),
     argv: review.argv,
+    reviewedRunId: review.run_id,
+    outputDirectory: review.output_directory,
     command: review.command,
     workflow: review.display_name,
     outputs: review.outputs.map((item) => item.path),
@@ -104,7 +108,9 @@ export async function processBatchQueue() {
     const run = await api("/api/runs", {
       method: "POST",
       headers: originHeaders(),
-      body: JSON.stringify({ argv: item.argv }),
+      body: JSON.stringify({
+        argv: item.argv, run_id: item.reviewedRunId, output_directory: item.outputDirectory,
+      }),
     });
     item.status = run.status;
     item.runId = run.id;
@@ -152,6 +158,9 @@ export function clearFinishedQueueItems() {
 }
 
 export async function refreshRuns() {
+  const previouslyActive = new Set(state.runs
+    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status)).map((run) => run.id));
+  if (state.activeRunId) previouslyActive.add(state.activeRunId);
   const payload = await api("/api/runs");
   state.runs = payload.runs;
   const active = state.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status)) || null;
@@ -162,6 +171,9 @@ export async function refreshRuns() {
   renderTabCounts();
   if (["runs", "queue"].includes(state.bottomTab)) renderBottom();
   if (!state.activeRunId) window.setTimeout(() => void processBatchQueue(), 0);
+  if (state.runs.some((run) => previouslyActive.has(run.id) && !ACTIVE_RUN_STATUSES.has(run.status))) {
+    await refreshFiles();
+  }
 }
 
 export function connectRunEvents(runId) {
@@ -271,15 +283,7 @@ export function renderBottom() {
     content.textContent = translate("No artifacts yet.");
     return;
   }
-  state.artifacts.forEach((artifact) => {
-    const link = document.createElement("a");
-    link.className = "artifact-link";
-    link.href = `/api/artifacts/${encodeURIComponent(artifact.id)}`;
-    link.target = "_blank";
-    link.rel = "noopener";
-    link.textContent = artifact.path;
-    content.append(link);
-  });
+  state.artifacts.forEach((artifact) => content.append(artifactItem(artifact)));
 }
 
 export function renderRunList(content) {

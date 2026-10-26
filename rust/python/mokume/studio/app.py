@@ -32,6 +32,7 @@ from mokume.studio.auth import (
     loopback_origin_from_host,
     origin_is_allowed,
 )
+from mokume.studio.artifacts import install_artifact_routes
 from mokume.studio.catalog import (
     CommandValidationError,
     command_schema,
@@ -47,7 +48,6 @@ from mokume.studio.models import (
 )
 from mokume.studio.paths import (
     PathAccessError,
-    ProjectPaths,
     list_directories,
     readable_directory,
 )
@@ -205,7 +205,7 @@ def _install_security_middleware(app: FastAPI) -> None:
         response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
+        response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -470,43 +470,7 @@ def _install_control_routes(
     require_session: Dependency,
     require_mutation: Dependency,
 ) -> None:
-    @app.get("/api/artifacts")
-    async def artifacts(
-        _session: Session = Depends(require_session),
-        run_id: str | None = Query(default=None),
-    ) -> dict:
-        project = runtime.store.active_project()
-        if project is None:
-            return {"artifacts": []}
-        if run_id is not None:
-            record = runtime.store.get_run(run_id)
-            if record is None or record.project_id != project.id:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
-            return {"artifacts": runtime.store.list_artifacts(run_id)}
-        return {"artifacts": runtime.store.list_project_artifacts(project.id)}
-
-    @app.get("/api/artifacts/{artifact_id}")
-    async def artifact(
-        artifact_id: str,
-        _session: Session = Depends(require_session),
-    ):
-        record = runtime.store.get_artifact(artifact_id)
-        if record is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
-        run_record = runtime.store.get_run(record.run_id)
-        project = runtime.store.active_project()
-        if project is None or run_record is None or run_record.project_id != project.id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact project not found")
-        try:
-            path = ProjectPaths(project.root).resolve_existing(record.path)
-        except PathAccessError as exc:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-        disposition = "attachment" if record.media_type == "text/html" else "inline"
-        return FileResponse(
-            path,
-            media_type=record.media_type,
-            headers={"Content-Disposition": f'{disposition}; filename="{path.name}"'},
-        )
+    install_artifact_routes(app, runtime, require_session)
 
     @app.get("/api/system")
     async def system_status(

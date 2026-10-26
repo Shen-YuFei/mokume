@@ -8,8 +8,12 @@ import shutil
 import time
 from pathlib import Path
 
+import pytest
+
+from mokume.studio.insights import review_command
 from mokume.studio.jobs import JobManager
 from mokume.studio.models import RunRequest, RunStatus, TERMINAL_RUN_STATUSES
+from mokume.studio.paths import PathAccessError
 from mokume.studio.state import StateStore
 
 
@@ -108,7 +112,8 @@ def test_real_worker_writes_output_artifact_and_provenance(tmp_path):
         manager.shutdown()
 
     assert record.status is RunStatus.SUCCEEDED
-    assert (project_root / "protein result.tsv").is_file()
+    assert (Path(record.run_directory) / "protein result.tsv").is_file()
+    assert not (project_root / "protein result.tsv").exists()
     provenance_path = Path(record.run_directory) / "provenance.json"
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     assert provenance["approved_hash"] == record.approved_hash
@@ -179,5 +184,56 @@ def test_worker_rejects_input_changed_after_approval(tmp_path):
     assert "changed after the run was approved" in (record.error or "")
     assert not (project_root / "protein result.tsv").exists()
     run_directory = Path(record.run_directory)
+    assert not (run_directory / "protein result.tsv").exists()
     assert json.loads((run_directory / "run.json").read_text())["status"] == "failed"
     assert (run_directory / "events.jsonl").is_file()
+
+
+@pytest.mark.parametrize("output", ["nested/result.tsv", "--output=nested/result.tsv"])
+def test_reviewed_outputs_use_the_same_run_directory_on_submission(tmp_path, output):
+    """Review and submission preserve one final path for relative outputs."""
+    store, project_root = _project_with_peptides(tmp_path)
+    request = _request()
+    if output.startswith("--"):
+        request.argv[-2:] = [output]
+    else:
+        request.argv[-1] = output
+    review = review_command(request, project_root)
+    assert review["valid"] is True
+    submitted_request = RunRequest(
+        argv=review["argv"],
+        run_id=review["run_id"],
+        output_directory=review["output_directory"],
+    )
+    manager = JobManager(store)
+    try:
+        submitted = manager.submit(submitted_request, store.active_project())
+        record = _wait_for_terminal(store, submitted.id)
+    finally:
+        manager.shutdown()
+    expected = Path(record.run_directory) / "nested" / "result.tsv"
+    assert record.status is RunStatus.SUCCEEDED
+    assert record.id == review["run_id"]
+    assert review["outputs"][0]["path"] == str(expected)
+    assert record.argv[record.argv.index("--output") + 1] == str(expected)
+    assert expected.is_file()
+
+
+def test_absolute_output_remains_project_guarded(tmp_path):
+    """Absolute project outputs keep their location and cannot escape the project."""
+    store, project_root = _project_with_peptides(tmp_path)
+    manager = JobManager(store)
+    request = _request()
+    request.argv[-1] = str(project_root / "absolute.tsv")
+    try:
+        submitted = manager.submit(request, store.active_project())
+        record = _wait_for_terminal(store, submitted.id)
+        assert record.status is RunStatus.SUCCEEDED
+        assert record.argv[-1] == str(project_root / "absolute.tsv")
+        assert (project_root / "absolute.tsv").is_file()
+        request = _request()
+        request.argv[-1] = str(tmp_path / "outside.tsv")
+        with pytest.raises(PathAccessError, match="escapes project root"):
+            manager.submit(request, store.active_project())
+    finally:
+        manager.shutdown()

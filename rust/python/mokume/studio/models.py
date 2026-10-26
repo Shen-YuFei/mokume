@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -69,6 +70,7 @@ class RunRequest(BaseModel):
     """Canonical user-approved native command request."""
 
     argv: list[str] = Field(min_length=1)
+    run_id: UUID = Field(default_factory=uuid4)
     output_directory: str = "results/mokume"
 
     @field_validator("argv")

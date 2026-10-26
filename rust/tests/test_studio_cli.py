@@ -1,6 +1,7 @@
 """CLI and packaging contract tests for the optional Studio runtime."""
 
 import importlib
+import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from mokume.studio import cli
+from mokume.studio.cli import _bind_port
 
 try:
     import tomllib
@@ -95,6 +97,19 @@ def test_explicit_port_does_not_fall_back(monkeypatch):
         getattr(cli, "_select_socket")(9000)
 
     assert attempted == [9000]
+
+
+def test_port_can_be_reused_after_an_accepted_connection_closes():
+    """A recently closed Studio listener can bind again while TCP winds down."""
+    with _bind_port(0) as listener:
+        address = listener.getsockname()
+        with socket.create_connection(address) as peer:
+            connection, _remote = listener.accept()
+            with connection:
+                connection.shutdown(socket.SHUT_RDWR)
+            assert peer.recv(1) == b""
+    with _bind_port(address[1]) as restarted:
+        assert restarted.getsockname() == address
 
 
 def test_default_port_scan_is_bounded(monkeypatch):

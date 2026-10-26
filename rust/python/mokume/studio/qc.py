@@ -11,6 +11,7 @@ import pandas as pd
 from mokume.studio.catalog import command_schema
 from mokume.studio.models import ProjectRecord, RunRecord, RunStatus
 from mokume.studio.paths import ProjectPaths
+from mokume.studio.sdrf import read_sdrf
 
 
 def qc_summary(
@@ -48,6 +49,7 @@ def qc_summary(
         entity_counts=entity_counts,
         normalization=_normalization_summary(record.argv),
         reports=_report_artifacts(artifacts),
+        conditions=_sample_conditions(record.argv, project),
     )
     return summary
 
@@ -75,6 +77,10 @@ def _summarize_matrix(path: Path) -> dict[str, Any]:
         "entity_label": _entity_label(frame.columns[0]),
         "sample_count": int(numeric.shape[1]),
         "missing_percent": missing,
+        "samples": list(numeric.columns),
+        "missing_by_sample": (100.0 * (1.0 - np.isfinite(positive).mean(axis=0)))
+        .round(2)
+        .tolist(),
         "median_cv_percent": median_cv,
         "log2_intensity_quartiles": quartiles,
         "correlation": correlations,
@@ -138,9 +144,10 @@ def _sample_diagnostics(
 
 def _correlation_diagnostics(filled: Any, samples: list[str]) -> dict[str, Any]:
     correlation = np.corrcoef(filled.T)
+    matrix = np.where(np.isfinite(correlation), correlation, None).tolist()
     means = (correlation.sum(axis=1) - 1.0) / max(1, len(samples) - 1)
     if not np.isfinite(means).any():
-        return {"median": None, "lowest_sample": None, "outliers": []}
+        return {"median": None, "lowest_sample": None, "outliers": [], "matrix": matrix}
     median_correlation = float(np.nanmedian(means))
     spread = float(np.nanmedian(np.abs(means - median_correlation)))
     cutoff = min(0.7, median_correlation - 3 * spread)
@@ -149,6 +156,7 @@ def _correlation_diagnostics(filled: Any, samples: list[str]) -> dict[str, Any]:
         "median": round(median_correlation, 4),
         "lowest_sample": samples[int(np.nanargmin(means))],
         "outliers": outliers,
+        "matrix": matrix,
     }
 
 
@@ -169,6 +177,20 @@ def _pca_diagnostics(filled: Any, samples: list[str]) -> dict[str, Any]:
     return {
         "variance_percent": [round(float(value), 2) for value in ratio],
         "outliers": pca_outliers,
+        "scores": np.pad(scores, ((0, 0), (0, 2 - scores.shape[1]))).tolist(),
+    }
+
+
+def _sample_conditions(argv: list[str], project: ProjectRecord) -> dict[str, str]:
+    options = _command_options(argv)
+    if not options.get("sdrf"):
+        return {}
+    path = ProjectPaths(project.root).resolve_existing(str(options["sdrf"]))
+    preview = read_sdrf(path, row_limit=50000)
+    return {
+        row["sample"]: row["condition"]
+        for row in preview["rows"]
+        if row["sample"] and row["condition"]
     }
 
 

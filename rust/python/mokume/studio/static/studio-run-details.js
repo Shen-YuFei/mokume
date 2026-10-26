@@ -12,6 +12,8 @@ import {
   toast,
 } from "./studio-core.js";
 import { translate, translatedElement } from "./studio-i18n.js";
+import { artifactItem } from "./studio-artifacts.js";
+import { qcPlots } from "./studio-qc-plots.js";
 import { applyWorkflowTemplate } from "./studio-workflow.js";
 import {
   appendMetric,
@@ -142,18 +144,7 @@ export function runArtifactSection(details) {
   if (!details.artifacts?.length) {
     list.append(translatedElement("p", "empty-state", "No artifacts were recorded."));
   }
-  (details.artifacts || []).forEach((artifact) => {
-    const link = document.createElement("a");
-    link.href = `/api/artifacts/${encodeURIComponent(artifact.id)}`;
-    link.target = "_blank";
-    link.rel = "noopener";
-    const path = document.createElement("code");
-    path.textContent = artifact.path;
-    const meta = document.createElement("small");
-    meta.textContent = `${formatBytes(artifact.size)} · sha256 ${artifact.sha256}`;
-    link.append(path, meta);
-    list.append(link);
-  });
+  (details.artifacts || []).forEach((artifact) => list.append(artifactItem(artifact)));
   section.append(list);
   return section;
 }
@@ -422,7 +413,7 @@ export function renderQcPanel(container, qc) {
   appendQcMetric(metrics, "Log2 intensity", quartiles.length === 3
     ? `Q1 ${quartiles[0]} · median ${quartiles[1]} · Q3 ${quartiles[2]}`
     : "—");
-  container.append(metrics);
+  container.append(metrics, qcPlots(qc));
 
   const diagnostics = document.createElement("div");
   diagnostics.className = "qc-diagnostics";

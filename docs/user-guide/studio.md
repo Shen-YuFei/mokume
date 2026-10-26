@@ -41,6 +41,12 @@ directory inside the selected project, and paths that escape the project root
 are rejected. The active project cannot be changed while a run is in progress.
 Cancelling a run terminates its worker rather than merely hiding the task.
 
+Relative output arguments, such as `--output pca.png`, are resolved inside that
+run's `results/mokume/<run-id>/` directory. Input paths remain relative to the
+project root. Absolute output paths can point elsewhere inside the project and
+still pass the same path and overwrite checks. The preflight **Inputs & outputs**
+list shows the final resolved paths before submission.
+
 For dataset inspection, the protein matrix must have one unique protein-ID
 column followed by numeric sample-intensity columns. Supply the matching SDRF,
 two distinct contrast labels, and the input scale explicitly. Vendor matrices

@@ -113,12 +113,31 @@ export function buildArgumentField(flag) {
 
 export function renderFieldHeading(heading, flag, requirement) {
   const parameterSelector = heading.querySelector(".parameter-selector");
-  heading.replaceChildren(parameterSelector || document.createTextNode(`--${flag}`));
+  heading.replaceChildren(parameterSelector || parameterLabel(flag));
   if (!requirement) return;
   const label = document.createElement("span");
   label.className = "required-label";
   setTranslatedText(label, requirement === true ? "Required" : requirement);
   heading.append(label);
+}
+
+export function parameterLabel(flag) {
+  const name = flag.replace(/^--/, "");
+  const abbreviations = new Set(["DE", "FDR", "SDRF", "PCA", "CV", "TMT", "LFQ", "IRS", "QC", "ID", "MBR", "PSM"]);
+  const friendly = name.split("-").map((word, index) => {
+    if (abbreviations.has(word.toUpperCase())) return word.toUpperCase();
+    return index ? word : word.charAt(0).toUpperCase() + word.slice(1);
+  }).join(" ");
+  const label = document.createElement("span");
+  label.className = "parameter-label";
+  const title = document.createElement("span");
+  title.className = "parameter-name";
+  title.textContent = friendly;
+  const raw = document.createElement("code");
+  raw.className = "parameter-flag";
+  raw.textContent = `--${name}`;
+  label.append(title, raw);
+  return label;
 }
 
 export function buildArgumentControl(flag) {
@@ -245,7 +264,7 @@ export function configureAlternativeParameterSelector(form, flags, stateKey, lab
         option.setAttribute("role", "option");
         option.setAttribute("aria-selected", "false");
         option.tabIndex = -1;
-        option.textContent = `--${value}`;
+        option.append(parameterLabel(value));
         option.addEventListener("click", (event) => {
           event.stopPropagation();
           setAlternativeParameter(form, flags, stateKey, value);
@@ -291,7 +310,7 @@ export function setAlternativeParameter(form, flags, stateKey, selected) {
     });
     field.hidden = !active;
     const selector = field.querySelector(`[data-parameter-selector="${stateKey}"]`);
-    selector.querySelector(".parameter-selector-value").textContent = `--${selected}`;
+    selector.querySelector(".parameter-selector-value").replaceChildren(parameterLabel(selected));
     selector.querySelectorAll(".parameter-selector-option").forEach((option) => {
       option.setAttribute("aria-selected", String(option.dataset.value === selected));
     });

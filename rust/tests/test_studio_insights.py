@@ -11,6 +11,7 @@ import pytest
 from studio_test_support import make_studio_app
 
 from mokume.studio.models import ArtifactRecord, JobSpec, RunStatus, utc_now
+from mokume.studio.qc import qc_summary
 
 
 PORT = 18767
@@ -67,9 +68,11 @@ async def _assert_review_failure_cases(
 ) -> None:
     """Verify existing outputs and missing SDRF conditions are rejected."""
     (project / "result.csv").write_text("already here\n", encoding="utf-8")
+    argv = _review_argv()
+    argv[argv.index("--output") + 1] = str(project / "result.csv")
     blocked = await client.post(
         "/api/commands/review",
-        json={"argv": _review_argv()},
+        json={"argv": argv},
         headers=headers,
     )
     output = next(
@@ -128,6 +131,9 @@ async def test_review_reports_mapping_resources_and_existing_output(
     assert payload["sdrf"]["row_count"] == 2
     assert payload["sdrf"]["columns"]["condition"] == "factor value[condition]"
     assert payload["sdrf"]["rows"][1]["replicate"] == "2"
+    expected_output = project / "results" / "mokume" / payload["run_id"] / "result.csv"
+    assert payload["outputs"][0]["path"] == str(expected_output)
+    assert not expected_output.parent.exists()
     assert not (project / "result.csv").exists()
     await _assert_review_failure_cases(studio_client, headers, project)
 
@@ -250,6 +256,12 @@ async def test_run_details_include_qc_stages_logs_and_provenance(
     assert details["qc"]["entity_counts"] == {"proteins": 3}
     assert details["qc"]["sample_count"] == 3
     assert details["qc"]["missing_percent"] > 0
+    assert details["qc"]["samples"] == ["S1", "S2", "S3"]
+    assert details["qc"]["missing_by_sample"] == [0.0, 33.33, 0.0]
+    assert len(details["qc"]["correlation"]["matrix"]) == 3
+    assert all(len(row) == 3 for row in details["qc"]["correlation"]["matrix"])
+    assert len(details["qc"]["pca"]["scores"]) == 3
+    assert all(len(row) == 2 for row in details["qc"]["pca"]["scores"])
 
     other = tmp_path / "other"
     other.mkdir()
@@ -261,4 +273,105 @@ async def test_run_details_include_qc_stages_logs_and_provenance(
     assert switched.status_code == 200
     assert (await studio_client.get("/api/runs/run-1/details")).status_code == 404
     assert (await studio_client.get("/api/artifacts/artifact-1")).status_code == 404
+    assert (
+        await studio_client.get("/api/artifacts/artifact-1/preview")
+    ).status_code == 404
     assert (await studio_client.get("/api/artifacts")).json() == {"artifacts": []}
+
+
+def _register_artifact(client, path: Path, media_type: str) -> str:
+    """Register a local artifact against the completed fixture run."""
+    identifier = path.name
+    client.app.state.runtime.store.register_artifact(
+        ArtifactRecord(
+            id=identifier,
+            run_id="run-1",
+            path=str(path),
+            media_type=media_type,
+            size=path.stat().st_size,
+            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
+    )
+    return f"/api/artifacts/{identifier}"
+
+
+async def test_html_artifact_preview_has_an_isolated_inline_response(
+    studio_client, tmp_path
+):
+    """HTML can run inline scripts only inside a same-origin-framed sandbox."""
+    project = tmp_path / "project"
+    headers, _digest = await _seed_completed_run(studio_client, project)
+    report = project / "report.html"
+    report.write_text("<html><script>document.title = 'report';</script></html>")
+    url = _register_artifact(studio_client, report, "text/html")
+    preview = await studio_client.get(f"{url}/preview")
+    assert preview.status_code == 200
+    assert preview.text == report.read_text()
+    assert preview.headers["content-type"].startswith("text/html")
+    assert preview.headers["content-disposition"].startswith("inline;")
+    assert preview.headers["content-security-policy"] == (
+        "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; "
+        "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; "
+        "frame-ancestors 'self'"
+    )
+    assert preview.headers["x-frame-options"] == "SAMEORIGIN"
+    download = await studio_client.get(url)
+    assert download.headers["content-disposition"].startswith("attachment;")
+    assert download.headers["x-frame-options"] == "DENY"
+    assert (
+        await studio_client.get("/api/artifacts/artifact-1/preview")
+    ).status_code == 415
+    other = tmp_path / "other"
+    other.mkdir()
+    await studio_client.post(
+        "/api/projects/open", json={"path": str(other)}, headers=headers
+    )
+    assert (await studio_client.get(f"{url}/preview")).status_code == 404
+    studio_client.cookies.clear()
+    assert (await studio_client.get(f"{url}/preview")).status_code == 401
+
+
+async def test_svg_artifact_is_sandboxed_and_cannot_use_html_preview(
+    studio_client, tmp_path
+):
+    """Inline SVG cannot execute scripts under the Studio origin."""
+    project = tmp_path / "project"
+    await _seed_completed_run(studio_client, project)
+    image = project / "image.svg"
+    image.write_text('<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>')
+    url = _register_artifact(studio_client, image, "image/svg+xml")
+    response = await studio_client.get(url)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert response.headers["content-disposition"].startswith("inline;")
+    assert response.headers["content-security-policy"] == "sandbox"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert (await studio_client.get(f"{url}/preview")).status_code == 415
+    image.unlink()
+    outside = tmp_path / "outside.svg"
+    outside.write_text("<svg/>")
+    image.symlink_to(outside)
+    assert (await studio_client.get(url)).status_code == 404
+
+
+async def test_qc_conditions_include_samples_beyond_the_sdrf_preview(
+    studio_client, tmp_path
+):
+    """PCA condition metadata is not limited to the preflight's first 24 rows."""
+    project = tmp_path / "project"
+    await _seed_completed_run(studio_client, project)
+    store = studio_client.app.state.runtime.store
+    record = store.get_run("run-1")
+    design = project / "design.sdrf.tsv"
+    design.write_text(
+        "source name\tfactor value[condition]\n"
+        + "".join(f"S{index}\tcontrol\n" for index in range(1, 26))
+        + "S26\ttreated\n"
+    )
+    summary = qc_summary(
+        record.model_copy(update={"argv": [*record.argv, "--sdrf", str(design)]}),
+        [item.model_dump(mode="json") for item in store.list_artifacts(record.id)],
+        store.active_project(),
+    )
+    assert summary["conditions"]["S26"] == "treated"
+    assert len(summary["conditions"]) == 26
