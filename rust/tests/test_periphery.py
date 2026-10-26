@@ -121,7 +121,9 @@ def test_volcano_height_and_guide_use_raw_pvalues(tmp_path):
             str(output),
             fdr_threshold=threshold,
         )
-        arguments = output.read_text().split("Plotly.newPlot('volcano-plot', ")[1]
+        arguments = output.read_text(encoding="utf-8").split(
+            "Plotly.newPlot('volcano-plot', "
+        )[1]
         _, layout = json.loads("[" + arguments.split(", plotConfig);")[0] + "]")
         shapes = [shape for shape in layout["shapes"] if shape.get("xref") == "paper"]
         if expected is None:
