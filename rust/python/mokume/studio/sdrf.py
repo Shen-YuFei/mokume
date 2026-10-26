@@ -14,7 +14,7 @@ _REFERENCE_PATTERN = re.compile(
 _EMPTY_VALUES = {"", "na", "n/a", "not applicable", "not available", "unknown"}
 
 
-def read_sdrf(path: Path) -> dict[str, Any]:
+def read_sdrf(path: Path, *, row_limit: int = 24) -> dict[str, Any]:
     """Read a small mapped preview while counting every SDRF row."""
     with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as stream:
         reader = csv.DictReader(stream, delimiter="\t")
@@ -33,7 +33,7 @@ def read_sdrf(path: Path) -> dict[str, Any]:
             if key in seen and any(key):
                 issues.append(f"row {row_count}: duplicate sample mapping")
             seen.add(key)
-            if len(rows) < 24:
+            if len(rows) < row_limit:
                 rows.append(mapped)
     return {
         "path": str(path),

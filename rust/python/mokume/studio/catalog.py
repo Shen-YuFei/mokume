@@ -386,15 +386,14 @@ def _with_presentation(command: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_and_canonicalize(
-    argv: Iterable[str], project_root: str | Path
+    argv: Iterable[str], project_root: str | Path, output_directory: Path | None = None
 ) -> list[str]:
     """Validate workflow argv and guard every path beneath the active project."""
     original = list(argv)
     spec = _command_spec(original)
     paths = ProjectPaths(project_root)
-    canonical = _canonicalize_paths(original, spec, paths)
-    path = tuple(spec["path"])
-    if path in NATIVE_COMMAND_PATHS:
+    canonical = _canonicalize_paths(original, spec, paths, output_directory)
+    if tuple(spec["path"]) in NATIVE_COMMAND_PATHS:
         package = importlib.import_module("mokume")
         getattr(package, "validate_args")(canonical)
     else:
@@ -463,7 +462,10 @@ def _command_spec(argv: list[str]) -> dict[str, Any]:
 
 
 def _canonicalize_paths(
-    argv: list[str], spec: dict[str, Any], paths: ProjectPaths
+    argv: list[str],
+    spec: dict[str, Any],
+    paths: ProjectPaths,
+    output_directory: Path | None,
 ) -> list[str]:
     command_length = len(spec["path"])
     options = _option_index(spec.get("flags", ()))
@@ -484,7 +486,9 @@ def _canonicalize_paths(
         ]
         if len(values) != value_count:
             raise CommandValidationError(f"missing value for {option}")
-        canonical.extend(_canonical_values(argument, option, values, paths))
+        canonical.extend(
+            _canonical_values(argument, option, values, paths, output_directory)
+        )
         index += 1 + value_count - (inline_value is not None)
     return canonical
 
@@ -521,6 +525,7 @@ def _canonical_values(
     option: str,
     values: list[str],
     paths: ProjectPaths,
+    output_directory: Path | None,
 ) -> list[str]:
     names = argument.get("value_names") or []
     canonical: list[str] = []
@@ -530,6 +535,8 @@ def _canonical_values(
             canonical.append(value)
             continue
         long_name = str(argument.get("long") or option.lstrip("-"))
+        if long_name in OUTPUT_ARGUMENTS and output_directory is not None:
+            value = str(output_directory / Path(value).expanduser())
         resolved = (
             paths.resolve_output(value)
             if long_name in OUTPUT_ARGUMENTS

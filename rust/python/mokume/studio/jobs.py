@@ -202,17 +202,10 @@ class JobManager:
             return self._start_locked(spec, project, command)
 
     def _prepare_spec(self, request: RunRequest, project_root: str) -> JobSpec:
-        canonical = validate_and_canonicalize(request.argv, project_root)
         guard = ProjectPaths(project_root)
-        run_id = str(uuid.uuid4())
-        base_directory = guard.resolve_output(
-            request.output_directory, allow_existing=True
-        )
-        if base_directory.exists() and not base_directory.is_dir():
-            raise PathAccessError(f"run output is not a directory: {base_directory}")
-        run_directory = base_directory / run_id
-        if run_directory.exists():  # practically impossible, kept deterministic
-            raise PathAccessError(f"run directory already exists: {run_directory}")
+        run_id = str(request.run_id)
+        run_directory = guard.run_directory(request.output_directory, run_id)
+        canonical = validate_and_canonicalize(request.argv, project_root, run_directory)
         inputs, _outputs = command_paths(canonical)
         input_snapshots = [
             path_snapshot(guard.resolve_existing(path), guard) for path in inputs

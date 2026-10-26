@@ -206,7 +206,9 @@ export async function submitReviewedRun() {
   const payload = await api("/api/runs", {
     method: "POST",
     headers: originHeaders(),
-    body: JSON.stringify({ argv: review.argv }),
+    body: JSON.stringify({
+      argv: review.argv, run_id: review.run_id, output_directory: review.output_directory,
+    }),
   });
   byId("command-review-dialog").close();
   state.activeRunId = payload.id;

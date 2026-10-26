@@ -24,7 +24,7 @@ from mokume.studio.command_insights import (
     planned_workflow_steps,
     template_from_argv,
 )
-from mokume.studio.models import ProjectRecord, RunRecord, RunStatus, ValidationRequest
+from mokume.studio.models import ProjectRecord, RunRecord, RunRequest, RunStatus
 from mokume.studio.paths import ProjectPaths
 from mokume.studio.qc import qc_summary
 from mokume.studio.sdrf import read_sdrf
@@ -54,13 +54,13 @@ def install_insight_routes(
 
     @app.post("/api/commands/review")
     async def command_review(
-        payload: ValidationRequest,
+        payload: RunRequest,
         _session=Depends(require_mutation),
     ) -> dict:
         project = runtime.store.active_project()
         if project is None:
             raise HTTPException(status.HTTP_409_CONFLICT, "Open a project folder first")
-        return review_command(payload.argv, project.root)
+        return review_command(payload, project.root)
 
     @app.get("/api/runs/{run_id}/details")
     async def run_details(run_id: str, _session=Depends(require_session)) -> dict:
@@ -71,11 +71,12 @@ def install_insight_routes(
         return build_run_details(runtime.store, record, project)
 
 
-def review_command(argv: list[str], project_root: str | Path) -> dict:
+def review_command(request: RunRequest, project_root: str | Path) -> dict:
     """Return a non-mutating, structured review even when validation fails."""
+    argv = request.argv
     spec = _find_command(argv)
     guard = ProjectPaths(project_root)
-    canonical, validation_error = _try_canonicalize(argv, guard.root)
+    canonical, validation_error = _try_canonicalize(request, guard)
     inspected_argv = canonical or argv
     occurrences = parse_occurrences(inspected_argv, spec) if spec else []
     inspection = _review_inspection(guard, occurrences)
@@ -85,6 +86,8 @@ def review_command(argv: list[str], project_root: str | Path) -> dict:
     )
     return {
         "valid": valid,
+        "run_id": str(request.run_id),
+        "output_directory": request.output_directory,
         "error": validation_error,
         "error_parameter": _error_parameter(validation_error),
         "argv": canonical or argv,
@@ -149,10 +152,11 @@ def _find_command(argv: list[str]) -> dict[str, Any] | None:
 
 
 def _try_canonicalize(
-    argv: list[str], root: Path
+    request: RunRequest, guard: ProjectPaths
 ) -> tuple[list[str] | None, str | None]:
     try:
-        return validate_and_canonicalize(argv, root), None
+        directory = guard.run_directory(request.output_directory, str(request.run_id))
+        return validate_and_canonicalize(request.argv, guard.root, directory), None
     except (OSError, RuntimeError, ValueError) as exc:
         return None, str(exc)
 

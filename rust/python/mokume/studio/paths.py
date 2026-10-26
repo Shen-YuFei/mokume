@@ -87,6 +87,13 @@ class ProjectPaths:
         """Return a stable project-relative representation of an existing path."""
         return str(self.resolve_existing(path).relative_to(self.root))
 
+    def run_directory(self, base: str, run_id: str) -> Path:
+        """Resolve an unused run directory beneath a project output directory."""
+        directory = self.resolve_output(base, allow_existing=True)
+        if directory.exists() and not directory.is_dir():
+            raise PathAccessError(f"run output is not a directory: {directory}")
+        return self.resolve_output(directory / run_id)
+
     def _candidate(self, requested: str | Path) -> Path:
         path = Path(requested).expanduser()
         return path if path.is_absolute() else self.root / path
