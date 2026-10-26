@@ -293,11 +293,17 @@ Pass `--help` to either command for the full flag set.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--export-peptides` | none | Export normalized peptides (not supported with DirectLFQ) |
+| `--export-unnormalized-peptides` | none | Rust only: export the same peptide rows before sample normalization, after run normalization and feature filtering |
+| `--export-unimputed` | none | Rust only: export the protein matrix after IRS and sample/coverage filtering, before imputation; requires `--impute-method` |
 | `--export-ions` | none | Export normalized ions (DirectLFQ only) |
 
-`--export-peptides` also rejects dataset-level sample normalization for
-non-cell-based aggregation methods, because those peptide values would not
-represent the normalized protein matrix.
+MaxLFQ peptide export supports quantile and hierarchical sample normalization.
+It sums the normalized modification/charge species into canonical peptide rows.
+Both peptide exports have identical keys and columns: dataset-level normalization
+uses `ProteinName,PeptideCanonical,SampleID,NormIntensity`; other configurations
+also include `BioReplicate` and `Condition`. DirectLFQ, Ratio and SpectralCount
+reject peptide export. piBAQ still rejects peptide export with dataset-level
+sample normalization.
 
 ### Runtime Resource Controls
 

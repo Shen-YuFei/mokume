@@ -199,6 +199,8 @@ impl OutputFormat {
 pub struct OutputConfig {
     pub protein_matrix: PathBuf,
     pub export_peptides: Option<PathBuf>,
+    pub export_unnormalized_peptides: Option<PathBuf>,
+    pub export_unimputed: Option<PathBuf>,
     pub export_ions: Option<PathBuf>,
     pub format: OutputFormat,
 }

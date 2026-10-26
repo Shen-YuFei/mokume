@@ -214,15 +214,23 @@ fn validate_method_requirements(
     if method == QuantMethod::Ratio && args.sdrf.is_none() {
         return Err(invalid_input("Ratio quantification requires --sdrf option"));
     }
-    if args.export_peptides.is_some()
-        && matches!(
-            method,
-            QuantMethod::DirectLfq | QuantMethod::Ratio | QuantMethod::SpectralCount
-        )
-    {
-        return Err(invalid_input(format!(
-            "export-peptides is not supported by {method} quantification"
-        )));
+    if matches!(
+        method,
+        QuantMethod::DirectLfq | QuantMethod::Ratio | QuantMethod::SpectralCount
+    ) {
+        for (name, path) in [
+            ("export-peptides", &args.export_peptides),
+            (
+                "export-unnormalized-peptides",
+                &args.export_unnormalized_peptides,
+            ),
+        ] {
+            if path.is_some() {
+                return Err(invalid_input(format!(
+                    "{name} is not supported by {method} quantification"
+                )));
+            }
+        }
     }
     if args.coverage_threshold.is_some() && args.sdrf.is_none() {
         return Err(invalid_input("coverage-threshold requires --sdrf option"));
@@ -447,6 +455,8 @@ fn output_config(args: &Features2ProteinsArgs) -> OutputConfig {
     OutputConfig {
         protein_matrix: args.output.clone(),
         export_peptides: args.export_peptides.clone(),
+        export_unnormalized_peptides: args.export_unnormalized_peptides.clone(),
+        export_unimputed: args.export_unimputed.clone(),
         export_ions: args.export_ions.clone(),
         format: OutputFormat::PythonCompatible,
     }

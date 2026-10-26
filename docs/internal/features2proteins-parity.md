@@ -25,6 +25,8 @@ intent for each parameter.
 | memory budget | Runtime | `--duckdb-memory` caps DuckDB memory. | `--memory` is a cross-platform soft process resident-memory planner/guard: it reduces QPX batch/read-ahead memory and checks RSS or Working Set between batches/phases. It cannot replace an operating-system, scheduler, or container hard limit. Runtime pyOpenMS piBAQ digestion occurs before the guarded Rust dispatch. | Intentional CLI difference |
 | `--export-peptides` | Output | Writes normalized peptide-level intermediates. | Writes Python-shaped peptide intermediates for non-DirectLFQ methods; DirectLFQ peptide export still returns `NotImplemented`. | Implemented subset |
 | `--export-ions` | Output | Streams DirectLFQ's normalized, within-protein-aligned ion matrix in linear intensity space. | Writes the same normalized, within-protein-aligned linear ion matrix; non-DirectLFQ methods return `NotImplemented`. | Implemented subset |
+| `--export-unnormalized-peptides` | Output | Not available. | Exports matched peptide rows before sample normalization, retaining run normalization and feature filtering. | Rust only |
+| `--export-unimputed` | Output | Not available. | Exports the protein matrix after IRS and filtering, before imputation and batch correction; requires `--impute-method`. | Rust only |
 | `--normalization-proteins` | Normalization | Restricts normalization proteins to the provided list for selected dataset-level normalizers without filtering the final matrix. | Implemented sample normalizers use the file to restrict factor inputs and still apply the factors to the full output matrix. It is unavailable for directlfq, ratio, peptide-count, and spectral-count. Empty files or lists with no matching features fail clearly. | Implemented subset |
 | `--coverage-threshold` | Postprocessing | Drops proteins below per-condition non-missing coverage. | Applies a per-condition coverage filter when SDRF condition metadata is available. | Implemented subset |
 | `--min-sample-correlation` | Postprocessing | Drops samples below mean within-condition Pearson correlation on the normalized protein matrix. | Same one-shot pairwise-complete log2 correlation and sample-column removal. | Implemented |
@@ -126,6 +128,17 @@ the same contract:
   deterministic ordering before DirectLFQ constructs its matrix. Rust maps its
   temporary lexical IDs back to the original registries after solving, so input
   row encounter order cannot change the result.
+- MaxLFQ quantile/hierarchical `--export-peptides` uses the normalized species
+  traces consumed by its solver, summed to canonical peptide rows. Python supports
+  these normalizers but exports separate modification/charge species columns.
+  Compare canonical sums rather than individual exported rows across runtimes.
+- The PXD007683 export audit found existing normalization-definition differences:
+  Python quantile uses the largest observed column count for its reference grid;
+  Rust uses the union of peptide rows. With the same reference grid, canonical
+  export sums agree to floating-point precision. Python hierarchical uses its
+  clustering/least-squares normalizer, whereas Rust uses DirectLFQ sample
+  alignment. Exports preserve the values used by each runtime without changing
+  either normalization calculation.
 - `--export-ions` is produced by the same DirectLFQ calculation as the protein
   matrix. It contains the sample-normalized and within-protein-aligned ion
   profiles in linear intensity space, not the raw input traces.

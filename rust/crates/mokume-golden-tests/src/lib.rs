@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+mod exports;
+
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::{create_dir_all, File};
@@ -3831,6 +3833,8 @@ fn run_synthetic_quantification_with(
         output: OutputConfig {
             protein_matrix: output.clone(),
             export_peptides: None,
+            export_unnormalized_peptides: None,
+            export_unimputed: None,
             export_ions: None,
             format: OutputFormat::PythonCompatible,
         },
@@ -3955,6 +3959,8 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
         output: OutputConfig {
             protein_matrix: output.clone(),
             export_peptides: None,
+            export_unnormalized_peptides: None,
+            export_unimputed: None,
             export_ions: None,
             format: OutputFormat::PythonCompatible,
         },
@@ -4069,6 +4075,8 @@ fn run_family_pibaq_quantification_with(pibaq: PibaqConfig) -> Result<CsvTable, 
         output: OutputConfig {
             protein_matrix: output.clone(),
             export_peptides: None,
+            export_unnormalized_peptides: None,
+            export_unimputed: None,
             export_ions: None,
             format: OutputFormat::PythonCompatible,
         },
@@ -4751,6 +4759,8 @@ fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> Featu
         output: OutputConfig {
             protein_matrix: output,
             export_peptides: None,
+            export_unnormalized_peptides: None,
+            export_unimputed: None,
             export_ions: None,
             format: OutputFormat::PythonCompatible,
         },
@@ -4817,6 +4827,8 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
         output: OutputConfig {
             protein_matrix: output.clone(),
             export_peptides: None,
+            export_unnormalized_peptides: None,
+            export_unimputed: None,
             export_ions: None,
             format: OutputFormat::PythonCompatible,
         },

@@ -442,20 +442,28 @@ impl FeatureToProteinState {
         let contextual = self.aggregation.preserves_contextual_canonical_rows();
         // Exported peptide rows need the contextual ids here; otherwise a
         // pipelined ingest leaves them to its aggregation worker.
-        if deferred.is_none() || self.export_rows.peptides.is_some() {
+        if deferred.is_none() || self.export_rows.has_peptides() {
             self.contextual.resolve(&mut record, contextual)?;
         }
-        self.export_rows.push(IntermediateMeasurement {
-            protein,
-            sample,
-            peptide: record.peptide,
-            intensity,
-            protein_name: &protein_group,
-            peptide_canonical: &feature.sequence,
-            sample_name: &sample_name,
-            run_file_name: &feature.run_file_name,
-            sdrf_record,
+        let unnormalized_intensity = self.export_rows.unnormalized_peptides.as_ref().map(|_| {
+            intensity_factors.map_or(feature.intensity, |factors| {
+                factors.normalize_run(feature.intensity, &sample_name, &feature.run_file_name)
+            })
         });
+        self.export_rows.push(
+            IntermediateMeasurement {
+                protein,
+                sample,
+                peptide: record.peptide,
+                intensity,
+                protein_name: &protein_group,
+                peptide_canonical: &feature.sequence,
+                sample_name: &sample_name,
+                run_file_name: &feature.run_file_name,
+                sdrf_record,
+            },
+            unnormalized_intensity,
+        );
         if let Some(records) = deferred {
             records.push(record);
         } else {
@@ -554,25 +562,22 @@ impl FeatureToProteinState {
     fn write_intermediate_exports(
         &mut self,
         config: &FeatureToProteinsConfig,
-        min_unique_peptides: usize,
+        allowed_cells: &HashSet<CellKey>,
         options: PeptideExportOptions,
         dataset_normalization: Option<SampleNormalizationMethod>,
     ) -> Result<()> {
-        let allowed_cells = self.allowed_cells(min_unique_peptides);
         let low_frequency_peptides = self
             .low_frequency
             .as_ref()
             .map(LowFrequencyTracker::low_frequency_peptides)
             .unwrap_or_default();
-        // When a dataset-level sample normalization is requested, the exported
-        // peptides must carry it: Python applies it in `load_for_mokume` before
-        // writing the peptide CSV. Reuse the exact aggregation helper on cells
-        // rebuilt from the export rows so the export matches the protein matrix.
+        // Read MaxLFQ's already-normalized species traces. Cell-based methods
+        // reuse their normalization helper on cells rebuilt from export rows.
         let dataset_normalized = dataset_normalization
-            .map(|method| self.export_dataset_normalized_values(method, &allowed_cells));
+            .map(|method| self.export_dataset_normalized_values(method, allowed_cells));
         self.export_rows.write(
             config,
-            &allowed_cells,
+            allowed_cells,
             &low_frequency_peptides,
             options,
             dataset_normalized.as_ref(),
@@ -582,15 +587,15 @@ impl FeatureToProteinState {
             &self.proteins,
             &self.canonical_peptides,
             &self.samples,
-            &allowed_cells,
+            allowed_cells,
         )
     }
 
-    /// Dataset-level-normalized canonical peptide values for `--export-peptides`,
-    /// keyed by `(protein, sample, canonical sequence)`. Rebuilds the same
+    /// Dataset-normalized canonical values for `--export-peptides`. MaxLFQ
+    /// reads its actual solver traces; cell-based methods rebuild the same
     /// max-merged `(protein, sample) -> {peptide: intensity}` cells the
     /// aggregation holds (both come from `push_peptide_max` over the same
-    /// ingest), then applies the identical [`apply_dataset_norm_to_peptide_cells`]
+    /// ingest), then apply the identical [`apply_dataset_norm_to_peptide_cells`]
     /// helper, so the exported peptides match the protein-matrix normalization.
     fn export_dataset_normalized_values(
         &self,
@@ -601,6 +606,14 @@ impl FeatureToProteinState {
         let Some(export) = self.export_rows.peptides.as_ref() else {
             return result;
         };
+        if let FeatureAggregation::Lfq {
+            route_to_directlfq: false,
+            traces,
+            ..
+        } = &self.aggregation
+        {
+            return traces.normalized_canonical_values(&self.canonical_peptides);
+        }
         let mut cells: HashMap<CellKey, HashMap<PeptideId, f64>> = HashMap::new();
         for (key, peptides) in &export.rows {
             let cell = CellKey {
@@ -634,6 +647,7 @@ impl FeatureToProteinState {
 
     fn into_matrix(
         mut self,
+        config: &FeatureToProteinsConfig,
         min_unique_peptides: usize,
         dataset_normalization: Option<SampleNormalizationMethod>,
     ) -> Result<ProteinMatrix> {
@@ -653,6 +667,8 @@ impl FeatureToProteinState {
                 );
             }
         }
+        let options = PeptideExportOptions::default();
+        self.write_intermediate_exports(config, &allowed_cells, options, dataset_normalization)?;
         let empty_mapping = HashMap::new();
         // TMM scales contextual peptidoforms in place, so `finalize` must still
         // collapse them; the other dataset normalizers write canonical cells.
@@ -760,6 +776,7 @@ impl LowFrequencyTracker {
 #[derive(Debug, Default)]
 struct IntermediateExports {
     peptides: Option<PeptideExport>,
+    unnormalized_peptides: Option<PeptideExport>,
 }
 
 /// `RazorPeptideFilter` mode (Python `preprocessing/filters/protein.py:334-378`).
@@ -854,11 +871,20 @@ struct PeptideExportOptions {
 }
 
 impl IntermediateExports {
+    fn has_peptides(&self) -> bool {
+        self.peptides.is_some() || self.unnormalized_peptides.is_some()
+    }
+
     fn new(config: &FeatureToProteinsConfig) -> Self {
         Self {
             peptides: config
                 .output
                 .export_peptides
+                .as_ref()
+                .map(|_| PeptideExport::default()),
+            unnormalized_peptides: config
+                .output
+                .export_unnormalized_peptides
                 .as_ref()
                 .map(|_| PeptideExport::default()),
         }
@@ -877,12 +903,25 @@ impl IntermediateExports {
                     run_mode,
                     ..PeptideExport::default()
                 }),
+            unnormalized_peptides: None,
         }
     }
 
-    fn push(&mut self, measurement: IntermediateMeasurement<'_>) {
+    fn push(
+        &mut self,
+        measurement: IntermediateMeasurement<'_>,
+        unnormalized_intensity: Option<f64>,
+    ) {
         if let Some(peptides) = &mut self.peptides {
             peptides.push(measurement);
+        }
+        if let (Some(peptides), Some(intensity)) =
+            (&mut self.unnormalized_peptides, unnormalized_intensity)
+        {
+            peptides.push(IntermediateMeasurement {
+                intensity,
+                ..measurement
+            });
         }
     }
 
@@ -894,25 +933,29 @@ impl IntermediateExports {
         options: PeptideExportOptions,
         dataset_normalized: Option<&HashMap<(ProteinId, SampleId, String), f64>>,
     ) -> Result<()> {
-        if let (Some(path), Some(peptides_export)) = (
-            config.output.export_peptides.as_deref(),
-            self.peptides.as_ref(),
-        ) {
+        for (path, peptides_export, normalized) in [
+            (
+                config.output.export_peptides.as_deref(),
+                self.peptides.as_ref(),
+                dataset_normalized,
+            ),
+            (
+                config.output.export_unnormalized_peptides.as_deref(),
+                self.unnormalized_peptides.as_ref(),
+                None,
+            ),
+        ] {
+            let (Some(path), Some(peptides_export)) = (path, peptides_export) else {
+                continue;
+            };
             let rows = peptides_export.materialize(
                 allowed_cells,
                 low_frequency_peptides,
                 options.log2,
-                dataset_normalized,
+                normalized,
             );
-            // Python's dataset-level normalization (`_apply_dataset_normalization`,
-            // stages.py:961-1047) pivots the peptide table to
-            // `(ProteinName, PeptideCanonical) x SampleID`, normalizes, then melts
-            // back keying only on `[ProteinName, PeptideCanonical]` — dropping
-            // BioReplicate and Condition. So the exported CSV carries four columns,
-            // not six. The non-dataset path returns the combined table unchanged and
-            // keeps all six. `dataset_normalized.is_some()` is exactly the
-            // dataset-level case (features2peptides always passes `None`, so its
-            // export is unaffected).
+            // Both exports keep the same keys and columns. Dataset-level
+            // normalization drops BioReplicate/Condition, as in Python's melt.
             let omit_replicate_condition = dataset_normalized.is_some();
             peptides_export.write_csv(path, &rows, omit_replicate_condition)?;
             if options.save_parquet {
@@ -1325,6 +1368,10 @@ fn tech_replicate_of(run_file_name: &str) -> i64 {
 impl IntensityFactors {
     fn normalize(&self, intensity: f64, sample: &str, run: &str) -> f64 {
         let sample_factor = self.sample.get(sample).copied().unwrap_or(1.0);
+        self.normalize_run(intensity, sample, run) * sample_factor
+    }
+
+    fn normalize_run(&self, intensity: f64, sample: &str, run: &str) -> f64 {
         let run_intensity = self
             .run
             .get(&RunCellKey {
@@ -1339,7 +1386,7 @@ impl IntensityFactors {
         // (`peptide.py:333-340`), then `peptide_normalized` (sample) runs later
         // (`peptide.py:370`). Missing runs map to 1.0.
         let irs_scale = self.irs_scale_by_run.get(run).copied().unwrap_or(1.0);
-        run_intensity * irs_scale * sample_factor
+        run_intensity * irs_scale
     }
 
     fn is_empty(&self) -> bool {
@@ -1764,6 +1811,30 @@ impl FeatureAggregation {
 }
 
 impl MaxLfqFeatureAggregation {
+    /// Read the normalized species traces without changing the solver input.
+    fn normalized_canonical_values(
+        &self,
+        canonicals: &StringIdRegistry<PeptideId>,
+    ) -> HashMap<(ProteinId, SampleId, String), f64> {
+        let sequences = canonicals.iter().collect::<HashMap<_, _>>();
+        let species_to_canonical = self
+            .ion_to_species
+            .iter()
+            .map(|(ion, species)| (*species, self.ion_to_canonical[ion]))
+            .collect::<HashMap<_, _>>();
+        let mut traces = self.peptide_traces.iter().collect::<Vec<_>>();
+        traces.sort_by_key(|(key, _)| (key.protein, key.sample, key.peptide));
+        let mut values = HashMap::new();
+        for (key, intensity) in traces {
+            let canonical = species_to_canonical[&key.peptide];
+            let sequence = sequences[&canonical];
+            *values
+                .entry((key.protein, key.sample, sequence.to_owned()))
+                .or_insert(0.0) += intensity;
+        }
+        values
+    }
+
     fn into_protein_values(
         self,
         allowed_cells: &HashSet<CellKey>,
@@ -3599,10 +3670,9 @@ fn apply_quantile_to_lfq_traces(
     }
 }
 
-/// Hierarchical (DirectLFQ) sample normalization on the MaxLFQ species traces,
-/// mirroring Python's `apply_hierarchical` over the `(protein, canonical,
-/// peptidoform, charge)` rows that `_sum_maxlfq_species` produces. Every trace
-/// of a sample is scaled by that sample's shift.
+/// DirectLFQ sample normalization on MaxLFQ's modification/charge species.
+/// Every trace of a sample is scaled by that sample's shift. Python currently
+/// uses an independent clustering/least-squares normalizer on the same species.
 fn apply_hierarchical_to_lfq_traces(
     traces: &mut HashMap<PeptideCellKey, f64>,
     allowed_cells: &HashSet<CellKey>,
@@ -5375,6 +5445,8 @@ fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfi
         output: OutputConfig {
             protein_matrix: PathBuf::new(),
             export_peptides: None,
+            export_unnormalized_peptides: None,
+            export_unimputed: None,
             export_ions: None,
             format: OutputFormat::default(),
         },
@@ -5574,15 +5646,7 @@ fn run_features_to_proteins_inner(
     } else {
         config.filtering.min_unique_peptides
     };
-    // The protein pipeline never log2-transforms the peptide intermediates;
-    // only the standalone `features2peptides` honors `--log2`.
-    state.write_intermediate_exports(
-        config,
-        min_unique_peptides,
-        PeptideExportOptions::default(),
-        dataset_normalization,
-    )?;
-    let matrix = state.into_matrix(min_unique_peptides, dataset_normalization)?;
+    let matrix = state.into_matrix(config, min_unique_peptides, dataset_normalization)?;
     memory.check("protein matrix materialization")?;
     finish_protein_matrix(config, sdrf.as_ref(), raw_sdrf.as_ref(), &memory, matrix)
 }
@@ -5661,7 +5725,7 @@ struct IngestSinks {
 
 impl IngestSinks {
     fn take(state: &mut FeatureToProteinState, placeholder: FeatureAggregation) -> Self {
-        let defer_context = state.export_rows.peptides.is_none();
+        let defer_context = !state.export_rows.has_peptides();
         Self {
             contextual: state.aggregation.preserves_contextual_canonical_rows(),
             aggregation: std::mem::replace(&mut state.aggregation, placeholder),
@@ -5741,11 +5805,7 @@ fn finish_protein_matrix(
     memory.check("matrix post-processing")?;
     // Python's dataset-level normalization pivots through sparse long form, so
     // absent cells remain missing even for additive quantification methods.
-    let missing_fill = if dataset_sample_normalization_method(config)?.is_some() {
-        None
-    } else {
-        missing_protein_value(config.quantification)
-    };
+    let missing_fill = missing_protein_value(config)?;
     matrix.write_csv(
         &config.output.protein_matrix,
         config.output.format,
@@ -5795,6 +5855,10 @@ fn apply_protein_postprocessing(
     if let Some(threshold) = config.coverage_threshold {
         matrix.apply_coverage_filter(sdrf, threshold, drop_empty_samples)?;
     }
+    if let Some(path) = &config.output.export_unimputed {
+        let missing_fill = missing_protein_value(config)?;
+        matrix.write_csv(path, config.output.format, drop_empty_samples, missing_fill)?;
+    }
     if config.imputation.enabled {
         matrix.apply_imputation(&config.imputation, drop_empty_samples)?;
     }
@@ -5809,10 +5873,13 @@ fn apply_protein_postprocessing(
     Ok(())
 }
 
-fn missing_protein_value(method: QuantMethod) -> Option<f64> {
+fn missing_protein_value(config: &FeatureToProteinsConfig) -> Result<Option<f64>> {
+    if dataset_sample_normalization_method(config)?.is_some() {
+        return Ok(None);
+    }
     // Missing protein x sample cells follow Python's per-method convention: the
     // additive methods write `0`, the average/ratio methods leave the cell empty.
-    match method {
+    Ok(match config.quantification {
         QuantMethod::Sum
         | QuantMethod::Intensity
         | QuantMethod::PeptideCount
@@ -5824,7 +5891,7 @@ fn missing_protein_value(method: QuantMethod) -> Option<f64> {
         | QuantMethod::MaxLfq
         | QuantMethod::Ratio
         | QuantMethod::Pibaq => None,
-    }
+    })
 }
 
 fn spectral_count_matrix(
@@ -6294,7 +6361,7 @@ pub fn run_features_to_peptides(config: &FeatureToPeptidesConfig) -> Result<()> 
     };
     state.write_intermediate_exports(
         &proteins_config,
-        min_unique,
+        &state.allowed_cells(min_unique),
         PeptideExportOptions {
             log2: config.log2,
             save_parquet: config.save_parquet,
@@ -6504,6 +6571,8 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
         output: OutputConfig {
             protein_matrix: config.output.clone(),
             export_peptides: Some(config.output.clone()),
+            export_unnormalized_peptides: None,
+            export_unimputed: None,
             export_ions: None,
             format: OutputFormat::PythonCompatible,
         },
@@ -6910,8 +6979,8 @@ fn required_parquet(input: &InputConfig) -> Result<&Path> {
 /// Quant methods whose aggregation collapses to `(protein, sample)` peptide
 /// cells normalized by [`apply_dataset_norm_to_peptide_cells`]. These share the
 /// dataset-level normalization with the `--export-peptides` path, so the
-/// exported peptides match the protein matrix. piBAQ / LFQ / Ratio normalize
-/// through aggregation-specific paths not connected to the peptide export.
+/// exported peptides match the protein matrix. piBAQ / DirectLFQ / Ratio use
+/// aggregation-specific paths; MaxLFQ exports its normalized species traces.
 fn is_cell_based_linear_quant(method: QuantMethod) -> bool {
     matches!(
         method,
@@ -6999,12 +7068,13 @@ fn require_existing_input(path: &Path) -> Result<()> {
 fn validate_implemented_subset(config: &FeatureToProteinsConfig) -> Result<()> {
     let dataset_normalization = dataset_sample_normalization_method(config)?;
     // Dataset-level sample normalization is carried into the exported peptides
-    // only for the cell-based linear methods (their aggregation and export share
-    // one normalization helper); other aggregations would emit peptides whose
-    // normalization does not match the protein matrix.
-    if config.output.export_peptides.is_some()
+    // for cell-based methods and MaxLFQ. Other aggregations use structures
+    // whose normalized values are not connected to the peptide export.
+    if (config.output.export_peptides.is_some()
+        || config.output.export_unnormalized_peptides.is_some())
         && dataset_normalization.is_some()
         && !is_cell_based_linear_quant(config.quantification)
+        && config.quantification != QuantMethod::MaxLfq
     {
         return unsupported("dataset-normalization-export-peptides");
     }
@@ -10300,7 +10370,7 @@ mod tests {
         RuntimeConfig, SampleId, StringIdRegistry, TmtConfig, TransferredFeatures,
     };
     use mokume_io::{QpxFeatureRecord, SdrfRawTable, SdrfTable};
-    use mokume_normalization::SampleNormalizationMethod;
+    use mokume_normalization::{RunCellKey, RunNormalizationTransform, SampleNormalizationMethod};
 
     use super::{
         batch_column_values_for_samples, detect_reference_samples, expand_de_contrasts_file,
@@ -10310,9 +10380,26 @@ mod tests {
         resolve_irs_autodetect_channel, resolve_irs_reference_samples, resolve_reference_batch,
         run_features_to_proteins, sample_plex, sum_peptide_values, validate_batch_sizes,
         validate_combat_design, validate_de_ensemble_options, validate_features_to_proteins,
-        validate_implemented_subset, CellKey, IrsStat, NormalizationFactorCollector, ProteinMatrix,
-        ProteinValues,
+        validate_implemented_subset, CellKey, IntensityFactors, IrsStat,
+        NormalizationFactorCollector, ProteinMatrix, ProteinValues,
     };
+
+    #[test]
+    fn before_sample_normalization_retains_run_transform_and_channel_irs() {
+        let factors = IntensityFactors {
+            run: HashMap::from([(
+                RunCellKey {
+                    sample: "sample".to_owned(),
+                    run: "run".to_owned(),
+                },
+                RunNormalizationTransform::new(2.0, 3.0),
+            )]),
+            irs_scale_by_run: HashMap::from([("run".to_owned(), 3.0)]),
+            sample: HashMap::from([("sample".to_owned(), 5.0)]),
+        };
+        assert_eq!(factors.normalize_run(10.0, "sample", "run"), 69.0);
+        assert_eq!(factors.normalize(10.0, "sample", "run"), 345.0);
+    }
 
     #[test]
     fn peptide_sums_follow_stable_id_order() {
@@ -12242,6 +12329,8 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             output: OutputConfig {
                 protein_matrix: PathBuf::from("protein.csv"),
                 export_peptides: None,
+                export_unnormalized_peptides: None,
+                export_unimputed: None,
                 export_ions: None,
                 format: OutputFormat::PythonCompatible,
             },

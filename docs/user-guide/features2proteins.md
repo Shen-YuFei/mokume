@@ -611,11 +611,42 @@ mokume quantify features2proteins \
     --export-ions ions.csv
 ```
 
-DirectLFQ and Ratio peptide export is not supported because those calculations
-operate on method-specific normalized structures. Conversely, `--export-ions` is DirectLFQ-only. For
-non-cell-based aggregation methods, peptide export also rejects dataset-level
-sample normalization because the exported peptide values would not represent
-the normalized protein matrix.
+MaxLFQ supports peptide export with its default hierarchical normalization and
+with quantile normalization. The export sums the normalized modification/charge
+species actually used by MaxLFQ into protein × canonical peptide × sample rows.
+Python's MaxLFQ export retains the individual species instead.
+
+The Rust CLI also provides two diagnostic exports:
+
+```bash
+# Matched peptide tables before and after sample normalization
+mokume quantify features2proteins \
+    -p features.parquet -s experiment.sdrf.tsv -o proteins.csv \
+    --export-peptides peptides.csv \
+    --export-unnormalized-peptides peptides.before-sample-normalization.csv
+
+# Protein matrix immediately before imputation
+mokume quantify features2proteins \
+    -p features.parquet -s experiment.sdrf.tsv -o proteins.csv \
+    --impute-method minprob --export-unimputed proteins.before-imputation.csv
+```
+
+`--export-unnormalized-peptides` retains feature filtering and run normalization,
+including channel IRS scaling when enabled, but precedes both ingest-time sample
+factors (such as global/condition median) and dataset-level sample normalization.
+It is collected during the same parquet read. Its rows and columns match
+`--export-peptides` exactly. Dataset-level exports use the four columns
+`ProteinName,PeptideCanonical,SampleID,NormIntensity`; other configurations also
+include `BioReplicate` and `Condition`.
+
+`--export-unimputed` requires `--impute-method`. It uses the final matrix's CSV
+format after protein-level IRS, sample correlation filtering and coverage
+filtering, but before imputation and batch correction. Neither diagnostic export
+changes quantification, differential expression, or any existing output.
+
+DirectLFQ, Ratio and SpectralCount reject both peptide exports. `--export-ions`
+is DirectLFQ-only. piBAQ peptide export with dataset-level sample normalization
+remains unsupported.
 
 ## Full Example
 

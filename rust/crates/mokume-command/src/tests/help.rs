@@ -30,6 +30,8 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--directlfq-num-samples-quadratic",
     "--directlfq-no-sample-normalization",
     "--export-peptides",
+    "--export-unnormalized-peptides",
+    "--export-unimputed",
     "--export-ions",
     "--batch-correction",
     "--batch-method",

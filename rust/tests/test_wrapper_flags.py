@@ -97,6 +97,22 @@ def test_features2proteins_protein_fdr_keyword_maps_to_flag() -> None:
     ]
 
 
+def test_features2proteins_intermediate_export_keywords_map_to_flags() -> None:
+    """Intermediate export paths reach their Rust CLI flags."""
+    assert flags_for(
+        "features2proteins",
+        {
+            "export_unnormalized_peptides": "before-normalization.csv",
+            "export_unimputed": "before-imputation.csv",
+        },
+    ) == [
+        "--export-unnormalized-peptides",
+        "before-normalization.csv",
+        "--export-unimputed",
+        "before-imputation.csv",
+    ]
+
+
 def test_pibaq_shared_peptide_options_translate() -> None:
     """piBAQ shared-peptide keywords map to their CLI flags."""
     assert flags_for(

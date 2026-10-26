@@ -227,6 +227,12 @@ mean-center, rlr, loess, tmm]"
     #[arg(long = "export-peptides", value_name = "FILE")]
     export_peptides: Option<PathBuf>,
 
+    #[arg(long = "export-unnormalized-peptides", value_name = "FILE")]
+    export_unnormalized_peptides: Option<PathBuf>,
+
+    #[arg(long = "export-unimputed", value_name = "FILE")]
+    export_unimputed: Option<PathBuf>,
+
     #[arg(long = "export-ions", value_name = "FILE")]
     export_ions: Option<PathBuf>,
 
