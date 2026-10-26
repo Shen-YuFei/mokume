@@ -6,6 +6,7 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 from mokume.plotting._common import ordered_samples, style_axes
 from mokume.plotting.style import CONDITION_COLORS, SAMPLE_POINT_COLOR, TEXT_COLOR
@@ -38,12 +39,14 @@ def _distribution_data(dataset, field, class_field, log2):
     return frame.dropna(subset=[field])
 
 
-def _condition_legend(ax, palette):
+def _condition_legend(ax, palette, filled=False):
     """Describe conditions rather than repeating a legend entry for each sample."""
     if len(palette) > 1:
         ax.legend(
             handles=[
-                Line2D([], [], color=color, linewidth=2, label=name)
+                Patch(facecolor=color, alpha=0.5, label=name)
+                if filled
+                else Line2D([], [], color=color, linewidth=2, label=name)
                 for name, color in palette.items()
             ],
             labelcolor=TEXT_COLOR,
@@ -168,7 +171,7 @@ def plot_box_plot(
         xlabel="Sample",
         ylabel=f"{'log2 ' if log2 else ''}{field}",
     )
-    _condition_legend(ax, palette)
+    _condition_legend(ax, palette, filled=True)
     style_axes(ax)
     fig.tight_layout()
     return fig

@@ -13,6 +13,15 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm as _norm
 
+from mokume.plotting._common import style_axes
+from mokume.plotting.style import (
+    CONDITION_COLORS,
+    SAMPLE_POINT_COLOR,
+    SINGLE_SERIES_COLOR,
+    TEXT_COLOR,
+    WHITE,
+)
+
 if TYPE_CHECKING:
     from mokume.tissuemap.tissue_specificity import GMMThresholds
 
@@ -27,89 +36,96 @@ def _overlay_gmm_curves(ax, gmm, x_upper: float) -> None:
     ax.plot(
         x_grid,
         p_bg,
-        "--",
-        color="#1565C0",
-        lw=1.5,
+        "-",
+        color=CONDITION_COLORS[1],
+        lw=2,
+        zorder=3,
         label=f"Background (\u03bc={gmm.bg_mean:.2f})",
     )
     ax.plot(
         x_grid,
         p_sp,
-        "--",
-        color="#C62828",
-        lw=1.5,
+        "-",
+        color=CONDITION_COLORS[2],
+        lw=2,
+        zorder=3,
         label=f"Specific (\u03bc={gmm.sp_mean:.2f})",
     )
     ax.plot(
-        x_grid, p_bg + p_sp, "-", color="#222", lw=2, label="GMM mixture", alpha=0.7
+        x_grid,
+        p_bg + p_sp,
+        "-",
+        color=TEXT_COLOR,
+        lw=5,
+        alpha=0.25,
+        zorder=2,
+        label="GMM mixture",
     )
 
 
-def _plot_histogram_panel(
-    ax,
-    max_ts,
-    categories,
-    ts_enriched,
-    ts_specific,
-    ts_housekeeping,
-    gmm,
-) -> None:
-    """Panel A: TS score histogram with threshold lines and optional GMM."""
+def _draw_thresholds(ax, categories, thresholds) -> None:
+    """Identify thresholds with neutral dashed lines and direct labels."""
+    enriched, specific, housekeeping = thresholds
     n_specific = int((categories == "tissue-specific").sum())
     n_enriched = int(categories.isin(["tissue-specific", "tissue-enriched"]).sum())
+    labels = [
+        (specific, f"Specific ≥ {specific:.2f} (n={n_specific})"),
+        (enriched, f"Enriched ≥ {enriched:.2f} (n={n_enriched})"),
+    ]
+    if housekeeping is not None:
+        n_hk = int((categories == "house-keeping").sum())
+        labels.append(
+            (housekeeping, f"House-keeping |TS| < {housekeeping:.2f} (n={n_hk})")
+        )
+    # One row per threshold so labels of close thresholds never collide.
+    for row, (value, label) in enumerate(labels):
+        ax.axvline(value, color=SAMPLE_POINT_COLOR, linestyle="--", linewidth=1)
+        ax.annotate(
+            label,
+            (value, 0.97 - row * 0.07),
+            xycoords=ax.get_xaxis_transform(),
+            xytext=(4, 0),
+            textcoords="offset points",
+            va="top",
+            fontsize=9,
+            color=TEXT_COLOR,
+            bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.85, "pad": 1},
+        )
 
+
+def _plot_histogram_panel(
+    ax, max_ts, categories, ts_enriched, ts_specific, ts_housekeeping, gmm
+) -> None:
+    """Panel A: TS histogram with direct threshold labels and optional GMM."""
     p99 = float(max_ts.quantile(0.99)) if len(max_ts) > 0 else ts_specific * 3
     x_upper = max(p99, ts_specific * 2)
     n_outliers = int((max_ts > x_upper).sum())
-
     use_density = gmm is not None
     ax.hist(
         max_ts.clip(upper=x_upper).values,
         bins=50,
-        color="#5C6BC0",
-        edgecolor="white",
+        color=SINGLE_SERIES_COLOR,
+        edgecolor=WHITE,
         linewidth=0.5,
         alpha=0.6,
         density=use_density,
     )
-    ax.axvline(
-        ts_specific,
-        color="#E53935",
-        linestyle="--",
-        linewidth=1.5,
-        label=f"Tissue-specific TS≥{ts_specific:.2f} (n={n_specific})",
-    )
-    ax.axvline(
-        ts_enriched,
-        color="#FF9800",
-        linestyle="--",
-        linewidth=1.5,
-        label=f"Tissue-enriched TS≥{ts_enriched:.2f} (n={n_enriched})",
-    )
-    if ts_housekeeping is not None:
-        n_hk = int((categories == "house-keeping").sum())
-        ax.axvline(
-            ts_housekeeping,
-            color="#43A047",
-            linestyle="-.",
-            linewidth=1.5,
-            label=f"House-keeping |TS|<{ts_housekeeping:.2f} (n={n_hk})",
-        )
+    _draw_thresholds(ax, categories, (ts_enriched, ts_specific, ts_housekeeping))
     if gmm is not None:
         _overlay_gmm_curves(ax, gmm, x_upper)
-
+        ax.legend(fontsize=9, frameon=False, loc="upper right", labelcolor=TEXT_COLOR)
     left_bound = float(max_ts.min()) - 0.5 if len(max_ts) > 0 else 0.0
     ax.set_xlim(left=left_bound, right=x_upper * 1.05)
     if n_outliers > 0:
         ax.text(
             0.97,
-            0.95,
+            0.72,
             f"{n_outliers} proteins with TS > {x_upper:.1f}\n(clipped)",
             transform=ax.transAxes,
             ha="right",
             va="top",
             fontsize=8,
-            color="#777",
+            color=TEXT_COLOR,
             style="italic",
         )
     ax.set_xlabel("AdaTiSS max TS score", fontsize=11)
@@ -120,9 +136,7 @@ def _plot_histogram_panel(
         fontweight="bold",
         loc="left",
     )
-    ax.legend(fontsize=9, frameon=True)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    style_axes(ax)
 
 
 def _compute_specific_counts(
@@ -161,9 +175,9 @@ def _plot_bar_panel(
     ax.barh(
         range(len(spt)),
         spt.values,
-        color="#5C6BC0",
-        edgecolor="white",
-        linewidth=0.5,
+        color=SINGLE_SERIES_COLOR,
+        height=0.7,
+        linewidth=0,
     )
     ax.set_yticks(range(len(spt)))
     ax.set_yticklabels(spt.index, fontsize=8)
@@ -180,11 +194,10 @@ def _plot_bar_panel(
         fontweight="bold",
         loc="left",
     )
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    style_axes(ax)
     for i, v in enumerate(spt.values):
         if v > 0:
-            ax.text(v + 0.5, i, str(v), va="center", fontsize=6, color="#555")
+            ax.text(v + 0.5, i, str(v), va="center", fontsize=6, color=TEXT_COLOR)
 
 
 def plot_ts_distribution(
@@ -265,9 +278,9 @@ def plot_specific_per_tissue(
     ax.barh(
         range(len(spt)),
         spt.values,
-        color="#5C6BC0",
-        edgecolor="white",
-        linewidth=0.5,
+        color=SINGLE_SERIES_COLOR,
+        height=0.7,
+        linewidth=0,
     )
     ax.set_yticks(range(len(spt)))
     ax.set_yticklabels(spt.index, fontsize=8)
@@ -277,15 +290,14 @@ def plot_specific_per_tissue(
     )
     ax.set_title(
         "Tissue-specific proteins per tissue (AdaTiSS)",
-        fontsize=13,
+        fontsize=12,
         fontweight="bold",
     )
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    style_axes(ax)
 
     for i, v in enumerate(spt.values):
         if v > 0:
-            ax.text(v + 0.5, i, str(v), va="center", fontsize=7, color="#555")
+            ax.text(v + 0.5, i, str(v), va="center", fontsize=7, color=TEXT_COLOR)
 
     plt.tight_layout()
     fig.savefig(

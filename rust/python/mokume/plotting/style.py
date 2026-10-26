@@ -17,8 +17,9 @@ CONDITION_SYMBOLS = (
     "triangle-down",
     "cross",
 )
+# Past six groups, cycle colors before shapes so neighbouring groups never share a hue.
 CONDITION_STYLE_INDICES = tuple((index, index) for index in range(6)) + tuple(
-    (color, marker) for color in range(6) for marker in range(6) if color != marker
+    (color, (color + shift) % 6) for shift in range(1, 6) for color in range(6)
 )
 PLEX_SYMBOLS = tuple(range(53))
 SIGNIFICANCE_COLORS = {
