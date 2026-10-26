@@ -132,9 +132,10 @@ def _generate_heatmap_plots(
             continue
 
         sig_proteins = (
-            sig.sort_values(
-                by="log2FC", key=lambda series: series.abs(), ascending=False
-            )["ProteinName"]
+            sig.assign(abs_log2FC=sig["log2FC"].abs())
+            .sort_values(["adj_pvalue", "abs_log2FC"], ascending=[True, False])[
+                "ProteinName"
+            ]
             .head(50)
             .tolist()
         )

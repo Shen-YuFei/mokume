@@ -125,6 +125,7 @@ SHARED_FILES: tuple[str, ...] = (
     "plotting/differential_expression.py",
     "plotting/distributions.py",
     "plotting/pca.py",
+    "plotting/style.py",
     "quantification/families.py",
     "reports/__init__.py",
     "reports/interactive.py",

@@ -18,6 +18,16 @@ import numpy as np
 from plotly.offline import get_plotlyjs
 
 from mokume.reports.qc_report import compute_qc_metrics, _safe_json
+from mokume.plotting.style import (
+    CONDITION_COLORS,
+    CONDITION_STYLE_INDICES,
+    CONDITION_SYMBOLS,
+    PLEX_SYMBOLS,
+    PLOTLY_TEMPLATE,
+    REPORT_CSS,
+    SINGLE_SERIES_COLOR,
+    TEXT_COLOR,
+)
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.reports.comparison")
@@ -347,34 +357,21 @@ def _build_comparison_html(
     <title>{html.escape(title)}</title>
     <script>{get_plotlyjs()}</script>
     <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-               background: #f5f5f5; color: #333; }}
-        .header {{ background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
-                   color: white; padding: 24px 30px; }}
-        .header h1 {{ font-size: 24px; }}
+        {REPORT_CSS}
         .header p {{ opacity: 0.8; margin-top: 6px; font-size: 13px; }}
         .container {{ max-width: 1500px; margin: 0 auto; padding: 20px; }}
-        .card {{ background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                 padding: 16px; margin-bottom: 20px; }}
-        .card h3 {{ font-size: 15px; color: #2c3e50; border-bottom: 2px solid #ecf0f1;
-                    padding-bottom: 8px; margin-bottom: 12px; }}
         .card h4 {{ font-size: 13px; color: #7f8c8d; margin: 12px 0 8px; }}
         .row {{ display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }}
-        table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
-        th {{ background: #34495e; color: white; padding: 8px 10px; text-align: center;
-              font-size: 11px; }}
-        td {{ padding: 6px 10px; border-bottom: 1px solid #eee; text-align: center; }}
-        tr:hover {{ background: #f8f9fa; }}
-        .best {{ background: #d5f5e3; font-weight: bold; }}
-        .worst {{ background: #fadbd8; }}
-        .good {{ color: #27ae60; }}
-        .bad {{ color: #e74c3c; }}
+        .best {{ background: #ecf0f1; font-weight: bold; }}
+        .worst {{ background: #f5f5f5; }}
         .neutral {{ color: #7f8c8d; }}
         .section {{ margin-bottom: 30px; }}
-        .section-title {{ font-size: 18px; color: #2c3e50; margin-bottom: 16px;
-                          padding-left: 10px; border-left: 4px solid #3498db; }}
-        .pca-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        .section-title {{ font-size: 18px; color: {TEXT_COLOR}; margin-bottom: 16px;
+                          padding-left: 10px; border-left: 4px solid {
+        SINGLE_SERIES_COLOR
+    }; }}
+        .pca-grid {{ display: grid;
+                     grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
                      gap: 16px; }}
         .metric-explanation {{ font-size: 12px; color: #7f8c8d; margin-top: 8px;
                                line-height: 1.5; }}
@@ -426,6 +423,12 @@ def _build_comparison_html(
     <div class="section">
         <h2 class="section-title">{plex["pca_title"]}</h2>
         <div class="pca-grid" id="pca-container"></div>
+        {
+        '<p class="metric-explanation">In plots with multiple plexes, markers encode '
+        "plex. For more than three conditions, use condition names in the legend and hover.</p>"
+        if plex["show_plex"]
+        else ""
+    }
     </div>
 
     <!-- Section 3: DE Concordance -->
@@ -482,8 +485,13 @@ const concordanceData = {_safe_json(concordance_json)};
 const fcScatterData = {_safe_json(fc_scatter_data)};
 const showPlex = {_safe_json(plex["show_plex"])};
 
-const palette = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b'];
-const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'star'];
+const palette = {_safe_json(CONDITION_COLORS)};
+const singleColor = {_safe_json(SINGLE_SERIES_COLOR)};
+const plotConfig = {{responsive: true, displaylogo: false, displayModeBar: 'hover'}};
+const plotTemplate = {_safe_json(PLOTLY_TEMPLATE)};
+const plexSymbols = {_safe_json(PLEX_SYMBOLS)};
+const conditionSymbols = {_safe_json(CONDITION_SYMBOLS)};
+const styleIndices = {_safe_json(CONDITION_STYLE_INDICES)};
 
 // ---- Summary Table ----
 (function() {{
@@ -540,54 +548,70 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
 }})();
 
 // ---- PCA Plots ----
-(function() {{
-    const container = document.getElementById('pca-container');
-    Object.keys(pcaData).forEach((wfName, wfIdx) => {{
-        const pca = pcaData[wfName];
-        const div = document.createElement('div');
-        div.className = 'card';
-        div.innerHTML = `<div id="pca-${{wfIdx}}" style="height:380px"></div>`;
-        container.appendChild(div);
-
-        const conditions = [...new Set(pca.conditions)].sort();
-        const plexes = [...new Set(pca.plexes)].sort();
-        const condColors = {{}};
-        const plexSymMap = {{}};
-        conditions.forEach((c, i) => condColors[c] = palette[i % palette.length]);
-        plexes.forEach((p, i) => plexSymMap[p] = plexSymbols[i % plexSymbols.length]);
-
-        const traces = [];
-        conditions.forEach(cond => {{
-            plexes.forEach(plex => {{
-                const idx = pca.samples.map((s, i) => i)
-                    .filter(i => pca.conditions[i] === cond && pca.plexes[i] === plex);
-                if (idx.length === 0) return;
-                traces.push({{
-                    type: 'scatter', mode: 'markers+text',
-                    x: idx.map(i => pca.pc1[i]),
-                    y: idx.map(i => pca.pc2[i]),
-                    text: idx.map(i => pca.samples[i]),
-                    textposition: 'top right',
-                    textfont: {{ size: 7 }},
-                    marker: {{
-                        color: condColors[cond],
-                        symbol: plexSymMap[plex],
-                        size: 10,
-                        line: {{ width: 1, color: '#333' }}
-                    }},
-                    name: showPlex ? cond + ' / ' + plex : cond,
-                }});
+const allConditions = [...new Set(Object.values(pcaData).flatMap(pca => pca.conditions))].sort();
+const condStyles = Object.fromEntries(allConditions.map((condition, index) => {{
+    const [color, shape] = styleIndices[index];
+    return [condition, {{color: palette[color], symbol: conditionSymbols[shape]}}];
+}}));
+function pcaTraces(pca) {{
+    const conditions = [...new Set(pca.conditions)].sort();
+    const plexes = [...new Set(pca.plexes)].sort();
+    const multiPlex = plexes.length > 1;
+    const plexSymMap = Object.fromEntries(plexes.map((plex, i) => [plex, plexSymbols[i]]));
+    const traces = [];
+    conditions.forEach(cond => {{
+        plexes.forEach(plex => {{
+            const indices = pca.samples.map((sample, i) => i)
+                .filter(i => pca.conditions[i] === cond && pca.plexes[i] === plex);
+            if (!indices.length) return;
+            traces.push({{
+                type: 'scatter', mode: 'markers+text', cliponaxis: false,
+                x: indices.map(i => pca.pc1[i]), y: indices.map(i => pca.pc2[i]),
+                text: indices.map(i => pca.samples[i]),
+                textposition: 'top right', textfont: {{size: 8}},
+                hovertext: indices.map(i => pca.samples[i] + '<br>Condition: ' + cond
+                    + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
+                marker: {{color: condStyles[cond].color, size: 10,
+                    symbol: multiPlex ? plexSymMap[plex] : condStyles[cond].symbol,
+                    line: {{width: 2, color: '#ffffff'}}}},
+                name: multiPlex ? cond + ' / ' + plex : cond,
             }});
         }});
-
-        Plotly.newPlot(`pca-${{wfIdx}}`, traces, {{
-            title: {{ text: wfName, font: {{ size: 14 }} }},
-            xaxis: {{ title: {{ text: 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)' }} }},
-            yaxis: {{ title: {{ text: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)' }} }},
-            legend: {{ font: {{ size: 9 }}, orientation: 'h', y: -0.15 }},
-            margin: {{ t: 50, b: 80, l: 60, r: 20 }},
-        }}, {{responsive: true}});
     }});
+    return traces;
+}}
+function paddedRange(values) {{
+    const low = Math.min(...values), high = Math.max(...values);
+    const padding = (high - low || 1) * 0.15;
+    return [low - padding, high + padding];
+}}
+function drawPca(wfName, index) {{
+    const pca = pcaData[wfName];
+    const traces = pcaTraces(pca);
+    Plotly.newPlot(`pca-${{index}}`, traces, {{
+        template: plotTemplate,
+        title: {{text: wfName + (traces.length === 1 ? ' (' + traces[0].name + ')' : ''),
+                 x: 0, xanchor: 'left', font: {{size: 14}}}},
+        xaxis: {{title: {{text: 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)'}},
+                 range: paddedRange(pca.pc1)}},
+        yaxis: {{title: {{text: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)'}},
+                 range: paddedRange(pca.pc2)}},
+        showlegend: traces.length > 1,
+        legend: {{font: {{size: 9}}, orientation: 'h', y: -0.2}},
+        margin: {{t: 55, b: 95, l: 60, r: 45}},
+    }}, plotConfig);
+}}
+(function() {{
+    const container = document.getElementById('pca-container');
+    const names = Object.keys(pcaData);
+    names.forEach((name, index) => {{
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<div id="pca-${{index}}" style="height:380px;width:100%"></div>`;
+        container.appendChild(card);
+    }});
+    // Insert every card before measuring any grid item for Plotly.
+    requestAnimationFrame(() => names.forEach(drawPca));
 }})();
 
 // ---- Concordance Table ----
@@ -621,23 +645,32 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
     const d = fcScatterData[key];
     const cd = concordanceData[key];
 
+    const limit = Math.max(...[...d.fc_a, ...d.fc_b].filter(Number.isFinite).map(Math.abs)) * 1.05;
     Plotly.newPlot('fc-scatter', [{{
         type: 'scatter', mode: 'markers',
         x: d.fc_a, y: d.fc_b,
         text: d.proteins,
-        marker: {{ size: 4, color: '#3498db', opacity: 0.5 }},
+        marker: {{ size: 8, color: singleColor, opacity: 0.5,
+                   line: {{width: 2, color: '#ffffff'}} }},
         hovertemplate: '<b>%{{text}}</b><br>%{{xaxis.title.text}}: %{{x:.2f}}<br>%{{yaxis.title.text}}: %{{y:.2f}}<extra></extra>',
     }}, {{
         type: 'scatter', mode: 'lines',
-        x: [-10, 10], y: [-10, 10],
-        line: {{ dash: 'dash', color: 'red', width: 1 }},
+        x: [-limit, limit], y: [-limit, limit],
+        line: {{ color: plotTemplate.layout.xaxis.linecolor, width: 1 }},
         showlegend: false,
     }}], {{
-        title: {{ text: `log2FC: ${{cd.name_a}} vs ${{cd.name_b}} (r=${{cd.fc_pearson.toFixed(3)}})`, font: {{ size: 13 }} }},
-        xaxis: {{ title: {{ text: cd.name_a + ' log2FC' }}, range: [-8, 8] }},
-        yaxis: {{ title: {{ text: cd.name_b + ' log2FC' }}, range: [-8, 8] }},
+        template: plotTemplate,
+        title: {{ x: 0, xanchor: 'left',
+                  text: `log2FC: ${{cd.name_a}} vs ${{cd.name_b}} ` +
+                      `(r=${{cd.fc_pearson.toFixed(3)}})`,
+                  font: {{ size: 13 }} }},
+        xaxis: {{ title: {{ text: cd.name_a + ' log2FC' }},
+                  range: [-limit, limit], constrain: 'domain' }},
+        yaxis: {{ title: {{ text: cd.name_b + ' log2FC' }}, range: [-limit, limit],
+                  constrain: 'domain', scaleanchor: 'x', scaleratio: 1 }},
+        showlegend: false,
         margin: {{ t: 50, b: 50, l: 60, r: 20 }},
-    }}, {{responsive: true}});
+    }}, plotConfig);
 }})();
 
 // ---- CAT Curve ----
@@ -646,20 +679,25 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
     Object.keys(concordanceData).forEach((key, i) => {{
         const cat = concordanceData[key].cat_curve;
         if (!cat) return;
+        const color = Object.keys(concordanceData).length === 1
+            ? singleColor : palette[styleIndices[i][0]];
         traces.push({{
-            type: 'scatter', mode: 'lines',
+            type: 'scatter', mode: 'lines+markers',
             x: cat.k, y: cat.fraction,
             name: key,
-            line: {{ width: 2, color: palette[i % palette.length] }},
+            line: {{width: 2, color}},
+            marker: {{size: 8, color, symbol: conditionSymbols[styleIndices[i][1]],
+                      line: {{width: 2, color: '#ffffff'}}}},
         }});
     }});
     if (traces.length === 0) return;
     Plotly.newPlot('cat-plot', traces, {{
-        title: {{ text: 'Concordance at Top-k', font: {{ size: 14 }} }},
+        template: plotTemplate, showlegend: traces.length > 1,
+        title: {{ x: 0, xanchor: 'left', text: 'Concordance at Top-k', font: {{ size: 14 }} }},
         xaxis: {{ title: {{ text: 'Top k proteins (by p-value)' }} }},
         yaxis: {{ title: {{ text: 'Fraction overlap' }}, range: [0, 1] }},
         margin: {{ t: 50, b: 50, l: 60, r: 20 }},
-    }}, {{responsive: true}});
+    }}, plotConfig);
 }})();
 </script>
 
@@ -668,6 +706,13 @@ const plexSymbols = ['circle', 'square', 'diamond', 'cross', 'triangle-up', 'sta
 </div>
 </body>
 </html>"""
+
+
+def _direction_mark(result):
+    """Check mark for the expected direction, cross for significance the other way."""
+    if result["correct_direction"]:
+        return " &#10003;"
+    return " &#10007;" if result["detected"] else ""
 
 
 def _build_marker_table(marker_results, marker_genes, workflow_metrics):
@@ -697,19 +742,15 @@ def _build_marker_table(marker_results, marker_genes, workflow_metrics):
     rows = []
     for acc, info in marker_genes.items():
         row = f"<tr><td><b>{info['name']}</b></td><td>{acc}</td>"
-        row += f"<td class='{'good' if info['expected'] == 'UP' else 'bad'}'>{info['expected']}</td>"
+        row += f"<td class='sig-{info['expected'].lower()}'>{info['expected']}</td>"
 
         for wf in wf_names:
             r = marker_results[wf].get(acc, {})
             if r.get("log2FC") is not None:
                 fc = f"{r['log2FC']:.2f}"
                 sig = r["significance"]
-                css = (
-                    "good"
-                    if r.get("correct_direction")
-                    else ("bad" if r.get("detected") else "neutral")
-                )
-                row += f"<td>{fc}</td><td class='{css}'>{sig}</td>"
+                css = f"sig-{sig.lower()}"
+                row += f"<td>{fc}</td><td class='{css}'>{sig}{_direction_mark(r)}</td>"
             else:
                 row += "<td>-</td><td class='neutral'>NOT FOUND</td>"
 

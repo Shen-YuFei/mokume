@@ -49,7 +49,14 @@ mokume plot de \
 This generates:
 
 - `plots/volcano_NASH-HL.png` -- Volcano plot for each contrast
-- `plots/heatmap_NASH-HL.png` -- Per-contrast heatmap showing top 50 significant proteins (by |log2FC|) and only the two compared conditions. Skipped if no significant proteins exist for that contrast.
+- `plots/heatmap_NASH-HL.png` -- Per-contrast heatmap showing the top 50 significant proteins by ascending adjusted p-value, breaking ties by descending |log2FC|. Only the two compared conditions are included. Skipped if no significant proteins exist for that contrast.
+
+Volcano heights are `-log10(p-value)`, using the raw `pvalue` column. Point
+colors use the adjusted p-value and |log2FC| significance cutoffs. The horizontal
+guide marks the largest raw p-value among proteins with adjusted p-value below
+`--fdr`, including those below the fold-change cutoff. It is omitted when no
+protein passes the adjusted p-value cutoff.
+
 The `--volcano` / `--heatmap` flags select which plots to render;
 `--log2fc` (default 0.5) and `--fdr` (default 0.05) mirror the
 kernel's `--de-log2fc` / `--de-fdr` so the significance cutoffs match. Volcano
@@ -64,6 +71,12 @@ mokume plot pca \
     --sdrf experiment.sdrf.tsv \
     --output pca_conditions.png
 ```
+
+PCA uses complete-case proteins and reports their count below the title. Small
+plots (at most 30 samples) include sample labels. Conditions use the shared
+six-color palette with distinct color/marker combinations rather than cycling
+through colors. In HTML PCA and t-SNE plots with multiple plexes, shapes identify
+plexes; the legend and hover text identify conditions.
 
 ## Interactive DE Report
 
@@ -90,8 +103,12 @@ Each report includes:
   fold-change and FDR cutoffs
 - **Volcano plot** -- hover details and highlighted proteins; click a point to
   show that protein below
-- **Protein expression** -- per-sample intensities of the selected protein
-- **Results table** -- searchable and filterable by significance
+- **Protein expression** -- log2 intensities as sample points grouped by
+  condition, with neutral gray points and a black mean marker for each condition.
+  Only samples from the two
+  conditions in the current contrast are included.
+- **Results table** -- raw and adjusted p-values, searchable and filterable by
+  significance
 
 For PCA, t-SNE, sample correlation, CV, missing values and variance
 decomposition, use the QC report below.
@@ -102,6 +119,10 @@ For a QC report built directly from a protein matrix CSV (with optional DE
 results and SDRF grouping), use `mokume.qc_report` (`analysis` extra). It computes
 PCA / t-SNE / silhouette / variance decomposition / CV / missing-value and
 DE-quality metrics and writes an interactive HTML report:
+
+Sample correlation uses a light-to-dark sequential blue scale, from the minimum
+off-diagonal correlation (rounded down to 0.01) to 1. The zero-centered DE
+z-score heatmap uses a diverging RdBu scale. Missing heatmap cells remain gray.
 
 ```python
 import mokume

@@ -14,9 +14,7 @@ the tables, Python only draws): we never recompute DE or the protein matrix here
 We read the CSVs Rust produced and call the shared mokume report builder, so the
 cells in the report are the cells in the Rust CSVs. No mokume algorithm is
 duplicated -- a system ``pip install mokume[analysis]`` provides the builder
-(plotly is loaded from a CDN by the generated HTML; the Python builder itself
-needs only pandas + numpy, but the availability gate matches Python and checks
-for plotly).
+(the generated HTML embeds plotly.js from the installed plotly package).
 
 argv contract (runnable via ``mokume interactive-report``):
 
@@ -162,7 +160,11 @@ def main(argv=None):
         generate_de_report(
             de_results=de_df,
             protein_df=protein_df,
-            sample_to_condition=sample_to_condition,
+            sample_to_condition={
+                sample: condition
+                for sample, condition in sample_to_condition.items()
+                if condition in (cond_a, cond_b)
+            },
             output_html=output_html,
             title=f"DE Report: {key} ({cond_a} vs {cond_b})",
             highlight_genes=highlight,

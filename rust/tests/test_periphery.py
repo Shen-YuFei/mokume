@@ -5,6 +5,7 @@ Skipped unless the ``analysis`` extra (matplotlib + pandas) is installed.
 
 import glob
 import importlib
+import json
 import os
 
 import pytest
@@ -12,7 +13,9 @@ import pytest
 import mokume
 
 pytest.importorskip("matplotlib")
-pytest.importorskip("pandas")
+pd = pytest.importorskip("pandas")
+np = pytest.importorskip("numpy")
+plt = pytest.importorskip("matplotlib.pyplot")
 
 DATA = os.path.join(os.path.dirname(__file__), "data")
 
@@ -29,6 +32,10 @@ def test_peptides2protein_qc_writes_pdf(tmp_path):
 
 
 def test_de_plots_writes_volcano_png(tmp_path):
+    de = pd.read_csv(os.path.join(DATA, "de.csv"))
+    de["pvalue"] = [0.0001, 0.0002, 0.1, 0.8]
+    de_csv = tmp_path / "de.csv"
+    de.to_csv(de_csv, index=False)
     plot_dir = tmp_path / "plots"
     mokume.de_plots(
         [
@@ -41,7 +48,7 @@ def test_de_plots_writes_volcano_png(tmp_path):
             "c1",
             "CondA",
             "CondB",
-            os.path.join(DATA, "de.csv"),
+            str(de_csv),
         ]
     )
     assert glob.glob(str(plot_dir / "*.png"))
@@ -84,3 +91,96 @@ def test_de_plots_preserves_tiny_kernel_pvalues(tmp_path, monkeypatch):
     assert observed["adj_pvalue"] == pytest.approx(
         9.010904590617499e-29, rel=1e-15, abs=0.0
     )
+
+
+def test_volcano_height_and_guide_use_raw_pvalues(tmp_path):
+    """The adjusted-p cutoff includes small-FC proteins when placing the guide."""
+    plotting = importlib.import_module("mokume.plotting.differential_expression")
+    report = pytest.importorskip("mokume.reports.interactive")
+    de = pd.DataFrame(
+        {
+            "ProteinName": ["P1", "P2", "P3"],
+            "log2FC": [2.0, 0.1, -2.0],
+            "pvalue": [0.001, 0.007, 0.03],
+            "adj_pvalue": [0.01, 0.04, 0.2],
+            "significance": ["UP", "Unchanged", "Unchanged"],
+        }
+    )
+    for threshold, expected in [(0.05, -np.log10(0.007)), (0.001, None)]:
+        figure = plotting.plot_volcano(de, fdr_threshold=threshold)
+        axis = figure.axes[0]
+        np.testing.assert_allclose(
+            axis.collections[0].get_offsets()[:, 1], -np.log10(de["pvalue"])
+        )
+        guides = [line for line in axis.lines if list(line.get_xdata()) == [0, 1]]
+        output = tmp_path / "report.html"
+        report.generate_de_report(
+            de,
+            pd.DataFrame({"ProteinName": ["P1"], "S1": [10]}),
+            {"S1": "A"},
+            str(output),
+            fdr_threshold=threshold,
+        )
+        arguments = output.read_text().split("Plotly.newPlot('volcano-plot', ")[1]
+        _, layout = json.loads("[" + arguments.split(", plotConfig);")[0] + "]")
+        shapes = [shape for shape in layout["shapes"] if shape.get("xref") == "paper"]
+        if expected is None:
+            assert not guides and not shapes
+        else:
+            assert guides[0].get_ydata()[0] == pytest.approx(expected)
+            assert shapes[0]["y0"] == pytest.approx(expected)
+        plt.close(figure)
+
+
+def test_de_heatmap_selects_adjusted_p_before_absolute_fold_change(
+    tmp_path, monkeypatch
+):
+    """Large fold changes cannot displace stronger adjusted-p evidence."""
+    de_plots = importlib.import_module("mokume.commands.de_plots")
+    de = pd.DataFrame({"ProteinName": [f"P{i}" for i in range(53)], "log2FC": 1.0})
+    de["adj_pvalue"] = np.linspace(0.002, 0.007, 53)
+    de.loc[:2] = [
+        ["large_fc", 100, 0.04],
+        ["tie_low", 1, 0.001],
+        ["tie_high", -2, 0.001],
+    ]
+    de_csv = tmp_path / "de.csv"
+    de.to_csv(de_csv, index=False)
+    matrix = pd.DataFrame({"ProteinName": de["ProteinName"], "S1": 1, "S2": 2, "S3": 3})
+    protein_csv = tmp_path / "proteins.csv"
+    matrix.to_csv(protein_csv, index=False)
+    sdrf = tmp_path / "samples.sdrf.tsv"
+    sdrf.write_text("source name\tfactor value[condition]\nS1\tA\nS2\tB\nS3\tC\n")
+    observed = {}
+
+    def capture_heatmap(frame, mapping, **kwargs):
+        observed.update(frame=frame, mapping=mapping, **kwargs)
+
+    plotting = importlib.import_module("mokume.plotting.differential_expression")
+    monkeypatch.setattr(plotting, "plot_heatmap", capture_heatmap)
+    assert (
+        de_plots.main(
+            [
+                "-p",
+                str(protein_csv),
+                "-o",
+                str(tmp_path),
+                "-s",
+                str(sdrf),
+                "--heatmap",
+                "--contrast",
+                "A-B",
+                "A",
+                "B",
+                str(de_csv),
+            ]
+        )
+        == 0
+    )
+    assert observed["proteins"] == [
+        "tie_high",
+        "tie_low",
+        *[f"P{i}" for i in range(3, 51)],
+    ]
+    assert list(observed["frame"].columns) == ["ProteinName", "S1", "S2"]
+    assert observed["mapping"] == {"S1": "A", "S2": "B"}

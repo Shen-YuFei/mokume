@@ -1971,7 +1971,8 @@ class PostprocessingStage:
 
             cond_a, cond_b = de_entry["conditions"]
             sig_proteins = (
-                sig.sort_values(by="log2FC", key=lambda x: x.abs(), ascending=False)[
+                sig.assign(abs_log2FC=sig["log2FC"].abs())
+                .sort_values(["adj_pvalue", "abs_log2FC"], ascending=[True, False])[
                     "ProteinName"
                 ]
                 .head(50)
@@ -2081,6 +2082,9 @@ class PostprocessingStage:
 
         sample_to_condition = detect_condition_from_sdrf(self.config.input.sdrf)
 
+        contrast_conditions = {
+            f"{a}-{b}": (a, b) for a, b in self._parse_de_contrasts(sample_to_condition)
+        }
         for contrast_name, de_entry in de_results.items():
             de_df = de_entry["df"] if isinstance(de_entry, dict) else de_entry
             if self.config.output.report_output:
@@ -2096,7 +2100,11 @@ class PostprocessingStage:
             generate_de_report(
                 de_results=de_df,
                 protein_df=protein_df,
-                sample_to_condition=sample_to_condition,
+                sample_to_condition={
+                    sample: condition
+                    for sample, condition in sample_to_condition.items()
+                    if condition in contrast_conditions[contrast_name]
+                },
                 output_html=output_html,
                 title=f"DE Report: {contrast_name}",
                 highlight_genes=self.config.output.highlight_genes,

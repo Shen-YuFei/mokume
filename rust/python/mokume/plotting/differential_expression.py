@@ -13,9 +13,18 @@ import matplotlib
 import seaborn as sns
 from sklearn.decomposition import PCA
 
-matplotlib.use("Agg")
+from mokume.plotting.style import (
+    AXIS_COLOR,
+    CONDITION_COLORS,
+    CONDITION_MARKERS,
+    CONDITION_STYLE_INDICES,
+    GRID_COLOR,
+    MISSING_COLOR,
+    SIGNIFICANCE_COLORS,
+    TEXT_COLOR,
+)
 
-MISSING_COLOR = "#bdbdbd"
+matplotlib.use("Agg")
 
 
 def plot_volcano(
@@ -33,7 +42,7 @@ def plot_volcano(
     Parameters
     ----------
     de_results : pd.DataFrame
-        DE results with columns: ProteinName, log2FC, adj_pvalue, significance.
+        DE results with columns: ProteinName, log2FC, pvalue, adj_pvalue, significance.
     log2fc_threshold : float
         Threshold for fold change significance lines.
     fdr_threshold : float
@@ -55,28 +64,31 @@ def plot_volcano(
     fig, ax = plt.subplots(figsize=figsize)
 
     df = de_results.copy()
-    df["-log10(adj_pvalue)"] = -np.log10(df["adj_pvalue"].clip(lower=1e-300))
+    df["neg_log10_p"] = -np.log10(df["pvalue"].clip(lower=1e-300))
 
     # Color mapping
-    color_map = {
-        "UP": "#E74C3C",
-        "DOWN": "#3498DB",
-        "Unchanged": "#BDC3C7",
-        "NotTested": "#666666",
-    }
+    color_map = SIGNIFICANCE_COLORS
     colors = df["significance"].map(color_map)
 
     ax.scatter(
         df["log2FC"],
-        df["-log10(adj_pvalue)"],
+        df["neg_log10_p"],
         c=colors,
         alpha=0.6,
-        s=20,
-        edgecolors="none",
+        s=64,
+        edgecolors="#ffffff",
+        linewidths=1.5,
     )
 
     # Significance thresholds
-    ax.axhline(y=-np.log10(fdr_threshold), color="grey", linestyle="--", linewidth=0.8)
+    cutoff = df.loc[df["adj_pvalue"] < fdr_threshold, "pvalue"].max()
+    if pd.notna(cutoff):
+        ax.axhline(
+            y=-np.log10(max(cutoff, 1e-300)),
+            color="grey",
+            linestyle="--",
+            linewidth=0.8,
+        )
     ax.axvline(x=log2fc_threshold, color="grey", linestyle="--", linewidth=0.8)
     ax.axvline(x=-log2fc_threshold, color="grey", linestyle="--", linewidth=0.8)
 
@@ -84,10 +96,19 @@ def plot_volcano(
     if highlight_genes:
         for gene in highlight_genes:
             matches = df[df["ProteinName"].str.contains(gene, case=False, na=False)]
+            ax.scatter(
+                matches["log2FC"],
+                matches["neg_log10_p"],
+                c=matches["significance"].map(color_map),
+                s=120,
+                edgecolors="#ffffff",
+                linewidths=1.5,
+                zorder=3,
+            )
             for _, row in matches.iterrows():
                 ax.annotate(
                     row["ProteinName"],
-                    xy=(row["log2FC"], row["-log10(adj_pvalue)"]),
+                    xy=(row["log2FC"], row["neg_log10_p"]),
                     xytext=(5, 5),
                     textcoords="offset points",
                     fontsize=8,
@@ -98,29 +119,31 @@ def plot_volcano(
     # Legend
     from matplotlib.patches import Patch
 
-    n_up = (df["significance"] == "UP").sum()
-    n_down = (df["significance"] == "DOWN").sum()
-    n_ns = (df["significance"] == "Unchanged").sum()
-    n_not_tested = (df["significance"] == "NotTested").sum()
+    counts = df["significance"].value_counts()
     legend_elements = [
-        Patch(facecolor=color_map["UP"], label=f"UP ({n_up})"),
-        Patch(facecolor=color_map["DOWN"], label=f"DOWN ({n_down})"),
-        Patch(facecolor=color_map["Unchanged"], label=f"Unchanged ({n_ns})"),
+        Patch(facecolor=color, label=f"{label} ({counts[label]})")
+        for label, color in color_map.items()
+        if counts.get(label, 0)
     ]
-    if n_not_tested:
-        legend_elements.append(
-            Patch(
-                facecolor=color_map["NotTested"],
-                label=f"NotTested ({n_not_tested})",
-            )
-        )
-    ax.legend(handles=legend_elements, loc="upper right")
+    if len(legend_elements) > 1:
+        ax.legend(handles=legend_elements, loc="upper right", labelcolor=TEXT_COLOR)
+    elif legend_elements:
+        title += f" ({legend_elements[0].get_label()})"
 
     ax.set_xlabel("log2 Fold Change", fontsize=12)
-    ax.set_ylabel("-log10(adjusted p-value)", fontsize=12)
+    ax.set_ylabel("-log10(p-value)", fontsize=12)
     ax.set_title(title, fontsize=14)
+    _style_axes(ax)
+    fig.text(
+        0.5,
+        0.01,
+        "Colors: adjusted p-value and |log2FC| cutoffs",
+        ha="center",
+        fontsize=9,
+    )
 
-    plt.tight_layout()
+    # Reserve the bottom band for the caption so it clears the x-axis label.
+    plt.tight_layout(rect=(0, 0.03, 1, 1))
 
     if output_file:
         plt.savefig(output_file, dpi=150, bbox_inches="tight")
@@ -231,9 +254,7 @@ def plot_heatmap(
 
     # Create condition color annotation
     conditions = [sample_to_condition.get(s, "Unknown") for s in valid_samples]
-    unique_conditions = sorted(set(conditions))
-    palette = sns.color_palette("Set2", len(unique_conditions))
-    condition_colors = {c: palette[i] for i, c in enumerate(unique_conditions)}
+    condition_colors = _condition_palette(conditions)
     col_colors = pd.Series(
         [condition_colors[c] for c in conditions], index=valid_samples, name="Condition"
     )
@@ -251,7 +272,8 @@ def plot_heatmap(
         xticklabels=True,
     )
     g.ax_heatmap.set_facecolor(MISSING_COLOR)
-    g.fig.suptitle(title, y=1.02, fontsize=14)
+    g.ax_heatmap.tick_params(colors=TEXT_COLOR)
+    g.fig.suptitle(title, y=1.02, fontsize=14, color=TEXT_COLOR)
 
     _add_heatmap_legend(g.ax_heatmap, condition_colors, missing.to_numpy().any())
 
@@ -277,7 +299,45 @@ def _add_heatmap_legend(ax, condition_colors, has_missing):
         loc="upper left",
         bbox_to_anchor=(1.05, 1),
         title="Condition",
-    )
+        labelcolor=TEXT_COLOR,
+    ).set_visible(len(legend_patches) > 1)
+
+
+def _condition_palette(conditions):
+    """Assign colors from the nonrepeating color/shape combinations."""
+    return {
+        condition: CONDITION_COLORS[CONDITION_STYLE_INDICES[index][0]]
+        for index, condition in enumerate(sorted(set(conditions)))
+    }
+
+
+def _style_axes(ax):
+    """Use neutral text and light solid axes without changing global defaults."""
+    ax.set_axisbelow(True)
+    ax.grid(color=GRID_COLOR, linestyle="-", linewidth=0.6)
+    ax.tick_params(colors=TEXT_COLOR)
+    ax.xaxis.label.set_color(TEXT_COLOR)
+    ax.yaxis.label.set_color(TEXT_COLOR)
+    ax.title.set_color(TEXT_COLOR)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("bottom", "left"):
+        ax.spines[side].set_color(AXIS_COLOR)
+        ax.spines[side].set_linewidth(0.6)
+
+
+def _label_pca_samples(ax, pca_df):
+    """Label small PCA plots without crowding larger sample sets."""
+    if len(pca_df) <= 30:
+        for sample, row in pca_df.iterrows():
+            y = row["PC2"] if "PC2" in row else row["PC1"]
+            ax.annotate(
+                sample,
+                (row["PC1"], y),
+                xytext=(4, 4),
+                textcoords="offset points",
+                fontsize=7,
+            )
 
 
 def plot_pca_conditions(
@@ -338,9 +398,6 @@ def plot_pca_conditions(
             plt.close(fig)
         return fig
 
-    # Fill remaining NaN with column median
-    data = data.fillna(data.median())
-
     # Compute PCA
     n_components = min(2, data.shape[0], data.shape[1])
     pca = PCA(n_components=n_components)
@@ -354,13 +411,21 @@ def plot_pca_conditions(
     pca_df["Condition"] = [sample_to_condition[s] for s in pca_df.index]
 
     fig, ax = plt.subplots(figsize=figsize)
+    conditions = sorted(pca_df["Condition"].unique())
     sns.scatterplot(
         data=pca_df,
         x="PC1",
         y="PC2" if "PC2" in pca_df.columns else "PC1",
         hue="Condition",
-        palette="Set2",
+        style="Condition",
+        markers={
+            condition: CONDITION_MARKERS[CONDITION_STYLE_INDICES[index][1]]
+            for index, condition in enumerate(conditions)
+        },
+        palette=_condition_palette(pca_df["Condition"]),
         s=100,
+        edgecolor="#ffffff",
+        linewidth=1.5,
         ax=ax,
     )
 
@@ -368,8 +433,14 @@ def plot_pca_conditions(
     ax.set_xlabel(f"PC1 ({var_explained[0]:.1f}%)", fontsize=12)
     if n_components >= 2:
         ax.set_ylabel(f"PC2 ({var_explained[1]:.1f}%)", fontsize=12)
-    ax.set_title(title, fontsize=14)
-    ax.legend(loc="center left", bbox_to_anchor=(1.05, 0.5))
+    ax.set_title(
+        f"{title}\nn = {data.shape[1]:,} proteins, complete cases", fontsize=14
+    )
+    _label_pca_samples(ax, pca_df)
+    ax.legend(
+        loc="center left", bbox_to_anchor=(1.05, 0.5), labelcolor=TEXT_COLOR
+    ).set_visible(len(conditions) > 1)
+    _style_axes(ax)
 
     plt.tight_layout()
 
