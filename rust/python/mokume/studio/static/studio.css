@@ -19,25 +19,21 @@
   --accent-soft: rgba(79, 207, 134, 0.12);
   --accent-border: rgba(79, 207, 134, 0.42);
   --accent-contrast: #05170d;
-  --qc-condition-1: #0072B2;
-  --qc-condition-2: #E69F00;
-  --qc-condition-3: #009E73;
-  --qc-condition-4: #CC79A7;
-  --qc-condition-5: #56B4E9;
-  --qc-condition-6: #D55E00;
-  --qc-condition-7: #F0E442;
-  --qc-condition-8: #000000;
-  --qc-rdbu-0: #67001f;
-  --qc-rdbu-1: #b2182b;
-  --qc-rdbu-2: #d6604d;
-  --qc-rdbu-3: #f4a582;
-  --qc-rdbu-4: #fddbc7;
-  --qc-rdbu-5: #f7f7f7;
-  --qc-rdbu-6: #d1e5f0;
-  --qc-rdbu-7: #92c5de;
-  --qc-rdbu-8: #4393c3;
-  --qc-rdbu-9: #2166ac;
-  --qc-rdbu-10: #053061;
+  /* Okabe-Ito hues stepped to clear 3:1 on both themes; slot order is the CVD-safe order. */
+  --qc-condition-1: #0072b2;
+  --qc-condition-2: #c18505;
+  --qc-condition-3: #009e73;
+  --qc-condition-4: #d55e00;
+  --qc-condition-5: #3c9cd0;
+  --qc-condition-6: #c673a1;
+  /* Single-hue sequential ramp, low to high; low values recede into the surface. */
+  --qc-seq-0: #0d366b;
+  --qc-seq-1: #184f95;
+  --qc-seq-2: #256abf;
+  --qc-seq-3: #3987e5;
+  --qc-seq-4: #6da7ec;
+  --qc-seq-5: #9ec5f4;
+  --qc-seq-6: #cde2fb;
   --focus: #5fd894;
   --primary-border: #4fcf86;
   --primary-bg: #4fcf86;
@@ -127,6 +123,13 @@
   --accent-soft: rgba(31, 157, 91, 0.1);
   --accent-border: rgba(31, 157, 91, 0.45);
   --accent-contrast: #ffffff;
+  --qc-seq-0: #cde2fb;
+  --qc-seq-1: #9ec5f4;
+  --qc-seq-2: #6da7ec;
+  --qc-seq-3: #3987e5;
+  --qc-seq-4: #256abf;
+  --qc-seq-5: #184f95;
+  --qc-seq-6: #0d366b;
   --focus: #1f9d5b;
   --primary-border: #177a46;
   --primary-bg: #177a46;
@@ -1091,18 +1094,12 @@ body.resize-rows .center-column { transition-duration: 0s; }
 .qc-plot figcaption { color: var(--muted); font-size: 11px; font-weight: 600; }
 .qc-plot svg { display: block; width: 100%; height: auto; overflow: visible; }
 .qc-plot svg text { fill: var(--secondary-text); font: 9px var(--font-sans); }
-.qc-plot-axis { fill: none; stroke: var(--muted); stroke-width: 1; }
+.qc-plot-axis { fill: none; stroke: var(--border-strong); stroke-width: 1; }
+.qc-plot-grid { stroke: var(--border); stroke-width: 1; }
+.qc-plot-marker { stroke: var(--surface); stroke-width: 4; paint-order: stroke; }
 .qc-plot-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; font-size: 10px; color: var(--secondary-text); }
 .qc-plot-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.qc-plot-legend i { width: 8px; height: 8px; border: 1px solid var(--border-strong); border-radius: 50%; }
-.qc-condition-1 { background: var(--qc-condition-1); }
-.qc-condition-2 { background: var(--qc-condition-2); }
-.qc-condition-3 { background: var(--qc-condition-3); }
-.qc-condition-4 { background: var(--qc-condition-4); }
-.qc-condition-5 { background: var(--qc-condition-5); }
-.qc-condition-6 { background: var(--qc-condition-6); }
-.qc-condition-7 { background: var(--qc-condition-7); }
-.qc-condition-8 { background: var(--qc-condition-8); }
+.qc-plot-legend svg { width: 10px; height: 10px; overflow: visible; }
 .workbench-section > .qc-panel { padding: 12px; }
 .qc-metrics { display: grid; grid-template-columns: repeat(5, minmax(110px, 1fr)); gap: 8px; margin: 0; }
 .qc-metrics > div { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
