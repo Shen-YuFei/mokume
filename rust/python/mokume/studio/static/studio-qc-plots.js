@@ -149,6 +149,62 @@ function pcaLabels(svg, positions, samples) {
   });
 }
 
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2;
+}
+
+// Nearest clear spot in eight directions, then farther out; as in ggrepel,
+// a label more than 8 px from its anchor keeps a leader.
+// Like sample labels, a condition label with no free spot is left to the
+// legend rather than stacked on another label.
+function labelBox(anchor, size, placed, dots) {
+  const radii = [4, 8, 12, 16, 20, 24, 32, 40, 48, 56, 64];
+  const candidates = radii.flatMap((radius) => [...Array(8).keys()].map((step) => {
+    const angle = step * Math.PI / 4;
+    const x = Math.max(AREA.left + size[0] / 2, Math.min(AREA.left + AREA.width - size[0] / 2,
+      anchor[0] + Math.cos(angle) * (radius + size[0] / 2)));
+    const y = Math.max(AREA.top + size[1] / 2, Math.min(200 - size[1] / 2,
+      anchor[1] + Math.sin(angle) * (radius + size[1] / 2)));
+    return { radius, box: [x - size[0] / 2, y - size[1] / 2, x + size[0] / 2, y + size[1] / 2] };
+  })).filter(({ box }) => !placed.some((other) => overlaps(box, other)));
+  const hits = (box) => dots.filter((dot) => overlaps(box, dot)).length;
+  const near = candidates.filter(({ radius }) => radius <= 24);
+  const clear = near.find(({ box }) => !hits(box));
+  if (clear) {
+    const gap = Math.hypot(anchor[0] - Math.max(clear.box[0], Math.min(clear.box[2], anchor[0])),
+      anchor[1] - Math.max(clear.box[1], Math.min(clear.box[3], anchor[1])));
+    return { box: clear.box, leader: gap > 8 };
+  }
+  const pool = near.length ? near : candidates;
+  if (!pool.length) return null;
+  return { box: pool.reduce((best, item) => (hits(item.box) < hits(best.box) ? item : best)).box,
+    leader: true };
+}
+
+// Above twelve conditions colours repeat, so each condition is named once
+// beside its sample nearest the condition median instead of naming samples.
+function conditionLabels(svg, positions, groups, conditions) {
+  const dots = positions.map(([x, y]) => [x - 4, y - 4, x + 4, y + 4]);
+  const placed = [];
+  conditions.forEach((condition, group) => {
+    const own = positions.filter((_, index) => groups[index] === group);
+    const centre = [0, 1].map((axis) => median(own.map((position) => position[axis])));
+    const anchor = own.reduce((best, position) => (Math.hypot(position[0] - centre[0],
+      position[1] - centre[1]) < Math.hypot(best[0] - centre[0], best[1] - centre[1]) ? position : best));
+    const name = condition || translate("Unknown condition");
+    const spot = labelBox(anchor, [Math.min(name.length, 14) * 5 + 2, 12], placed, dots);
+    if (!spot) return;
+    const { box, leader } = spot;
+    placed.push(box);
+    if (leader) {
+      const end = [Math.max(box[0], Math.min(box[2], anchor[0])), Math.max(box[1], Math.min(box[3], anchor[1]))];
+      svg.append(svgNode("path", { d: `M${anchor[0]} ${anchor[1]}L${end[0]} ${end[1]}`, class: "qc-plot-leader" }));
+    }
+    sampleLabel(svg, name, (box[0] + box[2]) / 2, box[3] - 3, { "text-anchor": "middle" });
+  });
+}
+
 function conditionLegend(figure, conditions) {
   const legend = document.createElement("div");
   legend.className = "qc-plot-legend";
@@ -172,10 +228,11 @@ export function pcaPlot(qc) {
   const yRange = coordinateRange(points.map((point) => point[1]));
   scatterTicks(plot.svg, xRange, yRange);
   const conditions = [...new Set(qc.samples.map((sample) => qc.conditions?.[sample] || ""))];
+  const groups = qc.samples.map((sample) => conditions.indexOf(qc.conditions?.[sample] || ""));
   const positions = points.map((point, index) => pcaPoint(plot.svg, point, qc.samples[index],
-    [xRange, yRange], conditionStyle(
-      conditions.indexOf(qc.conditions?.[qc.samples[index]] || ""), conditions.length)));
-  pcaLabels(plot.svg, positions, qc.samples);
+    [xRange, yRange], conditionStyle(groups[index], conditions.length)));
+  if (conditions.length > 12) conditionLabels(plot.svg, positions, groups, conditions);
+  else pcaLabels(plot.svg, positions, qc.samples);
   if (conditions.length > 1) conditionLegend(plot.figure, conditions);
   label(plot.svg, translate("Explained variance: {pc1}% / {pc2}%", {
     pc1: variance[0] || 0, pc2: variance[1] || 0,
