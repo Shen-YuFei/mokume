@@ -12,6 +12,44 @@ def compact_json(value):
     return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
 
 
+# Each marker trace gets a text twin in its legend group, drawn after every
+# marker so no point covers a label. Outliers keep their labels; one that would
+# overprint a placed label is hidden, and hover still names the sample.
+# Visibility is redone after every redraw (zoom, resize, legend toggle).
+EMBEDDING_LABEL_JS = """
+function labelTraces(traces) {
+    return traces.map(trace => {
+        trace.legendgroup = trace.legendgroup || trace.name;
+        // Transparent same-size markers keep the usual offset from the point.
+        return {type: 'scatter', mode: 'markers+text', x: trace.x, y: trace.y,
+            text: trace.text, marker: {size: trace.marker.size, opacity: 0},
+            legendgroup: trace.legendgroup, textposition: 'top right', textfont: {size: 8},
+            cliponaxis: false, hoverinfo: 'skip', showlegend: false};
+    });
+}
+function labelEmbedding(gd) {
+    const thin = () => {
+        const labels = [...gd.querySelectorAll('.scatterlayer .textpoint')].map(node => {
+            const box = node.getBoundingClientRect();
+            return {node, box, x: box.x + box.width / 2, y: box.y + box.height / 2};
+        });
+        const cx = labels.reduce((sum, label) => sum + label.x, 0) / labels.length;
+        const cy = labels.reduce((sum, label) => sum + label.y, 0) / labels.length;
+        labels.sort((a, b) => Math.hypot(b.x - cx, b.y - cy) - Math.hypot(a.x - cx, a.y - cy));
+        const placed = [];
+        labels.forEach(({node, box}) => {
+            const hidden = placed.some(other => box.left < other.right
+                && other.left < box.right && box.top < other.bottom && other.top < box.bottom);
+            node.style.visibility = hidden ? 'hidden' : '';
+            if (!hidden) placed.push(box);
+        });
+    };
+    gd.on('plotly_afterplot', thin);
+    thin();
+}
+"""
+
+
 def condition_guides(samples, conditions):
     """Return Plotly separators and top labels for condition-grouped samples."""
     boundaries, labels = condition_groups(samples, conditions)

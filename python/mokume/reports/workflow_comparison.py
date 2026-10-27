@@ -30,7 +30,7 @@ from mokume.plotting.style import (
 )
 from mokume.core.logger import get_logger
 from mokume.reports._comparison_profiles import marker_profiles
-from mokume.reports._plots import plot_cards
+from mokume.reports._plots import EMBEDDING_LABEL_JS, plot_cards
 
 logger = get_logger("mokume.reports.comparison")
 
@@ -549,6 +549,7 @@ const condStyles = Object.fromEntries(allConditions.map((condition, index) => {{
     const [color, shape] = styleIndices[index];
     return [condition, {{color: palette[color], symbol: conditionSymbols[shape]}}];
 }}));
+{EMBEDDING_LABEL_JS}
 function pcaTraces(pca) {{
     const conditions = [...new Set(pca.conditions)].sort();
     const plexes = [...new Set(pca.plexes)].sort();
@@ -561,10 +562,9 @@ function pcaTraces(pca) {{
                 .filter(i => pca.conditions[i] === cond && pca.plexes[i] === plex);
             if (!indices.length) return;
             traces.push({{
-                type: 'scatter', mode: 'markers+text', cliponaxis: false,
+                type: 'scatter', mode: 'markers', cliponaxis: false,
                 x: indices.map(i => pca.pc1[i]), y: indices.map(i => pca.pc2[i]),
                 text: indices.map(i => pca.samples[i]),
-                textposition: 'top right', textfont: {{size: 8}},
                 hovertext: indices.map(i => pca.samples[i] + '<br>Condition: ' + cond
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
                 marker: {{color: condStyles[cond].color, size: 10,
@@ -584,7 +584,7 @@ function paddedRange(values) {{
 function drawPca(wfName, index) {{
     const pca = pcaData[wfName];
     const traces = pcaTraces(pca);
-    Plotly.newPlot(`pca-${{index}}`, traces, {{
+    Plotly.newPlot(`pca-${{index}}`, [...traces, ...labelTraces(traces)], {{
         template: plotTemplate,
         title: {{text: wfName + (traces.length === 1 ? ' (' + traces[0].name + ')' : ''),
                  x: 0, xanchor: 'left', font: {{size: 14}}}},
@@ -595,7 +595,7 @@ function drawPca(wfName, index) {{
         showlegend: traces.length > 1,
         legend: {{font: {{size: 9}}, orientation: 'h', y: -0.2}},
         margin: {{t: 55, b: 95, l: 60, r: 45}},
-    }}, plotConfig);
+    }}, plotConfig).then(labelEmbedding);
 }}
 (function() {{
     const container = document.getElementById('pca-container');

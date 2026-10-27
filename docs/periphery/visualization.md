@@ -97,7 +97,8 @@ mokume plot pca \
 PCA uses complete-case proteins and reports their count below the title. Small
 plots (at most 30 samples) include sample labels, placed from the outermost
 sample inward; a label that would overprint one already placed is omitted.
-Conditions use the shared
+HTML PCA plots in the QC and comparison reports apply the same rule after each
+zoom or resize, and hover always names the sample. Conditions use the shared
 six-color palette with distinct color/marker combinations rather than cycling
 through colors. In HTML PCA plots with multiple plexes, shapes identify
 plexes; the legend and hover text identify conditions.

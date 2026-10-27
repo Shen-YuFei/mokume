@@ -37,7 +37,7 @@ from mokume.plotting.style import (
 )
 from mokume.core.logger import get_logger
 from mokume.plotting._common import log2_matrix as prepare_log2, read_frame
-from mokume.reports._plots import plot_cards
+from mokume.reports._plots import EMBEDDING_LABEL_JS, plot_cards
 from mokume.reports._qc_diagnostics import diagnostic_plots
 
 logger = get_logger("mokume.reports.qc")
@@ -879,6 +879,7 @@ const pca = {_safe_json(pca)};
 [...new Set(pca.plexes)].sort().forEach((plex, index) => {{
     plexSymbols[plex] = plexShapeSymbols[index];
 }});
+{EMBEDDING_LABEL_JS}
 function embeddingTraces(data, xKey, yKey) {{
     const conditions = [...new Set(data.conditions)].sort();
     const plexes = [...new Set(data.plexes)].sort();
@@ -889,10 +890,9 @@ function embeddingTraces(data, xKey, yKey) {{
                 .filter(i => data.conditions[i] === condition && data.plexes[i] === plex);
             if (!indices.length) return;
             traces.push({{
-                type: 'scatter', mode: 'markers+text', cliponaxis: false,
+                type: 'scatter', mode: 'markers', cliponaxis: false,
                 x: indices.map(i => data[xKey][i]), y: indices.map(i => data[yKey][i]),
-                text: indices.map(i => data.samples[i]), textposition: 'top right',
-                textfont: {{size: 8}},
+                text: indices.map(i => data.samples[i]),
                 hovertext: indices.map(i => data.samples[i] + '<br>Condition: ' + condition
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
                 marker: {{color: condColors[condition], size: 12,
@@ -906,7 +906,7 @@ function embeddingTraces(data, xKey, yKey) {{
 }}
 function drawEmbedding(target, data, axes, title) {{
     const traces = embeddingTraces(data, axes[0][0], axes[1][0]);
-    Plotly.newPlot(target, traces, {{
+    Plotly.newPlot(target, [...traces, ...labelTraces(traces)], {{
         template: plotTemplate,
         title: {{x: 0, xanchor: 'left', font: {{size: 14}},
             text: title + (traces.length === 1 ? ' (' + traces[0].name + ')' : '')}},
@@ -914,7 +914,7 @@ function drawEmbedding(target, data, axes, title) {{
         yaxis: {{title: {{text: axes[1][1]}}, range: paddedRange(data[axes[1][0]])}},
         showlegend: traces.length > 1, legend: {{font: {{size: 10}}}},
         margin: {{t: 50, b: 50, l: 60, r: 35}},
-    }}, plotConfig);
+    }}, plotConfig).then(labelEmbedding);
 }}
 drawEmbedding('pca-plot', pca,
     [['pc1', 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)'],
