@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.transforms import Bbox
 from sklearn.decomposition import PCA
 
 from mokume.plotting._common import static_style, style_axes as _style_axes
@@ -322,7 +323,7 @@ def _condition_palette(conditions):
 
 
 def _label_pca_samples(ax, pca_df):
-    """Label outliers first and drop labels that would overprint placed ones.
+    """Label outliers first; drop labels that would cover another label or sample.
 
     Call after the final layout, since overlaps are measured in display space.
     """
@@ -330,6 +331,8 @@ def _label_pca_samples(ax, pca_df):
         return
     y = pca_df["PC2"] if "PC2" in pca_df else pca_df["PC1"]
     points = ax.transData.transform(np.column_stack([pca_df["PC1"], y]))
+    radius = np.sqrt(ax.collections[0].get_sizes()[0]) * ax.figure.dpi / 144
+    dots = [Bbox.from_bounds(*(xy - radius), 2 * radius, 2 * radius) for xy in points]
     renderer = ax.figure.canvas.get_renderer()
     placed = []
     for index in np.argsort(-np.linalg.norm(points - points.mean(axis=0), axis=1)):
@@ -346,7 +349,9 @@ def _label_pca_samples(ax, pca_df):
             label.set_horizontalalignment("right")
             label.xyann = (-4, 4)
             box = label.get_window_extent(renderer)
-        if any(box.overlaps(other) for other in placed):
+        # A label never hides another sample's point; its own point sits clear of it.
+        others = placed + dots[:index] + dots[index + 1 :]
+        if any(box.overlaps(other) for other in others):
             label.remove()
         else:
             placed.append(box)
