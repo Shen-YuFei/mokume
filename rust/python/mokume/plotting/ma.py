@@ -6,8 +6,8 @@ from matplotlib import pyplot as plt
 from mokume.plotting._common import log2_matrix, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_MARKERS,
     CONDITION_STYLE_INDICES,
+    MISSING_COLOR,
     SAMPLE_POINT_COLOR,
     SIGNIFICANCE_COLORS,
     TEXT_COLOR,
@@ -52,6 +52,9 @@ def plot_ma(de, protein_df, sample_to_condition, output_file, options):
         else pd.Series(groups.loc[de["ProteinName"]].to_numpy(), index=de.index)
     )
     names = sorted(labels.unique())
+    if groups is not None and len(names) > 3:
+        _plot_facets(de, abundance, labels, output_file, options)
+        return
     fig, ax = plt.subplots(figsize=(3.5, 2.8))
     _plot_groups(ax, de, abundance, labels, options)
     for value in (-options["log2fc"], options["log2fc"]):
@@ -85,33 +88,66 @@ def _plot_groups(ax, de, abundance, labels, options):
     groups = options.get("groups")
     names = sorted(labels.unique())
     for index, name in enumerate(names):
-        subset = labels == name
-        color_index, marker_index = CONDITION_STYLE_INDICES[index]
         color = (
             SIGNIFICANCE_COLORS[name]
             if groups is None
-            else CONDITION_COLORS[color_index]
+            else CONDITION_COLORS[CONDITION_STYLE_INDICES[index][0]]
         )
-        marker = (
-            "o"
-            if groups is None or len(names) <= 3
-            else CONDITION_MARKERS[marker_index]
-        )
-        ax.scatter(
-            abundance[subset],
-            de.loc[subset, "log2FC"],
-            color=color,
-            marker=marker,
-            s=8,
-            alpha=0.6,
-            linewidths=0,
-            label=name,
-            rasterized=True,
-        )
+        subset = labels == name
+        _group_points(ax, abundance[subset], de.loc[subset, "log2FC"], color, name)
         if name in options.get("expected", {}):
             value = options["expected"][name]
             ax.axhline(value, color=color, linestyle="--", linewidth=2)
     _label_expected(ax, names, options.get("expected", {}))
+
+
+def _group_points(ax, abundance, fold_changes, color, name=None):
+    """Use the same density marks in grouped and faceted MA plots."""
+    ax.scatter(
+        abundance,
+        fold_changes,
+        color=color,
+        marker="o",
+        s=8,
+        alpha=0.6,
+        linewidths=0,
+        label=name,
+        rasterized=True,
+    )
+
+
+def _plot_facets(de, abundance, labels, output_file, options):
+    """Emphasize one composition group per panel against the other proteins."""
+    names = sorted(labels.unique())
+    rows = (len(names) + 2) // 3
+    fig, axes = plt.subplots(
+        rows, 3, figsize=(7.2, rows * 2.4), sharex=True, sharey=True, squeeze=False
+    )
+    for index, name in enumerate(names):
+        ax = axes.flat[index]
+        subset = labels == name
+        color = CONDITION_COLORS[CONDITION_STYLE_INDICES[index][0]]
+        _group_points(ax, abundance[~subset], de.loc[~subset, "log2FC"], MISSING_COLOR)
+        _group_points(ax, abundance[subset], de.loc[subset, "log2FC"], color)
+        for value in (-options["log2fc"], options["log2fc"]):
+            ax.axhline(value, color="grey", linestyle="--", linewidth=0.8)
+        ax.axhline(0, color=SAMPLE_POINT_COLOR, linewidth=0.6)
+        if name in options.get("expected", {}):
+            ax.axhline(
+                options["expected"][name], color=color, linestyle="--", linewidth=2
+            )
+        _label_expected(ax, [name], options.get("expected", {}))
+        ax.set_title(name)
+        style_axes(ax)
+        ax.tick_params(labelbottom=index + 3 >= len(names))
+    for ax in list(axes.flat)[len(names) :]:
+        fig.delaxes(ax)
+    fig.suptitle(options["title"])
+    fig.supxlabel("Mean log2 intensity (A)", fontsize=10)
+    fig.supylabel("log2 fold change (M)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(output_file, bbox_inches="tight")
+    plt.close(fig)
 
 
 def _label_expected(ax, names, expected):

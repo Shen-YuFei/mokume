@@ -21,7 +21,7 @@ CONDITION_SYMBOLS = (
 CONDITION_STYLE_INDICES = tuple((index, index) for index in range(6)) + tuple(
     (color, (color + shift) % 6) for shift in range(1, 6) for color in range(6)
 )
-PLEX_SYMBOLS = tuple(range(53))
+PLEX_SYMBOLS = tuple(range(6))
 SIGNIFICANCE_COLORS = {
     "UP": "#D55E00",
     "DOWN": "#0072B2",
@@ -102,7 +102,7 @@ PLOTLY_TEMPLATE = {
     "data": {
         "scatter": [
             {
-                "marker": {"size": 8, "line": {"width": 2, "color": "#ffffff"}},
+                "marker": {"size": 8, "line": {"width": 0}},
                 "textfont": {"color": TEXT_COLOR},
             }
         ],

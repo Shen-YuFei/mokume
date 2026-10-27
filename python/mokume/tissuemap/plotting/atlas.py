@@ -275,8 +275,7 @@ def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> None:
             color=color,
             marker=marker,
             s=36,
-            edgecolors=WHITE,
-            linewidths=0.6,
+            linewidths=0,
             zorder=3,
         )
         # Anchor on a real member: a split group's mean can sit in empty space.
@@ -302,8 +301,7 @@ def _group_legend(ax, group_styles, **kwargs) -> None:
             linestyle="none",
             markersize=6,
             markerfacecolor=color,
-            markeredgecolor=WHITE,
-            markeredgewidth=0.6,
+            markeredgewidth=0,
             label=group,
         )
         for group, (color, marker) in group_styles.items()
@@ -346,8 +344,7 @@ def _draw_dendrogram_panel(
             color=color,
             marker=marker,
             s=36,
-            edgecolors=WHITE,
-            linewidths=0.6,
+            linewidths=0,
             clip_on=False,
             zorder=4,
         )

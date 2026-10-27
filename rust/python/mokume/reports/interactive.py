@@ -351,7 +351,7 @@ function expressionTraces(data) {
             y0: mean, y1: mean, line: {color: textColor, width: 3}});
     });
     const traces = [{type: 'scatter', mode: 'markers', x, y, customdata: names,
-        marker: {color: pointColor, size: 9, line: {width: 1, color: '#ffffff'}},
+        marker: {color: pointColor, size: 9, line: {width: 0}},
         hovertemplate: '<b>%{customdata}</b><br>log2 intensity: %{y:.2f}<extra></extra>'}];
     return {traces, shapes, conditions, samples};
 }

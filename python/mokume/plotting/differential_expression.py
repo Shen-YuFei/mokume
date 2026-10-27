@@ -13,10 +13,13 @@ import seaborn as sns
 from matplotlib.transforms import Bbox
 from sklearn.decomposition import PCA
 
-from mokume.plotting._common import static_style, style_axes as _style_axes
+from mokume.plotting._common import (
+    condition_markers,
+    static_style,
+    style_axes as _style_axes,
+)
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_MARKERS,
     CONDITION_STYLE_INDICES,
     MISSING_COLOR,
     SIGNIFICANCE_COLORS,
@@ -436,14 +439,10 @@ def plot_pca_conditions(
         y="PC2" if "PC2" in pca_df.columns else "PC1",
         hue="Condition",
         style="Condition",
-        markers={
-            condition: CONDITION_MARKERS[CONDITION_STYLE_INDICES[index][1]]
-            for index, condition in enumerate(conditions)
-        },
+        markers=condition_markers(conditions),
         palette=_condition_palette(pca_df["Condition"]),
         s=40,
-        edgecolor="#ffffff",
-        linewidth=0.6,
+        linewidth=0,
         ax=ax,
     )
 

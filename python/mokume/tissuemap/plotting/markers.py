@@ -306,8 +306,7 @@ def _draw_nan_points(ax, tsne: np.ndarray, nan_mask: np.ndarray) -> None:
             tsne[nan_mask, 1],
             c=MISSING_COLOR,
             s=12,
-            edgecolors=WHITE,
-            linewidths=0.3,
+            linewidths=0,
             zorder=2,
             rasterized=True,
         )
@@ -331,8 +330,7 @@ def _draw_detected_points(ax, tsne, expr_all, nan_mask) -> None:
         vmin=0,
         vmax=1,
         s=12,
-        edgecolors=WHITE,
-        linewidths=0.3,
+        linewidths=0,
         zorder=3,
         rasterized=True,
     )

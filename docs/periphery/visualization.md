@@ -32,8 +32,9 @@ rasterized; PCA and atlas sample markers, labels and axes remain vector graphics
 Default canvases match journal columns: about 3.5 in for single panels and at
 most 7.2 in for multi-panel figures, while heatmaps and marker grids grow with
 their rows and columns. Protein points are small, translucent and unringed so
-overlaps read as density; sample points keep a thin white ring, and highlighted
-proteins are larger with a thin dark outline. These settings apply only while
+overlaps read as density; sample points have no outline, and highlighted
+proteins are larger with a thin dark outline. Markers on lines, UpSet dots and
+log2FC points keep their white rings. These settings apply only while
 Mokume creates and exports a figure; the caller's matplotlib defaults are
 restored. Interactive HTML reports follow the same point rules but keep their
 own fonts and layout.
@@ -100,9 +101,12 @@ sample inward; a label that would cover a placed label or another sample's
 point is omitted. HTML PCA plots in the QC and comparison reports apply the
 same rule after each zoom or resize, and hover always names the sample.
 Conditions use the shared six-color palette with distinct color/marker
-combinations rather than cycling through colors. In HTML PCA plots with
-multiple plexes, shapes identify plexes; the legend and hover text identify
-conditions.
+combinations rather than cycling through colors. Static DE PCA uses circles
+for up to three conditions and color/shape combinations above three, matching
+the other static PCA plots. In HTML PCA plots with two to six plexes, shapes
+identify plexes; the legend and hover text identify conditions. Above six
+plexes, shapes identify conditions and the legend lists each condition once.
+Hover text continues to identify the plex.
 
 ## Interactive DE Report
 
@@ -166,6 +170,12 @@ mokume plot de -p proteins.csv -s experiment.sdrf.tsv -o plots --ma \
     --protein-groups protein_groups.tsv --expected-log2fc B-A yeast 1 \
     --contrast B-A B A de_B-A.csv
 ```
+
+MA plots with more than three composition groups use one panel per group,
+sorted by group name in three columns with shared axes. Each panel emphasizes
+its group over gray background proteins and shows that group's expected ratio,
+when supplied. All group points are circles; these panels have no legend.
+Plots without composition groups or with up to three groups keep one panel.
 
 Unknown contrast or group references fail. With two or more contrasts, `plot de`
 automatically writes `upset_significant.png` with exclusive significant-protein

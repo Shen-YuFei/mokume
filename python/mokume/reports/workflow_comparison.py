@@ -419,8 +419,9 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_html, pr
         <h2 class="section-title">{plex["pca_title"]}</h2>
         <div class="pca-grid" id="pca-container"></div>
         {
-        '<p class="metric-explanation">In plots with multiple plexes, markers encode '
-        "plex. For more than three conditions, use condition names in the legend and hover.</p>"
+        '<p class="metric-explanation">Shapes identify plexes when there are at '
+        f"most {len(PLEX_SYMBOLS)}; with more plexes, shapes follow conditions. "
+        "Hover text names each sample's condition and plex.</p>"
         if plex["show_plex"]
         else ""
     }
@@ -554,9 +555,11 @@ function pcaTraces(pca) {{
     const conditions = [...new Set(pca.conditions)].sort();
     const plexes = [...new Set(pca.plexes)].sort();
     const multiPlex = plexes.length > 1;
+    const shapeByPlex = multiPlex && plexes.length <= plexSymbols.length;
     const plexSymMap = Object.fromEntries(plexes.map((plex, i) => [plex, plexSymbols[i]]));
     const traces = [];
     conditions.forEach(cond => {{
+        let first = true;
         plexes.forEach(plex => {{
             const indices = pca.samples.map((sample, i) => i)
                 .filter(i => pca.conditions[i] === cond && pca.plexes[i] === plex);
@@ -568,10 +571,13 @@ function pcaTraces(pca) {{
                 hovertext: indices.map(i => pca.samples[i] + '<br>Condition: ' + cond
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
                 marker: {{color: condStyles[cond].color, size: 10,
-                    symbol: multiPlex ? plexSymMap[plex] : condStyles[cond].symbol,
-                    line: {{width: 1, color: '#ffffff'}}}},
-                name: multiPlex ? cond + ' / ' + plex : cond,
+                    symbol: shapeByPlex ? plexSymMap[plex] : condStyles[cond].symbol,
+                    line: {{width: 0}}}},
+                name: shapeByPlex ? cond + ' / ' + plex : cond,
+                legendgroup: shapeByPlex ? cond + ' / ' + plex : cond,
+                showlegend: shapeByPlex || first,
             }});
+            first = false;
         }});
     }});
     return traces;

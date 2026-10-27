@@ -2,7 +2,7 @@
 Quality control report for proteomics quantification workflows.
 
 Generates interactive HTML reports with sample-level and DE-level QC metrics:
-- PCA (colored by condition, shaped by plex)
+- PCA (colored by condition, shaped by plex for up to six plexes)
 - Sample correlation heatmap
 - Per-condition CV distributions
 - Intensity/ratio distribution boxplots
@@ -761,8 +761,9 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
                 <div style="flex:1"><div id="pca-plot" style="height:450px"></div></div>
             </div>
             {
-        '<p style="font-size:12px; margin-bottom:16px">Markers encode plex. For more '
-        "than three conditions, use the condition names in the legend and hover.</p>"
+        '<p style="font-size:12px; margin-bottom:16px">Shapes identify plexes when there are at '
+        f"most {len(PLEX_SYMBOLS)}; with more plexes, shapes follow conditions. "
+        "Hover text names each sample's condition and plex.</p>"
         if plex["multi_plex"]
         else ""
     }
@@ -883,8 +884,10 @@ const pca = {_safe_json(pca)};
 function embeddingTraces(data, xKey, yKey) {{
     const conditions = [...new Set(data.conditions)].sort();
     const plexes = [...new Set(data.plexes)].sort();
+    const shapeByPlex = multiPlex && plexes.length <= plexShapeSymbols.length;
     const traces = [];
     conditions.forEach(condition => {{
+        let first = true;
         plexes.forEach(plex => {{
             const indices = data.samples.map((sample, i) => i)
                 .filter(i => data.conditions[i] === condition && data.plexes[i] === plex);
@@ -896,10 +899,12 @@ function embeddingTraces(data, xKey, yKey) {{
                 hovertext: indices.map(i => data.samples[i] + '<br>Condition: ' + condition
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
                 marker: {{color: condColors[condition], size: 12,
-                    symbol: multiPlex ? plexSymbols[plex] : condSymbols[condition],
-                    line: {{width: 1, color: '#ffffff'}}}},
-                name: multiPlex ? condition + ' / ' + plex : condition, legendgroup: condition,
+                    symbol: shapeByPlex ? plexSymbols[plex] : condSymbols[condition],
+                    line: {{width: 0}}}},
+                name: shapeByPlex ? condition + ' / ' + plex : condition,
+                legendgroup: condition, showlegend: shapeByPlex || first,
             }});
+            first = false;
         }});
     }});
     return traces;

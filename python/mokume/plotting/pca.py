@@ -5,10 +5,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-from mokume.plotting._common import static_style, style_axes
+from mokume.plotting._common import condition_markers, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_MARKERS,
     CONDITION_STYLE_INDICES,
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
@@ -27,12 +26,12 @@ def _embedding_plot(frame, axes, group_column, options):
             frame[axes[1]],
             color=SAMPLE_POINT_COLOR,
             s=36,
-            linewidths=0.6,
-            edgecolors=WHITE,
+            linewidths=0,
         )
         groups = []
+    markers = condition_markers(groups)
     for index, group in enumerate(groups):
-        color, shape = CONDITION_STYLE_INDICES[index]
+        color = CONDITION_STYLE_INDICES[index][0]
         subset = frame[frame[group_column] == group]
         ax.scatter(
             subset[axes[0]],
@@ -40,9 +39,8 @@ def _embedding_plot(frame, axes, group_column, options):
             label=group,
             color=CONDITION_COLORS[color],
             s=36,
-            linewidths=0.6,
-            edgecolors=WHITE,
-            marker=CONDITION_MARKERS[shape] if len(groups) > 3 else "o",
+            linewidths=0,
+            marker=markers[group],
         )
     ax.set(xlabel=axes[0], ylabel=axes[1], title=options["title"])
     if len(groups) > 1:
