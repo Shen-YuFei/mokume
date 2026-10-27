@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.transforms import offset_copy
 from scipy.stats import norm as _norm
 
 from mokume.plotting._common import panel_label, static_style, style_axes
@@ -64,7 +65,7 @@ def _overlay_gmm_curves(ax, gmm, x_upper: float) -> None:
 
 
 def _draw_thresholds(ax, categories, thresholds) -> None:
-    """Identify thresholds with neutral dashed lines and direct labels."""
+    """Join each neutral dashed threshold line to its label with an elbow."""
     enriched, specific, housekeeping = thresholds
     n_specific = int((categories == "tissue-specific").sum())
     n_enriched = int(categories.isin(["tissue-specific", "tissue-enriched"]).sum())
@@ -77,18 +78,28 @@ def _draw_thresholds(ax, categories, thresholds) -> None:
         labels.append(
             (housekeeping, f"House-keeping |TS| < {housekeeping:.2f} (n={n_hk})")
         )
-    # One row per threshold so labels of close thresholds never collide.
-    for row, (value, label) in enumerate(labels):
-        ax.axvline(value, color=SAMPLE_POINT_COLOR, linestyle="--", linewidth=1)
+    # Labels share one column right of the highest threshold. Each line rises to
+    # its own row, the leftmost to the top, so no leader crosses another line.
+    column = offset_copy(ax.get_xaxis_transform(), fig=ax.figure, x=6, units="points")
+    for row, (value, label) in enumerate(sorted(labels)):
         ax.annotate(
             label,
-            (value, 0.97 - row * 0.07),
+            (value, 0),
             xycoords=ax.get_xaxis_transform(),
-            xytext=(4, 0),
-            textcoords="offset points",
-            va="top",
+            xytext=(max(labels)[0], 0.95 - row * 0.1),
+            textcoords=column,
+            va="center",
             color=TEXT_COLOR,
-            bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.85, "pad": 1},
+            arrowprops={
+                "arrowstyle": "-",
+                "connectionstyle": "angle,angleA=0,angleB=90,rad=0",
+                "relpos": (0, 0.5),
+                "shrinkA": 2,
+                "shrinkB": 0,
+                "color": SAMPLE_POINT_COLOR,
+                "linestyle": "--",
+                "linewidth": 1,
+            },
         )
 
 
