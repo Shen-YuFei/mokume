@@ -1,19 +1,11 @@
 // Small SVG diagnostics drawn from the bounded post-run QC summary.
 import { setTranslatedText, translate, translatedElement } from "./studio-i18n.js";
 
+import { categoryColors } from "./studio-qc-colors.js";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const AREA = { left: 70, top: 26, width: 240, height: 174 };
-const CONDITION_SLOTS = 6;
 const SEQUENTIAL_STEPS = 6;
-// Shapes join colour once a scatter shows more than three conditions,
-// so every condition keeps a distinct colour-shape pair.
-const SHAPES = [
-  (x, y) => `M${x - 4} ${y}a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z`,
-  (x, y) => `M${x - 3.5} ${y - 3.5}h7v7h-7Z`,
-  (x, y) => `M${x} ${y - 4.6}L${x + 4.2} ${y + 3}H${x - 4.2}Z`,
-  (x, y) => `M${x} ${y - 5}L${x + 5} ${y}L${x} ${y + 5}L${x - 5} ${y}Z`,
-  (x, y) => `M${x} ${y + 4.6}L${x + 4.2} ${y - 3}H${x - 4.2}Z`,
-];
 
 function svgNode(name, attributes = {}, text = null) {
   const node = document.createElementNS(SVG_NS, name);
@@ -111,18 +103,12 @@ function scatterTicks(svg, xRange, yRange) {
   });
 }
 
-function conditionStyle(index, count) {
-  return {
-    fill: `var(--qc-condition-${index % CONDITION_SLOTS + 1})`,
-    shape: SHAPES[count > 3 ? index % SHAPES.length : 0],
-  };
-}
-
-function pcaPoint(svg, point, sample, ranges, style) {
+function pcaPoint(svg, point, sample, ranges, color) {
   const [xRange, yRange] = ranges;
   const x = AREA.left + (point[0] - xRange[0]) / (xRange[1] - xRange[0]) * AREA.width;
   const y = 200 - (point[1] - yRange[0]) / (yRange[1] - yRange[0]) * AREA.height;
-  const marker = svgNode("path", { d: style.shape(x, y), fill: style.fill });
+  const marker = svgNode("circle", { cx: x, cy: y, r: 3.3, fill: color,
+    "fill-opacity": 0.85, stroke: "none" });
   marker.append(svgNode("title", {}, `${sample}: ${point[0].toFixed(2)}, ${point[1].toFixed(2)}`));
   svg.append(marker);
   return [x, y];
@@ -205,14 +191,14 @@ function conditionLabels(svg, positions, groups, conditions) {
   });
 }
 
-function conditionLegend(figure, conditions) {
+function conditionLegend(figure, conditions, colors) {
   const legend = document.createElement("div");
   legend.className = "qc-plot-legend";
   conditions.forEach((condition, index) => {
     const entry = document.createElement("span");
-    const style = conditionStyle(index, conditions.length);
     const swatch = svgNode("svg", { viewBox: "0 0 10 10", "aria-hidden": "true" });
-    swatch.append(svgNode("path", { d: style.shape(5, 5), fill: style.fill }));
+    swatch.append(svgNode("circle", { cx: 5, cy: 5, r: 3.3, fill: colors[index],
+      "fill-opacity": 0.85, stroke: "none" }));
     entry.append(swatch, document.createTextNode(condition || translate("Unknown condition")));
     legend.append(entry);
   });
@@ -228,12 +214,13 @@ export function pcaPlot(qc) {
   const yRange = coordinateRange(points.map((point) => point[1]));
   scatterTicks(plot.svg, xRange, yRange);
   const conditions = [...new Set(qc.samples.map((sample) => qc.conditions?.[sample] || ""))];
+  const colors = categoryColors(conditions.length);
   const groups = qc.samples.map((sample) => conditions.indexOf(qc.conditions?.[sample] || ""));
   const positions = points.map((point, index) => pcaPoint(plot.svg, point, qc.samples[index],
-    [xRange, yRange], conditionStyle(groups[index], conditions.length)));
+    [xRange, yRange], colors[groups[index]]));
   if (conditions.length > 12) conditionLabels(plot.svg, positions, groups, conditions);
   else pcaLabels(plot.svg, positions, qc.samples);
-  if (conditions.length > 1) conditionLegend(plot.figure, conditions);
+  if (conditions.length > 1) conditionLegend(plot.figure, conditions, colors);
   label(plot.svg, translate("Explained variance: {pc1}% / {pc2}%", {
     pc1: variance[0] || 0, pc2: variance[1] || 0,
   }), 190, 252, { "text-anchor": "middle" });
