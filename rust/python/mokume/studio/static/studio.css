@@ -1096,6 +1096,7 @@ body.resize-rows .center-column { transition-duration: 0s; }
 .qc-plot svg text { fill: var(--secondary-text); font: 9px var(--font-sans); }
 .qc-plot-axis { fill: none; stroke: var(--border-strong); stroke-width: 1; }
 .qc-plot-grid { stroke: var(--border); stroke-width: 1; }
+.qc-plot-leader { fill: none; stroke: var(--muted); stroke-width: 0.75; }
 .qc-plot-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; font-size: 10px; color: var(--secondary-text); }
 .qc-plot-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .qc-plot-legend svg { width: 10px; height: 10px; overflow: visible; }
