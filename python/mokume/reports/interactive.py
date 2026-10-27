@@ -96,6 +96,10 @@ def _volcano_traces(de: pd.DataFrame, highlight_genes: list) -> list[dict]:
         subset = de[de["significance"] == significance]
         if subset.empty:
             continue
+        # Plotly draws rows in order; highlighted proteins go last to stay on top.
+        subset = subset.iloc[
+            np.argsort(subset["ProteinName"].isin(highlight_genes), kind="stable")
+        ]
         highlighted = subset["ProteinName"].isin(highlight_genes)
         traces.append(
             {
@@ -108,9 +112,13 @@ def _volcano_traces(de: pd.DataFrame, highlight_genes: list) -> list[dict]:
                 ].values.tolist(),
                 "marker": {
                     "color": SIGNIFICANCE_COLORS[significance],
-                    "size": np.where(highlighted, 14, 8).tolist(),
-                    "opacity": 0.8,
-                    "line": {"color": "#ffffff", "width": 2},
+                    # Proteins read as density; highlighted ones stay opaque and outlined.
+                    "size": np.where(highlighted, 12, 6).tolist(),
+                    "opacity": np.where(highlighted, 1, 0.6).tolist(),
+                    "line": {
+                        "color": TEXT_COLOR,
+                        "width": np.where(highlighted, 1, 0).tolist(),
+                    },
                 },
                 "name": f"{significance} ({len(subset)})",
                 "hovertemplate": "<b>%{customdata[0]}</b><br>log2FC: %{customdata[1]:.3f}<br>"
@@ -343,7 +351,7 @@ function expressionTraces(data) {
             y0: mean, y1: mean, line: {color: textColor, width: 3}});
     });
     const traces = [{type: 'scatter', mode: 'markers', x, y, customdata: names,
-        marker: {color: pointColor, size: 9, line: {width: 2, color: '#ffffff'}},
+        marker: {color: pointColor, size: 9, line: {width: 1, color: '#ffffff'}},
         hovertemplate: '<b>%{customdata}</b><br>log2 intensity: %{y:.2f}<extra></extra>'}];
     return {traces, shapes, conditions, samples};
 }

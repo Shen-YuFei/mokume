@@ -35,7 +35,8 @@ their rows and columns. Protein points are small, translucent and unringed so
 overlaps read as density; sample points keep a thin white ring, and highlighted
 proteins are larger with a thin dark outline. These settings apply only while
 Mokume creates and exports a figure; the caller's matplotlib defaults are
-restored. Interactive HTML report styles are independent.
+restored. Interactive HTML reports follow the same point rules but keep their
+own fonts and layout.
 
 ## DE Plots from features2proteins Output
 

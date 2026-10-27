@@ -569,7 +569,7 @@ function pcaTraces(pca) {{
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
                 marker: {{color: condStyles[cond].color, size: 10,
                     symbol: multiPlex ? plexSymMap[plex] : condStyles[cond].symbol,
-                    line: {{width: 2, color: '#ffffff'}}}},
+                    line: {{width: 1, color: '#ffffff'}}}},
                 name: multiPlex ? cond + ' / ' + plex : cond,
             }});
         }});
@@ -646,8 +646,7 @@ function drawPca(wfName, index) {{
         type: 'scatter', mode: 'markers',
         x: d.fc_a, y: d.fc_b,
         text: d.proteins,
-        marker: {{ size: 8, color: singleColor, opacity: 0.5,
-                   line: {{width: 2, color: '#ffffff'}} }},
+        marker: {{ size: 6, color: singleColor, opacity: 0.6, line: {{width: 0}} }},
         hovertemplate: '<b>%{{text}}</b><br>%{{xaxis.title.text}}: %{{x:.2f}}<br>%{{yaxis.title.text}}: %{{y:.2f}}<extra></extra>',
     }}, {{
         type: 'scatter', mode: 'lines',

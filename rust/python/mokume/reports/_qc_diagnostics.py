@@ -271,8 +271,8 @@ def _rank_plot(values, highlights):
                 "y": finite_list(abundance.loc[selected]),
                 "marker": {
                     "color": SINGLE_SERIES_COLOR,
-                    "size": 8,
-                    "line": {"color": WHITE, "width": 2},
+                    "size": 9,
+                    "line": {"color": TEXT_COLOR, "width": 1},
                 },
                 "textfont": {"color": TEXT_COLOR},
             }

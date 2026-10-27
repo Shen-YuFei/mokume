@@ -897,7 +897,7 @@ function embeddingTraces(data, xKey, yKey) {{
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
                 marker: {{color: condColors[condition], size: 12,
                     symbol: multiPlex ? plexSymbols[plex] : condSymbols[condition],
-                    line: {{width: 2, color: '#ffffff'}}}},
+                    line: {{width: 1, color: '#ffffff'}}}},
                 name: multiPlex ? condition + ' / ' + plex : condition, legendgroup: condition,
             }});
         }});
