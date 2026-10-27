@@ -47,6 +47,34 @@ AXIS_COLOR = "#D9D9D9"
 WHITE = "#ffffff"
 PEPTIDE_COLOR = "#D0D0D0"
 INACTIVE_COLOR = "#E5E5E5"
+MATPLOTLIB_FONTS = ("Arial", "Helvetica", "Liberation Sans", "Nimbus Sans")
+MATPLOTLIB_STYLE = {
+    "font.size": 10,
+    "font.weight": "normal",
+    "axes.labelsize": 10,
+    "axes.labelweight": "normal",
+    "axes.titlesize": 11,
+    "axes.titleweight": "normal",
+    "figure.titlesize": 11,
+    "figure.titleweight": "normal",
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "legend.fontsize": 9,
+    "legend.title_fontsize": 9,
+    "axes.grid": False,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.edgecolor": TEXT_COLOR,
+    "axes.linewidth": 0.8,
+    "xtick.direction": "out",
+    "ytick.direction": "out",
+    "xtick.color": TEXT_COLOR,
+    "ytick.color": TEXT_COLOR,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+    "svg.fonttype": "none",
+    "savefig.dpi": 300,
+}
 PLOTLY_AXIS_STYLE = {
     "showgrid": True,
     "gridcolor": GRID_COLOR,

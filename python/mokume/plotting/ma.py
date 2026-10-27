@@ -3,7 +3,7 @@
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from mokume.plotting._common import log2_matrix, style_axes
+from mokume.plotting._common import log2_matrix, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
     CONDITION_MARKERS,
@@ -41,6 +41,7 @@ def ma_values(de, protein_df, conditions, sample_to_condition):
     return de["ProteinName"].map(means.mean(axis=1))
 
 
+@static_style()
 def plot_ma(de, protein_df, sample_to_condition, output_file, options):
     """Draw significance or composition groups with optional expected ratios."""
     abundance = ma_values(de, protein_df, options["conditions"], sample_to_condition)
@@ -65,7 +66,7 @@ def plot_ma(de, protein_df, sample_to_condition, output_file, options):
         ax.legend(labelcolor=TEXT_COLOR, loc="center left", bbox_to_anchor=(1.02, 0.5))
     style_axes(ax)
     fig.tight_layout()
-    fig.savefig(output_file, dpi=150, bbox_inches="tight")
+    fig.savefig(output_file, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -95,6 +96,7 @@ def _plot_groups(ax, de, abundance, labels, options):
             linewidths=2,
             edgecolors=WHITE,
             label=name,
+            rasterized=True,
         )
         if name in options.get("expected", {}):
             value = options["expected"][name]
@@ -106,5 +108,4 @@ def _plot_groups(ax, de, abundance, labels, options):
                 color=TEXT_COLOR,
                 transform=ax.get_yaxis_transform(),
                 va="bottom",
-                fontsize=9,
             )

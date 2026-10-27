@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from mokume.plotting._common import ordered_samples, style_axes
+from mokume.plotting._common import ordered_samples, static_style, style_axes
 from mokume.plotting.style import CONDITION_COLORS, SAMPLE_POINT_COLOR, TEXT_COLOR
 
 
@@ -55,6 +55,7 @@ def _condition_legend(ax, palette, filled=False):
         )
 
 
+@static_style()
 def plot_distributions(
     dataset: pd.DataFrame,
     field: str,
@@ -110,6 +111,7 @@ def plot_distributions(
     return fig
 
 
+@static_style()
 def plot_box_plot(
     dataset: pd.DataFrame,
     field: str,
@@ -164,7 +166,6 @@ def plot_box_plot(
         order,
         rotation=rotation,
         ha="right" if rotation else "center",
-        fontsize=8,
     )
     ax.set(
         title=f"{title} ({len(order)} samples)",
@@ -182,7 +183,7 @@ def _box_bodies(ax, values, colors, violin):
     if violin:
         bodies = ax.violinplot(values, showmedians=True)["bodies"]
     else:
-        bodies = ax.boxplot(
+        boxes = ax.boxplot(
             values,
             patch_artist=True,
             widths=0.7,
@@ -193,7 +194,10 @@ def _box_bodies(ax, values, colors, violin):
                 "markerfacecolor": SAMPLE_POINT_COLOR,
                 "markeredgecolor": SAMPLE_POINT_COLOR,
             },
-        )["boxes"]
+        )
+        bodies = boxes["boxes"]
+        for points in boxes["fliers"]:
+            points.set_rasterized(True)
     for body, color in zip(bodies, colors):
         body.set_facecolor(color)
         body.set_alpha(0.5)

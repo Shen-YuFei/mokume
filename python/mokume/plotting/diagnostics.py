@@ -6,7 +6,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import patheffects
 
-from mokume.plotting._common import style_axes
+from mokume.plotting._common import static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
     CONDITION_MARKERS,
@@ -18,6 +18,7 @@ from mokume.plotting.style import (
 )
 
 
+@static_style()
 def plot_abundance_rank(log2_values, highlight_genes=None):
     """Rank proteins by observed mean log2 abundance."""
     abundance = log2_values.mean(axis=1).dropna().sort_values(ascending=False)
@@ -42,7 +43,6 @@ def plot_abundance_rank(log2_values, highlight_genes=None):
                 xytext=(5, 5),
                 textcoords="offset points",
                 color=TEXT_COLOR,
-                fontsize=8,
             )
     ax.set(xlabel="Protein rank", ylabel="Mean log2 intensity", title="Abundance rank")
     style_axes(ax)
@@ -58,6 +58,7 @@ def upset_counts(sets):
     )
 
 
+@static_style()
 def plot_upset(sets, output_file):
     """Show intersection sizes, set sizes and the membership matrix."""
     counts = upset_counts(sets)
@@ -75,7 +76,7 @@ def plot_upset(sets, output_file):
         width=0.7,
         linewidth=0,
     )
-    top.bar_label(bars, fontsize=8, color=TEXT_COLOR)
+    top.bar_label(bars, color=TEXT_COLOR)
     left.barh(
         range(len(names)),
         [len(sets[name]) for name in names],
@@ -98,7 +99,7 @@ def plot_upset(sets, output_file):
     matrix.set_ylim(left.get_ylim())
     top.set_xlim(matrix.get_xlim())
     fig.tight_layout()
-    fig.savefig(output_file, dpi=150, bbox_inches="tight")
+    fig.savefig(output_file, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -157,6 +158,7 @@ def _fold_change_series(ax, tables, protein, color, marker):
         )
 
 
+@static_style()
 def plot_fold_changes(tables, proteins, output_file):
     """Compare fold changes, switching to small multiples above six proteins."""
     multiple = len(proteins) > 6
@@ -181,7 +183,7 @@ def plot_fold_changes(tables, proteins, output_file):
             ha="right" if rotation else "center",
         )
         style_axes(ax)
-    fig.supylabel("log2 fold change", color=TEXT_COLOR, fontsize=10)
+    fig.supylabel("log2 fold change", color=TEXT_COLOR)
     if multiple:
         for ax in list(axes.flat)[len(proteins) :]:
             ax.set_visible(False)
@@ -191,10 +193,9 @@ def plot_fold_changes(tables, proteins, output_file):
         0.5,
         0.01,
         "Solid: significant; hollow: nonsignificant. No confidence "
-        "intervals: DE tables contain no standard errors.",
+        "intervals:\nDE tables contain no standard errors.",
         ha="center",
-        fontsize=8,
     )
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
-    fig.savefig(output_file, dpi=150, bbox_inches="tight")
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.savefig(output_file, bbox_inches="tight")
     plt.close(fig)

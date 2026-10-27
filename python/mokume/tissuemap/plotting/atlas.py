@@ -16,7 +16,7 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.cluster.hierarchy import dendrogram as scipy_dendro
 from scipy.spatial.distance import pdist
 
-from mokume.plotting._common import style_axes
+from mokume.plotting._common import panel_label, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
     CONDITION_MARKERS,
@@ -217,7 +217,6 @@ def _label_groups(ax, anchors: dict) -> None:
         ax.text(
             *center,
             group,
-            fontsize=9,
             color=TEXT_COLOR,
             ha="center",
             va="center",
@@ -264,7 +263,7 @@ def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> None:
         anchors[group] = points[
             np.argmin(np.linalg.norm(points - np.median(points, axis=0), axis=1))
         ]
-    ax.set_title("A  Tissue Atlas", fontsize=12, fontweight="bold", loc="left", pad=12)
+    ax.set_title("Tissue atlas", loc="left", pad=12)
     ax.set(xlabel="t-SNE 1", ylabel="t-SNE 2")
     ax.margins(0.18)
     style_axes(ax)
@@ -293,8 +292,6 @@ def _group_legend(ax, group_styles, **kwargs) -> None:
         handles=handles,
         title="Proteomic group",
         labelcolor=TEXT_COLOR,
-        fontsize=9,
-        title_fontsize=10,
         frameon=False,
         **kwargs,
     )
@@ -316,7 +313,6 @@ def _draw_dendrogram_panel(
     for collection in ax.collections:
         collection.set_linewidth(1)
     style_axes(ax)
-    ax.grid(axis="y", visible=False)
     marker_transform = ax.get_yaxis_transform() + ScaledTranslation(
         -12 / 72, 0, ax.figure.dpi_scale_trans
     )
@@ -336,10 +332,8 @@ def _draw_dendrogram_panel(
             zorder=4,
         )
     ax.tick_params(axis="y", length=0, pad=25)
-    ax.set_title(
-        "B  Tissue Dendrogram", fontsize=12, fontweight="bold", loc="left", pad=12
-    )
-    ax.set_xlabel("Ward distance (correlation)", fontsize=10)
+    ax.set_title("Tissue dendrogram", loc="left", pad=12)
+    ax.set_xlabel("Ward distance (correlation)")
 
 
 def _save_figure(fig, out_dir: Path, name: str, opts: _SaveOpts) -> None:
@@ -372,6 +366,7 @@ def _save_individual_dendrogram(out_dir, tree, group_styles, opts):
     _save_figure(fig, out_dir, "tissue_dendrogram", opts)
 
 
+@static_style()
 def plot_slide_atlas_dendrogram(
     adata: ad.AnnData,
     out_dir: Path,
@@ -410,6 +405,8 @@ def plot_slide_atlas_dendrogram(
     )
     _draw_dendrogram_panel(axes[1], z_linkage, unique_tissues, tissue_to_group, styles)
     _draw_tsne_panel(axes[0], adata, groups, styles)
+    for ax, letter in zip(axes, "ab"):
+        panel_label(ax, letter)
     opts = _SaveOpts(dpi, save_pdf)
     _save_figure(fig, out_dir, "slide_atlas_dendrogram", opts)
     _save_individual_atlas(out_dir, adata, groups, styles, opts)

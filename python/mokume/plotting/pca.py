@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-from mokume.plotting._common import style_axes
+from mokume.plotting._common import static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
     CONDITION_MARKERS,
@@ -46,13 +46,14 @@ def _embedding_plot(frame, axes, group_column, options):
         )
     ax.set(xlabel=axes[0], ylabel=axes[1], title=options["title"])
     if len(groups) > 1:
-        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8)
+        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
     style_axes(ax)
     fig.tight_layout()
     fig.savefig(options["output"], bbox_inches="tight")
     plt.close(fig)
 
 
+@static_style()
 def plot_pca(
     df_pca: pd.DataFrame,
     output_file: str,
@@ -96,6 +97,7 @@ def plot_pca(
     )
 
 
+@static_style()
 def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFrame:
     """
     Compute principal components and display a variance explained plot.
@@ -148,6 +150,7 @@ def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFra
     return df_pca
 
 
+@static_style()
 def plot_tsne(
     df: pd.DataFrame, x_col: str, y_col: str, hue_col: str, file_name: str
 ) -> None:

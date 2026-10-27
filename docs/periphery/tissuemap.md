@@ -83,7 +83,7 @@ The current TissueMap workflow is organized around per-dataset processing:
 | `--generate-config` | none | Write a default YAML template and exit |
 | `--tmt-dataset` | auto | Mark one or more dataset IDs as TMT; repeat for multiple datasets |
 | `-t`, `--threads` | `8` | Threads for dataset processing and embedding |
-| `--dpi` | `250` | Plot resolution override |
+| `--dpi` | `300` | Plot resolution override |
 | `--impute-method` | config default | Imputation method used before embedding |
 | `--embedding-method` | config default | `tsne` or `umap` |
 

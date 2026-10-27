@@ -9,6 +9,7 @@ from mokume.plotting._common import (
     log2_matrix,
     ordered_samples,
     read_frame,
+    static_style,
     style_axes,
 )
 from mokume.plotting.style import (
@@ -59,6 +60,7 @@ def condition_groups(samples, conditions):
     return [start - 0.5 for start in starts[1:]], labels
 
 
+@static_style()
 def plot_profile(protein_df, peptides, sample_to_condition, protein, output_file):
     """Plot gray peptide trajectories behind the protein summary."""
     values = peptide_matrix(peptides, sample_to_condition)
@@ -102,5 +104,5 @@ def plot_profile(protein_df, peptides, sample_to_condition, protein, output_file
         )
     style_axes(ax)
     fig.tight_layout()
-    fig.savefig(output_file, dpi=150, bbox_inches="tight")
+    fig.savefig(output_file, bbox_inches="tight")
     plt.close(fig)

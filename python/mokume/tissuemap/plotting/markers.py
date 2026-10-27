@@ -18,7 +18,7 @@ from pandas.errors import PerformanceWarning
 import scanpy as sc
 
 from mokume.imputation.censored import impute_mindet
-from mokume.plotting._common import style_axes
+from mokume.plotting._common import static_style, style_axes
 from mokume.plotting.style import (
     GRID_COLOR,
     MISSING_COLOR,
@@ -182,11 +182,10 @@ def _draw_heatmap(ax, prepared, tissue_colors, title) -> None:
             ax.axhline(y=i - 0.5, color=GRID_COLOR, linewidth=0.5)
             prev_tissue = tissue
     cbar = ax.figure.colorbar(im, ax=ax, shrink=0.3, aspect=20, pad=0.02)
-    cbar.set_label("Z-score (mean tissue expression)", fontsize=10, color=TEXT_COLOR)
+    cbar.set_label("Z-score (mean tissue expression)", color=TEXT_COLOR)
     cbar.ax.tick_params(colors=TEXT_COLOR)
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=20)
+    ax.set_title(title, pad=20)
     style_axes(ax)
-    ax.grid(False)
 
 
 def _compute_tissue_means(
@@ -230,13 +229,14 @@ def _prepare_heatmap_data(
     )
 
 
+@static_style()
 def plot_marker_heatmap(
     adata: ad.AnnData,
     tissue_order: list[str],
     out_dir: Path,
     *,
     n_top: int = 5,
-    dpi: int = 200,
+    dpi: int = 300,
     save_pdf: bool = True,
 ) -> None:
     """Top *n_top* Wilcoxon markers per tissue, z-scored heatmap."""
@@ -309,6 +309,7 @@ def _draw_nan_points(ax, tsne: np.ndarray, nan_mask: np.ndarray) -> None:
             edgecolors=WHITE,
             linewidths=2,
             zorder=2,
+            rasterized=True,
         )
 
 
@@ -333,6 +334,7 @@ def _draw_detected_points(ax, tsne, expr_all, nan_mask) -> None:
         edgecolors=WHITE,
         linewidths=2,
         zorder=3,
+        rasterized=True,
     )
 
 
@@ -348,8 +350,6 @@ def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
     ax.set_title(
         f"{_protein_label(prot)}\n{tissue} marker{ts_val}\n"
         f"{int((~nan_mask).sum())}/{len(expr_all)} samples detected",
-        fontsize=12,
-        fontweight="bold",
         pad=10,
     )
     ax.set(xlabel="t-SNE 1", ylabel="t-SNE 2")
@@ -372,13 +372,14 @@ def _create_subplot_grid(
     return fig, flat
 
 
+@static_style()
 def plot_marker_tsne(
     adata: ad.AnnData,
     tissue_order: list[str],
     out_dir: Path,
     *,
     n_showcase: int = 8,
-    dpi: int = 200,
+    dpi: int = 300,
     save_pdf: bool = True,
 ) -> None:
     """Show relative abundance within each showcase protein on one shared scale."""
@@ -402,8 +403,6 @@ def plot_marker_tsne(
 
     fig.suptitle(
         "t-SNE — Relative abundance within each protein",
-        fontsize=14,
-        fontweight="bold",
         color=TEXT_COLOR,
     )
     cbar = fig.colorbar(
@@ -415,7 +414,6 @@ def plot_marker_tsne(
     cbar.set_label(
         "Relative abundance within each protein (1st–99th percentile)",
         color=TEXT_COLOR,
-        fontsize=11,
     )
     cbar.ax.tick_params(colors=TEXT_COLOR)
     fig.savefig(out_dir / "marker_tsne.png", dpi=dpi, bbox_inches="tight")
@@ -481,7 +479,8 @@ def _render_dotplot(adata, genes, out_dir, dpi) -> None:
     )
     for ax in axes.values():
         style_axes(ax)
-        ax.grid(False)
+    for dots in axes["mainplot_ax"].collections:
+        dots.set_rasterized(True)
     for dots in axes["size_legend_ax"].collections:
         dots.set_facecolor(MISSING_COLOR)
         dots.set_edgecolor(WHITE)
@@ -490,13 +489,14 @@ def _render_dotplot(adata, genes, out_dir, dpi) -> None:
     plt.close(dp.fig)
 
 
+@static_style()
 def plot_dotplot(
     adata: ad.AnnData,
     tissue_order: list[str],
     out_dir: Path,
     *,
     n_top: int = 3,
-    dpi: int = 150,
+    dpi: int = 300,
 ) -> None:
     """Scanpy dotplot of top markers per tissue."""
     if "tissue_markers" not in adata.uns:

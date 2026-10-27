@@ -63,6 +63,31 @@ def test_de_plots_writes_volcano_png(tmp_path):
     assert glob.glob(str(plot_dir / "*.png"))
 
 
+def test_static_plot_restores_defaults_and_exports_editable_pdf(tmp_path, caplog):
+    """Static exports scope typography, preserve caller fonts and avoid Type 3."""
+    plotting = importlib.import_module("mokume.plotting.differential_expression")
+    de = pd.read_csv(os.path.join(DATA, "de.csv"))
+    de["pvalue"] = [0.0001, 0.0002, 0.1, 0.8]
+    output = tmp_path / "volcano.pdf"
+    with plt.rc_context(
+        {"font.family": ["DejaVu Sans"], "axes.grid": True, "pdf.fonttype": 3}
+    ):
+        before = dict(plt.rcParams)
+        figure = plotting.plot_volcano(de, output_file=str(output))
+        assert dict(plt.rcParams) == before
+    axis = figure.axes[0]
+    assert axis.title.get_fontsize() == 11
+    assert axis.title.get_fontweight() == "normal"
+    assert axis.xaxis.label.get_fontsize() == 10
+    assert "DejaVu Sans" in axis.title.get_fontfamily()
+    assert not any(line.get_visible() for line in axis.get_xgridlines())
+    assert not any(line.get_visible() for line in axis.get_ygridlines())
+    assert axis.collections[0].get_rasterized()
+    assert b"/Subtype /Type3" not in output.read_bytes()
+    assert b"/FontFile2" in output.read_bytes()
+    assert "findfont: Font family" not in caplog.text
+
+
 def test_de_plots_preserves_tiny_kernel_pvalues(tmp_path, monkeypatch):
     de_csv = tmp_path / "de.csv"
     de_csv.write_text(

@@ -135,7 +135,7 @@ def _render_pdf(frame, args, plotting):
     if args.ruler:
         columns.extend((COPYNUMBER, CONCENTRATION_NM))
     width = min(16, frame[SAMPLE_ID].nunique() * 0.5 + 6)
-    with plotting.PdfPages(args.qc_report) as pdf:
+    with common.static_style(), plotting.PdfPages(args.qc_report) as pdf:
         for column in columns:
             _require_column(frame, column, args.protein_table)
             options = {

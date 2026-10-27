@@ -9,11 +9,10 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib
 import seaborn as sns
 from sklearn.decomposition import PCA
 
-from mokume.plotting._common import style_axes as _style_axes
+from mokume.plotting._common import static_style, style_axes as _style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
     CONDITION_MARKERS,
@@ -23,9 +22,8 @@ from mokume.plotting.style import (
     TEXT_COLOR,
 )
 
-matplotlib.use("Agg")
 
-
+@static_style()
 def plot_volcano(
     de_results: pd.DataFrame,
     log2fc_threshold: float = 0.5,
@@ -77,6 +75,7 @@ def plot_volcano(
         s=64,
         edgecolors="#ffffff",
         linewidths=1.5,
+        rasterized=True,
     )
 
     # Significance thresholds
@@ -111,7 +110,6 @@ def plot_volcano(
                     xytext=(5, 5),
                     textcoords="offset points",
                     fontsize=8,
-                    fontweight="bold",
                     arrowprops=dict(arrowstyle="-", color="black", lw=0.5),
                 )
 
@@ -129,28 +127,28 @@ def plot_volcano(
     elif legend_elements:
         title += f" ({legend_elements[0].get_label()})"
 
-    ax.set_xlabel("log2 Fold Change", fontsize=12)
-    ax.set_ylabel("-log10(p-value)", fontsize=12)
-    ax.set_title(title, fontsize=14)
+    ax.set_xlabel("log2 Fold Change")
+    ax.set_ylabel("-log10(p-value)")
+    ax.set_title(title)
     _style_axes(ax)
     fig.text(
         0.5,
         0.01,
         "Colors: adjusted p-value and |log2FC| cutoffs",
         ha="center",
-        fontsize=9,
     )
 
     # Reserve the bottom band for the caption so it clears the x-axis label.
     plt.tight_layout(rect=(0, 0.03, 1, 1))
 
     if output_file:
-        plt.savefig(output_file, dpi=150, bbox_inches="tight")
+        plt.savefig(output_file, bbox_inches="tight")
         plt.close(fig)
 
     return fig
 
 
+@static_style()
 def plot_heatmap(
     protein_df: pd.DataFrame,
     sample_to_condition: dict[str, str],
@@ -219,7 +217,7 @@ def plot_heatmap(
         fig, ax = plt.subplots(figsize=figsize)
         ax.text(0.5, 0.5, "No proteins to display", ha="center", va="center")
         if output_file:
-            plt.savefig(output_file, dpi=150, bbox_inches="tight")
+            plt.savefig(output_file, bbox_inches="tight")
             plt.close(fig)
         return fig
 
@@ -247,7 +245,7 @@ def plot_heatmap(
         )
         ax.set_title(title)
         if output_file:
-            plt.savefig(output_file, dpi=150, bbox_inches="tight")
+            plt.savefig(output_file, bbox_inches="tight")
             plt.close(fig)
         return fig
 
@@ -272,12 +270,12 @@ def plot_heatmap(
     )
     g.ax_heatmap.set_facecolor(MISSING_COLOR)
     g.ax_heatmap.tick_params(colors=TEXT_COLOR)
-    g.fig.suptitle(title, y=1.02, fontsize=14, color=TEXT_COLOR)
+    g.fig.suptitle(title, y=1.02, color=TEXT_COLOR)
 
     _add_heatmap_legend(g.ax_heatmap, condition_colors, missing.to_numpy().any())
 
     if output_file:
-        g.savefig(output_file, dpi=150, bbox_inches="tight")
+        g.savefig(output_file, bbox_inches="tight")
         plt.close(g.fig)
 
     return g.fig
@@ -324,6 +322,7 @@ def _label_pca_samples(ax, pca_df):
             )
 
 
+@static_style()
 def plot_pca_conditions(
     protein_df: pd.DataFrame,
     sample_to_condition: dict[str, str],
@@ -378,7 +377,7 @@ def plot_pca_conditions(
         fig, ax = plt.subplots(figsize=figsize)
         ax.text(0.5, 0.5, "Not enough features for PCA", ha="center", va="center")
         if output_file:
-            plt.savefig(output_file, dpi=150, bbox_inches="tight")
+            plt.savefig(output_file, bbox_inches="tight")
             plt.close(fig)
         return fig
 
@@ -414,12 +413,10 @@ def plot_pca_conditions(
     )
 
     var_explained = pca.explained_variance_ratio_ * 100
-    ax.set_xlabel(f"PC1 ({var_explained[0]:.1f}%)", fontsize=12)
+    ax.set_xlabel(f"PC1 ({var_explained[0]:.1f}%)")
     if n_components >= 2:
-        ax.set_ylabel(f"PC2 ({var_explained[1]:.1f}%)", fontsize=12)
-    ax.set_title(
-        f"{title}\nn = {data.shape[1]:,} proteins, complete cases", fontsize=14
-    )
+        ax.set_ylabel(f"PC2 ({var_explained[1]:.1f}%)")
+    ax.set_title(f"{title}\nn = {data.shape[1]:,} proteins, complete cases")
     _label_pca_samples(ax, pca_df)
     ax.legend(
         loc="center left", bbox_to_anchor=(1.05, 0.5), labelcolor=TEXT_COLOR
@@ -429,7 +426,7 @@ def plot_pca_conditions(
     plt.tight_layout()
 
     if output_file:
-        plt.savefig(output_file, dpi=150, bbox_inches="tight")
+        plt.savefig(output_file, bbox_inches="tight")
         plt.close(fig)
 
     return fig

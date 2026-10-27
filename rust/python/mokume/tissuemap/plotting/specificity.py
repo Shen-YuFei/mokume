@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm as _norm
 
-from mokume.plotting._common import style_axes
+from mokume.plotting._common import panel_label, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
     SAMPLE_POINT_COLOR,
@@ -87,7 +87,6 @@ def _draw_thresholds(ax, categories, thresholds) -> None:
             xytext=(4, 0),
             textcoords="offset points",
             va="top",
-            fontsize=9,
             color=TEXT_COLOR,
             bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.85, "pad": 1},
         )
@@ -113,7 +112,7 @@ def _plot_histogram_panel(
     _draw_thresholds(ax, categories, (ts_enriched, ts_specific, ts_housekeeping))
     if gmm is not None:
         _overlay_gmm_curves(ax, gmm, x_upper)
-        ax.legend(fontsize=9, frameon=False, loc="upper right", labelcolor=TEXT_COLOR)
+        ax.legend(frameon=False, loc="upper right", labelcolor=TEXT_COLOR)
     left_bound = float(max_ts.min()) - 0.5 if len(max_ts) > 0 else 0.0
     ax.set_xlim(left=left_bound, right=x_upper * 1.05)
     if n_outliers > 0:
@@ -124,16 +123,13 @@ def _plot_histogram_panel(
             transform=ax.transAxes,
             ha="right",
             va="top",
-            fontsize=8,
             color=TEXT_COLOR,
             style="italic",
         )
-    ax.set_xlabel("AdaTiSS max TS score", fontsize=11)
-    ax.set_ylabel("Density" if use_density else "Number of proteins", fontsize=11)
+    ax.set_xlabel("AdaTiSS max TS score")
+    ax.set_ylabel("Density" if use_density else "Number of proteins")
     ax.set_title(
-        "A. AdaTiSS tissue specificity score distribution",
-        fontsize=12,
-        fontweight="bold",
+        "AdaTiSS tissue specificity score distribution",
         loc="left",
     )
     style_axes(ax)
@@ -183,15 +179,12 @@ def _plot_bar_panel(
     ax.set_yticklabels(spt.index, fontsize=8)
     ax.set_xlabel(
         f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})",
-        fontsize=9,
     )
-    title = "B. Tissue-specific proteins per tissue"
+    title = "Tissue-specific proteins per tissue"
     if len(nonzero) > top_n:
         title += f" (top {top_n})"
     ax.set_title(
         title,
-        fontsize=12,
-        fontweight="bold",
         loc="left",
     )
     style_axes(ax)
@@ -200,6 +193,7 @@ def _plot_bar_panel(
             ax.text(v + 0.5, i, str(v), va="center", fontsize=6, color=TEXT_COLOR)
 
 
+@static_style()
 def plot_ts_distribution(
     ts_df: pd.DataFrame,
     unique_tissues: list[str],
@@ -208,7 +202,7 @@ def plot_ts_distribution(
     ts_enriched: float = 2.5,
     ts_specific: float = 4.0,
     ts_housekeeping: float | None = None,
-    dpi: int = 200,
+    dpi: int = 300,
     save_pdf: bool = True,
 ) -> None:
     """Two-panel figure: TS score histogram + per-tissue specific proteins.
@@ -247,6 +241,8 @@ def plot_ts_distribution(
         _compute_specific_counts(ts_df, unique_tissues),
         ts_specific,
     )
+    for ax, letter in zip(axes, "ab"):
+        panel_label(ax, letter)
 
     plt.tight_layout()
     fig.savefig(out_dir / "ts_distribution.png", dpi=dpi, bbox_inches="tight")
@@ -256,13 +252,14 @@ def plot_ts_distribution(
     logger.info("Saved ts_distribution.png")
 
 
+@static_style()
 def plot_specific_per_tissue(
     ts_df: pd.DataFrame,
     unique_tissues: list[str],
     out_dir: Path,
     *,
     ts_specific: float = 4.0,
-    dpi: int = 200,
+    dpi: int = 300,
     save_pdf: bool = True,
 ) -> None:
     """Standalone per-tissue bar chart of tissue-specific protein counts.
@@ -286,12 +283,9 @@ def plot_specific_per_tissue(
     ax.set_yticklabels(spt.index, fontsize=8)
     ax.set_xlabel(
         f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})",
-        fontsize=10,
     )
     ax.set_title(
         "Tissue-specific proteins per tissue (AdaTiSS)",
-        fontsize=12,
-        fontweight="bold",
     )
     style_axes(ax)
 

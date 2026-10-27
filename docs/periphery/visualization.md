@@ -16,6 +16,23 @@ recomputes the numbers).
     pip install "mokume[all]"       # every optional capability
     ```
 
+## Static Figure Style
+
+Matplotlib figures use the first installed font from Arial, Helvetica,
+Liberation Sans and Nimbus Sans. The caller's configured fonts remain available
+for missing glyphs, including Chinese sample names. Body text and axis labels
+are 10 pt, ticks and legends 9 pt, and regular-weight titles 11 pt. Dense labels
+may use smaller type, down to 6 pt. Multi-panel letters are lowercase and bold.
+
+Static plots have no background grid. Only the left and bottom axes are shown,
+with outward ticks. Bitmap exports default to 300 dpi; TissueMap's `--dpi` can
+override this. PDF and PostScript embed TrueType fonts, and SVG keeps text as
+text. Dense protein and peptide scatter layers and marker t-SNE layers are
+rasterized; PCA and atlas sample markers, labels and axes remain vector graphics.
+These settings apply only while Mokume creates and exports a figure; the
+caller's matplotlib defaults are restored. Interactive HTML report styles are
+independent.
+
 ## DE Plots from features2proteins Output
 
 First run the kernel to write the protein matrix and one DE result CSV per
