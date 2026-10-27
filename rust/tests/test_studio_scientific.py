@@ -257,7 +257,7 @@ def test_knowledge_search_returns_exact_dataset_benchmark_summaries(tmp_path):
     assert summary["kind"] == "dataset_benchmark_summary"
     assert summary["eligible_as_prior"] is False
     assert summary["preset_eligible"] is False
-    assert summary["benchmark"]["successful_candidates"] == 744
+    assert summary["benchmark"]["successful_candidates"] == 1410
     assert summary["benchmark"]["failed_candidates"] == 0
     assert summary["design"]["contrasts"][0]["expected_direction"] == "MIXED"
     assert summary["design"]["contrasts"][0]["expected_log2fc"] is None
