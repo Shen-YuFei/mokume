@@ -9,11 +9,11 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from mokume.plotting._common import ordered_samples, static_style, style_axes
-from mokume.plotting.style import CONDITION_COLORS, SAMPLE_POINT_COLOR, TEXT_COLOR
+from mokume.plotting.style import category_colors, SAMPLE_POINT_COLOR, TEXT_COLOR
 
 
 def distribution_groups(dataset, class_field):
-    """Return sample order and colors; large or absent condition sets are neutral."""
+    """Return sample order and colors; absent condition sets are neutral."""
     conditions = (
         dataset.drop_duplicates(class_field)
         .set_index(class_field)["Condition"]
@@ -23,7 +23,7 @@ def distribution_groups(dataset, class_field):
     )
     order = ordered_samples(dataset[class_field].unique(), conditions)
     names = sorted(set(conditions.values()))
-    palette = dict(zip(names, CONDITION_COLORS)) if len(names) <= 6 else {}
+    palette = dict(zip(names, category_colors(len(names))))
     colors = {
         sample: palette.get(conditions.get(sample), SAMPLE_POINT_COLOR)
         for sample in order
@@ -67,8 +67,8 @@ def plot_distributions(
     """
     Plot one density curve per class, colored by its condition.
 
-    Samples are colored by the dataset's ``Condition`` column when it has at
-    most six conditions; otherwise curves are neutral.
+    Samples use the dataset's ``Condition`` colors; the palette expands for
+    additional conditions. Without conditions, curves are neutral.
 
     Parameters
     ----------

@@ -33,9 +33,9 @@ Default canvases match journal columns: about 3.5 in for single panels and at
 most 7.2 in for multi-panel figures, while heatmaps and marker grids grow with
 their rows and columns. Protein points are small, translucent and unringed so
 overlaps read as density; sample points have no outline, and highlighted
-proteins are larger with a thin dark outline. Markers on lines, UpSet dots and
-log2FC points keep their white rings. These settings apply only while
-Mokume creates and exports a figure; the caller's matplotlib defaults are
+proteins are larger with a thin dark outline. Protein profile and
+variance-curve markers and UpSet dots keep their white rings. These settings
+apply only while Mokume creates and exports a figure; matplotlib defaults are
 restored. Interactive HTML reports follow the same point rules but keep their
 own fonts and layout.
 
@@ -100,15 +100,13 @@ plots (at most 30 samples) include sample labels, placed from the outermost
 sample inward; a label that would cover a placed label or another sample's
 point is omitted. HTML PCA plots in the QC and comparison reports apply the
 same rule after each zoom or resize, and hover always names the sample.
-Conditions use the shared six-color palette with distinct color/marker
-combinations, cycling through the full set when categories outnumber the
-available combinations. Static DE PCA uses circles
-for up to three conditions and color/shape combinations above three, matching
-the other static PCA plots. In HTML PCA plots with at most 12 conditions and
-two to six plexes, shapes identify plexes; the legend and hover text identify
-conditions. Above 12 conditions or six plexes, shapes identify conditions and
-the legend lists each condition once. Hover text continues to identify the
-plex.
+Conditions are distinguished only by color. All category markers are small
+circles with opacity 0.85 and no outline: static scatter area is 20 pt² and
+HTML marker diameter is 7 px. The first six colors use the shared palette.
+Additional colors are selected greedily from an in-gamut OKLCH grid
+(lightness 0.43-0.77, chroma 0.10-0.17, the seeds' range) to maximize
+separation in OKLab. Palettes are deterministic and preserve their prefixes as
+the number of categories grows. Plex information remains in hover text.
 
 Above 12 categories, static and HTML PCA label each category at the sample
 nearest its coordinate-wise median, replacing sample-name labels. Legends move
@@ -323,9 +321,10 @@ returns a matplotlib `Figure` or writes to an `output_file` / `file_name` path.
 | `is_plotting_available()` | `True` if matplotlib/seaborn are installed |
 
 `plot_distributions` and `plot_box_plot` use the frame's `Condition` column when
-present and sort samples by condition then name. More than six conditions, or no
-condition information, use neutral sample curves and boxes without a legend.
-`plot_pca` and `plot_tsne` use the shared condition color/shape combinations;
+present and sort samples by condition then name. The palette expands for
+additional conditions. Without condition information, sample curves and boxes
+are neutral and have no legend.
+`plot_pca` and `plot_tsne` use small circles and the expanding category palette;
 `plot_pca`'s `palette` argument is ignored.
 
 ```python

@@ -7,8 +7,6 @@ import numpy as np
 import pandas as pd
 
 from mokume.plotting.style import (
-    CONDITION_MARKERS,
-    condition_style,
     MATPLOTLIB_FONTS,
     MATPLOTLIB_STYLE,
     SAMPLE_POINT_COLOR,
@@ -57,16 +55,6 @@ def style_axes(ax):
     for side in ("bottom", "left"):
         ax.spines[side].set_color(TEXT_COLOR)
         ax.spines[side].set_linewidth(0.8)
-
-
-def condition_markers(conditions):
-    """Use circles through three conditions, then the shared shape codes."""
-    return {
-        condition: (
-            CONDITION_MARKERS[condition_style(index)[1]] if len(conditions) > 3 else "o"
-        )
-        for index, condition in enumerate(conditions)
-    }
 
 
 def nearest_anchor(points):

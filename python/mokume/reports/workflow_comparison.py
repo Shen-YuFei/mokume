@@ -19,10 +19,7 @@ from plotly.offline import get_plotlyjs
 
 from mokume.reports.qc_report import compute_qc_metrics, _safe_json
 from mokume.plotting.style import (
-    CONDITION_COLORS,
-    CONDITION_STYLE_INDICES,
-    CONDITION_SYMBOLS,
-    PLEX_SYMBOLS,
+    category_colors,
     PLOTLY_TEMPLATE,
     REPORT_CSS,
     SINGLE_SERIES_COLOR,
@@ -345,6 +342,10 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_html, pr
 
     plex = _plex_display(workflow_metrics)
 
+    condition_names = sorted(
+        {condition for pca in pca_data.values() for condition in pca["conditions"]}
+    )
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -419,8 +420,7 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_html, pr
         <h2 class="section-title">{plex["pca_title"]}</h2>
         <div class="pca-grid" id="pca-container"></div>
         {
-        '<p class="metric-explanation">Shapes identify plexes when there are at '
-        f"most {len(PLEX_SYMBOLS)}; with more plexes, shapes follow conditions. "
+        '<p class="metric-explanation">Colors identify conditions. '
         "Hover text names each sample's condition and plex.</p>"
         if plex["show_plex"]
         else ""
@@ -482,13 +482,12 @@ const concordanceData = {_safe_json(concordance_json)};
 const fcScatterData = {_safe_json(fc_scatter_data)};
 const showPlex = {_safe_json(plex["show_plex"])};
 
-const palette = {_safe_json(CONDITION_COLORS)};
+const catColors = {
+        _safe_json(dict(zip(concordance, category_colors(len(concordance)))))
+    };
 const singleColor = {_safe_json(SINGLE_SERIES_COLOR)};
 const plotConfig = {{responsive: true, displaylogo: false, displayModeBar: 'hover'}};
 const plotTemplate = {_safe_json(PLOTLY_TEMPLATE)};
-const plexSymbols = {_safe_json(PLEX_SYMBOLS)};
-const conditionSymbols = {_safe_json(CONDITION_SYMBOLS)};
-const styleIndices = {_safe_json(CONDITION_STYLE_INDICES)};
 
 // ---- Summary Table ----
 (function() {{
@@ -545,19 +544,14 @@ const styleIndices = {_safe_json(CONDITION_STYLE_INDICES)};
 }})();
 
 // ---- PCA Plots ----
-const allConditions = [...new Set(Object.values(pcaData).flatMap(pca => pca.conditions))].sort();
-const condStyles = Object.fromEntries(allConditions.map((condition, index) => {{
-    const [color, shape] = styleIndices[index % styleIndices.length];
-    return [condition, {{color: palette[color], symbol: conditionSymbols[shape]}}];
-}}));
+const condColors = {
+        _safe_json(dict(zip(condition_names, category_colors(len(condition_names)))))
+    };
 {EMBEDDING_LABEL_JS}
 function pcaTraces(pca) {{
     const conditions = [...new Set(pca.conditions)].sort();
     const plexes = [...new Set(pca.plexes)].sort();
     const multiPlex = plexes.length > 1;
-    const shapeByPlex = multiPlex && plexes.length <= plexSymbols.length
-        && conditions.length <= 12;
-    const plexSymMap = Object.fromEntries(plexes.map((plex, i) => [plex, plexSymbols[i]]));
     const traces = [];
     conditions.forEach(cond => {{
         let first = true;
@@ -572,12 +566,9 @@ function pcaTraces(pca) {{
                 text: indices.map(i => pca.samples[i]),
                 hovertext: indices.map(i => pca.samples[i] + '<br>Condition: ' + cond
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
-                marker: {{color: condStyles[cond].color, size: 10,
-                    symbol: shapeByPlex ? plexSymMap[plex] : condStyles[cond].symbol,
+                marker: {{color: condColors[cond], size: 7, opacity: 0.85, symbol: 'circle',
                     line: {{width: 0}}}},
-                name: shapeByPlex ? cond + ' / ' + plex : cond,
-                legendgroup: shapeByPlex ? cond + ' / ' + plex : cond,
-                showlegend: shapeByPlex || first,
+                name: cond, legendgroup: cond, showlegend: first,
             }});
             first = false;
         }});
@@ -680,19 +671,17 @@ function drawPca(wfName, index) {{
 // ---- CAT Curve ----
 (function() {{
     const traces = [];
-    Object.keys(concordanceData).forEach((key, i) => {{
+    Object.keys(concordanceData).forEach(key => {{
         const cat = concordanceData[key].cat_curve;
         if (!cat) return;
         const color = Object.keys(concordanceData).length === 1
-            ? singleColor : palette[styleIndices[i % styleIndices.length][0]];
+            ? singleColor : catColors[key];
         traces.push({{
             type: 'scatter', mode: 'lines+markers',
             x: cat.k, y: cat.fraction,
             name: key,
             line: {{width: 2, color}},
-            marker: {{size: 8, color,
-                symbol: conditionSymbols[styleIndices[i % styleIndices.length][1]],
-                      line: {{width: 2, color: '#ffffff'}}}},
+            marker: {{size: 7, color, symbol: 'circle', opacity: 0.85, line: {{width: 0}}}},
         }});
     }});
     if (traces.length === 0) return;

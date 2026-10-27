@@ -285,7 +285,7 @@ def test_protein_groups_and_expected_ratio_references(tmp_path):
 
 
 def test_distribution_order_and_large_condition_palette():
-    """Sort samples within conditions and avoid cycling a categorical palette."""
+    """Sort samples within conditions and extend the palette past six."""
     frame = pd.DataFrame(
         {
             "SampleID": ["S1", "S3", "S2"] * 2,
@@ -308,5 +308,5 @@ def test_distribution_order_and_large_condition_palette():
         }
     )
     _, colors, palette = distributions.distribution_groups(frame, "SampleID")
-    assert not palette
-    assert set(colors.values()) == {style.SAMPLE_POINT_COLOR}
+    assert tuple(palette.values()) == style.category_colors(7)
+    assert len(set(colors.values())) == 7

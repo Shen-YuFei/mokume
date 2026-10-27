@@ -1,5 +1,7 @@
 """Shared palettes and presentation constants for static plots and reports."""
 
+import numpy as np
+
 CONDITION_COLORS = (
     "#0072B2",
     "#E69F00",
@@ -8,27 +10,94 @@ CONDITION_COLORS = (
     "#56B4E9",
     "#CC79A7",
 )
-CONDITION_MARKERS = ("o", "s", "^", "D", "v", "P")
-CONDITION_SYMBOLS = (
-    "circle",
-    "square",
-    "triangle-up",
-    "diamond",
-    "triangle-down",
-    "cross",
-)
-# Past six groups, cycle colors before shapes so neighbouring groups never share a hue.
-CONDITION_STYLE_INDICES = tuple((index, index) for index in range(6)) + tuple(
-    (color, (color + shift) % 6) for shift in range(1, 6) for color in range(6)
-)
 
 
-def condition_style(index):
-    """Cycle through the shared color/shape combinations by category index."""
-    return CONDITION_STYLE_INDICES[index % len(CONDITION_STYLE_INDICES)]
+def _linear_rgb(lab):
+    """Convert OKLab coordinates to linear sRGB without clipping the gamut."""
+    lms = (
+        lab
+        @ np.array(
+            [
+                [1, 0.3963377774, 0.2158037573],
+                [1, -0.1055613458, -0.0638541728],
+                [1, -0.0894841775, -1.2914855480],
+            ]
+        ).T
+    )
+    return (
+        lms**3
+        @ np.array(
+            [
+                [4.0767416621, -3.3077115913, 0.2309699292],
+                [-1.2684380046, 2.6097574011, -0.3413193965],
+                [-0.0041960863, -0.7034186147, 1.7076147010],
+            ]
+        ).T
+    )
 
 
-PLEX_SYMBOLS = tuple(range(6))
+def _oklab(colors):
+    """Convert hexadecimal sRGB seeds to OKLab for perceptual distances."""
+    rgb = (
+        np.array([[int(color[i : i + 2], 16) for i in (1, 3, 5)] for color in colors])
+        / 255
+    )
+    rgb = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    lms = (
+        rgb
+        @ np.array(
+            [
+                [0.4122214708, 0.5363325363, 0.0514459929],
+                [0.2119034982, 0.6806995451, 0.1073969566],
+                [0.0883024619, 0.2817188376, 0.6299787005],
+            ]
+        ).T
+    )
+    return (
+        np.cbrt(lms)
+        @ np.array(
+            [
+                [0.2104542553, 0.7936177850, -0.0040720468],
+                [1.9779984951, -2.4285922050, 0.4505937099],
+                [0.0259040371, 0.7827717662, -0.8086757660],
+            ]
+        ).T
+    )
+
+
+def _palette_candidates():
+    """Enumerate an ordered OKLCH grid of in-gamut sRGB colors."""
+    # Chroma stays within the seeds' range so added hues sit with Okabe-Ito.
+    light, chroma, hue = np.meshgrid(
+        np.linspace(0.43, 0.77, 35),
+        np.linspace(0.10, 0.17, 8),
+        np.deg2rad(np.arange(0, 360, 5)),
+        indexing="ij",
+    )
+    lab = np.column_stack(
+        (light.ravel(), (chroma * np.cos(hue)).ravel(), (chroma * np.sin(hue)).ravel())
+    )
+    rgb = _linear_rgb(lab)
+    valid = ((rgb >= 0) & (rgb <= 1)).all(axis=1)
+    rgb = rgb[valid]
+    rgb = np.where(rgb <= 0.0031308, rgb * 12.92, 1.055 * rgb ** (1 / 2.4) - 0.055)
+    colors = [f"#{r:02X}{g:02X}{b:02X}" for r, g, b in np.rint(rgb * 255).astype(int)]
+    return lab[valid], colors
+
+
+def category_colors(n):
+    """Extend six seeds greedily in OKLab, with deterministic stable prefixes."""
+    colors = list(CONDITION_COLORS)
+    lab, candidates = _palette_candidates()
+    distances = np.sum((lab[:, None, :] - _oklab(colors)) ** 2, axis=2).min(axis=1)
+    for _ in range(n - len(colors)):
+        index = int(np.argmax(distances))
+        colors.append(candidates[index])
+        distances = np.minimum(distances, np.sum((lab - lab[index]) ** 2, axis=1))
+        distances[index] = -np.inf
+    return tuple(colors[:n])
+
+
 SIGNIFICANCE_COLORS = {
     "UP": "#D55E00",
     "DOWN": "#0072B2",

@@ -1,4 +1,4 @@
-"""Tissue atlas and dendrograms sharing proteomic-group color/shape codes."""
+"""Tissue atlas and dendrograms sharing proteomic-group colors."""
 
 from __future__ import annotations
 
@@ -25,9 +25,7 @@ from mokume.plotting._common import (
     style_axes,
 )
 from mokume.plotting.style import (
-    CONDITION_COLORS,
-    CONDITION_MARKERS,
-    condition_style,
+    category_colors,
     SAMPLE_POINT_COLOR,
     TEXT_COLOR,
     WHITE,
@@ -182,16 +180,23 @@ def _organ_key(tissue: str) -> str:
     return tissue.split(",")[0].strip()
 
 
-def _group_styles(proteomic_groups: dict) -> dict[str, tuple[str, str]]:
-    """Use circles through six groups, then cycle the shared color/shape pairs."""
-    styles = {}
-    for index, group in enumerate(proteomic_groups):
-        color, marker = condition_style(index)
-        styles[group] = (
-            CONDITION_COLORS[color],
-            CONDITION_MARKERS[marker] if len(proteomic_groups) > 6 else "o",
-        )
-    return styles
+def _group_styles(proteomic_groups: dict) -> dict[str, str]:
+    """Assign one shared palette color to each proteomic group."""
+    return dict(zip(proteomic_groups, category_colors(len(proteomic_groups))))
+
+
+def _sample_points(ax, x, y, color, **kwargs):
+    """Keep atlas samples and dendrogram group marks visually identical."""
+    ax.scatter(
+        x,
+        y,
+        color=color,
+        marker="o",
+        s=20,
+        alpha=0.85,
+        linewidths=0,
+        **kwargs,
+    )
 
 
 def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> dict:
@@ -201,14 +206,12 @@ def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> dict:
     anchors = {}
     for group, members in proteomic_groups.items():
         points = tsne[np.isin(tissues, members)]
-        color, marker = group_styles[group]
-        ax.scatter(
+        color = group_styles[group]
+        _sample_points(
+            ax,
             points[:, 0],
             points[:, 1],
-            color=color,
-            marker=marker,
-            s=36,
-            linewidths=0,
+            color,
             zorder=3,
         )
         # Anchor on a real member: a split group's mean can sit in empty space.
@@ -228,14 +231,15 @@ def _group_legend(ax, group_styles, **kwargs) -> None:
         Line2D(
             [],
             [],
-            marker=marker,
+            marker="o",
             linestyle="none",
-            markersize=6,
+            markersize=np.sqrt(20),
+            alpha=0.85,
             markerfacecolor=color,
             markeredgewidth=0,
             label=group,
         )
-        for group, (color, marker) in group_styles.items()
+        for group, color in group_styles.items()
     ]
     if len(group_styles) > 12:
         bottom_legend(ax, handles, title="Proteomic group")
@@ -270,15 +274,13 @@ def _draw_dendrogram_panel(
     )
     for label in ax.get_yticklabels():
         label.set_color(TEXT_COLOR)
-        color, marker = group_styles[tissue_to_group[label.get_text()]]
-        ax.scatter(
+        color = group_styles[tissue_to_group[label.get_text()]]
+        _sample_points(
+            ax,
             0,
             label.get_position()[1],
+            color,
             transform=marker_transform,
-            color=color,
-            marker=marker,
-            s=36,
-            linewidths=0,
             clip_on=False,
             zorder=4,
         )

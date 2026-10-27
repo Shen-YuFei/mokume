@@ -15,7 +15,6 @@ from sklearn.decomposition import PCA
 
 from mokume.plotting._common import (
     bottom_legend,
-    condition_markers,
     expand_category_axes,
     label_categories,
     place_labels,
@@ -23,8 +22,7 @@ from mokume.plotting._common import (
     style_axes as _style_axes,
 )
 from mokume.plotting.style import (
-    CONDITION_COLORS,
-    condition_style,
+    category_colors,
     MISSING_COLOR,
     SIGNIFICANCE_COLORS,
     TEXT_COLOR,
@@ -320,11 +318,9 @@ def _add_heatmap_legend(ax, condition_colors, has_missing):
 
 
 def _condition_palette(conditions):
-    """Assign colors from the cycling color/shape combinations."""
-    return {
-        condition: CONDITION_COLORS[condition_style(index)[0]]
-        for index, condition in enumerate(sorted(set(conditions)))
-    }
+    """Assign colors in sorted condition order from the expanding palette."""
+    names = sorted(set(conditions))
+    return dict(zip(names, category_colors(len(names))))
 
 
 def _label_pca_samples(ax, pca_df):
@@ -434,16 +430,15 @@ def plot_pca_conditions(
     pca_df["Condition"] = [sample_to_condition[s] for s in pca_df.index]
 
     fig, ax = plt.subplots(figsize=figsize)
-    conditions = sorted(pca_df["Condition"].unique())
     sns.scatterplot(
         data=pca_df,
         x="PC1",
         y="PC2" if "PC2" in pca_df.columns else "PC1",
         hue="Condition",
-        style="Condition",
-        markers=condition_markers(conditions),
         palette=_condition_palette(pca_df["Condition"]),
-        s=40,
+        s=20,
+        alpha=0.85,
+        marker="o",
         linewidth=0,
         ax=ax,
     )

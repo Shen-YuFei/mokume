@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 from mokume.tissuemap.embedding import _impute_for_pca
-from mokume.plotting.style import CONDITION_COLORS
+from mokume.plotting.style import CONDITION_COLORS, category_colors
 from mokume.plotting.differential_expression import plot_pca_conditions, plot_volcano
 from mokume.reports.qc_report import generate_qc_report
 from mokume.tissuemap.plotting.atlas import (
@@ -132,14 +132,14 @@ def test_atlas_names_require_a_unique_strict_organ_majority(members, used, expec
     assert _name_cluster(members, 3, used) == expected
 
 
-def test_atlas_group_codes_use_circles_then_unique_color_shape_pairs():
-    """Atlas and dendrogram group styles must remain unambiguous beyond six."""
+def test_atlas_groups_use_distinct_palette_colors():
+    """Atlas and dendrogram groups share distinct colors beyond six."""
     small = _group_styles({f"Group {i}": [] for i in range(6)})
     large = _group_styles({f"Group {i}": [] for i in range(10)})
 
-    assert list(small.values()) == [(color, "o") for color in CONDITION_COLORS]
+    assert tuple(small.values()) == CONDITION_COLORS
     assert len(set(large.values())) == 10
-    assert len({marker for _, marker in large.values()}) > 1
+    assert tuple(large.values()) == category_colors(10)
 
 
 @pytest.mark.parametrize(
@@ -218,7 +218,7 @@ def test_dendrogram_group_markers_do_not_cover_leaf_labels():
         np.array([[0, 1, 1.0, 2]]),
         ["brain", "skin"],
         {"brain": "Group 1", "skin": "Group 1"},
-        {"Group 1": (CONDITION_COLORS[0], "o")},
+        {"Group 1": CONDITION_COLORS[0]},
     )
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
@@ -304,5 +304,15 @@ def test_qc_peptide_diagnostics_support_more_than_six_conditions(tmp_path):
 
     report = output.read_text(encoding="utf-8")
     assert "normalization-plot" in report
-    assert "styleIndices[index % styleIndices.length]" in report
-    assert "styleIndices[index]" not in report
+    assert "const condColors = {" in report
+    assert "styleIndices" not in report
+    assert "shapeByPlex" not in report
+
+
+def test_category_palette_extends_with_unique_stable_prefixes():
+    """The six seeds remain fixed while larger palettes extend deterministically."""
+    assert category_colors(6) == CONDITION_COLORS
+    colors = category_colors(40)
+    assert len(colors) == len(set(colors)) == 40
+    assert colors[:6] == CONDITION_COLORS
+    assert colors[:20] == category_colors(20)

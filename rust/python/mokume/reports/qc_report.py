@@ -24,10 +24,8 @@ from sklearn.metrics import silhouette_score as sklearn_silhouette_score
 
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_STYLE_INDICES,
-    CONDITION_SYMBOLS,
+    category_colors,
     MISSING_COLOR,
-    PLEX_SYMBOLS,
     PLOTLY_TEMPLATE,
     REPORT_CSS,
     SEQUENTIAL_COLORS,
@@ -673,6 +671,8 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
         </div>
         """
 
+    condition_names = sorted(set(pca["conditions"]))
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -761,8 +761,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
                 <div style="flex:1"><div id="pca-plot" style="height:450px"></div></div>
             </div>
             {
-        '<p style="font-size:12px; margin-bottom:16px">Shapes identify plexes when there are at '
-        f"most {len(PLEX_SYMBOLS)}; with more plexes, shapes follow conditions. "
+        '<p style="font-size:12px; margin-bottom:16px">Colors identify conditions. '
         "Hover text names each sample's condition and plex.</p>"
         if plex["multi_plex"]
         else ""
@@ -857,35 +856,19 @@ function sampleOrder(a, b) {{
     return sampleConditions[a].localeCompare(sampleConditions[b]) || a.localeCompare(b);
 }}
 
-// Color palette
-const condColors = {{}};
-const plexSymbols = {{}};
-const palette = {_safe_json(CONDITION_COLORS)};
+// Shared colors are computed in Python for every condition panel.
+const condColors = {
+        _safe_json(dict(zip(condition_names, category_colors(len(condition_names)))))
+    };
 const singleColor = {_safe_json(SINGLE_SERIES_COLOR)};
 const sequentialColors = {_safe_json(SEQUENTIAL_COLORS)};
 const plotConfig = {{responsive: true, displaylogo: false, displayModeBar: 'hover'}};
 const plotTemplate = {_safe_json(PLOTLY_TEMPLATE)};
-const conditionSymbols = {_safe_json(CONDITION_SYMBOLS)};
-const styleIndices = {_safe_json(CONDITION_STYLE_INDICES)};
-const plexShapeSymbols = {_safe_json(PLEX_SYMBOLS)};
-const condSymbols = {{}};
-
-// Shared embedding styles and plots
 const pca = {_safe_json(pca)};
-[...new Set(pca.conditions)].sort().forEach((condition, index) => {{
-    const [color, shape] = styleIndices[index % styleIndices.length];
-    condColors[condition] = palette[color];
-    condSymbols[condition] = conditionSymbols[shape];
-}});
-[...new Set(pca.plexes)].sort().forEach((plex, index) => {{
-    plexSymbols[plex] = plexShapeSymbols[index];
-}});
 {EMBEDDING_LABEL_JS}
 function embeddingTraces(data, xKey, yKey) {{
     const conditions = [...new Set(data.conditions)].sort();
     const plexes = [...new Set(data.plexes)].sort();
-    const shapeByPlex = multiPlex && plexes.length <= plexShapeSymbols.length
-        && conditions.length <= 12;
     const traces = [];
     conditions.forEach(condition => {{
         let first = true;
@@ -900,11 +883,10 @@ function embeddingTraces(data, xKey, yKey) {{
                 text: indices.map(i => data.samples[i]),
                 hovertext: indices.map(i => data.samples[i] + '<br>Condition: ' + condition
                     + (multiPlex ? '<br>Plex: ' + plex : '')), hoverinfo: 'text',
-                marker: {{color: condColors[condition], size: 12,
-                    symbol: shapeByPlex ? plexSymbols[plex] : condSymbols[condition],
+                marker: {{color: condColors[condition], size: 7, opacity: 0.85,
+                    symbol: 'circle',
                     line: {{width: 0}}}},
-                name: shapeByPlex ? condition + ' / ' + plex : condition,
-                legendgroup: condition, showlegend: shapeByPlex || first,
+                name: condition, legendgroup: condition, showlegend: first,
             }});
             first = false;
         }});

@@ -1,12 +1,7 @@
 """Centered marker-protein profiles across quantification workflows."""
 
 from mokume.plotting._common import finite_list, log2_matrix, ordered_samples
-from mokume.plotting.style import (
-    CONDITION_COLORS,
-    condition_style,
-    CONDITION_SYMBOLS,
-    WHITE,
-)
+from mokume.plotting.style import category_colors
 from mokume.reports._plots import condition_guides
 
 
@@ -50,7 +45,7 @@ def marker_profiles(workflows, marker_genes):
 def _marker_traces(workflows, protein, conditions):
     """Prepare each workflow curve, retaining absent-workflow names for the caption."""
     traces, missing = [], []
-    for workflow_index, workflow in enumerate(workflows):
+    for workflow, color in zip(workflows, category_colors(len(workflows))):
         values = log2_matrix(workflow["protein_df"], workflow.get("is_log2", False))
         if protein not in values.index:
             missing.append(workflow["name"])
@@ -59,7 +54,6 @@ def _marker_traces(workflows, protein, conditions):
             [sample for sample in values if sample in conditions], conditions
         )
         row = values.loc[protein, samples]
-        color, marker = condition_style(workflow_index)
         traces.append(
             {
                 "type": "scatter",
@@ -67,11 +61,12 @@ def _marker_traces(workflows, protein, conditions):
                 "name": workflow["name"],
                 "x": samples,
                 "y": finite_list(row - row.median()),
-                "line": {"color": CONDITION_COLORS[color], "width": 2},
+                "line": {"color": color, "width": 2},
                 "marker": {
-                    "size": 8,
-                    "symbol": CONDITION_SYMBOLS[marker],
-                    "line": {"width": 2, "color": WHITE},
+                    "size": 7,
+                    "symbol": "circle",
+                    "opacity": 0.85,
+                    "line": {"width": 0},
                 },
             }
         )

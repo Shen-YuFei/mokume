@@ -15,7 +15,7 @@ from mokume.plotting._common import (
 from mokume.plotting.profile import peptide_matrix
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    condition_style,
+    category_colors,
     MISSING_COLOR,
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
@@ -352,7 +352,7 @@ def _peptide_boxes(values, samples, conditions, panel):
     """Summarize sample quartiles for one normalization panel."""
     names = sorted({conditions[sample] for sample in samples})
     traces = []
-    for index, condition in enumerate(names):
+    for condition, color in zip(names, category_colors(len(names))):
         group = [sample for sample in samples if conditions[sample] == condition]
         quantiles = values[group].quantile([0, 0.25, 0.5, 0.75, 1])
         traces.append(
@@ -369,7 +369,7 @@ def _peptide_boxes(values, samples, conditions, panel):
                 "q3": finite_list(quantiles.loc[0.75]),
                 "lowerfence": finite_list(quantiles.loc[0]),
                 "upperfence": finite_list(quantiles.loc[1]),
-                "marker": {"color": CONDITION_COLORS[condition_style(index)[0]]},
+                "marker": {"color": color},
                 "line": {"width": 2},
             }
         )

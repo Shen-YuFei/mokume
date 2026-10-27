@@ -1,4 +1,4 @@
-"""Locally styled PCA and t-SNE plots with shared condition color/shape codes."""
+"""Locally styled PCA and t-SNE plots with shared condition colors."""
 
 import numpy as np
 import pandas as pd
@@ -7,15 +7,13 @@ from sklearn.decomposition import PCA
 
 from mokume.plotting._common import (
     bottom_legend,
-    condition_markers,
     expand_category_axes,
     label_categories,
     static_style,
     style_axes,
 )
 from mokume.plotting.style import (
-    CONDITION_COLORS,
-    condition_style,
+    category_colors,
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
     WHITE,
@@ -26,18 +24,17 @@ def _embedding_plot(frame, axes, group_column, options):
     """Plot existing coordinates without modifying their calculation."""
     fig, ax = plt.subplots(figsize=options.get("figsize", (3.5, 3)))
     groups = sorted(frame[group_column].unique())
-    markers = condition_markers(groups)
-    for index, group in enumerate(groups):
-        color = condition_style(index)[0]
+    for group, color in zip(groups, category_colors(len(groups))):
         subset = frame[frame[group_column] == group]
         ax.scatter(
             subset[axes[0]],
             subset[axes[1]],
             label=group,
-            color=CONDITION_COLORS[color],
-            s=36,
+            color=color,
+            s=20,
+            alpha=0.85,
             linewidths=0,
-            marker=markers[group],
+            marker="o",
         )
     ax.set(xlabel=axes[0], ylabel=axes[1], title=options["title"])
     if 1 < len(groups) <= 12:
@@ -67,7 +64,7 @@ def plot_pca(
     """
     Plot a PCA scatter plot and save it to a file.
 
-    Groups use the shared condition color/shape combinations.
+    Groups use the expanding shared category palette.
 
     Parameters
     ----------

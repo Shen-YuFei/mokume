@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 from mokume.plotting._common import log2_matrix, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    condition_style,
+    category_colors,
     MISSING_COLOR,
     SAMPLE_POINT_COLOR,
     SIGNIFICANCE_COLORS,
@@ -88,11 +88,7 @@ def _plot_groups(ax, de, abundance, labels, options):
     groups = options.get("groups")
     names = sorted(labels.unique())
     for index, name in enumerate(names):
-        color = (
-            SIGNIFICANCE_COLORS[name]
-            if groups is None
-            else CONDITION_COLORS[condition_style(index)[0]]
-        )
+        color = SIGNIFICANCE_COLORS[name] if groups is None else CONDITION_COLORS[index]
         subset = labels == name
         _group_points(ax, abundance[subset], de.loc[subset, "log2FC"], color, name)
         if name in options.get("expected", {}):
@@ -123,10 +119,9 @@ def _plot_facets(de, abundance, labels, output_file, options):
     fig, axes = plt.subplots(
         rows, 3, figsize=(7.2, rows * 2.4), sharex=True, sharey=True, squeeze=False
     )
-    for index, name in enumerate(names):
+    for index, (name, color) in enumerate(zip(names, category_colors(len(names)))):
         ax = axes.flat[index]
         subset = labels == name
-        color = CONDITION_COLORS[condition_style(index)[0]]
         _group_points(ax, abundance[~subset], de.loc[~subset, "log2FC"], MISSING_COLOR)
         _group_points(ax, abundance[subset], de.loc[subset, "log2FC"], color)
         for value in (-options["log2fc"], options["log2fc"]):
