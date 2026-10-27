@@ -4,12 +4,11 @@ from collections import Counter
 
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib import patheffects
+from matplotlib.lines import Line2D
 
 from mokume.plotting._common import static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_MARKERS,
     INACTIVE_COLOR,
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
@@ -128,80 +127,126 @@ def _intersection_matrix(ax, names, intersections):
         )
 
 
-def _fold_change_series(ax, tables, protein, color, marker):
-    """Use solid and hollow markers for significant and nonsignificant values."""
-    rows = [
-        table.set_index("ProteinName").reindex([protein]).iloc[0]
-        for table in tables.values()
-    ]
-    values = [row["log2FC"] for row in rows]
-    significant = [row["significance"] in ("UP", "DOWN") for row in rows]
-    ax.plot(range(len(rows)), values, color=color, linewidth=2, label=protein)
-    for index, value in enumerate(values):
-        effects = (
-            []
-            if significant[index]
-            else [
-                patheffects.Stroke(linewidth=6, foreground=WHITE),
-                patheffects.Normal(),
-            ]
-        )
+def _fold_change_points(ax, tables, protein, color, offset):
+    """Use filled and open dots for significant and nonsignificant values."""
+    for index, table in enumerate(tables.values()):
+        row = table.set_index("ProteinName").reindex([protein]).iloc[0]
+        significant = row["significance"] in ("UP", "DOWN")
         ax.scatter(
-            index,
-            value,
-            s=64,
-            marker=marker,
-            linewidths=2,
-            edgecolors=WHITE if significant[index] else color,
-            facecolors=color if significant[index] else WHITE,
-            path_effects=effects,
+            index + offset,
+            row["log2FC"],
+            s=24,
+            alpha=0.85,
+            linewidths=0 if significant else 1,
+            edgecolors=color,
+            facecolors=color if significant else "none",
             zorder=3,
         )
 
 
+def _legends_below(fig, groups):
+    """Stack frameless legends under the settled axes."""
+    renderer = fig.canvas.get_renderer()
+    top = min(ax.get_tightbbox(renderer).y0 for ax in fig.axes if ax.get_visible())
+    for handles in groups:
+        legend = fig.legend(
+            handles=handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, top / fig.bbox.height),
+            ncol=min(3, len(handles)),
+            frameon=False,
+            labelcolor=TEXT_COLOR,
+        )
+        top = legend.get_window_extent(renderer).y0
+
+
+def _dot_handle(label, color, filled=True):
+    """Build a dot-only legend entry matching the plotted dots."""
+    return Line2D(
+        [],
+        [],
+        linestyle="",
+        marker="o",
+        markersize=5,
+        alpha=0.85,
+        markeredgewidth=0 if filled else 1,
+        markeredgecolor=color,
+        markerfacecolor=color if filled else "none",
+        label=label,
+    )
+
+
+def _contrast_axis(ax, names):
+    """Mark zero and label the unordered contrasts."""
+    rotation = 30 if max(map(len, names)) > 8 else 0
+    ax.axhline(0, color=SAMPLE_POINT_COLOR, linewidth=0.6)
+    ax.set_xticks(
+        range(len(names)),
+        names,
+        rotation=rotation,
+        ha="right" if rotation else "center",
+    )
+    ax.set_xlim(-0.5, len(names) - 0.5)
+    style_axes(ax)
+
+
+def _overlay_proteins(ax, tables, proteins):
+    """Dodge up to six colored proteins within each contrast."""
+    spacing = min(0.12, 0.6 / len(proteins))
+    for index, (protein, color) in enumerate(zip(proteins, CONDITION_COLORS)):
+        offset = (index - (len(proteins) - 1) / 2) * spacing
+        _fold_change_points(ax, tables, protein, color, offset)
+    ax.set_title("log2FC across contrasts")
+    ax.set_ylabel("log2 fold change")
+    return [
+        _dot_handle(protein, color)
+        for protein, color in zip(proteins, CONDITION_COLORS)
+    ]
+
+
+def _protein_panels(fig, axes, tables, proteins):
+    """Give each protein its own panel and hide the unused ones."""
+    for ax, protein in zip(axes.flat, proteins):
+        _fold_change_points(ax, tables, protein, SINGLE_SERIES_COLOR, 0)
+        ax.set_title(protein)
+    for ax in list(axes.flat)[len(proteins) :]:
+        ax.set_visible(False)
+    fig.supylabel(
+        "log2 fold change", color=TEXT_COLOR, fontsize=plt.rcParams["axes.labelsize"]
+    )
+
+
 @static_style()
 def plot_fold_changes(tables, proteins, output_file):
-    """Compare fold changes, switching to small multiples above six proteins."""
+    """Compare fold changes, switching to small multiples above six proteins.
+
+    Contrasts are unordered, so markers are dodged within each contrast rather
+    than joined. Confidence intervals are omitted: DE tables carry no standard
+    errors.
+    """
     multiple = len(proteins) > 6
-    columns, rows = (3, int(np.ceil(len(proteins) / 3))) if multiple else (1, 1)
+    rows = int(np.ceil(len(proteins) / 3)) if multiple else 1
     fig, axes = plt.subplots(
         rows,
-        columns,
+        3 if multiple else 1,
         figsize=(7.2, rows * 2.4) if multiple else (3.5, 3),
         squeeze=False,
         sharey=True,
     )
-    for index, protein in enumerate(proteins):
-        ax = axes.flat[index] if multiple else axes[0, 0]
-        color = SINGLE_SERIES_COLOR if multiple else CONDITION_COLORS[index]
-        marker = "o" if multiple else CONDITION_MARKERS[index]
-        _fold_change_series(ax, tables, protein, color, marker)
-        ax.set_title(protein if multiple else "log2FC across contrasts")
-    rotation = 30 if max(map(len, tables)) > 8 else 0
-    for ax in axes.flat:
-        ax.axhline(0, color=SAMPLE_POINT_COLOR, linewidth=0.6)
-        ax.set_xticks(
-            range(len(tables)),
-            list(tables),
-            rotation=rotation,
-            ha="right" if rotation else "center",
-        )
-        style_axes(ax)
-    fig.supylabel("log2 fold change", color=TEXT_COLOR)
     if multiple:
-        for ax in list(axes.flat)[len(proteins) :]:
-            ax.set_visible(False)
-    elif len(proteins) > 1:
-        axes[0, 0].legend(
-            labelcolor=TEXT_COLOR, loc="center left", bbox_to_anchor=(1.02, 0.5)
-        )
-    fig.text(
-        0.5,
-        0.01,
-        "Solid: significant; hollow: nonsignificant. No confidence "
-        "intervals:\nDE tables contain no standard errors.",
-        ha="center",
+        _protein_panels(fig, axes, tables, proteins)
+        groups = []
+    else:
+        groups = [_overlay_proteins(axes[0, 0], tables, proteins)]
+    for ax in axes.flat:
+        _contrast_axis(ax, list(tables))
+    fig.tight_layout()
+    groups.append(
+        [
+            _dot_handle(label, SAMPLE_POINT_COLOR, filled)
+            for label, filled in (("Significant", True), ("Not significant", False))
+        ]
     )
-    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    _legends_below(fig, groups)
     fig.savefig(output_file, bbox_inches="tight")
     plt.close(fig)

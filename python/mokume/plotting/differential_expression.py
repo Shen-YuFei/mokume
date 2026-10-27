@@ -44,6 +44,9 @@ def plot_volcano(
     """
     Create a volcano plot from differential expression results.
 
+    Heights use raw p-values; colors follow the ``significance`` column, i.e. the
+    adjusted p-value and |log2FC| cutoffs.
+
     Parameters
     ----------
     de_results : pd.DataFrame
@@ -128,15 +131,7 @@ def plot_volcano(
     ax.set_ylabel("-log10(p-value)")
     ax.set_title(title)
     _style_axes(ax)
-    fig.text(
-        0.5,
-        0.01,
-        "Colors: adjusted p-value and |log2FC| cutoffs",
-        ha="center",
-    )
-
-    # Reserve the bottom band for the caption so it clears the x-axis label.
-    plt.tight_layout(rect=(0, 0.03, 1, 1))
+    plt.tight_layout()
     place_labels(ax, anchors, points=list(anchors.values()), fontsize=8)
 
     if output_file:

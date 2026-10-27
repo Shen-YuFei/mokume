@@ -196,9 +196,11 @@ Plots without composition groups or with up to three groups keep one panel.
 Unknown contrast or group references fail. With two or more contrasts, `plot de`
 automatically writes `upset_significant.png` with exclusive significant-protein
 intersections. With `--highlight-protein`, it also writes
-`log2fc_across_contrasts.png`: solid markers are significant and hollow markers
-are not. More than six proteins use small multiples. Confidence intervals are
-omitted because DE tables contain no standard errors.
+`log2fc_across_contrasts.png`: each protein is a colored dot, side by side
+within each contrast and not joined, since contrasts have no order. Filled dots
+are significant and open dots are not. More than six proteins use small
+multiples. Confidence intervals are omitted because DE tables contain no
+standard errors.
 
 ## Single-Matrix QC Report
 
