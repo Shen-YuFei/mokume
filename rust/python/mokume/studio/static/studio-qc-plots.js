@@ -122,8 +122,7 @@ function pcaPoint(svg, point, sample, ranges, style) {
   const [xRange, yRange] = ranges;
   const x = AREA.left + (point[0] - xRange[0]) / (xRange[1] - xRange[0]) * AREA.width;
   const y = 200 - (point[1] - yRange[0]) / (yRange[1] - yRange[0]) * AREA.height;
-  const marker = svgNode("path", { d: style.shape(x, y), fill: style.fill,
-    class: "qc-plot-marker" });
+  const marker = svgNode("path", { d: style.shape(x, y), fill: style.fill });
   marker.append(svgNode("title", {}, `${sample}: ${point[0].toFixed(2)}, ${point[1].toFixed(2)}`));
   svg.append(marker);
   return [x, y];
