@@ -67,8 +67,10 @@ COMMAND_PRESENTATION: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {
             "id": "quantification",
             "title": "Quantification",
             "flags": (
-                "quant_method min_aa min_unique keep_contaminants fasta pibaq_enzyme "
-                "pibaq_max_aa pibaq_min_shared pibaq_families_yaml "
+                "quant_method min_aa min_unique keep_contaminants filter_protein_fdr "
+                "transferred_features fasta pibaq_enzyme pibaq_max_aa "
+                "pibaq_missed_cleavages pibaq_min_shared pibaq_shared "
+                "pibaq_family_rows pibaq_families_yaml pibaq_evidence "
                 "pibaq_min_anchors directlfq_min_nonan "
                 "directlfq_num_samples_quadratic directlfq_no_sample_normalization "
                 "maxlfq_min_ratio_count stabilize "
@@ -84,7 +86,9 @@ COMMAND_PRESENTATION: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {
                 "batch_correction batch_method batch_column batch_covariate "
                 "batch_nonparametric batch_mean_only batch_ref irs "
                 "irs_reference_sample irs_sdrf_column irs_sdrf_value "
-                "irs_reference_regex irs_stat irs_remove_reference"
+                "irs_reference_regex irs_stat irs_remove_reference irs_plex_column "
+                "irs_missing_reference tmt_row_merge tmt_impurity "
+                "tmt_interference_floor tmt_floor_quantile"
             ).split(),
             "common": (
                 "run_normalization sample_normalization batch_correction irs"
@@ -96,7 +100,7 @@ COMMAND_PRESENTATION: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {
             "flags": (
                 "impute_method impute_quantile impute_seed impute_tune_sigma "
                 "impute_n_neighbors de_contrast de_contrast_file de_method "
-                "de_ensemble_method de_ensemble_min_k de_log2fc_threshold "
+                "de_covariate de_ensemble_method de_ensemble_min_k de_log2fc_threshold "
                 "de_effect_size_gate de_fdr_threshold de_fdr_method de_output"
             ).split(),
             "common": (

@@ -331,7 +331,7 @@ def test_plot_de_requires_an_output_type(tmp_path):
     for name in ("proteins.csv", "de.csv"):
         (project / name).write_text("fixture\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="select --volcano or --heatmap"):
+    with pytest.raises(ValueError, match="select --volcano, --heatmap or --ma"):
         validate_and_canonicalize(
             [
                 "plot",
