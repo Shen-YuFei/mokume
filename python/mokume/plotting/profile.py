@@ -69,7 +69,7 @@ def plot_profile(protein_df, peptides, sample_to_condition, protein, output_file
         [sample for sample in proteins if sample in sample_to_condition],
         sample_to_condition,
     )
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(7.2, 3.2))
     has_peptides = protein in values.index.get_level_values("ProteinName")
     if has_peptides:
         ax.plot(

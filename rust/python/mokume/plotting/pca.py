@@ -18,7 +18,7 @@ from mokume.plotting.style import (
 
 def _embedding_plot(frame, axes, group_column, options):
     """Plot existing coordinates without modifying their calculation."""
-    fig, ax = plt.subplots(figsize=options.get("figsize", (8, 6)))
+    fig, ax = plt.subplots(figsize=options.get("figsize", (3.5, 3)))
     groups = sorted(frame[group_column].unique())
     if len(groups) > len(CONDITION_STYLE_INDICES):
         # Beyond the color/shape combinations groups are indistinguishable.
@@ -26,8 +26,8 @@ def _embedding_plot(frame, axes, group_column, options):
             frame[axes[0]],
             frame[axes[1]],
             color=SAMPLE_POINT_COLOR,
-            s=64,
-            linewidths=2,
+            s=36,
+            linewidths=0.6,
             edgecolors=WHITE,
         )
         groups = []
@@ -39,8 +39,8 @@ def _embedding_plot(frame, axes, group_column, options):
             subset[axes[1]],
             label=group,
             color=CONDITION_COLORS[color],
-            s=64,
-            linewidths=2,
+            s=36,
+            linewidths=0.6,
             edgecolors=WHITE,
             marker=CONDITION_MARKERS[shape] if len(groups) > 3 else "o",
         )
@@ -62,7 +62,7 @@ def plot_pca(
     hue_col: str = "batch",
     palette: str = "Set2",
     title: str = "PCA plot",
-    figsize: tuple = (8, 6),
+    figsize: tuple = (3.5, 3),
 ) -> None:
     """
     Plot a PCA scatter plot and save it to a file.
@@ -123,7 +123,7 @@ def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFra
     df_pca = pd.DataFrame(
         df_pca, index=df.index, columns=[f"PC{i}" for i in range(1, n_components + 1)]
     )
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(3.5, 2.6))
     xi = np.arange(1, n_components + 1, step=1)
     ax.plot(
         xi,

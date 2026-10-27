@@ -22,7 +22,7 @@ from mokume.plotting.style import (
 def plot_abundance_rank(log2_values, highlight_genes=None):
     """Rank proteins by observed mean log2 abundance."""
     abundance = log2_values.mean(axis=1).dropna().sort_values(ascending=False)
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(3.5, 2.6))
     ranks = np.arange(1, len(abundance) + 1)
     ax.plot(ranks, abundance, color=SINGLE_SERIES_COLOR, linewidth=2)
     for protein in highlight_genes or []:
@@ -32,9 +32,9 @@ def plot_abundance_rank(log2_values, highlight_genes=None):
                 rank,
                 abundance[protein],
                 color=SINGLE_SERIES_COLOR,
-                s=64,
-                edgecolors=WHITE,
-                linewidths=2,
+                s=36,
+                edgecolors=TEXT_COLOR,
+                linewidths=0.6,
                 zorder=3,
             )
             ax.annotate(
@@ -64,7 +64,7 @@ def plot_upset(sets, output_file):
     counts = upset_counts(sets)
     intersections = sorted(counts, key=lambda key: (-counts[key], key))
     names = list(sets)
-    fig = plt.figure(figsize=(max(8, len(intersections) * 0.45), 6))
+    fig = plt.figure(figsize=(max(4.5, len(intersections) * 0.32), 3.6))
     grid = fig.add_gridspec(2, 2, width_ratios=[1, 3], height_ratios=[2, 1])
     top, left, matrix = (
         fig.add_subplot(grid[position]) for position in ((0, 1), (1, 0), (1, 1))
@@ -77,6 +77,7 @@ def plot_upset(sets, output_file):
         linewidth=0,
     )
     top.bar_label(bars, color=TEXT_COLOR)
+    top.margins(y=0.12)
     left.barh(
         range(len(names)),
         [len(sets[name]) for name in names],
@@ -162,10 +163,13 @@ def _fold_change_series(ax, tables, protein, color, marker):
 def plot_fold_changes(tables, proteins, output_file):
     """Compare fold changes, switching to small multiples above six proteins."""
     multiple = len(proteins) > 6
-    columns = 3 if multiple else 1
-    rows = int(np.ceil(len(proteins) / columns)) if multiple else 1
+    columns, rows = (3, int(np.ceil(len(proteins) / 3))) if multiple else (1, 1)
     fig, axes = plt.subplots(
-        rows, columns, figsize=(9, rows * 3.5), squeeze=False, sharey=True
+        rows,
+        columns,
+        figsize=(7.2, rows * 2.4) if multiple else (3.5, 3),
+        squeeze=False,
+        sharey=True,
     )
     for index, protein in enumerate(proteins):
         ax = axes.flat[index] if multiple else axes[0, 0]
@@ -188,7 +192,9 @@ def plot_fold_changes(tables, proteins, output_file):
         for ax in list(axes.flat)[len(proteins) :]:
             ax.set_visible(False)
     elif len(proteins) > 1:
-        axes[0, 0].legend(labelcolor=TEXT_COLOR)
+        axes[0, 0].legend(
+            labelcolor=TEXT_COLOR, loc="center left", bbox_to_anchor=(1.02, 0.5)
+        )
     fig.text(
         0.5,
         0.01,

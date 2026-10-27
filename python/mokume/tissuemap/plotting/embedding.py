@@ -35,14 +35,18 @@ def _plot_scree_panel(ax, var_ratio: np.ndarray, n_pcs: int) -> None:
     ax.set_xlim(0.5, n_pcs + 0.5)
     ax.margins(y=0.15)
     style_axes(ax)
-    for i in range(min(3, n_pcs)):
-        ax.text(
-            i + 1.1,
-            var_ratio[i] * 100 + 0.3,
-            f"{var_ratio[i] * 100:.1f}%",
-            ha="left",
-            color=TEXT_COLOR,
-        )
+    # One block in the empty upper right; per-bar labels collide on narrow bars.
+    ax.text(
+        0.97,
+        0.95,
+        "\n".join(
+            f"PC{i + 1}  {var_ratio[i] * 100:.1f}%" for i in range(min(3, n_pcs))
+        ),
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        color=TEXT_COLOR,
+    )
 
 
 def _plot_cumulative_panel(ax, cumvar: np.ndarray, n_pcs: int) -> None:
@@ -52,26 +56,28 @@ def _plot_cumulative_panel(ax, cumvar: np.ndarray, n_pcs: int) -> None:
         cumvar * 100,
         "o-",
         color=SINGLE_SERIES_COLOR,
-        markersize=8,
+        markersize=4,
         markeredgecolor=WHITE,
-        markeredgewidth=2,
+        markeredgewidth=0.6,
         linewidth=2,
     )
     for threshold in (50, 70):
         ax.axhline(threshold, color=SAMPLE_POINT_COLOR, linestyle="--", linewidth=1)
-        ax.text(n_pcs * 0.8, threshold + 1.5, f"{threshold}%", color=TEXT_COLOR)
-    for n_pc in dict.fromkeys([2, 10, 20, n_pcs]):
-        if n_pc > n_pcs:
-            continue
-        ax.annotate(
-            f"PC1-{n_pc}\n{cumvar[n_pc - 1] * 100:.1f}%",
-            (n_pc, cumvar[n_pc - 1] * 100),
-            textcoords="offset points",
-            xytext=(-8, -30) if n_pc == n_pcs else (8, -25),
-            ha="right" if n_pc == n_pcs else "left",
-            color=TEXT_COLOR,
-            arrowprops={"arrowstyle": "-", "color": SAMPLE_POINT_COLOR, "lw": 0.6},
-        )
+        ax.text(n_pcs, threshold + 1.5, f"{threshold}%", ha="right", color=TEXT_COLOR)
+    # The rising curve leaves the lower right empty; callouts there crossed the thresholds.
+    ax.text(
+        0.97,
+        0.05,
+        "\n".join(
+            f"PC1-{n_pc}  {cumvar[n_pc - 1] * 100:.1f}%"
+            for n_pc in dict.fromkeys([2, 10, 20, n_pcs])
+            if n_pc <= n_pcs
+        ),
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        color=TEXT_COLOR,
+    )
     ax.set_xlabel("Number of PCs")
     ax.set_ylabel("Cumulative variance (%)")
     ax.set_title("Cumulative variance", loc="left")
@@ -101,7 +107,7 @@ def plot_pca_scree(
     n_pcs = len(var_ratio)
     cumvar = np.cumsum(var_ratio)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.8))
     _plot_scree_panel(axes[0], var_ratio, n_pcs)
     _plot_cumulative_panel(axes[1], cumvar, n_pcs)
     for ax, letter in zip(axes, "ab"):

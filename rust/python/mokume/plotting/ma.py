@@ -52,7 +52,7 @@ def plot_ma(de, protein_df, sample_to_condition, output_file, options):
         else pd.Series(groups.loc[de["ProteinName"]].to_numpy(), index=de.index)
     )
     names = sorted(labels.unique())
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(3.5, 2.8))
     _plot_groups(ax, de, abundance, labels, options)
     for value in (-options["log2fc"], options["log2fc"]):
         ax.axhline(value, color="grey", linestyle="--", linewidth=0.8)
@@ -63,7 +63,17 @@ def plot_ma(de, protein_df, sample_to_condition, output_file, options):
         title=options["title"] + (f" ({names[0]})" if len(names) == 1 else ""),
     )
     if len(names) > 1:
-        ax.legend(labelcolor=TEXT_COLOR, loc="center left", bbox_to_anchor=(1.02, 0.5))
+        legend = ax.legend(
+            labelcolor=TEXT_COLOR,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.22),
+            ncol=min(len(names), 3),
+            frameon=False,
+            markerscale=2.5,
+        )
+        # Density marks are translucent; legend keys show the full group color.
+        for handle in legend.legend_handles:
+            handle.set_alpha(1)
     style_axes(ax)
     fig.tight_layout()
     fig.savefig(output_file, bbox_inches="tight")
@@ -92,9 +102,9 @@ def _plot_groups(ax, de, abundance, labels, options):
             de.loc[subset, "log2FC"],
             color=color,
             marker=marker,
-            s=64,
-            linewidths=2,
-            edgecolors=WHITE,
+            s=8,
+            alpha=0.6,
+            linewidths=0,
             label=name,
             rasterized=True,
         )
@@ -118,4 +128,6 @@ def _label_expected(ax, names, expected):
             color=TEXT_COLOR,
             transform=ax.get_yaxis_transform(),
             va="bottom",
+            fontsize=8,
+            bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.85, "pad": 1},
         )

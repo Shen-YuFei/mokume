@@ -31,7 +31,7 @@ def plot_volcano(
     highlight_genes: Optional[list[str]] = None,
     title: str = "Volcano Plot",
     output_file: Optional[str] = None,
-    figsize: tuple = (10, 8),
+    figsize: tuple = (3.5, 3.2),
 ) -> plt.Figure:
     """
     Create a volcano plot from differential expression results.
@@ -67,14 +67,14 @@ def plot_volcano(
     color_map = SIGNIFICANCE_COLORS
     colors = df["significance"].map(color_map)
 
+    # One mark per protein: small, translucent and unringed so overlaps read as density.
     ax.scatter(
         df["log2FC"],
         df["neg_log10_p"],
         c=colors,
         alpha=0.6,
-        s=64,
-        edgecolors="#ffffff",
-        linewidths=1.5,
+        s=8,
+        linewidths=0,
         rasterized=True,
     )
 
@@ -98,9 +98,9 @@ def plot_volcano(
                 matches["log2FC"],
                 matches["neg_log10_p"],
                 c=matches["significance"].map(color_map),
-                s=120,
-                edgecolors="#ffffff",
-                linewidths=1.5,
+                s=36,
+                edgecolors=TEXT_COLOR,
+                linewidths=0.6,
                 zorder=3,
             )
             for _, row in matches.iterrows():
@@ -123,7 +123,17 @@ def plot_volcano(
         if counts.get(label, 0)
     ]
     if len(legend_elements) > 1:
-        ax.legend(handles=legend_elements, loc="upper right", labelcolor=TEXT_COLOR)
+        # A single row under the axes leaves the plot its full width.
+        ax.legend(
+            handles=legend_elements,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.2),
+            ncol=len(legend_elements),
+            frameon=False,
+            handlelength=1,
+            columnspacing=1,
+            labelcolor=TEXT_COLOR,
+        )
     elif legend_elements:
         title += f" ({legend_elements[0].get_label()})"
 
@@ -155,7 +165,7 @@ def plot_heatmap(
     proteins: Optional[list[str]] = None,
     title: str = "Protein Heatmap",
     output_file: Optional[str] = None,
-    figsize: tuple = (12, 10),
+    figsize: tuple = (6, 9),
     top_n: int = 50,
 ) -> plt.Figure:
     """
@@ -264,15 +274,18 @@ def plot_heatmap(
         col_colors=col_colors,
         figsize=figsize,
         dendrogram_ratio=0.1,
-        cbar_pos=(0.02, 0.8, 0.03, 0.15),
+        cbar_pos=(0.02, 0.87, 0.03, 0.1),
         yticklabels=True,
         xticklabels=True,
     )
     g.ax_heatmap.set_facecolor(MISSING_COLOR)
     g.ax_heatmap.tick_params(colors=TEXT_COLOR)
+    # Protein rows are dense; 7 pt keeps one label per row legible.
+    g.ax_heatmap.tick_params(axis="y", labelsize=7)
     g.fig.suptitle(title, y=1.02, color=TEXT_COLOR)
 
-    _add_heatmap_legend(g.ax_heatmap, condition_colors, missing.to_numpy().any())
+    # Beside the column dendrogram the legend clears the row labels.
+    _add_heatmap_legend(g.ax_col_dendrogram, condition_colors, missing.to_numpy().any())
 
     if output_file:
         g.savefig(output_file, bbox_inches="tight")
@@ -309,17 +322,34 @@ def _condition_palette(conditions):
 
 
 def _label_pca_samples(ax, pca_df):
-    """Label small PCA plots without crowding larger sample sets."""
-    if len(pca_df) <= 30:
-        for sample, row in pca_df.iterrows():
-            y = row["PC2"] if "PC2" in row else row["PC1"]
-            ax.annotate(
-                sample,
-                (row["PC1"], y),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize=7,
-            )
+    """Label outliers first and drop labels that would overprint placed ones.
+
+    Call after the final layout, since overlaps are measured in display space.
+    """
+    if len(pca_df) > 30:
+        return
+    y = pca_df["PC2"] if "PC2" in pca_df else pca_df["PC1"]
+    points = ax.transData.transform(np.column_stack([pca_df["PC1"], y]))
+    renderer = ax.figure.canvas.get_renderer()
+    placed = []
+    for index in np.argsort(-np.linalg.norm(points - points.mean(axis=0), axis=1)):
+        label = ax.annotate(
+            pca_df.index[index],
+            (pca_df["PC1"].iloc[index], y.iloc[index]),
+            xytext=(4, 4),
+            textcoords="offset points",
+            fontsize=7,
+        )
+        box = label.get_window_extent(renderer)
+        if box.x1 > ax.get_window_extent().x1:
+            # Near the right edge the label goes left so it stays clear of the legend.
+            label.set_horizontalalignment("right")
+            label.xyann = (-4, 4)
+            box = label.get_window_extent(renderer)
+        if any(box.overlaps(other) for other in placed):
+            label.remove()
+        else:
+            placed.append(box)
 
 
 @static_style()
@@ -328,7 +358,7 @@ def plot_pca_conditions(
     sample_to_condition: dict[str, str],
     title: str = "PCA by Condition",
     output_file: Optional[str] = None,
-    figsize: tuple = (8, 6),
+    figsize: tuple = (3.5, 3),
 ) -> plt.Figure:
     """
     Create a PCA scatter plot colored by experimental condition.
@@ -406,9 +436,9 @@ def plot_pca_conditions(
             for index, condition in enumerate(conditions)
         },
         palette=_condition_palette(pca_df["Condition"]),
-        s=100,
+        s=40,
         edgecolor="#ffffff",
-        linewidth=1.5,
+        linewidth=0.6,
         ax=ax,
     )
 
@@ -417,13 +447,13 @@ def plot_pca_conditions(
     if n_components >= 2:
         ax.set_ylabel(f"PC2 ({var_explained[1]:.1f}%)")
     ax.set_title(f"{title}\nn = {data.shape[1]:,} proteins, complete cases")
-    _label_pca_samples(ax, pca_df)
     ax.legend(
         loc="center left", bbox_to_anchor=(1.05, 0.5), labelcolor=TEXT_COLOR
     ).set_visible(len(conditions) > 1)
     _style_axes(ax)
 
     plt.tight_layout()
+    _label_pca_samples(ax, pca_df)
 
     if output_file:
         plt.savefig(output_file, bbox_inches="tight")

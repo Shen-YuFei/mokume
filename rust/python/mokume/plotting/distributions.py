@@ -92,7 +92,7 @@ def plot_distributions(
     """
     order, colors, palette = distribution_groups(dataset, class_field)
     frame = _distribution_data(dataset, field, class_field, log2)
-    fig, ax = plt.subplots(figsize=(min(width, 14), 5))
+    fig, ax = plt.subplots(figsize=(min(width, 7.2), 3.2))
     for sample in order:
         sns.kdeplot(
             frame.loc[frame[class_field] == sample, field],
@@ -153,7 +153,7 @@ def plot_box_plot(
     values = _distribution_data(dataset, field, class_field, log2).groupby(class_field)[
         field
     ]
-    fig, ax = plt.subplots(figsize=(min(width, 16), 5))
+    fig, ax = plt.subplots(figsize=(min(width, 7.2), 3.4))
     _box_bodies(
         ax,
         [values.get_group(sample).to_numpy() for sample in order],

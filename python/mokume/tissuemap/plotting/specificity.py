@@ -112,13 +112,14 @@ def _plot_histogram_panel(
     _draw_thresholds(ax, categories, (ts_enriched, ts_specific, ts_housekeeping))
     if gmm is not None:
         _overlay_gmm_curves(ax, gmm, x_upper)
-        ax.legend(frameon=False, loc="upper right", labelcolor=TEXT_COLOR)
+        # Threshold labels fill the top rows; the legend sits beside the low tail.
+        ax.legend(frameon=False, loc="center right", labelcolor=TEXT_COLOR)
     left_bound = float(max_ts.min()) - 0.5 if len(max_ts) > 0 else 0.0
     ax.set_xlim(left=left_bound, right=x_upper * 1.05)
     if n_outliers > 0:
         ax.text(
             0.97,
-            0.72,
+            0.3,
             f"{n_outliers} proteins with TS > {x_upper:.1f}\n(clipped)",
             transform=ax.transAxes,
             ha="right",
@@ -226,7 +227,7 @@ def plot_ts_distribution(
     categories = ts_df.get("enrichment_category", pd.Series(dtype=str))
     gmm: GMMThresholds | None = ts_df.attrs.get("gmm")
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.2))
     _plot_histogram_panel(
         axes[0],
         max_ts,
@@ -269,7 +270,7 @@ def plot_specific_per_tissue(
     """
     specific_per_tissue = _compute_specific_counts(ts_df, unique_tissues)
 
-    fig, ax = plt.subplots(figsize=(10, max(6, len(unique_tissues) * 0.3)))
+    fig, ax = plt.subplots(figsize=(3.5, max(2.6, len(unique_tissues) * 0.16)))
 
     spt = specific_per_tissue.iloc[::-1]
     ax.barh(

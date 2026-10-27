@@ -187,7 +187,7 @@ def _group_styles(proteomic_groups: dict) -> dict[str, tuple[str, str]]:
     return styles
 
 
-def _label_position(size, center, placed, bounds):
+def _label_position(size, center, placed, bounds, others):
     """Choose a nearby label box inside the axes, avoiding earlier labels."""
     width, height = size
     candidates = []
@@ -204,8 +204,14 @@ def _label_position(size, center, placed, bounds):
             box = Bbox.from_bounds(
                 point[0] - width / 2, point[1] - height / 2, width, height
             )
+            distance = np.linalg.norm(point - center)
             score = sum(box.overlaps(other) for other in placed) * 1e6
-            score += np.linalg.norm(point - center)
+            # A label nearer another group's anchor would read as that group's.
+            score += 1e3 * (
+                np.linalg.norm(others - point, axis=1).min(initial=np.inf) < distance
+            )
+            # Prefer above, then beside, so every label reads the same way.
+            score += distance + 24 * (1 - np.sin(angle))
             candidates.append((score, point, box))
     _, point, box = min(candidates, key=lambda candidate: candidate[0])
     return point, box
@@ -220,6 +226,7 @@ def _label_groups(ax, anchors: dict) -> None:
             color=TEXT_COLOR,
             ha="center",
             va="center",
+            fontsize=8,
             zorder=4,
             bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.85, "pad": 1.5},
         )
@@ -228,14 +235,27 @@ def _label_groups(ax, anchors: dict) -> None:
     ax.figure.canvas.draw()
     renderer = ax.figure.canvas.get_renderer()
     bounds = ax.get_window_extent().padded(-6)
+    # Treat every drawn point as an obstacle so labels never hide the data.
+    points = [
+        Bbox.from_bounds(*(xy - radius), 2 * radius, 2 * radius)
+        for collection in ax.collections
+        for xy, radius in zip(
+            collection.get_offset_transform().transform(collection.get_offsets()),
+            np.sqrt(np.resize(collection.get_sizes(), len(collection.get_offsets())))
+            * ax.figure.dpi
+            / 144,
+        )
+    ]
+    centers = ax.transData.transform(np.array(list(anchors.values())))
     placed = []
-    for text, center in zip(labels, anchors.values()):
+    for index, text in enumerate(labels):
         extent = text.get_window_extent(renderer).padded(4)
         point, box = _label_position(
             (extent.width, extent.height),
-            ax.transData.transform(center),
-            placed,
+            centers[index],
+            placed + points,
             bounds,
+            np.delete(centers, index, axis=0),
         )
         text.set_position(ax.transData.inverted().transform(point))
         placed.append(box)
@@ -254,9 +274,9 @@ def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> None:
             points[:, 1],
             color=color,
             marker=marker,
-            s=64,
+            s=36,
             edgecolors=WHITE,
-            linewidths=2,
+            linewidths=0.6,
             zorder=3,
         )
         # Anchor on a real member: a split group's mean can sit in empty space.
@@ -280,10 +300,10 @@ def _group_legend(ax, group_styles, **kwargs) -> None:
             [],
             marker=marker,
             linestyle="none",
-            markersize=8,
+            markersize=6,
             markerfacecolor=color,
             markeredgecolor=WHITE,
-            markeredgewidth=2,
+            markeredgewidth=0.6,
             label=group,
         )
         for group, (color, marker) in group_styles.items()
@@ -325,9 +345,9 @@ def _draw_dendrogram_panel(
             transform=marker_transform,
             color=color,
             marker=marker,
-            s=64,
+            s=36,
             edgecolors=WHITE,
-            linewidths=2,
+            linewidths=0.6,
             clip_on=False,
             zorder=4,
         )
@@ -349,7 +369,7 @@ def _save_figure(fig, out_dir: Path, name: str, opts: _SaveOpts) -> None:
 
 def _save_individual_atlas(out_dir, adata, proteomic_groups, group_styles, opts):
     """Render a standalone atlas with a compact group legend."""
-    fig, ax = plt.subplots(figsize=(11, 8), layout="constrained")
+    fig, ax = plt.subplots(figsize=(4.5, 3.6), layout="constrained")
     _group_legend(ax, group_styles, loc="center left", bbox_to_anchor=(1.02, 0.5))
     _draw_tsne_panel(ax, adata, proteomic_groups, group_styles)
     _save_figure(fig, out_dir, "tissue_atlas", opts)
@@ -359,7 +379,7 @@ def _save_individual_dendrogram(out_dir, tree, group_styles, opts):
     """Render a standalone dendrogram with a group legend."""
     z_linkage, tissues, tissue_to_group = tree
     fig, ax = plt.subplots(
-        figsize=(6.5, max(4.5, len(tissues) * 0.25)), layout="constrained"
+        figsize=(3.5, max(3, len(tissues) * 0.16)), layout="constrained"
     )
     _group_legend(ax, group_styles, loc="upper left", bbox_to_anchor=(1.02, 1))
     _draw_dendrogram_panel(ax, z_linkage, tissues, tissue_to_group, group_styles)
@@ -396,12 +416,12 @@ def plot_slide_atlas_dendrogram(
     fig, axes = plt.subplots(
         1,
         2,
-        figsize=(18, max(8, len(unique_tissues) * 0.25)),
+        figsize=(7.2, max(3.6, len(unique_tissues) * 0.16)),
         gridspec_kw={"width_ratios": [1.3, 1]},
         layout="constrained",
     )
     _group_legend(
-        axes[0], styles, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=3
+        axes[0], styles, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=3
     )
     _draw_dendrogram_panel(axes[1], z_linkage, unique_tissues, tissue_to_group, styles)
     _draw_tsne_panel(axes[0], adata, groups, styles)

@@ -29,9 +29,13 @@ with outward ticks. Bitmap exports default to 300 dpi; TissueMap's `--dpi` can
 override this. PDF and PostScript embed TrueType fonts, and SVG keeps text as
 text. Dense protein and peptide scatter layers and marker t-SNE layers are
 rasterized; PCA and atlas sample markers, labels and axes remain vector graphics.
-These settings apply only while Mokume creates and exports a figure; the
-caller's matplotlib defaults are restored. Interactive HTML report styles are
-independent.
+Default canvases match journal columns: about 3.5 in for single panels and at
+most 7.2 in for multi-panel figures, while heatmaps and marker grids grow with
+their rows and columns. Protein points are small, translucent and unringed so
+overlaps read as density; sample points keep a thin white ring, and highlighted
+proteins are larger with a thin dark outline. These settings apply only while
+Mokume creates and exports a figure; the caller's matplotlib defaults are
+restored. Interactive HTML report styles are independent.
 
 ## DE Plots from features2proteins Output
 
@@ -90,7 +94,9 @@ mokume plot pca \
 ```
 
 PCA uses complete-case proteins and reports their count below the title. Small
-plots (at most 30 samples) include sample labels. Conditions use the shared
+plots (at most 30 samples) include sample labels, placed from the outermost
+sample inward; a label that would overprint one already placed is omitted.
+Conditions use the shared
 six-color palette with distinct color/marker combinations rather than cycling
 through colors. In HTML PCA plots with multiple plexes, shapes identify
 plexes; the legend and hover text identify conditions.

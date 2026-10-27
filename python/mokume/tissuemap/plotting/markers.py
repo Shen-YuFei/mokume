@@ -256,8 +256,8 @@ def plot_marker_heatmap(
     if prepared is None:
         return
     available_tissues, available_proteins = prepared[2:4]
-    fig_height = max(12, len(available_proteins) * 0.18)
-    fig, ax = plt.subplots(figsize=(14, fig_height))
+    fig_height = max(6, len(available_proteins) * 0.13)
+    fig, ax = plt.subplots(figsize=(4.5, fig_height))
     heatmap_title = (
         f"Top {n_top} marker proteins per tissue (Wilcoxon, "
         f"{len(available_tissues)} tissues)\n"
@@ -305,9 +305,9 @@ def _draw_nan_points(ax, tsne: np.ndarray, nan_mask: np.ndarray) -> None:
             tsne[nan_mask, 0],
             tsne[nan_mask, 1],
             c=MISSING_COLOR,
-            s=64,
+            s=12,
             edgecolors=WHITE,
-            linewidths=2,
+            linewidths=0.3,
             zorder=2,
             rasterized=True,
         )
@@ -330,9 +330,9 @@ def _draw_detected_points(ax, tsne, expr_all, nan_mask) -> None:
         cmap=_EXPR_CMAP,
         vmin=0,
         vmax=1,
-        s=64,
+        s=12,
         edgecolors=WHITE,
-        linewidths=2,
+        linewidths=0.3,
         zorder=3,
         rasterized=True,
     )
@@ -350,7 +350,8 @@ def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
     ax.set_title(
         f"{_protein_label(prot)}\n{tissue} marker{ts_val}\n"
         f"{int((~nan_mask).sum())}/{len(expr_all)} samples detected",
-        pad=10,
+        pad=4,
+        fontsize=7,
     )
     ax.set(xlabel="t-SNE 1", ylabel="t-SNE 2")
     ax.margins(0.12)
@@ -364,7 +365,7 @@ def _create_subplot_grid(
     """Create a subplot grid and return (fig, flat_axes_list)."""
     n_rows = (n_items + n_cols - 1) // n_cols
     fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(6 * n_cols, 5.5 * n_rows), layout="constrained"
+        n_rows, n_cols, figsize=(1.8 * n_cols, 2.2 * n_rows), layout="constrained"
     )
     flat = np.asarray(axes).flatten().tolist()
     for ax in flat[n_items:]:
@@ -464,9 +465,9 @@ def _render_dotplot(adata, genes, out_dir, dpi) -> None:
         cmap=_EXPR_CMAP,
         show=False,
         return_fig=True,
-        figsize=(20, 10),
+        figsize=(7.2, 3.6),
     )
-    dp.style(dot_edge_color=WHITE, dot_edge_lw=2, smallest_dot=64, largest_dot=200)
+    dp.style(dot_edge_color=WHITE, dot_edge_lw=0.6, smallest_dot=8, largest_dot=60)
     dp.legend(
         size_title="Fraction of samples\nin tissue (%)",
         colorbar_title="Mean relative abundance\nwithin each protein",
@@ -484,7 +485,7 @@ def _render_dotplot(adata, genes, out_dir, dpi) -> None:
     for dots in axes["size_legend_ax"].collections:
         dots.set_facecolor(MISSING_COLOR)
         dots.set_edgecolor(WHITE)
-        dots.set_linewidth(2)
+        dots.set_linewidth(0.6)
     dp.fig.savefig(out_dir / "marker_dotplot.png", dpi=dpi, bbox_inches="tight")
     plt.close(dp.fig)
 
