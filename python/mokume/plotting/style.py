@@ -21,6 +21,13 @@ CONDITION_SYMBOLS = (
 CONDITION_STYLE_INDICES = tuple((index, index) for index in range(6)) + tuple(
     (color, (color + shift) % 6) for shift in range(1, 6) for color in range(6)
 )
+
+
+def condition_style(index):
+    """Cycle through the shared color/shape combinations by category index."""
+    return CONDITION_STYLE_INDICES[index % len(CONDITION_STYLE_INDICES)]
+
+
 PLEX_SYMBOLS = tuple(range(6))
 SIGNIFICANCE_COLORS = {
     "UP": "#D55E00",

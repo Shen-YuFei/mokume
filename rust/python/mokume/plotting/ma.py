@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 from mokume.plotting._common import log2_matrix, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_STYLE_INDICES,
+    condition_style,
     MISSING_COLOR,
     SAMPLE_POINT_COLOR,
     SIGNIFICANCE_COLORS,
@@ -91,7 +91,7 @@ def _plot_groups(ax, de, abundance, labels, options):
         color = (
             SIGNIFICANCE_COLORS[name]
             if groups is None
-            else CONDITION_COLORS[CONDITION_STYLE_INDICES[index][0]]
+            else CONDITION_COLORS[condition_style(index)[0]]
         )
         subset = labels == name
         _group_points(ax, abundance[subset], de.loc[subset, "log2FC"], color, name)
@@ -126,7 +126,7 @@ def _plot_facets(de, abundance, labels, output_file, options):
     for index, name in enumerate(names):
         ax = axes.flat[index]
         subset = labels == name
-        color = CONDITION_COLORS[CONDITION_STYLE_INDICES[index][0]]
+        color = CONDITION_COLORS[condition_style(index)[0]]
         _group_points(ax, abundance[~subset], de.loc[~subset, "log2FC"], MISSING_COLOR)
         _group_points(ax, abundance[subset], de.loc[subset, "log2FC"], color)
         for value in (-options["log2fc"], options["log2fc"]):

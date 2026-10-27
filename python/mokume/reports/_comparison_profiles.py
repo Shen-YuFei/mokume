@@ -3,7 +3,7 @@
 from mokume.plotting._common import finite_list, log2_matrix, ordered_samples
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_STYLE_INDICES,
+    condition_style,
     CONDITION_SYMBOLS,
     WHITE,
 )
@@ -59,7 +59,7 @@ def _marker_traces(workflows, protein, conditions):
             [sample for sample in values if sample in conditions], conditions
         )
         row = values.loc[protein, samples]
-        color, marker = CONDITION_STYLE_INDICES[workflow_index]
+        color, marker = condition_style(workflow_index)
         traces.append(
             {
                 "type": "scatter",

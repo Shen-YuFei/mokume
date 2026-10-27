@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from plotly.offline import get_plotlyjs
 
-from mokume.reports._plots import compact_json as dump
+from mokume.reports._plots import VOLCANO_LABEL_JS, compact_json as dump
 from mokume.core.logger import get_logger
 from mokume.plotting._common import ordered_samples
 from mokume.reports._de_diagnostics import PROFILE_CARD, ma_payload, profile_script
@@ -138,6 +138,10 @@ def _highlight_annotations(de: pd.DataFrame, highlight_genes: list) -> list[dict
             "text": str(row["ProteinName"]),
             "showarrow": True,
             "arrowhead": 2,
+            "xanchor": "center",
+            "yanchor": "middle",
+            "arrowwidth": 0.7,
+            "arrowcolor": SAMPLE_POINT_COLOR,
             "ax": 20,
             "ay": -25,
             "font": {"size": 10, "color": "black"},
@@ -215,6 +219,7 @@ def generate_de_report(
         "fdr_threshold": fdr_threshold,
         "intensity_data": dump(_intensity_payload(protein_df, samples)),
         **ma_payload(de, protein_df, sample_to_condition, traces, log2fc_threshold),
+        "label_layout": VOLCANO_LABEL_JS,
         "diagnostic_script": profile_script(peptides, sample_to_condition),
         "profile_html": PROFILE_CARD if peptides is not None else "",
         "table_rows": dump(_table_rows(de, highlight_genes)),
@@ -327,7 +332,8 @@ const plotTemplate = $plot_template;
 const pointColor = $point_color;
 const textColor = $text_color;
 const plotConfig = {responsive: true, displaylogo: false, displayModeBar: 'hover'};
-Plotly.newPlot('volcano-plot', $volcano_traces, $volcano_layout, plotConfig);
+$label_layout
+Plotly.newPlot('volcano-plot', $volcano_traces, $volcano_layout, plotConfig).then(labelVolcano);
 Plotly.newPlot('ma-plot', $ma_traces, $ma_layout, plotConfig);
 $diagnostic_script
 ['volcano-plot', 'ma-plot'].forEach(target => document.getElementById(target).on('plotly_click', function(data) {

@@ -14,13 +14,17 @@ from matplotlib.transforms import Bbox
 from sklearn.decomposition import PCA
 
 from mokume.plotting._common import (
+    bottom_legend,
     condition_markers,
+    expand_category_axes,
+    label_categories,
+    place_labels,
     static_style,
     style_axes as _style_axes,
 )
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_STYLE_INDICES,
+    condition_style,
     MISSING_COLOR,
     SIGNIFICANCE_COLORS,
     TEXT_COLOR,
@@ -94,28 +98,7 @@ def plot_volcano(
     ax.axvline(x=log2fc_threshold, color="grey", linestyle="--", linewidth=0.8)
     ax.axvline(x=-log2fc_threshold, color="grey", linestyle="--", linewidth=0.8)
 
-    # Label highlighted genes
-    if highlight_genes:
-        for gene in highlight_genes:
-            matches = df[df["ProteinName"].str.contains(gene, case=False, na=False)]
-            ax.scatter(
-                matches["log2FC"],
-                matches["neg_log10_p"],
-                c=matches["significance"].map(color_map),
-                s=36,
-                edgecolors=TEXT_COLOR,
-                linewidths=0.6,
-                zorder=3,
-            )
-            for _, row in matches.iterrows():
-                ax.annotate(
-                    row["ProteinName"],
-                    xy=(row["log2FC"], row["neg_log10_p"]),
-                    xytext=(5, 5),
-                    textcoords="offset points",
-                    fontsize=8,
-                    arrowprops=dict(arrowstyle="-", color="black", lw=0.5),
-                )
+    anchors = _highlight_volcano(ax, df, highlight_genes or [])
 
     # Legend
     from matplotlib.patches import Patch
@@ -154,12 +137,36 @@ def plot_volcano(
 
     # Reserve the bottom band for the caption so it clears the x-axis label.
     plt.tight_layout(rect=(0, 0.03, 1, 1))
+    place_labels(ax, anchors, points=list(anchors.values()), fontsize=8)
 
     if output_file:
         plt.savefig(output_file, bbox_inches="tight")
         plt.close(fig)
 
     return fig
+
+
+def _highlight_volcano(ax, frame, genes):
+    """Keep highlighted marks unchanged and return their label anchors."""
+    anchors = {}
+    for gene in genes:
+        matches = frame[frame["ProteinName"].str.contains(gene, case=False, na=False)]
+        ax.scatter(
+            matches["log2FC"],
+            matches["neg_log10_p"],
+            c=matches["significance"].map(SIGNIFICANCE_COLORS),
+            s=36,
+            edgecolors=TEXT_COLOR,
+            linewidths=0.6,
+            zorder=3,
+        )
+        anchors.update(
+            {
+                row["ProteinName"]: (row["log2FC"], row["neg_log10_p"])
+                for _, row in matches.iterrows()
+            }
+        )
+    return anchors
 
 
 @static_style()
@@ -310,17 +317,17 @@ def _add_heatmap_legend(ax, condition_colors, has_missing):
         )
     ax.legend(
         handles=legend_patches,
-        loc="upper left",
-        bbox_to_anchor=(1.05, 1),
+        loc="lower left",
+        bbox_to_anchor=(1.05, 0),
         title="Condition",
         labelcolor=TEXT_COLOR,
     ).set_visible(len(legend_patches) > 1)
 
 
 def _condition_palette(conditions):
-    """Assign colors from the nonrepeating color/shape combinations."""
+    """Assign colors from the cycling color/shape combinations."""
     return {
-        condition: CONDITION_COLORS[CONDITION_STYLE_INDICES[index][0]]
+        condition: CONDITION_COLORS[condition_style(index)[0]]
         for index, condition in enumerate(sorted(set(conditions)))
     }
 
@@ -451,16 +458,25 @@ def plot_pca_conditions(
     if n_components >= 2:
         ax.set_ylabel(f"PC2 ({var_explained[1]:.1f}%)")
     ax.set_title(f"{title}\nn = {data.shape[1]:,} proteins, complete cases")
-    ax.legend(
-        loc="center left", bbox_to_anchor=(1.05, 0.5), labelcolor=TEXT_COLOR
-    ).set_visible(len(conditions) > 1)
     _style_axes(ax)
-
-    plt.tight_layout()
-    _label_pca_samples(ax, pca_df)
+    _finish_condition_pca(ax, pca_df)
 
     if output_file:
         plt.savefig(output_file, bbox_inches="tight")
         plt.close(fig)
 
     return fig
+
+
+def _finish_condition_pca(ax, frame):
+    """Use category labels and a bottom legend only for crowded condition sets."""
+    if frame["Condition"].nunique() > 12:
+        expand_category_axes(ax)
+        bottom_legend(ax)
+        label_categories(ax, frame, ("PC1", "PC2"), "Condition")
+    else:
+        ax.legend(
+            loc="center left", bbox_to_anchor=(1.05, 0.5), labelcolor=TEXT_COLOR
+        ).set_visible(frame["Condition"].nunique() > 1)
+        ax.figure.tight_layout()
+        _label_pca_samples(ax, frame)

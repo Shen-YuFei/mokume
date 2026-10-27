@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _overlay_gmm_curves(ax, gmm, x_upper: float) -> None:
-    """Draw GMM component density curves on an axes."""
+    """Draw GMM density curves and their compact legend below the panel."""
     x_grid = np.linspace(0, x_upper, 500)
     p_bg = gmm.bg_weight * _norm.pdf(x_grid, gmm.bg_mean, gmm.bg_std)
     p_sp = gmm.sp_weight * _norm.pdf(x_grid, gmm.sp_mean, gmm.sp_std)
@@ -61,6 +61,15 @@ def _overlay_gmm_curves(ax, gmm, x_upper: float) -> None:
         alpha=0.25,
         zorder=2,
         label="GMM mixture",
+    )
+    ax.legend(
+        frameon=False,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0),
+        bbox_transform=offset_copy(ax.transAxes, fig=ax.figure, y=-34, units="points"),
+        borderaxespad=0,
+        fontsize=8,
+        labelcolor=TEXT_COLOR,
     )
 
 
@@ -111,7 +120,7 @@ def _plot_histogram_panel(
     x_upper = max(p99, ts_specific * 2)
     n_outliers = int((max_ts > x_upper).sum())
     use_density = gmm is not None
-    ax.hist(
+    heights, _, _ = ax.hist(
         max_ts.clip(upper=x_upper).values,
         bins=50,
         color=SINGLE_SERIES_COLOR,
@@ -123,18 +132,18 @@ def _plot_histogram_panel(
     _draw_thresholds(ax, categories, (ts_enriched, ts_specific, ts_housekeeping))
     if gmm is not None:
         _overlay_gmm_curves(ax, gmm, x_upper)
-        # Threshold labels fill the top rows; the legend sits beside the low tail.
-        ax.legend(frameon=False, loc="center right", labelcolor=TEXT_COLOR)
+
     left_bound = float(max_ts.min()) - 0.5 if len(max_ts) > 0 else 0.0
     ax.set_xlim(left=left_bound, right=x_upper * 1.05)
     if n_outliers > 0:
-        ax.text(
-            0.97,
-            0.3,
-            f"{n_outliers} proteins with TS > {x_upper:.1f}\n(clipped)",
-            transform=ax.transAxes,
+        ax.annotate(
+            f"{n_outliers} > {x_upper:.1f}",
+            (x_upper, heights[-1]),
+            xytext=(0, 4),
+            textcoords="offset points",
             ha="right",
-            va="top",
+            va="bottom",
+            fontsize=7,
             color=TEXT_COLOR,
             style="italic",
         )
@@ -190,7 +199,7 @@ def _plot_bar_panel(
     ax.set_yticks(range(len(spt)))
     ax.set_yticklabels(spt.index, fontsize=8)
     ax.set_xlabel(
-        f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})",
+        f"Number of tissue-specific proteins\n(TS ≥ {ts_specific:.2f})",
     )
     title = "Tissue-specific proteins per tissue"
     if len(nonzero) > top_n:
@@ -238,7 +247,9 @@ def plot_ts_distribution(
     categories = ts_df.get("enrichment_category", pd.Series(dtype=str))
     gmm: GMMThresholds | None = ts_df.attrs.get("gmm")
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.2))
+    fig, axes = plt.subplots(
+        1, 2, figsize=(7.2, max(3.2, len(unique_tissues) * 0.14 + 1.4))
+    )
     _plot_histogram_panel(
         axes[0],
         max_ts,
@@ -294,7 +305,7 @@ def plot_specific_per_tissue(
     ax.set_yticks(range(len(spt)))
     ax.set_yticklabels(spt.index, fontsize=8)
     ax.set_xlabel(
-        f"Number of tissue-specific proteins (TS ≥ {ts_specific:.2f})",
+        f"Number of tissue-specific proteins\n(TS ≥ {ts_specific:.2f})",
     )
     ax.set_title(
         "Tissue-specific proteins per tissue (AdaTiSS)",

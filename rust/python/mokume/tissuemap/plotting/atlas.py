@@ -11,16 +11,23 @@ import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
-from matplotlib.transforms import Bbox, ScaledTranslation
+from matplotlib.transforms import ScaledTranslation
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.cluster.hierarchy import dendrogram as scipy_dendro
 from scipy.spatial.distance import pdist
 
-from mokume.plotting._common import panel_label, static_style, style_axes
+from mokume.plotting._common import (
+    bottom_legend,
+    nearest_anchor,
+    panel_label,
+    place_labels as _label_groups,
+    static_style,
+    style_axes,
+)
 from mokume.plotting.style import (
     CONDITION_COLORS,
     CONDITION_MARKERS,
-    CONDITION_STYLE_INDICES,
+    condition_style,
     SAMPLE_POINT_COLOR,
     TEXT_COLOR,
     WHITE,
@@ -176,10 +183,10 @@ def _organ_key(tissue: str) -> str:
 
 
 def _group_styles(proteomic_groups: dict) -> dict[str, tuple[str, str]]:
-    """Use circles for up to six groups, then unique color/shape pairs."""
+    """Use circles through six groups, then cycle the shared color/shape pairs."""
     styles = {}
     for index, group in enumerate(proteomic_groups):
-        color, marker = CONDITION_STYLE_INDICES[index]
+        color, marker = condition_style(index)
         styles[group] = (
             CONDITION_COLORS[color],
             CONDITION_MARKERS[marker] if len(proteomic_groups) > 6 else "o",
@@ -187,81 +194,7 @@ def _group_styles(proteomic_groups: dict) -> dict[str, tuple[str, str]]:
     return styles
 
 
-def _label_position(size, center, placed, bounds, others):
-    """Choose a nearby label box inside the axes, avoiding earlier labels."""
-    width, height = size
-    candidates = []
-    for radius in (12, 28, 48, 72, 104, 144):
-        for angle in np.linspace(0, 2 * np.pi, 8, endpoint=False):
-            point = center + (np.cos(angle), np.sin(angle)) * np.array(
-                [radius + width / 2, radius + height / 2]
-            )
-            point = np.clip(
-                point,
-                [bounds.x0 + width / 2, bounds.y0 + height / 2],
-                [bounds.x1 - width / 2, bounds.y1 - height / 2],
-            )
-            box = Bbox.from_bounds(
-                point[0] - width / 2, point[1] - height / 2, width, height
-            )
-            distance = np.linalg.norm(point - center)
-            score = sum(box.overlaps(other) for other in placed) * 1e6
-            # A label nearer another group's anchor would read as that group's.
-            score += 1e3 * (
-                np.linalg.norm(others - point, axis=1).min(initial=np.inf) < distance
-            )
-            # Prefer above, then beside, so every label reads the same way.
-            score += distance + 24 * (1 - np.sin(angle))
-            candidates.append((score, point, box))
-    _, point, box = min(candidates, key=lambda candidate: candidate[0])
-    return point, box
-
-
-def _label_groups(ax, anchors: dict) -> None:
-    """Place neutral group labels near their anchors without crossing the axes."""
-    labels = [
-        ax.text(
-            *center,
-            group,
-            color=TEXT_COLOR,
-            ha="center",
-            va="center",
-            fontsize=8,
-            zorder=4,
-            bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.85, "pad": 1.5},
-        )
-        for group, center in anchors.items()
-    ]
-    ax.figure.canvas.draw()
-    renderer = ax.figure.canvas.get_renderer()
-    bounds = ax.get_window_extent().padded(-6)
-    # Treat every drawn point as an obstacle so labels never hide the data.
-    points = [
-        Bbox.from_bounds(*(xy - radius), 2 * radius, 2 * radius)
-        for collection in ax.collections
-        for xy, radius in zip(
-            collection.get_offset_transform().transform(collection.get_offsets()),
-            np.sqrt(np.resize(collection.get_sizes(), len(collection.get_offsets())))
-            * ax.figure.dpi
-            / 144,
-        )
-    ]
-    centers = ax.transData.transform(np.array(list(anchors.values())))
-    placed = []
-    for index, text in enumerate(labels):
-        extent = text.get_window_extent(renderer).padded(4)
-        point, box = _label_position(
-            (extent.width, extent.height),
-            centers[index],
-            placed + points,
-            bounds,
-            np.delete(centers, index, axis=0),
-        )
-        text.set_position(ax.transData.inverted().transform(point))
-        placed.append(box)
-
-
-def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> None:
+def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> dict:
     """Draw existing t-SNE coordinates with the proteomic-group encoding."""
     tsne = adata.obsm["X_tsne"]
     tissues = adata.obs["tissue"].values
@@ -279,14 +212,12 @@ def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> None:
             zorder=3,
         )
         # Anchor on a real member: a split group's mean can sit in empty space.
-        anchors[group] = points[
-            np.argmin(np.linalg.norm(points - np.median(points, axis=0), axis=1))
-        ]
+        anchors[group] = nearest_anchor(points)
     ax.set_title("Tissue atlas", loc="left", pad=12)
     ax.set(xlabel="t-SNE 1", ylabel="t-SNE 2")
     ax.margins(0.18)
     style_axes(ax)
-    _label_groups(ax, anchors)
+    return anchors
 
 
 def _group_legend(ax, group_styles, **kwargs) -> None:
@@ -306,6 +237,9 @@ def _group_legend(ax, group_styles, **kwargs) -> None:
         )
         for group, (color, marker) in group_styles.items()
     ]
+    if len(group_styles) > 12:
+        bottom_legend(ax, handles, title="Proteomic group")
+        return
     ax.legend(
         handles=handles,
         title="Proteomic group",
@@ -353,6 +287,20 @@ def _draw_dendrogram_panel(
     ax.set_xlabel("Ward distance (correlation)")
 
 
+def _fit_dendrogram(ax):
+    """Fit leaf labels to their rendered row height, growing below 5 pt."""
+    fig = ax.figure
+    fig.canvas.draw()
+    labels = ax.get_yticklabels()
+    row_height = ax.get_window_extent().height * 72 / fig.dpi / len(labels)
+    if row_height < 5 / 0.7:
+        width, height = fig.get_size_inches()
+        fig.set_size_inches(width, height + len(labels) * (5 / 0.7 - row_height) / 72)
+        fig.canvas.draw()
+        row_height = ax.get_window_extent().height * 72 / fig.dpi / len(labels)
+    plt.setp(labels, fontsize=max(5, min(8, row_height * 0.7)))
+
+
 def _save_figure(fig, out_dir: Path, name: str, opts: _SaveOpts) -> None:
     """Save each atlas view with consistent output options."""
     fig.savefig(
@@ -367,8 +315,12 @@ def _save_figure(fig, out_dir: Path, name: str, opts: _SaveOpts) -> None:
 def _save_individual_atlas(out_dir, adata, proteomic_groups, group_styles, opts):
     """Render a standalone atlas with a compact group legend."""
     fig, ax = plt.subplots(figsize=(4.5, 3.6), layout="constrained")
-    _group_legend(ax, group_styles, loc="center left", bbox_to_anchor=(1.02, 0.5))
-    _draw_tsne_panel(ax, adata, proteomic_groups, group_styles)
+    if len(group_styles) <= 12:
+        _group_legend(ax, group_styles, loc="center left", bbox_to_anchor=(1.02, 0.5))
+    anchors = _draw_tsne_panel(ax, adata, proteomic_groups, group_styles)
+    if len(group_styles) > 12:
+        _group_legend(ax, group_styles)
+    _label_groups(ax, anchors)
     _save_figure(fig, out_dir, "tissue_atlas", opts)
 
 
@@ -380,6 +332,7 @@ def _save_individual_dendrogram(out_dir, tree, group_styles, opts):
     )
     _group_legend(ax, group_styles, loc="upper left", bbox_to_anchor=(1.02, 1))
     _draw_dendrogram_panel(ax, z_linkage, tissues, tissue_to_group, group_styles)
+    _fit_dendrogram(ax)
     _save_figure(fig, out_dir, "tissue_dendrogram", opts)
 
 
@@ -417,16 +370,28 @@ def plot_slide_atlas_dendrogram(
         gridspec_kw={"width_ratios": [1.3, 1]},
         layout="constrained",
     )
-    _group_legend(
-        axes[0], styles, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=3
+    _draw_slide_panels(
+        axes, adata, groups, styles, (z_linkage, unique_tissues, tissue_to_group)
     )
-    _draw_dendrogram_panel(axes[1], z_linkage, unique_tissues, tissue_to_group, styles)
-    _draw_tsne_panel(axes[0], adata, groups, styles)
-    for ax, letter in zip(axes, "ab"):
-        panel_label(ax, letter)
     opts = _SaveOpts(dpi, save_pdf)
     _save_figure(fig, out_dir, "slide_atlas_dendrogram", opts)
     _save_individual_atlas(out_dir, adata, groups, styles, opts)
     _save_individual_dendrogram(
         out_dir, (z_linkage, unique_tissues, tissue_to_group), styles, opts
     )
+
+
+def _draw_slide_panels(axes, adata, groups, styles, tree):
+    """Lay out the atlas and tree before positioning their labels."""
+    if len(styles) <= 12:
+        _group_legend(
+            axes[0], styles, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=3
+        )
+    _draw_dendrogram_panel(axes[1], *tree, styles)
+    anchors = _draw_tsne_panel(axes[0], adata, groups, styles)
+    _fit_dendrogram(axes[1])
+    if len(styles) > 12:
+        _group_legend(axes[0], styles)
+    _label_groups(axes[0], anchors)
+    for ax, letter in zip(axes, "ab"):
+        panel_label(ax, letter)

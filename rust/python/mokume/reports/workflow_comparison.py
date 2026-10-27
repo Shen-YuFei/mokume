@@ -547,7 +547,7 @@ const styleIndices = {_safe_json(CONDITION_STYLE_INDICES)};
 // ---- PCA Plots ----
 const allConditions = [...new Set(Object.values(pcaData).flatMap(pca => pca.conditions))].sort();
 const condStyles = Object.fromEntries(allConditions.map((condition, index) => {{
-    const [color, shape] = styleIndices[index];
+    const [color, shape] = styleIndices[index % styleIndices.length];
     return [condition, {{color: palette[color], symbol: conditionSymbols[shape]}}];
 }}));
 {EMBEDDING_LABEL_JS}
@@ -555,7 +555,8 @@ function pcaTraces(pca) {{
     const conditions = [...new Set(pca.conditions)].sort();
     const plexes = [...new Set(pca.plexes)].sort();
     const multiPlex = plexes.length > 1;
-    const shapeByPlex = multiPlex && plexes.length <= plexSymbols.length;
+    const shapeByPlex = multiPlex && plexes.length <= plexSymbols.length
+        && conditions.length <= 12;
     const plexSymMap = Object.fromEntries(plexes.map((plex, i) => [plex, plexSymbols[i]]));
     const traces = [];
     conditions.forEach(cond => {{
@@ -566,6 +567,7 @@ function pcaTraces(pca) {{
             if (!indices.length) return;
             traces.push({{
                 type: 'scatter', mode: 'markers', cliponaxis: false,
+                meta: {{condition: cond}},
                 x: indices.map(i => pca.pc1[i]), y: indices.map(i => pca.pc2[i]),
                 text: indices.map(i => pca.samples[i]),
                 hovertext: indices.map(i => pca.samples[i] + '<br>Condition: ' + cond
@@ -601,6 +603,7 @@ function drawPca(wfName, index) {{
         showlegend: traces.length > 1,
         legend: {{font: {{size: 9}}, orientation: 'h', y: -0.2}},
         margin: {{t: 55, b: 95, l: 60, r: 45}},
+        ...categoryLayout(`pca-${{index}}`, traces, 380),
     }}, plotConfig).then(labelEmbedding);
 }}
 (function() {{
@@ -681,13 +684,14 @@ function drawPca(wfName, index) {{
         const cat = concordanceData[key].cat_curve;
         if (!cat) return;
         const color = Object.keys(concordanceData).length === 1
-            ? singleColor : palette[styleIndices[i][0]];
+            ? singleColor : palette[styleIndices[i % styleIndices.length][0]];
         traces.push({{
             type: 'scatter', mode: 'lines+markers',
             x: cat.k, y: cat.fraction,
             name: key,
             line: {{width: 2, color}},
-            marker: {{size: 8, color, symbol: conditionSymbols[styleIndices[i][1]],
+            marker: {{size: 8, color,
+                symbol: conditionSymbols[styleIndices[i % styleIndices.length][1]],
                       line: {{width: 2, color: '#ffffff'}}}},
         }});
     }});

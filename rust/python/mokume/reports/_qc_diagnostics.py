@@ -15,6 +15,7 @@ from mokume.plotting._common import (
 from mokume.plotting.profile import peptide_matrix
 from mokume.plotting.style import (
     CONDITION_COLORS,
+    condition_style,
     MISSING_COLOR,
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
@@ -368,7 +369,7 @@ def _peptide_boxes(values, samples, conditions, panel):
                 "q3": finite_list(quantiles.loc[0.75]),
                 "lowerfence": finite_list(quantiles.loc[0]),
                 "upperfence": finite_list(quantiles.loc[1]),
-                "marker": {"color": CONDITION_COLORS[index]},
+                "marker": {"color": CONDITION_COLORS[condition_style(index)[0]]},
                 "line": {"width": 2},
             }
         )

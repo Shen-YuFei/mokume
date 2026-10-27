@@ -5,10 +5,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-from mokume.plotting._common import condition_markers, static_style, style_axes
+from mokume.plotting._common import (
+    bottom_legend,
+    condition_markers,
+    expand_category_axes,
+    label_categories,
+    static_style,
+    style_axes,
+)
 from mokume.plotting.style import (
     CONDITION_COLORS,
-    CONDITION_STYLE_INDICES,
+    condition_style,
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
     WHITE,
@@ -19,19 +26,9 @@ def _embedding_plot(frame, axes, group_column, options):
     """Plot existing coordinates without modifying their calculation."""
     fig, ax = plt.subplots(figsize=options.get("figsize", (3.5, 3)))
     groups = sorted(frame[group_column].unique())
-    if len(groups) > len(CONDITION_STYLE_INDICES):
-        # Beyond the color/shape combinations groups are indistinguishable.
-        ax.scatter(
-            frame[axes[0]],
-            frame[axes[1]],
-            color=SAMPLE_POINT_COLOR,
-            s=36,
-            linewidths=0,
-        )
-        groups = []
     markers = condition_markers(groups)
     for index, group in enumerate(groups):
-        color = CONDITION_STYLE_INDICES[index][0]
+        color = condition_style(index)[0]
         subset = frame[frame[group_column] == group]
         ax.scatter(
             subset[axes[0]],
@@ -43,10 +40,15 @@ def _embedding_plot(frame, axes, group_column, options):
             marker=markers[group],
         )
     ax.set(xlabel=axes[0], ylabel=axes[1], title=options["title"])
-    if len(groups) > 1:
+    if 1 < len(groups) <= 12:
         ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
     style_axes(ax)
-    fig.tight_layout()
+    if len(groups) > 12:
+        expand_category_axes(ax)
+        bottom_legend(ax)
+        label_categories(ax, frame, axes, group_column)
+    else:
+        fig.tight_layout()
     fig.savefig(options["output"], bbox_inches="tight")
     plt.close(fig)
 

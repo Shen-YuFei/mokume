@@ -12,12 +12,15 @@ from types import SimpleNamespace
 import anndata as ad
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
+from matplotlib.text import Text
 import numpy as np
 import pandas as pd
 import pytest
 
 from mokume.tissuemap.embedding import _impute_for_pca
 from mokume.plotting.style import CONDITION_COLORS
+from mokume.plotting.differential_expression import plot_pca_conditions, plot_volcano
+from mokume.reports.qc_report import generate_qc_report
 from mokume.tissuemap.plotting.atlas import (
     _draw_dendrogram_panel,
     _group_styles,
@@ -189,15 +192,18 @@ def test_marker_tsne_shares_a_protein_relative_scale_without_changing_values(
     np.testing.assert_array_equal(adata.X, matrix)
 
 
-def test_atlas_group_labels_stay_inside_axes_without_overlapping():
+@pytest.mark.parametrize("group_count", [10, 15])
+def test_atlas_group_labels_stay_inside_axes_without_overlapping(group_count):
     """Labels near an embedding boundary must not cross the title or each other."""
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, (ax, _) = plt.subplots(1, 2, figsize=(8, 6))
     ax.set(xlim=(0, 1), ylim=(0, 1))
-    _label_groups(ax, {f"Group {i}": np.array([0.95, 0.95]) for i in range(10)})
+    _label_groups(
+        ax, {f"Group {i}": np.array([0.95, 0.95]) for i in range(group_count)}
+    )
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     bounds = ax.get_window_extent()
-    boxes = [text.get_window_extent(renderer) for text in ax.texts]
+    boxes = [Text.get_window_extent(text, renderer) for text in ax.texts]
 
     assert all(bounds.contains(*box.min) and bounds.contains(*box.max) for box in boxes)
     assert not any(a.overlaps(b) for i, a in enumerate(boxes) for b in boxes[i + 1 :])
@@ -221,3 +227,82 @@ def test_dendrogram_group_markers_do_not_cover_leaf_labels():
         radius = (np.sqrt(marker.get_sizes()[0]) + marker.get_linewidths()[0]) / 2
         assert label.get_window_extent(renderer).x1 < center[0] - radius * fig.dpi / 72
     plt.close(fig)
+
+
+@pytest.mark.parametrize("condition_count", [40, 120])
+def test_pca_supports_many_conditions_and_category_labels(tmp_path, condition_count):
+    """More categories than style combinations must still produce a labelled plot."""
+    rng = np.random.default_rng(42)
+    samples = [f"S{i}" for i in range(condition_count * 2)]
+    frame = pd.DataFrame(
+        np.exp2(rng.normal(20, 1, (40, len(samples)))), columns=samples
+    )
+    frame.insert(0, "ProteinName", [f"P{i}" for i in range(40)])
+    conditions = {sample: f"C{i // 2:02}" for i, sample in enumerate(samples)}
+    output = tmp_path / "pca.png"
+
+    fig = plot_pca_conditions(frame, conditions, output_file=output)
+
+    assert output.is_file()
+    assert len(fig.axes[0].texts) == condition_count
+    assert len(fig.legends) == 1
+    assert {text.get_text() for text in fig.axes[0].texts} == set(conditions.values())
+    axes_size = fig.axes[0].get_window_extent().size / fig.dpi
+    np.testing.assert_allclose(axes_size, [6.4, 4.5])
+    plt.close(fig)
+
+
+def test_volcano_supports_fifteen_highlighted_proteins(tmp_path):
+    """Highlight labels do not depend on a figure-level category legend."""
+    rng = np.random.default_rng(42)
+    frame = pd.DataFrame(
+        {
+            "ProteinName": [f"P{i:04}" for i in range(500)],
+            "log2FC": rng.normal(size=500),
+            "pvalue": rng.uniform(0.001, 1, 500),
+            "adj_pvalue": 1.0,
+            "significance": "Unchanged",
+        }
+    )
+    output = tmp_path / "volcano.png"
+
+    fig = plot_volcano(
+        frame,
+        highlight_genes=frame["ProteinName"].iloc[:15].tolist(),
+        output_file=output,
+    )
+
+    assert output.is_file()
+    assert len(fig.axes[0].texts) == 15
+    plt.close(fig)
+
+
+def test_qc_peptide_diagnostics_support_more_than_six_conditions(tmp_path):
+    """Peptide boxes and report scripts must use cycling category styles."""
+    rng = np.random.default_rng(42)
+    samples = [f"S{i}" for i in range(16)]
+    frame = pd.DataFrame(np.exp2(rng.normal(20, 1, (12, 16))), columns=samples)
+    frame.insert(0, "ProteinName", [f"P{i}" for i in range(12)])
+    conditions = {sample: f"C{i // 2}" for i, sample in enumerate(samples)}
+    peptides = pd.DataFrame(
+        {
+            "ProteinName": "P0",
+            "PeptideCanonical": "PEPTIDE",
+            "SampleID": samples,
+            "NormIntensity": np.arange(16) + 100,
+        }
+    )
+    output = tmp_path / "qc.html"
+
+    generate_qc_report(
+        frame,
+        conditions,
+        output_html=output,
+        peptides=peptides,
+        unnormalized_peptides=peptides,
+    )
+
+    report = output.read_text(encoding="utf-8")
+    assert "normalization-plot" in report
+    assert "styleIndices[index % styleIndices.length]" in report
+    assert "styleIndices[index]" not in report

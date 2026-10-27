@@ -101,12 +101,28 @@ sample inward; a label that would cover a placed label or another sample's
 point is omitted. HTML PCA plots in the QC and comparison reports apply the
 same rule after each zoom or resize, and hover always names the sample.
 Conditions use the shared six-color palette with distinct color/marker
-combinations rather than cycling through colors. Static DE PCA uses circles
+combinations, cycling through the full set when categories outnumber the
+available combinations. Static DE PCA uses circles
 for up to three conditions and color/shape combinations above three, matching
-the other static PCA plots. In HTML PCA plots with two to six plexes, shapes
-identify plexes; the legend and hover text identify conditions. Above six
-plexes, shapes identify conditions and the legend lists each condition once.
-Hover text continues to identify the plex.
+the other static PCA plots. In HTML PCA plots with at most 12 conditions and
+two to six plexes, shapes identify plexes; the legend and hover text identify
+conditions. Above 12 conditions or six plexes, shapes identify conditions and
+the legend lists each condition once. Hover text continues to identify the
+plex.
+
+Above 12 categories, static and HTML PCA label each category at the sample
+nearest its coordinate-wise median, replacing sample-name labels. Legends move
+below the plot in columns. Static PCA uses a 7.2-inch-wide figure with an axes
+area of about 6.4 by 4.5 inches. Labels stay inside that axes area; the canvas
+grows downwards for the legend. Long category names may wrap. TissueMap also
+places legends below the atlas above 12 proteomic groups.
+
+Category, atlas-group and highlighted-protein labels try nearby positions in
+eight directions, moving outwards from the anchor. They avoid earlier labels
+and prefer positions clear of points. All static labels stay inside their own
+axes. A label more than 8 pt from its anchor gets a thin leader to it. If no
+gap remains, labels may overlap. HTML leaders end at the label edge. HTML
+labels are repositioned after zooms, resizing and legend changes.
 
 ## Interactive DE Report
 

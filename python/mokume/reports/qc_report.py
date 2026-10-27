@@ -873,7 +873,7 @@ const condSymbols = {{}};
 // Shared embedding styles and plots
 const pca = {_safe_json(pca)};
 [...new Set(pca.conditions)].sort().forEach((condition, index) => {{
-    const [color, shape] = styleIndices[index];
+    const [color, shape] = styleIndices[index % styleIndices.length];
     condColors[condition] = palette[color];
     condSymbols[condition] = conditionSymbols[shape];
 }});
@@ -884,7 +884,8 @@ const pca = {_safe_json(pca)};
 function embeddingTraces(data, xKey, yKey) {{
     const conditions = [...new Set(data.conditions)].sort();
     const plexes = [...new Set(data.plexes)].sort();
-    const shapeByPlex = multiPlex && plexes.length <= plexShapeSymbols.length;
+    const shapeByPlex = multiPlex && plexes.length <= plexShapeSymbols.length
+        && conditions.length <= 12;
     const traces = [];
     conditions.forEach(condition => {{
         let first = true;
@@ -894,6 +895,7 @@ function embeddingTraces(data, xKey, yKey) {{
             if (!indices.length) return;
             traces.push({{
                 type: 'scatter', mode: 'markers', cliponaxis: false,
+                meta: {{condition}},
                 x: indices.map(i => data[xKey][i]), y: indices.map(i => data[yKey][i]),
                 text: indices.map(i => data.samples[i]),
                 hovertext: indices.map(i => data.samples[i] + '<br>Condition: ' + condition
@@ -919,6 +921,7 @@ function drawEmbedding(target, data, axes, title) {{
         yaxis: {{title: {{text: axes[1][1]}}, range: paddedRange(data[axes[1][0]])}},
         showlegend: traces.length > 1, legend: {{font: {{size: 10}}}},
         margin: {{t: 50, b: 50, l: 60, r: 35}},
+        ...categoryLayout(target, traces, 450),
     }}, plotConfig).then(labelEmbedding);
 }}
 drawEmbedding('pca-plot', pca,

@@ -158,7 +158,7 @@ def test_volcano_height_and_guide_use_raw_pvalues(tmp_path):
         arguments = output.read_text(encoding="utf-8").split(
             "Plotly.newPlot('volcano-plot', "
         )[1]
-        _, layout = json.loads("[" + arguments.split(", plotConfig);")[0] + "]")
+        _, layout = json.loads("[" + arguments.split(", plotConfig)")[0] + "]")
         shapes = [shape for shape in layout["shapes"] if shape.get("xref") == "paper"]
         if expected is None:
             assert not guides and not shapes
