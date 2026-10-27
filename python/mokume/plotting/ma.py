@@ -101,11 +101,21 @@ def _plot_groups(ax, de, abundance, labels, options):
         if name in options.get("expected", {}):
             value = options["expected"][name]
             ax.axhline(value, color=color, linestyle="--", linewidth=2)
-            ax.text(
-                0.01,
-                value,
-                f"{name}: {value:g}",
-                color=TEXT_COLOR,
-                transform=ax.get_yaxis_transform(),
-                va="bottom",
-            )
+    _label_expected(ax, names, options.get("expected", {}))
+
+
+def _label_expected(ax, names, expected):
+    """Write one label per expected ratio so groups sharing it do not overprint."""
+    shared = {}
+    for name in names:
+        if name in expected:
+            shared.setdefault(expected[name], []).append(name)
+    for value, members in shared.items():
+        ax.text(
+            0.01,
+            value,
+            f"{', '.join(members)}: {value:g}",
+            color=TEXT_COLOR,
+            transform=ax.get_yaxis_transform(),
+            va="bottom",
+        )

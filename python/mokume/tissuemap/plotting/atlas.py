@@ -359,7 +359,7 @@ def _save_individual_dendrogram(out_dir, tree, group_styles, opts):
     """Render a standalone dendrogram with a group legend."""
     z_linkage, tissues, tissue_to_group = tree
     fig, ax = plt.subplots(
-        figsize=(10, max(7, len(tissues) * 0.25)), layout="constrained"
+        figsize=(6.5, max(4.5, len(tissues) * 0.25)), layout="constrained"
     )
     _group_legend(ax, group_styles, loc="upper left", bbox_to_anchor=(1.02, 1))
     _draw_dendrogram_panel(ax, z_linkage, tissues, tissue_to_group, group_styles)
