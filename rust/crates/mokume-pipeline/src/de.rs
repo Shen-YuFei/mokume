@@ -1265,11 +1265,15 @@ fn significance_label(significance: Significance) -> &'static str {
 /// Format a float for the DE CSV. Non-finite values (e.g. a NaN log2FC coerced
 /// by the P20 guard) are written as an empty cell, matching how pandas renders
 /// NaN to CSV.
+/// Shortest round-trip text; like Python's `repr`, magnitudes below 1e-4 use
+/// exponent notation, which every CSV reader parses exactly.
 fn format_float(value: f64) -> String {
-    if value.is_finite() {
-        value.to_string()
-    } else {
+    if !value.is_finite() {
         String::new()
+    } else if value != 0.0 && value.abs() < 1e-4 {
+        format!("{value:e}")
+    } else {
+        value.to_string()
     }
 }
 
@@ -1734,6 +1738,18 @@ mod tests {
             panic!("Inf must be rejected");
         };
         assert!(error.to_string().contains("contains an infinite value"));
+    }
+
+    #[test]
+    fn de_csv_writes_tiny_values_with_an_exponent() {
+        assert_eq!(
+            super::format_float(9.778087686539625e-17),
+            "9.778087686539625e-17"
+        );
+        assert_eq!(super::format_float(-2.5e-5), "-2.5e-5");
+        assert_eq!(super::format_float(0.0123), "0.0123");
+        assert_eq!(super::format_float(0.0), "0");
+        assert_eq!(super::format_float(f64::NAN), "");
     }
 
     fn counted(counts: &[f64]) -> MatrixDeInputs<'_> {
