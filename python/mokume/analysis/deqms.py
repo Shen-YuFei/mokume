@@ -310,6 +310,22 @@ def _build_count_vector(
     return counts
 
 
+def _precision_weights(values: np.ndarray, precision: np.ndarray) -> np.ndarray:
+    """Observation weights from each cell's quantification precision (1/SE^2).
+
+    A cell without a precision (zero or NaN, e.g. an imputed value) takes the
+    5th percentile of the observed precisions. Each weight is then floored as
+    ``1/(1/w + tau2)``, ``tau2`` being the median observed ``1/w``, so the
+    biological variance bounds how much one well-measured cell can count.
+    Mirrors the Rust ``deqms_two_group_weighted``.
+    """
+    measured = np.isfinite(values) & np.isfinite(precision) & (precision > 0)
+    observed = precision[measured]
+    tau2 = float(np.median(1.0 / observed)) if observed.size else 0.0
+    unmeasured = float(np.quantile(observed, 0.05)) if observed.size else 1.0
+    return 1.0 / (1.0 / np.where(measured, precision, unmeasured) + tau2)
+
+
 # ---------------------------------------------------------------------------
 # Public API: run_deqms
 # ---------------------------------------------------------------------------
@@ -322,8 +338,14 @@ def run_deqms(
     contrast: tuple[str, str],
     **options,
 ) -> pd.DataFrame:
-    """Run DEqMS differential expression (pure Python implementation)."""
+    """Run DEqMS differential expression (pure Python implementation).
+
+    ``precision``, a protein-by-sample frame of quantification precisions,
+    weights each cell by :func:`_precision_weights`; the weighted fit reports
+    weighted group means.
+    """
     peptide_counts = options.pop("peptide_counts", None)
+    precision = options.pop("precision", None)
     if options:
         unknown = ", ".join(sorted(options))
         raise TypeError(f"Unexpected DEqMS options: {unknown}")
@@ -337,13 +359,22 @@ def run_deqms(
     sample_order = list(samples_a) + list(samples_b)
     mat = sub_matrix[sample_order].values
     gene_names = list(sub_matrix.index)
+    weights = None
+    if precision is not None:
+        # Fill and floor over every row of the contrast, as the Rust DEqMS.
+        weights = _precision_weights(
+            log2_matrix[sample_order].to_numpy(dtype=float),
+            precision.reindex(index=log2_matrix.index, columns=sample_order).to_numpy(
+                dtype=float
+            ),
+        )[log2_matrix.index.get_indexer(sub_matrix.index)]
 
     design = np.zeros((len(sample_order), 2))
     design[: len(samples_a), 0] = 1.0
     design[len(samples_a) :, 1] = 1.0
     coef_names = [cond_a, cond_b]
 
-    fit = _lm_fit_with_na(mat, design, gene_names, coef_names)
+    fit = _lm_fit_with_na(mat, design, gene_names, coef_names, weights)
     contrasts = np.array([[1.0], [-1.0]])
     fit_c = _contrasts_fit(fit, contrasts)
     fit_eb = _ebayes(fit_c)
@@ -365,6 +396,9 @@ def run_deqms(
 
     summary = per_group_summary(sub_matrix, samples_a, samples_b, cond_a, cond_b)
     merged = raw.merge(summary, on="ProteinName", how="left")
+    if weights is not None:
+        merged[f"mean_{cond_a}"] = fit.coefficients[:, 0]
+        merged[f"mean_{cond_b}"] = fit.coefficients[:, 1]
     merged["pvalue"] = merged["sca_pvalue"]
     merged["adj_pvalue"] = bh_adjust(merged["sca_pvalue"].values)
     merged["sca_adj_pvalue"] = merged["adj_pvalue"]

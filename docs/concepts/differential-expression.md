@@ -58,7 +58,11 @@ not this class); `fdr_method` is `bh` (default), `ihw`, `bky`, or `storey`.
 BKY and Storey fall back to BH when pi0 is not reliable. LimROTS and ROTS report
 their own permutation-based FDR, which another FDR request leaves untouched.
 `log2fc_threshold="auto"` estimates a mixture-model effect-size gate; the Rust
-CLI exposes the same behavior as `--de-log2fc auto`. The
+CLI exposes the same behavior as `--de-log2fc auto`. For `deqms`,
+`precision=` takes a matrix of [precision weights](#precision-weights) in the
+protein matrix's layout (protein names in the first column); the pure-Python
+`features2proteins --de-precision-weights` builds it during MaxLFQ or DirectLFQ
+quantification. The
 Rust build runs the same methods through the CLI shown below (and the in-process
 wheel binding).
 

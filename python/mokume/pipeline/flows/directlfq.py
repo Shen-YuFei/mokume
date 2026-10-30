@@ -22,6 +22,7 @@ from mokume.pipeline.directlfq_streaming import (
     estimate_protein_intensities_streamed,
 )
 from mokume.quantification.base import QuantificationMethod
+from mokume.quantification.precision import precision_matrix
 
 logger = get_logger("mokume.pipeline.flows.directlfq")
 
@@ -97,13 +98,19 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
 
     # Run DirectLFQ protein estimation (streaming; returns linear intensities).
     logger.info("Running DirectLFQ protein estimation...")
+    residuals = [] if config.de.precision_weights else None
     protein_df = estimate_protein_intensities_streamed(
         normed_df,
         min_nonan=config.quantification.directlfq_min_nonan,
         num_samples_quadratic=config.quantification.directlfq_num_samples_quadratic,
         num_cores=config.quantification.directlfq_num_cores,
         export_ions=config.output.export_ions,
+        residuals=residuals,
     )
+    if residuals is not None:
+        dataset.layers["cell_precision"] = precision_matrix(
+            residuals, normed_df.columns, protein_df.columns[0]
+        )
 
     dataset.proteins = protein_df
     dataset.record_step(

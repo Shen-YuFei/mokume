@@ -14,6 +14,8 @@ from typing import Iterable, Iterator, Optional, TextIO
 import numpy as np
 import pandas as pd
 
+from mokume.quantification.precision import profile_residuals
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -55,9 +57,18 @@ def _estimate_protein_group(args):
     """Worker: estimate one protein and optionally return normalized ions.
 
     The ordinary path still returns only the protein name and profile. Ion
-    frames cross the process boundary only when the caller requested export.
+    frames cross the process boundary only when the caller requested export;
+    with ``include_residuals`` the worker also returns the shifted ions'
+    residuals around the profile.
     """
-    group_idx, protein_df, num_samples_quadratic, min_nonan, include_ions = args
+    (
+        group_idx,
+        protein_df,
+        num_samples_quadratic,
+        min_nonan,
+        include_ions,
+        include_residuals,
+    ) = args
     from directlfq.protein_intensity_estimation import (
         calculate_peptide_and_protein_intensities,
     )
@@ -69,7 +80,17 @@ def _estimate_protein_group(args):
         min_nonan,
     )
     protein_name = shifted_peptides.index.get_level_values(0)[0]
-    return protein_name, protein_profile, shifted_peptides if include_ions else None
+    fit = (
+        profile_residuals(shifted_peptides.to_numpy(), protein_profile)
+        if include_residuals and protein_profile is not None
+        else None
+    )
+    return (
+        protein_name,
+        protein_profile,
+        shifted_peptides if include_ions else None,
+        fit,
+    )
 
 
 @contextmanager
@@ -109,7 +130,7 @@ def _write_ion_results(results: Iterable[tuple], output: Optional[TextIO]) -> No
     """Append DirectLFQ-normalized ion rows in linear intensity space."""
     if output is None:
         return
-    for _, _, shifted_peptides in results:
+    for _, _, shifted_peptides, _ in results:
         if shifted_peptides is None:
             continue
         values = np.nan_to_num(2 ** shifted_peptides.to_numpy())
@@ -144,6 +165,7 @@ def estimate_protein_intensities_streamed(
     num_samples_quadratic: int,
     num_cores: Optional[int] = None,
     export_ions: Optional[str] = None,
+    residuals: Optional[list] = None,
 ) -> pd.DataFrame:
     """Estimate proteins and optionally stream normalized ions to CSV.
 
@@ -151,6 +173,8 @@ def estimate_protein_intensities_streamed(
     keeps only final protein profiles in memory. When ``export_ions`` is set,
     each bounded result batch is converted back to linear intensity space and
     appended to an atomic CSV output instead of retaining the full ion matrix.
+    When ``residuals`` is a list, each estimated protein's
+    ``(protein, profile_residuals)`` pair is appended to it.
 
     When ``num_cores > 1`` the per-protein estimation runs across a process pool.
     Unlike directlfq's own multiprocessing, proteins are streamed from
@@ -167,6 +191,7 @@ def estimate_protein_intensities_streamed(
 
     with _ion_export_file(export_ions, normed_df.columns) as ion_output:
         include_ions = ion_output is not None
+        include_residuals = residuals is not None
         if num_cores is not None and num_cores > 1:
             LOGGER.info(
                 "Estimating DirectLFQ proteins in parallel (%d cores)", num_cores
@@ -182,16 +207,17 @@ def estimate_protein_intensities_streamed(
                             num_samples_quadratic,
                             min_nonan,
                             include_ions,
+                            include_residuals,
                         )
                     )
                     if len(batch) >= batch_size:
                         results = pool.map(_estimate_protein_group, batch)
-                        _append_results(results, protein_ids, profile_rows)
+                        _append_results(results, protein_ids, profile_rows, residuals)
                         _write_ion_results(results, ion_output)
                         batch = []
                 if batch:
                     results = pool.map(_estimate_protein_group, batch)
-                    _append_results(results, protein_ids, profile_rows)
+                    _append_results(results, protein_ids, profile_rows, residuals)
                     _write_ion_results(results, ion_output)
         else:
             for group_idx, protein_df in iter_protein_groups(normed_df):
@@ -203,18 +229,23 @@ def estimate_protein_intensities_streamed(
                             num_samples_quadratic,
                             min_nonan,
                             include_ions,
+                            include_residuals,
                         )
                     )
                 ]
-                _append_results(results, protein_ids, profile_rows)
+                _append_results(results, protein_ids, profile_rows, residuals)
                 _write_ion_results(results, ion_output)
 
     return _protein_profiles_to_frame(protein_ids, profile_rows, normed_df.columns)
 
 
-def _append_results(results, protein_ids: list, profile_rows: list) -> None:
+def _append_results(
+    results, protein_ids: list, profile_rows: list, residuals: Optional[list]
+) -> None:
     """Append non-empty (name, profile) worker results, preserving order."""
-    for protein_name, protein_profile, _ in results:
+    for protein_name, protein_profile, _, fit in results:
         if protein_profile is not None:
             protein_ids.append(protein_name)
             profile_rows.append(protein_profile)
+        if fit is not None:
+            residuals.append((protein_name, fit))

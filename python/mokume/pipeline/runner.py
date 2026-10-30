@@ -180,7 +180,11 @@ def _postprocess(dataset: QpxDataset, config: PipelineConfig) -> QpxDataset:
     # Differential expression
     de_results = None
     if config.de.enabled:
-        de_results = post_stage.run_differential_expression(protein_df, dataset=dataset)
+        de_results = post_stage.run_differential_expression(
+            protein_df,
+            dataset=dataset,
+            precision=dataset.layers.get("cell_precision"),
+        )
         if de_results:
             dataset.uns["de_results"] = {
                 k: v["df"].to_dict(orient="records") for k, v in de_results.items()

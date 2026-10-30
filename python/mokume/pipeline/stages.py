@@ -1145,10 +1145,15 @@ class NormalizationStage:
 
 
 class QuantificationStage:
-    """Routes to the appropriate quantification method."""
+    """Routes to the appropriate quantification method.
+
+    With DE precision weights, a MaxLFQ run leaves its cell precisions in
+    ``cell_precision`` (protein matrix layout).
+    """
 
     def __init__(self, config: PipelineConfig):
         self.config = config
+        self.cell_precision = None
 
     def quantify(self, peptide_df: pd.DataFrame) -> pd.DataFrame:
         """Apply protein quantification method."""
@@ -1183,6 +1188,7 @@ class QuantificationStage:
                 intensity_column=NORM_INTENSITY,
                 sample_column=SAMPLE_ID,
             )
+            self._keep_cell_precision(result)
             return self.to_wide_format(result, quant_method)
         if quant_method.startswith("top"):
             match = re.match(r"top(\d+)", quant_method)
@@ -1204,12 +1210,20 @@ class QuantificationStage:
             return self._quantify_median(peptide_df)
         raise ValueError(f"Unknown quantification method: {quant_method}")
 
+    def _keep_cell_precision(self, result: pd.DataFrame) -> None:
+        """Keep MaxLFQ's cell precisions, if requested, as a protein matrix."""
+        if "Precision" in result:
+            self.cell_precision = result.pivot(
+                index=PROTEIN_NAME, columns=SAMPLE_ID, values="Precision"
+            ).reset_index()
+
     def _quantification_options(self, method: str) -> dict:
         """Method-specific solver settings, independent of worker allocation."""
         if method == "maxlfq":
             return {
                 "min_ratio_count": self.config.quantification.maxlfq_min_ratio_count,
                 "stabilize": self.config.quantification.stabilize,
+                "cell_precision": self.config.de.precision_weights,
             }
         return {}
 
@@ -1829,11 +1843,15 @@ class PostprocessingStage:
         sample_to_condition: dict,
         contrasts: list[tuple[str, str]],
         de_method: str,
-        peptide_counts: Optional[pd.Series],
+        de_inputs: tuple[Optional[pd.Series], Optional[pd.DataFrame]],
     ) -> dict:
-        """Run a non-ensemble DE method for all configured contrasts."""
+        """Run a non-ensemble DE method for all configured contrasts.
+
+        ``de_inputs`` holds the peptide counts and the cell precisions.
+        """
         from mokume.analysis.differential_expression import DifferentialExpression
 
+        peptide_counts, precision = de_inputs
         de = DifferentialExpression(
             method=de_method,
             log2fc_threshold=self.config.de.log2fc_threshold,
@@ -1841,6 +1859,7 @@ class PostprocessingStage:
             fdr_method=self.config.de.fdr_method,
             skip_log2=(self.config.quantification.method.lower() == "ratio"),
             peptide_counts=peptide_counts,
+            precision=precision,
         )
 
         all_results = {}
@@ -1853,12 +1872,14 @@ class PostprocessingStage:
         return all_results
 
     def run_differential_expression(
-        self, protein_df: pd.DataFrame, dataset=None
+        self, protein_df: pd.DataFrame, dataset=None, precision=None
     ) -> Optional[dict]:
         """Run differential expression analysis.
 
         The optional ``dataset`` parameter is accepted for compatibility with
         the pipeline runner (``pipeline.runner``) and is otherwise unused.
+        ``precision`` holds the quantification's cell precisions for
+        precision-weighted DEqMS.
         """
         from mokume.normalization.irs import detect_condition_from_sdrf
 
@@ -1881,6 +1902,8 @@ class PostprocessingStage:
                 f"FDR method '{self.config.de.fdr_method}' does not apply to "
                 f"{de_method}, which retains its permutation FDR"
             )
+        if self.config.de.precision_weights:
+            self._validate_precision_weights(de_method)
         peptide_counts = self._load_de_peptide_counts(de_method)
 
         if de_method == "ensemble":
@@ -1896,8 +1919,19 @@ class PostprocessingStage:
             sample_to_condition,
             contrasts,
             de_method,
-            peptide_counts,
+            (peptide_counts, precision),
         )
+
+    def _validate_precision_weights(self, de_method: str) -> None:
+        """Precision weights need MaxLFQ/DirectLFQ values tested by DEqMS."""
+        if self.config.quantification.method.lower() not in ("maxlfq", "directlfq"):
+            raise ValueError(
+                "DE precision weights require maxlfq or directlfq quantification"
+            )
+        if de_method != "deqms":
+            raise ValueError(
+                f"DE precision weights require the deqms DE method, not {de_method}"
+            )
 
     def _plot_sample_conditions(self, protein_df: pd.DataFrame) -> Optional[dict]:
         """Return sample-to-condition mapping for plotting when SDRF is available."""
