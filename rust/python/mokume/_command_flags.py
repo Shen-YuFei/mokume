@@ -23,6 +23,7 @@ _ALLOWED = {
         "pibaq_shared pibaq_family_rows pibaq_evidence "
         "directlfq_min_nonan directlfq_num_samples_quadratic "
         "export_peptides export_unnormalized_peptides export_unimputed export_ions "
+        "export_precision "
         "batch_correction batch_method batch_column "
         "batch_covariate batch_nonparametric batch_mean_only "
         "batch_ref irs irs_reference_sample irs_sdrf_column "

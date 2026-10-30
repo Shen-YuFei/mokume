@@ -69,6 +69,7 @@ fn resolve_quantification(
 ) -> mokume_core::Result<QuantificationOptions> {
     let QuantMethodArg { method, topn } = args.quant_method;
     validate_lfq_options(args, method)?;
+    validate_export_precision(args, method)?;
     if method == QuantMethod::Pibaq && args.min_unique.is_some() {
         return Err(MokumeError::InvalidInput {
             message: "piBAQ defines its denominator independently; do not pass --min-unique"
@@ -313,6 +314,20 @@ fn validate_lfq_options(
     Ok(())
 }
 
+fn validate_export_precision(
+    args: &Features2ProteinsArgs,
+    method: QuantMethod,
+) -> mokume_core::Result<()> {
+    if !matches!(method, QuantMethod::MaxLfq | QuantMethod::DirectLfq)
+        && args.export_precision.is_some()
+    {
+        return Err(MokumeError::InvalidInput {
+            message: "--export-precision requires --quant-method maxlfq or directlfq".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn resolve_batch(args: &Features2ProteinsArgs) -> mokume_core::Result<BatchCorrectionConfig> {
     let method_supplied = args.batch_method.is_some();
     let method = args.batch_method.clone().map_or_else(
@@ -458,6 +473,7 @@ fn output_config(args: &Features2ProteinsArgs) -> OutputConfig {
         export_unnormalized_peptides: args.export_unnormalized_peptides.clone(),
         export_unimputed: args.export_unimputed.clone(),
         export_ions: args.export_ions.clone(),
+        export_precision: args.export_precision.clone(),
         format: OutputFormat::PythonCompatible,
     }
 }

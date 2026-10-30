@@ -1456,7 +1456,8 @@ impl FeatureAggregation {
                 directlfq_num_samples_quadratic: config.directlfq.num_samples_quadratic,
                 directlfq_normalize_samples: config.directlfq.normalize_samples,
                 traces: MaxLfqFeatureAggregation::default(),
-                cell_precision: config.differential_expression.precision_weights,
+                cell_precision: config.differential_expression.precision_weights
+                    || config.output.export_precision.is_some(),
                 cached_directlfq: None,
             }),
         }
@@ -4766,6 +4767,24 @@ impl ProteinMatrix {
             .unwrap_or(0)
     }
 
+    /// Write each cell's quantification precision in the layout of the protein
+    /// matrix; a cell without one stays empty.
+    fn write_precision_csv(
+        &mut self,
+        path: &Path,
+        output_format: OutputFormat,
+        drop_empty_samples: bool,
+    ) -> Result<()> {
+        let mut values = ProteinValues::Cells(std::mem::take(&mut self.precision));
+        std::mem::swap(&mut self.values, &mut values);
+        let written = self.write_csv(path, output_format, drop_empty_samples, None);
+        std::mem::swap(&mut self.values, &mut values);
+        if let ProteinValues::Cells(precision) = values {
+            self.precision = precision;
+        }
+        written
+    }
+
     /// Cell precisions of protein `name` over `samples`, zero where none.
     fn sample_precisions(&self, name: &str, samples: &[SampleId]) -> Vec<f64> {
         let protein = self.proteins.get(name);
@@ -5478,6 +5497,7 @@ fn pibaq_only_config(params: &PibaqFromPeptidesParams) -> FeatureToProteinsConfi
             export_unnormalized_peptides: None,
             export_unimputed: None,
             export_ions: None,
+            export_precision: None,
             format: OutputFormat::default(),
         },
         filtering: FilterConfig {
@@ -5842,6 +5862,9 @@ fn finish_protein_matrix(
         drop_empty_samples,
         missing_fill,
     )?;
+    if let Some(path) = &config.output.export_precision {
+        matrix.write_precision_csv(path, config.output.format, drop_empty_samples)?;
+    }
     if config.differential_expression.enabled {
         let mut differential_expression = config.differential_expression.clone();
         differential_expression.method = resolve_de_method(config, || {
@@ -6605,6 +6628,7 @@ fn peptide_export_config(config: &FeatureToPeptidesConfig) -> FeatureToProteinsC
             export_unnormalized_peptides: None,
             export_unimputed: None,
             export_ions: None,
+            export_precision: None,
             format: OutputFormat::PythonCompatible,
         },
         filtering: config.filtering,
@@ -12485,6 +12509,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                 export_unnormalized_peptides: None,
                 export_unimputed: None,
                 export_ions: None,
+                export_precision: None,
                 format: OutputFormat::PythonCompatible,
             },
             filtering: FilterConfig::default(),

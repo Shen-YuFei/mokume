@@ -236,6 +236,9 @@ mean-center, rlr, loess, tmm]"
     #[arg(long = "export-ions", value_name = "FILE")]
     export_ions: Option<PathBuf>,
 
+    #[arg(long = "export-precision", value_name = "FILE")]
+    export_precision: Option<PathBuf>,
+
     #[arg(long = "batch-correction")]
     batch_correction: bool,
 

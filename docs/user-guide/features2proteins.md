@@ -630,6 +630,11 @@ mokume quantify features2proteins \
 mokume quantify features2proteins \
     -p features.parquet -s experiment.sdrf.tsv -o proteins.csv \
     --impute-method minprob --export-unimputed proteins.before-imputation.csv
+
+# Quantification precision of every MaxLFQ cell
+mokume quantify features2proteins \
+    -p features.parquet -s experiment.sdrf.tsv -o proteins.csv \
+    --quant-method maxlfq --export-precision proteins.precision.csv
 ```
 
 `--export-unnormalized-peptides` retains feature filtering and run normalization,
@@ -644,6 +649,12 @@ include `BioReplicate` and `Condition`.
 format after protein-level IRS, sample correlation filtering and coverage
 filtering, but before imputation and batch correction. Neither diagnostic export
 changes quantification, differential expression, or any existing output.
+
+`--export-precision` writes the precisions behind `--de-precision-weights` in
+the final protein matrix's format, with the same proteins and samples. Cells
+that MaxLFQ or DirectLFQ did not quantify, including imputed ones, are empty.
+Pass the table to `mokume.differential_expression(..., precision=...)` to weight
+DEqMS on a matrix outside the command. It does not change any other output.
 
 DirectLFQ, Ratio and SpectralCount reject both peptide exports. `--export-ions`
 is DirectLFQ-only. piBAQ peptide export with dataset-level sample normalization

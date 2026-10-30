@@ -33,6 +33,7 @@ const REQUIRED_FEATURES_TO_PROTEINS_OPTIONS: &[&str] = &[
     "--export-unnormalized-peptides",
     "--export-unimputed",
     "--export-ions",
+    "--export-precision",
     "--batch-correction",
     "--batch-method",
     "--batch-column",

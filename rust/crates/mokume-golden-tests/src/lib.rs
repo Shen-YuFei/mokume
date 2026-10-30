@@ -3836,6 +3836,7 @@ fn run_synthetic_quantification_with(
             export_unnormalized_peptides: None,
             export_unimputed: None,
             export_ions: None,
+            export_precision: None,
             format: OutputFormat::PythonCompatible,
         },
         filtering: FilterConfig {
@@ -3962,6 +3963,7 @@ fn run_ratio_quantification() -> Result<CsvTable, Box<dyn Error>> {
             export_unnormalized_peptides: None,
             export_unimputed: None,
             export_ions: None,
+            export_precision: None,
             format: OutputFormat::PythonCompatible,
         },
         filtering: FilterConfig {
@@ -4078,6 +4080,7 @@ fn run_family_pibaq_quantification_with(pibaq: PibaqConfig) -> Result<CsvTable, 
             export_unnormalized_peptides: None,
             export_unimputed: None,
             export_ions: None,
+            export_precision: None,
             format: OutputFormat::PythonCompatible,
         },
         filtering: FilterConfig {
@@ -4762,6 +4765,7 @@ fn default_sum_config(parquet: PathBuf, sdrf: PathBuf, output: PathBuf) -> Featu
             export_unnormalized_peptides: None,
             export_unimputed: None,
             export_ions: None,
+            export_precision: None,
             format: OutputFormat::PythonCompatible,
         },
         filtering: FilterConfig {
@@ -4830,6 +4834,7 @@ fn run_coverage_quantification() -> Result<CsvTable, Box<dyn Error>> {
             export_unnormalized_peptides: None,
             export_unimputed: None,
             export_ions: None,
+            export_precision: None,
             format: OutputFormat::PythonCompatible,
         },
         filtering: FilterConfig {

@@ -323,6 +323,7 @@ Pass `--help` to any command for the full flag set.
 | `--export-unnormalized-peptides` | none | Rust only: export the same peptide rows before sample normalization, after run normalization and feature filtering |
 | `--export-unimputed` | none | Rust only: export the protein matrix after IRS and sample/coverage filtering, before imputation; requires `--impute-method` |
 | `--export-ions` | none | Export normalized ions (DirectLFQ only) |
+| `--export-precision` | none | Rust only: export each cell's quantification precision in the protein matrix's layout (MaxLFQ/DirectLFQ only) |
 
 MaxLFQ peptide export supports quantile and hierarchical sample normalization.
 It sums the normalized modification/charge species into canonical peptide rows.

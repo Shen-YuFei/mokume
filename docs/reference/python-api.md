@@ -139,7 +139,10 @@ table. Because matrix-level DE has no quantification context, it requires a
 concrete method and rejects `auto`. Protein identifiers must be non-empty and
 unique. `deqms` and ensembles containing `deqms` also require
 `peptide_counts=[...]`, aligned one-to-one with the protein rows and containing
-finite positive integers.
+finite positive integers. For two-group `deqms`, `precision=[...]` adds the
+[precision weights](../concepts/differential-expression.md#precision-weights):
+a matrix shaped like the values with a positive precision for every quantified
+cell and `None` elsewhere, as written by `--export-precision`.
 
 ---
 

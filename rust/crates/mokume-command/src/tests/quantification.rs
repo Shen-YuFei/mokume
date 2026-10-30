@@ -441,6 +441,29 @@ fn de_precision_weights_require_lfq_deqms_two_group() -> mokume_core::Result<()>
     Ok(())
 }
 
+#[test]
+fn export_precision_requires_maxlfq_or_directlfq() -> mokume_core::Result<()> {
+    let parse = |method: &str| {
+        let argv = format!(
+            "mokume quantify features2proteins -p features.parquet -o proteins.csv \
+             --quant-method {method} --export-precision precision.csv"
+        );
+        features_to_proteins_args(Cli::parse_from(argv.split_whitespace())).into_config()
+    };
+    let config = parse("maxlfq")?;
+    assert_eq!(
+        config.output.export_precision.as_deref(),
+        Some(std::path::Path::new("precision.csv"))
+    );
+    let Err(error) = parse("top3") else {
+        panic!("--export-precision was accepted for top3");
+    };
+    assert!(error
+        .to_string()
+        .contains("requires --quant-method maxlfq or directlfq"));
+    Ok(())
+}
+
 fn features_to_proteins_args(cli: Cli) -> Box<Features2ProteinsArgs> {
     let Commands::Quantify(quantify) = cli.command else {
         panic!("expected quantify command");

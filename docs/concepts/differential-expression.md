@@ -135,7 +135,8 @@ group means and residuals then enter the same count-aware moderation.
 
 The option is off by default. On Mokume's LFQ spike-in benchmark it ranked
 true changes slightly better than unweighted DEqMS for both MaxLFQ and
-DirectLFQ.
+DirectLFQ. `--export-precision` writes the cell precisions; the matrix-level
+`mokume.differential_expression` takes them as `precision=`.
 
 ```bash
 mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
