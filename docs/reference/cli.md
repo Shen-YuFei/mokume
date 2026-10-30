@@ -223,6 +223,7 @@ wraps scikit-learn. Install `mokume[analysis]` and call the wheel's Python
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
 | `--de-covariate` | none | SDRF column added to the limma/DEqMS design; repeat for several columns |
 | `--de-block` | none | SDRF column whose levels are random blocks (e.g. the subject) in the limma/DEqMS design |
+| `--de-precision-weights` | off | Weight DEqMS by each cell's MaxLFQ/DirectLFQ quantification precision |
 | `--de-ensemble-method` | `limrots`, `deqms`, `proda` | Ensemble member; repeat to override the defaults |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |
@@ -263,6 +264,14 @@ repeated measures of a subject or for technical replicates nested in biological
 replicates; it combines with `--de-covariate`. Blocks of one sample each, or a
 block column already in the fixed design, give a zero correlation with a
 warning, as in limma. The same method rules as for covariates apply.
+
+`--de-precision-weights` weights each protein value in DEqMS by its
+quantification precision, estimated from the residuals of the protein's ions
+around its MaxLFQ or DirectLFQ profile. It requires `--quant-method maxlfq` or
+`directlfq` and `--de-method deqms` (`auto` resolves to DEqMS only for
+DirectLFQ), and does not combine with `--de-covariate`, `--de-block`, or an
+ensemble. See [Differential Expression
+concepts](../concepts/differential-expression.md#precision-weights).
 
 `--de-method ensemble` runs each member method on the same contrast and combines the per-protein verdicts via top-k consensus: a protein is called UP/DOWN only when at least `--de-ensemble-min-k` members agree on direction and the Cauchy-combined p-value passes the FDR threshold. Eligible non-ROTS members use the requested correction; ROTS and LimROTS retain their native permutation FDR. The Cauchy-combined p-values use BH by default, with BKY or Storey applied when requested and reliable; IHW remains a member-level correction because the combined rows have no IHW covariate. The default members are `limrots`, `deqms`, and `proda`; on a contrast with missing values they run `limma` in place of `limrots`, because LimROTS needs a complete matrix. An explicit `--de-ensemble-method limrots` member still needs a complete matrix.
 

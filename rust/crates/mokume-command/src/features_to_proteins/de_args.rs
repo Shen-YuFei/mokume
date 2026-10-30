@@ -43,6 +43,12 @@ pub(super) struct DeArgs {
     )]
     pub(super) de_block: Option<String>,
 
+    #[arg(
+        long = "de-precision-weights",
+        help = "Weight DEqMS by each cell's MaxLFQ/DirectLFQ quantification precision"
+    )]
+    pub(super) de_precision_weights: bool,
+
     #[arg(long = "de-ensemble-method", value_name = "METHOD")]
     pub(super) de_ensemble_method: Vec<String>,
 

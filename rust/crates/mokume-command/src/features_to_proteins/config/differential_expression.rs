@@ -12,6 +12,7 @@ pub(super) fn resolve_differential_expression(
     let method = args.de.de_method.clone().unwrap_or(defaults.method);
     let resolved_method = resolved_de_method(&method, quantification, args);
     validate_de_method_options(args, &method, resolved_method)?;
+    validate_precision_weights(args, quantification, resolved_method)?;
     if enabled {
         validate_de_requirements(args, &method)?;
     }
@@ -40,6 +41,7 @@ pub(super) fn resolve_differential_expression(
         output: args.de.de_output.clone(),
         covariates: args.de.de_covariate.clone(),
         block: args.de.de_block.clone(),
+        precision_weights: args.de.de_precision_weights,
     })
 }
 
@@ -49,6 +51,7 @@ fn de_options_supplied(args: &Features2ProteinsArgs) -> bool {
         || args.de.de_method.is_some()
         || !args.de.de_covariate.is_empty()
         || args.de.de_block.is_some()
+        || args.de.de_precision_weights
         || !args.de.de_ensemble_method.is_empty()
         || args.de.de_ensemble_min_k.is_some()
         || args.de.de_log2fc_threshold.is_some()
@@ -122,6 +125,32 @@ fn validate_de_method_options(
                 "--de-fdr-method does not apply to {resolved_method}, which retains its permutation FDR"
             ),
         });
+    }
+    Ok(())
+}
+
+fn validate_precision_weights(
+    args: &Features2ProteinsArgs,
+    quantification: QuantMethod,
+    resolved_method: &str,
+) -> mokume_core::Result<()> {
+    if !args.de.de_precision_weights {
+        return Ok(());
+    }
+    if !matches!(quantification, QuantMethod::MaxLfq | QuantMethod::DirectLfq) {
+        return Err(invalid_input(
+            "--de-precision-weights requires --quant-method maxlfq or directlfq",
+        ));
+    }
+    if !resolved_method.eq_ignore_ascii_case("deqms") {
+        return Err(invalid_input(
+            "--de-precision-weights requires --de-method deqms",
+        ));
+    }
+    if !args.de.de_covariate.is_empty() || args.de.de_block.is_some() {
+        return Err(invalid_input(
+            "--de-precision-weights does not apply to --de-covariate or --de-block designs",
+        ));
     }
     Ok(())
 }

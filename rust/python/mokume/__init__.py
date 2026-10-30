@@ -236,8 +236,10 @@ def differential_expression(proteins, values, n_a, n_b, method, **options):
     ``values`` is a row-major linear-intensity matrix whose first ``n_a``
     columns are group A and next ``n_b`` columns are group B. Missing cells may
     be ``None`` or non-finite floats. ``peptide_counts`` is required for DEqMS
-    and ensembles containing DEqMS. Other options include ``ensemble_methods``,
-    thresholds, condition labels, and ``threads``.
+    and ensembles containing DEqMS. ``precision``, a matrix of the same shape
+    holding each cell's quantification precision (``None``/0 where unknown),
+    switches DEqMS to precision weights. Other options include
+    ``ensemble_methods``, thresholds, condition labels, and ``threads``.
     """
     return _differential_expression(
         list(proteins),

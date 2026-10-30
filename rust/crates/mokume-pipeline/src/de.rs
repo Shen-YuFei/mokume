@@ -57,10 +57,10 @@ use std::path::{Path, PathBuf};
 use mokume_core::{DifferentialExpressionConfig, MokumeError, Result, SampleId};
 use mokume_io::{normalize_file_key, SdrfRawTable, SdrfTable};
 use mokume_stats::de::{
-    adaptive_adjust, combine_de_results, deqms_two_group, estimate_effect_size_gate,
-    ihw_correction, limma_two_group, limrots_two_group, proda_two_group, rots_two_group,
-    AdaptiveFdrMethod, AppliedFdrMethod, DeResult, EffectSizeGateMethod, EnsembleResult,
-    Significance,
+    adaptive_adjust, combine_de_results, deqms_two_group, deqms_two_group_weighted,
+    estimate_effect_size_gate, ihw_correction, limma_two_group, limrots_two_group, proda_two_group,
+    rots_two_group, AdaptiveFdrMethod, AppliedFdrMethod, DeResult, EffectSizeGateMethod,
+    EnsembleResult, PrecisionRows, Significance,
 };
 
 use crate::{create_parent_dir, invalid_input, ProteinMatrix};
@@ -142,6 +142,16 @@ pub enum MatrixDifferentialExpressionResults {
     Ensemble(Vec<EnsembleResult>),
 }
 
+/// Optional row and cell inputs of [`differential_expression_matrix`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MatrixDeInputs<'a> {
+    /// Peptide count of each row, required by DEqMS.
+    pub peptide_counts: Option<&'a [f64]>,
+    /// Quantification precision (1/SE^2) of each cell, zero or NaN where
+    /// unknown, for precision-weighted DEqMS.
+    pub precision: Option<&'a [Vec<f64>]>,
+}
+
 /// Run one two-group differential-expression analysis on a row-major linear
 /// protein matrix without loading QPX or writing a result file.
 ///
@@ -155,18 +165,18 @@ pub fn differential_expression_matrix(
     values: &[Vec<f64>],
     n_a: usize,
     n_b: usize,
-    peptide_counts: Option<&[f64]>,
+    inputs: MatrixDeInputs<'_>,
     config: &DifferentialExpressionConfig,
     threads: Option<usize>,
 ) -> Result<MatrixDifferentialExpressionResults> {
     validate_config(config)?;
-    validate_matrix_de_inputs(proteins, values, n_a, n_b, peptide_counts, config)?;
+    validate_matrix_de_inputs(proteins, values, n_a, n_b, inputs, config)?;
 
     crate::threading::install(threads, || {
         let rows = log2_matrix(values);
         let row_refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
         let default_counts;
-        let counts = match peptide_counts {
+        let counts = match inputs.peptide_counts {
             Some(counts) => counts,
             None => {
                 default_counts = vec![1.0; values.len()];
@@ -177,6 +187,7 @@ pub fn differential_expression_matrix(
             proteins,
             rows: &row_refs,
             peptide_counts: counts,
+            precision: inputs.precision,
             n_a,
             n_b,
         };
@@ -196,12 +207,23 @@ fn validate_matrix_de_inputs(
     values: &[Vec<f64>],
     n_a: usize,
     n_b: usize,
-    peptide_counts: Option<&[f64]>,
+    inputs: MatrixDeInputs<'_>,
     config: &DifferentialExpressionConfig,
 ) -> Result<()> {
     validate_matrix_shape(proteins.len(), values, n_a, n_b)?;
     validate_protein_identifiers(proteins)?;
-    validate_matrix_peptide_counts(peptide_counts, values.len(), config)
+    validate_matrix_peptide_counts(inputs.peptide_counts, values.len(), config)?;
+    let mismatched = inputs.precision.is_some_and(|precision| {
+        precision.len() != values.len()
+            || precision
+                .iter()
+                .zip(values)
+                .any(|(weights, row)| weights.len() != row.len())
+    });
+    if mismatched {
+        return Err(invalid_input("precision must have the shape of the matrix"));
+    }
+    Ok(())
 }
 
 fn validate_matrix_shape(
@@ -318,22 +340,8 @@ fn run_one_contrast(
     output: Option<&Path>,
     config: &DifferentialExpressionConfig,
 ) -> Result<()> {
-    let samples_a = group_samples(samples, condition_by_sample, &contrast.cond_a);
-    let samples_b = group_samples(samples, condition_by_sample, &contrast.cond_b);
-    if samples_a.is_empty() {
-        return Err(invalid_input(format!(
-            "No samples for '{}'. Available: {}",
-            contrast.cond_a,
-            available_conditions(condition_by_sample)
-        )));
-    }
-    if samples_b.is_empty() {
-        return Err(invalid_input(format!(
-            "No samples for '{}'. Available: {}",
-            contrast.cond_b,
-            available_conditions(condition_by_sample)
-        )));
-    }
+    let samples_a = condition_samples(samples, condition_by_sample, &contrast.cond_a)?;
+    let samples_b = condition_samples(samples, condition_by_sample, &contrast.cond_b)?;
 
     // Build the log2 protein x sample matrix with group A columns first, then
     // group B, matching the column order the two-group methods expect.
@@ -341,10 +349,17 @@ fn run_one_contrast(
     let (proteins, rows) = matrix.log2_rows(&ordered)?;
     let row_refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let peptide_counts = build_count_vector(matrix, &proteins, &ordered);
+    let precision = config.precision_weights.then(|| {
+        proteins
+            .iter()
+            .map(|protein| matrix.sample_precisions(protein, &ordered))
+            .collect::<Vec<_>>()
+    });
     let prepared = Prepared {
         proteins: &proteins,
         rows: &row_refs,
         peptide_counts: &peptide_counts,
+        precision: precision.as_deref(),
         n_a: samples_a.len(),
         n_b: samples_b.len(),
     };
@@ -363,13 +378,30 @@ fn run_one_contrast(
     }
 }
 
+/// Samples of `condition`, in matrix order; an error when it has none.
+fn condition_samples(
+    samples: &[(SampleId, &str)],
+    condition_by_sample: &HashMap<String, String>,
+    condition: &str,
+) -> Result<Vec<SampleId>> {
+    let found = group_samples(samples, condition_by_sample, condition);
+    if found.is_empty() {
+        return Err(invalid_input(format!(
+            "No samples for '{condition}'. Available: {}",
+            available_conditions(condition_by_sample)
+        )));
+    }
+    Ok(found)
+}
+
 /// The per-contrast inputs shared by every single-method run: the
-/// contrast-ordered protein names, the log2 rows, the deqms count vector, and
-/// the two group sizes.
+/// contrast-ordered protein names, the log2 rows, the deqms count vector, the
+/// cell precisions of precision-weighted DEqMS, and the two group sizes.
 struct Prepared<'a> {
     proteins: &'a [String],
     rows: &'a [&'a [f64]],
     peptide_counts: &'a [f64],
+    precision: Option<&'a [Vec<f64>]>,
     n_a: usize,
     n_b: usize,
 }
@@ -425,15 +457,27 @@ fn run_method_bh(
             // moderation runs; an all-equal vector still trips the
             // `ptp(log2 counts) < 1e-10` guard and falls back to plain eBayes
             // (== limma), so behaviour degrades gracefully.
-            deqms_two_group(
-                proteins,
-                rows,
-                n_a,
-                n_b,
-                prepared.peptide_counts,
-                fdr,
-                log2fc,
-            )
+            match prepared.precision {
+                Some(precision) => {
+                    let precision = precision.iter().map(Vec::as_slice).collect::<Vec<_>>();
+                    let data = PrecisionRows {
+                        rows,
+                        precision: &precision,
+                        n_a,
+                        n_b,
+                    };
+                    deqms_two_group_weighted(proteins, data, prepared.peptide_counts, fdr, log2fc)
+                }
+                None => deqms_two_group(
+                    proteins,
+                    rows,
+                    n_a,
+                    n_b,
+                    prepared.peptide_counts,
+                    fdr,
+                    log2fc,
+                ),
+            }
         }
         MemberMethod::Limma => limma_two_group(proteins, rows, n_a, n_b, fdr, log2fc),
     })
@@ -723,6 +767,9 @@ pub(crate) fn validate_config(config: &DifferentialExpressionConfig) -> Result<(
     }
     if is_ensemble {
         validated_ensemble_member_names(config)?;
+    }
+    if config.precision_weights && method != "deqms" {
+        return Err(invalid_input("precision weights require DEqMS"));
     }
     validate_de_thresholds(config)?;
     validate_effect_size_gate(config)
@@ -1253,7 +1300,8 @@ mod tests {
         available_conditions, build_count_vector, classify_significance, condition_by_sample,
         differential_expression_matrix, finalize_ensemble_results, finalize_member_results,
         run_differential_expression, sample_condition, shorten_factor_label, split_contrast,
-        validated_ensemble_member_names, write_de_csv, Contrast, MemberMethod, Prepared,
+        validated_ensemble_member_names, write_de_csv, Contrast, MatrixDeInputs, MemberMethod,
+        Prepared,
     };
     use crate::{CellKey, ProteinMatrix, ProteinValues};
 
@@ -1386,6 +1434,7 @@ mod tests {
             // protein 0 + 1, which is what this 6-protein fixture exercises
             // (< 10 valid points -> eBayes).
             peptide_counts: HashMap::new(),
+            precision: HashMap::new(),
             values: ProteinValues::Cells(values),
         })
     }
@@ -1417,6 +1466,7 @@ mod tests {
             proteins: &[],
             rows: &[],
             peptide_counts: &[],
+            precision: None,
             n_a: 3,
             n_b: 3,
         };
@@ -1465,6 +1515,7 @@ mod tests {
             allowed_proteins: HashSet::new(),
             excluded_samples: HashSet::new(),
             peptide_counts,
+            precision: HashMap::new(),
             values: ProteinValues::Cells(HashMap::new()),
         };
 
@@ -1671,12 +1722,25 @@ mod tests {
             ..DifferentialExpressionConfig::default()
         };
 
-        let Err(error) =
-            differential_expression_matrix(&proteins, &values, 2, 2, None, &config, Some(2))
-        else {
+        let Err(error) = differential_expression_matrix(
+            &proteins,
+            &values,
+            2,
+            2,
+            MatrixDeInputs::default(),
+            &config,
+            Some(2),
+        ) else {
             panic!("Inf must be rejected");
         };
         assert!(error.to_string().contains("contains an infinite value"));
+    }
+
+    fn counted(counts: &[f64]) -> MatrixDeInputs<'_> {
+        MatrixDeInputs {
+            peptide_counts: Some(counts),
+            ..MatrixDeInputs::default()
+        }
     }
 
     #[test]
@@ -1688,10 +1752,11 @@ mod tests {
             method: "deqms".to_owned(),
             ..DifferentialExpressionConfig::default()
         };
+        let run = |inputs: MatrixDeInputs<'_>| {
+            differential_expression_matrix(&proteins, &values, 2, 2, inputs, &config, Some(2))
+        };
 
-        let Err(error) =
-            differential_expression_matrix(&proteins, &values, 2, 2, None, &config, Some(2))
-        else {
+        let Err(error) = run(MatrixDeInputs::default()) else {
             panic!("DEqMS accepted missing peptide counts");
         };
         assert!(error.to_string().contains("peptide_counts are required"));
@@ -1702,30 +1767,13 @@ mod tests {
             vec![1.5, 2.0],
             vec![f64::NAN, 2.0],
         ] {
-            let Err(error) = differential_expression_matrix(
-                &proteins,
-                &values,
-                2,
-                2,
-                Some(&counts),
-                &config,
-                Some(2),
-            ) else {
+            let Err(error) = run(counted(&counts)) else {
                 panic!("DEqMS accepted invalid peptide counts");
             };
             assert!(error.to_string().contains("finite positive integers"));
         }
 
-        assert!(differential_expression_matrix(
-            &proteins,
-            &values,
-            2,
-            2,
-            Some(&[1.0, 2.0]),
-            &config,
-            Some(2),
-        )
-        .is_ok());
+        assert!(run(counted(&[1.0, 2.0])).is_ok());
     }
 
     #[test]
@@ -1746,7 +1794,7 @@ mod tests {
                 &values,
                 2,
                 2,
-                None,
+                MatrixDeInputs::default(),
                 &config,
                 Some(2),
             )
@@ -1765,9 +1813,15 @@ mod tests {
             ..DifferentialExpressionConfig::default()
         };
 
-        let Err(error) =
-            differential_expression_matrix(&proteins, &values, 2, 2, None, &config, Some(2))
-        else {
+        let Err(error) = differential_expression_matrix(
+            &proteins,
+            &values,
+            2,
+            2,
+            MatrixDeInputs::default(),
+            &config,
+            Some(2),
+        ) else {
             panic!("DEqMS ensemble accepted missing peptide counts");
         };
         assert!(error.to_string().contains("peptide_counts are required"));
@@ -1783,7 +1837,7 @@ mod tests {
             &values,
             2,
             2,
-            None,
+            MatrixDeInputs::default(),
             &without_deqms,
             Some(2),
         )
@@ -1807,7 +1861,15 @@ mod tests {
             ..DifferentialExpressionConfig::default()
         };
         let run = |values: &[Vec<f64>], config: &DifferentialExpressionConfig| {
-            differential_expression_matrix(&proteins, values, 2, 2, Some(&counts), config, Some(2))
+            differential_expression_matrix(
+                &proteins,
+                values,
+                2,
+                2,
+                counted(&counts),
+                config,
+                Some(2),
+            )
         };
 
         // On a complete contrast the default members still run LimROTS, which
@@ -2318,8 +2380,9 @@ mod tests {
             .map(|r| r.iter().map(|v| v.exp2()).collect())
             .collect::<Vec<_>>();
         let config = de_config(&dir.join("unused.csv"), "limrots");
+        let inputs = MatrixDeInputs::default();
         let output =
-            differential_expression_matrix(&proteins, &values, 4, 4, None, &config, Some(4))?;
+            differential_expression_matrix(&proteins, &values, 4, 4, inputs, &config, Some(4))?;
         let super::MatrixDifferentialExpressionResults::Standard(results) = output else {
             return Err("expected standard LimROTS results".into());
         };

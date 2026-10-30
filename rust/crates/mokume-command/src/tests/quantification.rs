@@ -411,6 +411,36 @@ fn de_block_enables_differential_expression() -> mokume_core::Result<()> {
     Ok(())
 }
 
+#[test]
+fn de_precision_weights_require_lfq_deqms_two_group() -> mokume_core::Result<()> {
+    let base = "mokume quantify features2proteins -p features.parquet -o proteins.csv \
+                -s samples.sdrf.tsv --de-contrast A B --de-output de.csv --de-precision-weights";
+    let parse = |extra: &str| {
+        let argv = base.split_whitespace().chain(extra.split_whitespace());
+        features_to_proteins_args(Cli::parse_from(argv)).into_config()
+    };
+    let config = parse("--quant-method directlfq")?;
+    assert!(config.differential_expression.enabled);
+    assert!(config.differential_expression.precision_weights);
+    for (extra, expected) in [
+        (
+            "--quant-method sum --de-method deqms",
+            "requires --quant-method maxlfq or directlfq",
+        ),
+        ("--quant-method maxlfq", "requires --de-method deqms"),
+        (
+            "--quant-method directlfq --de-block batch",
+            "does not apply to --de-covariate or --de-block",
+        ),
+    ] {
+        let Err(error) = parse(extra) else {
+            panic!("{extra} was accepted");
+        };
+        assert!(error.to_string().contains(expected), "{extra}: {error}");
+    }
+    Ok(())
+}
+
 fn features_to_proteins_args(cli: Cli) -> Box<Features2ProteinsArgs> {
     let Commands::Quantify(quantify) = cli.command else {
         panic!("expected quantify command");

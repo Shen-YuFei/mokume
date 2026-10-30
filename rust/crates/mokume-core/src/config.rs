@@ -759,6 +759,9 @@ pub struct DifferentialExpressionConfig {
     /// `duplicateCorrelation` + `lmFit(block =)`); `None` fits no block.
     #[serde(default)]
     pub block: Option<String>,
+    /// Weight DEqMS by each cell's MaxLFQ/DirectLFQ quantification precision.
+    #[serde(default)]
+    pub precision_weights: bool,
 }
 
 impl Default for DifferentialExpressionConfig {
@@ -777,6 +780,7 @@ impl Default for DifferentialExpressionConfig {
             output: None,
             covariates: Vec::new(),
             block: None,
+            precision_weights: false,
         }
     }
 }

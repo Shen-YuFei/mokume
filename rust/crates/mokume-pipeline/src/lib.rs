@@ -27,8 +27,9 @@ use mokume_normalization::{
     SampleNormalizationMethod,
 };
 use mokume_quant::{
-    direct_lfq_aligned, direct_lfq_aligned_with_ions, solve_max_lfq_with_stabilization,
-    DirectLfqIon, DirectLfqNormalizedIon, PeptideMeasurement,
+    cell_precisions, direct_lfq_aligned, direct_lfq_aligned_with_ions, profile_residuals,
+    solve_max_lfq_with_stabilization, DirectLfqIon, DirectLfqNormalizedIon, DirectLfqResult,
+    PeptideMeasurement, ProfileResiduals,
 };
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
@@ -45,7 +46,7 @@ mod tmt;
 
 use memory::MemoryPlan;
 
-pub use de::{differential_expression_matrix, MatrixDifferentialExpressionResults};
+pub use de::{differential_expression_matrix, MatrixDeInputs, MatrixDifferentialExpressionResults};
 pub use matrix::{impute_matrix, normalize_matrix};
 pub use maxlfq::run_maxlfq_from_peptides_with_threads;
 
@@ -680,7 +681,7 @@ impl FeatureToProteinState {
         } else {
             &self.index.peptide_to_contextual_canonical
         };
-        let values = self.aggregation.finalize(
+        let (values, precision) = self.aggregation.finalize(
             &allowed_cells,
             &mut self.proteins,
             collapse_mapping,
@@ -694,6 +695,7 @@ impl FeatureToProteinState {
             allowed_proteins,
             excluded_samples: HashSet::new(),
             peptide_counts,
+            precision,
             values,
         })
     }
@@ -1250,9 +1252,12 @@ enum FeatureAggregation {
         /// Contextual ion maxima. MaxLFQ preserves modification and charge;
         /// DirectLFQ collapses them into canonical peptide traces.
         traces: MaxLfqFeatureAggregation,
+        /// Also estimate each cell's quantification precision for
+        /// `--de-precision-weights`.
+        cell_precision: bool,
         /// Populated only when DirectLFQ ion export runs before matrix
         /// materialization, avoiding a second solver pass.
-        cached_directlfq_values: Option<HashMap<ProteinId, Vec<(SampleId, f64)>>>,
+        cached_directlfq: Option<DirectLfqCells>,
     },
 }
 
@@ -1451,7 +1456,8 @@ impl FeatureAggregation {
                 directlfq_num_samples_quadratic: config.directlfq.num_samples_quadratic,
                 directlfq_normalize_samples: config.directlfq.normalize_samples,
                 traces: MaxLfqFeatureAggregation::default(),
-                cached_directlfq_values: None,
+                cell_precision: config.differential_expression.precision_weights,
+                cached_directlfq: None,
             }),
         }
     }
@@ -1563,7 +1569,8 @@ impl FeatureAggregation {
             directlfq_num_samples_quadratic,
             directlfq_normalize_samples,
             traces,
-            cached_directlfq_values,
+            cell_precision,
+            cached_directlfq,
             ..
         } = self
         else {
@@ -1594,8 +1601,7 @@ impl FeatureAggregation {
             canonical_peptides,
             samples,
         )?;
-        *cached_directlfq_values =
-            Some(remap_directlfq_values(result.protein_quantities, &prepared));
+        *cached_directlfq = Some(directlfq_cells(result, &prepared, *cell_precision));
         Ok(())
     }
 
@@ -1632,6 +1638,7 @@ impl FeatureAggregation {
                 directlfq_min_nonan,
                 directlfq_num_samples_quadratic,
                 directlfq_normalize_samples,
+                cell_precision,
                 ..
             } => Self::Lfq {
                 method: *method,
@@ -1642,7 +1649,8 @@ impl FeatureAggregation {
                 directlfq_num_samples_quadratic: *directlfq_num_samples_quadratic,
                 directlfq_normalize_samples: *directlfq_normalize_samples,
                 traces: MaxLfqFeatureAggregation::default(),
-                cached_directlfq_values: None,
+                cell_precision: *cell_precision,
+                cached_directlfq: None,
             },
             Self::Pibaq(_) | Self::Ratio(_) => return None,
         })
@@ -1683,6 +1691,7 @@ impl FeatureAggregation {
         }
     }
 
+    /// The protein values and, for `cell_precision`, each cell's precision.
     fn finalize(
         self,
         allowed_cells: &HashSet<CellKey>,
@@ -1690,8 +1699,8 @@ impl FeatureAggregation {
         peptide_to_canonical: &HashMap<PeptideId, PeptideId>,
         canonical_peptides: &StringIdRegistry<PeptideId>,
         samples: &StringIdRegistry<SampleId>,
-    ) -> Result<ProteinValues> {
-        Ok(match self {
+    ) -> Result<(ProteinValues, HashMap<CellKey, f64>)> {
+        let values = match self {
             Self::Sum(cells) => ProteinValues::Cells(
                 cells
                     .into_iter()
@@ -1771,42 +1780,47 @@ impl FeatureAggregation {
                 directlfq_num_samples_quadratic,
                 directlfq_normalize_samples,
                 traces,
-                cached_directlfq_values,
+                cell_precision,
+                cached_directlfq,
                 ..
             } => {
-                let values = if let Some(values) = cached_directlfq_values {
-                    values
-                } else {
-                    let mut prepared = prepare_directlfq_ions(
-                        traces.into_directlfq_sums(),
-                        allowed_cells,
-                        proteins,
-                        canonical_peptides,
-                        samples,
-                    );
-                    let values = direct_lfq_aligned(
-                        std::mem::take(&mut prepared.ions),
-                        directlfq_min_nonan,
-                        directlfq_num_samples_quadratic,
-                        directlfq_normalize_samples,
-                    );
-                    remap_directlfq_values(values, &prepared)
-                };
-                ProteinValues::Rows(values)
+                if let Some((values, precision)) = cached_directlfq {
+                    return Ok((ProteinValues::Rows(values), precision));
+                }
+                let prepared = prepare_directlfq_ions(
+                    traces.into_directlfq_sums(),
+                    allowed_cells,
+                    proteins,
+                    canonical_peptides,
+                    samples,
+                );
+                let (values, precision) = solve_directlfq(
+                    prepared,
+                    directlfq_min_nonan,
+                    directlfq_num_samples_quadratic,
+                    directlfq_normalize_samples,
+                    cell_precision,
+                );
+                return Ok((ProteinValues::Rows(values), precision));
             }
             Self::Lfq {
                 traces,
                 maxlfq_min_ratio_count,
                 stabilize,
+                cell_precision,
                 ..
-            } => traces.into_protein_values(
-                allowed_cells,
-                proteins,
-                samples,
-                maxlfq_min_ratio_count,
-                stabilize,
-            )?,
-        })
+            } => {
+                return traces.into_protein_values(
+                    allowed_cells,
+                    proteins,
+                    samples,
+                    maxlfq_min_ratio_count,
+                    stabilize,
+                    cell_precision,
+                );
+            }
+        };
+        Ok((values, HashMap::new()))
     }
 }
 
@@ -1842,7 +1856,8 @@ impl MaxLfqFeatureAggregation {
         samples: &StringIdRegistry<SampleId>,
         min_ratio_count: usize,
         stabilize: bool,
-    ) -> Result<ProteinValues> {
+        cell_precision: bool,
+    ) -> Result<(ProteinValues, HashMap<CellKey, f64>)> {
         let traces = self.into_species_traces();
         let mut sample_ids = allowed_cells
             .iter()
@@ -1874,15 +1889,12 @@ impl MaxLfqFeatureAggregation {
                     warn!(protein = ?proteins.resolve(protein), components = result.components.len(),
                         "MaxLFQ sample graph is disconnected; between-component ratios are not identifiable");
                 }
-                Ok((protein, result.intensities.into_iter().filter(|(_, x)| *x > 0.0).collect::<Vec<_>>(), result.stabilized_pairs))
+                let values = result.intensities.into_iter().filter(|(_, x)| *x > 0.0).collect::<Vec<_>>();
+                let residuals = cell_precision.then(|| maxlfq_residuals(measurements, &values));
+                Ok((protein, values, result.stabilized_pairs, residuals))
             }).collect::<Result<Vec<_>>>()?;
         maxlfq::log_stabilization(min_ratio_count, stabilize, rows.iter().map(|row| row.2));
-        Ok(ProteinValues::Rows(
-            rows.into_iter()
-                .map(|(protein, values, _)| (protein, values))
-                .filter(|(_, values)| !values.is_empty())
-                .collect(),
-        ))
+        Ok(maxlfq_values_and_precision(rows))
     }
 
     fn push(&mut self, measurement: AggregationMeasurement<'_>) {
@@ -3888,6 +3900,9 @@ struct ProteinMatrix {
     /// DE path (the count-aware `spectraCounteBayes` moderation); every other
     /// stage ignores it.
     peptide_counts: HashMap<CellKey, usize>,
+    /// Per-(protein, sample) quantification precision (1/SE^2) of MaxLFQ and
+    /// DirectLFQ cells, filled only for `--de-precision-weights`.
+    precision: HashMap<CellKey, f64>,
     values: ProteinValues,
 }
 
@@ -4748,6 +4763,20 @@ impl ProteinMatrix {
             })
             .min()
             .unwrap_or(0)
+    }
+
+    /// Cell precisions of protein `name` over `samples`, zero where none.
+    fn sample_precisions(&self, name: &str, samples: &[SampleId]) -> Vec<f64> {
+        let protein = self.proteins.get(name);
+        samples
+            .iter()
+            .map(|&sample| {
+                protein
+                    .and_then(|protein| self.precision.get(&CellKey { protein, sample }))
+                    .copied()
+                    .unwrap_or(0.0)
+            })
+            .collect()
     }
 
     fn set_value(&mut self, protein: ProteinId, sample: SampleId, value: f64) {
@@ -5933,6 +5962,7 @@ fn spectral_count_matrix(
         allowed_proteins,
         excluded_samples: HashSet::new(),
         peptide_counts,
+        precision: HashMap::new(),
         values: ProteinValues::Cells(values),
     })
 }
@@ -8278,6 +8308,143 @@ fn prepare_directlfq_ions(
         lexical_to_sample,
         solver_samples,
     }
+}
+
+/// One solved MaxLFQ protein: its positive values, the stabilized ratio pairs,
+/// and its ion residuals when cell precision is requested.
+type MaxLfqRow = (
+    ProteinId,
+    Vec<(SampleId, f64)>,
+    usize,
+    Option<ProfileResiduals>,
+);
+
+/// The proteins with values, and the cell precisions of every protein with
+/// residuals.
+fn maxlfq_values_and_precision(rows: Vec<MaxLfqRow>) -> (ProteinValues, HashMap<CellKey, f64>) {
+    let mut residuals = Vec::new();
+    let values = rows
+        .into_iter()
+        .filter_map(|(protein, values, _, fit)| {
+            residuals.extend(fit.map(|fit| (protein, fit)));
+            (!values.is_empty()).then_some((protein, values))
+        })
+        .collect();
+    let precision = cell_precisions(&residuals)
+        .into_iter()
+        .map(|((protein, sample), value)| (CellKey { protein, sample }, value))
+        .collect();
+    (ProteinValues::Rows(values), precision)
+}
+
+/// One MaxLFQ protein's species traces around its solved profile, ions in
+/// species order and samples in id order.
+fn maxlfq_residuals(
+    mut measurements: Vec<PeptideMeasurement>,
+    profile: &[(SampleId, f64)],
+) -> ProfileResiduals {
+    measurements.sort_by_key(|measurement| (measurement.peptide.get(), measurement.sample.get()));
+    let ions = measurements
+        .chunk_by(|left, right| left.peptide == right.peptide)
+        .map(|ion| {
+            log2_present(
+                ion.iter()
+                    .map(|measurement| (measurement.sample, measurement.intensity)),
+            )
+        })
+        .collect::<Vec<_>>();
+    profile_residuals(&ions, &log2_present(profile.iter().copied()))
+}
+
+/// DirectLFQ protein values keyed by the matrix ids, with their cell
+/// precisions when requested.
+type DirectLfqCells = (
+    HashMap<ProteinId, Vec<(SampleId, f64)>>,
+    HashMap<CellKey, f64>,
+);
+
+/// Solve DirectLFQ on the prepared ions; the aligned ions are kept only for
+/// the cell precisions.
+fn solve_directlfq(
+    mut prepared: PreparedDirectLfq,
+    min_nonan: usize,
+    num_samples_quadratic: usize,
+    normalize_samples: bool,
+    cell_precision: bool,
+) -> DirectLfqCells {
+    let ions = std::mem::take(&mut prepared.ions);
+    if !cell_precision {
+        let values = direct_lfq_aligned(ions, min_nonan, num_samples_quadratic, normalize_samples);
+        return (remap_directlfq_values(values, &prepared), HashMap::new());
+    }
+    let result =
+        direct_lfq_aligned_with_ions(ions, min_nonan, num_samples_quadratic, normalize_samples);
+    directlfq_cells(result, &prepared, true)
+}
+
+fn directlfq_cells(
+    result: DirectLfqResult,
+    prepared: &PreparedDirectLfq,
+    cell_precision: bool,
+) -> DirectLfqCells {
+    let precision = if cell_precision {
+        directlfq_precision(&result, prepared)
+    } else {
+        HashMap::new()
+    };
+    (
+        remap_directlfq_values(result.protein_quantities, prepared),
+        precision,
+    )
+}
+
+/// Cell precisions of a DirectLFQ run, from its aligned ions around each
+/// protein's profile, keyed by the matrix ids.
+fn directlfq_precision(
+    result: &DirectLfqResult,
+    prepared: &PreparedDirectLfq,
+) -> HashMap<CellKey, f64> {
+    let mut ions = HashMap::<ProteinId, Vec<Vec<(SampleId, f64)>>>::new();
+    for ion in &result.normalized_ions {
+        ions.entry(ion.protein)
+            .or_default()
+            .push(log2_present(ion.quantities.iter().copied()));
+    }
+    let residuals = result
+        .protein_quantities
+        .par_iter()
+        .map(|(protein, values)| {
+            let protein_ions = ions.get(protein).map_or(&[][..], Vec::as_slice);
+            (
+                *protein,
+                profile_residuals(protein_ions, &log2_present(values.iter().copied())),
+            )
+        })
+        .collect::<Vec<_>>();
+    cell_precisions(&residuals)
+        .into_iter()
+        .map(|((protein, sample), value)| {
+            let protein = prepared
+                .lexical_to_protein
+                .get(&protein)
+                .copied()
+                .unwrap_or(protein);
+            let sample = prepared
+                .lexical_to_sample
+                .get(&sample)
+                .copied()
+                .unwrap_or(sample);
+            (CellKey { protein, sample }, value)
+        })
+        .collect()
+}
+
+/// Log2 of the positive finite intensities.
+fn log2_present(values: impl Iterator<Item = (SampleId, f64)>) -> Vec<(SampleId, f64)> {
+    values
+        .filter(|(_, value)| value.is_finite() && *value > 0.0)
+        .map(|(sample, value)| (sample, value.log2()))
+        .collect()
 }
 
 fn remap_directlfq_values(
@@ -11241,6 +11408,7 @@ mod tests {
             allowed_proteins: protein_ids[..2].iter().copied().collect(),
             excluded_samples: HashSet::new(),
             peptide_counts: HashMap::new(),
+            precision: HashMap::new(),
             values: ProteinValues::Cells(cells),
         };
 
@@ -11414,6 +11582,7 @@ mod tests {
             allowed_proteins: protein_ids.iter().copied().collect(),
             excluded_samples: HashSet::new(),
             peptide_counts: HashMap::new(),
+            precision: HashMap::new(),
             values: ProteinValues::Cells(cells),
         };
         let sdrf = SdrfTable::from_reader(
@@ -11474,6 +11643,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             allowed_proteins: protein_ids.iter().copied().collect(),
             excluded_samples: HashSet::new(),
             peptide_counts: HashMap::new(),
+            precision: HashMap::new(),
             values: ProteinValues::Cells(cells),
         };
 
@@ -11807,6 +11977,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             allowed_proteins,
             excluded_samples: HashSet::new(),
             peptide_counts: std::collections::HashMap::new(),
+            precision: std::collections::HashMap::new(),
             values: ProteinValues::Cells(cells),
         };
 
@@ -11887,6 +12058,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             allowed_proteins: ids.iter().copied().collect(),
             excluded_samples: HashSet::new(),
             peptide_counts: std::collections::HashMap::new(),
+            precision: std::collections::HashMap::new(),
             values: ProteinValues::Cells(cells),
         };
         (matrix, sample_ids, ids)
@@ -12005,6 +12177,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                     allowed_proteins,
                     excluded_samples: HashSet::new(),
                     peptide_counts: std::collections::HashMap::new(),
+                    precision: std::collections::HashMap::new(),
                     values: ProteinValues::Cells(cells),
                 },
                 sample_ids,
@@ -12109,6 +12282,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                     allowed_proteins,
                     excluded_samples: HashSet::new(),
                     peptide_counts: std::collections::HashMap::new(),
+                    precision: std::collections::HashMap::new(),
                     values: ProteinValues::Cells(cells),
                 },
                 sample_ids,
@@ -12173,6 +12347,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             allowed_proteins: [p1, p2].into_iter().collect(),
             excluded_samples: HashSet::new(),
             peptide_counts: std::collections::HashMap::new(),
+            precision: std::collections::HashMap::new(),
             values: ProteinValues::Cells(cells),
         };
 
@@ -12387,7 +12562,8 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                 peptide_traces,
                 ..super::MaxLfqFeatureAggregation::default()
             },
-            cached_directlfq_values: None,
+            cell_precision: false,
+            cached_directlfq: None,
         }
     }
 
@@ -12466,6 +12642,7 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
                 &fixture.canonical_peptides,
                 &StringIdRegistry::<SampleId>::new(),
             )?
+            .0
             .protein_ids())
     }
 
@@ -12488,6 +12665,65 @@ B1\tB1.raw\tB\nB2\tB2.raw\tB\n"
             !direct_proteins.contains(&fixture.scattered),
             "DirectLFQ applies the same per-cell unique-peptide gate"
         );
+        Ok(())
+    }
+
+    // With `cell_precision`, both LFQ methods give a finite precision for
+    // exactly the cells they quantify, keyed by the matrix ids.
+    #[test]
+    fn lfq_cell_precision_covers_quantified_cells() -> mokume_core::Result<()> {
+        let fixture = lfq_min_unique_fixture();
+        let protein = fixture.dense;
+        let mut sums = HashMap::new();
+        for (index, sample) in (1..=4).map(SampleId::new).enumerate() {
+            for (factor, peptide) in [(1.0, 9), (1.3, 10), (0.8, 11)] {
+                let noise = 1.0 + 0.05 * ((index * peptide) % 3) as f64;
+                let canonical = PeptideId::new(peptide as u32);
+                let key = super::DirectLfqCellKey {
+                    protein,
+                    canonical,
+                    sample,
+                };
+                sums.insert(key, 1000.0 * factor * noise);
+            }
+        }
+        for method in [super::QuantMethod::MaxLfq, super::QuantMethod::DirectLfq] {
+            let mut aggregation = lfq_aggregation(method, sums.clone());
+            if let super::FeatureAggregation::Lfq { cell_precision, .. } = &mut aggregation {
+                *cell_precision = true;
+            }
+            let (values, precision) = aggregation.finalize(
+                &fixture.allowed_cells,
+                &mut StringIdRegistry::<ProteinId>::new(),
+                &HashMap::new(),
+                &fixture.canonical_peptides,
+                &StringIdRegistry::<SampleId>::new(),
+            )?;
+            let super::ProteinValues::Rows(rows) = values else {
+                panic!("{method:?} returns protein rows");
+            };
+            let cells = rows
+                .iter()
+                .flat_map(|(protein, values)| {
+                    values
+                        .iter()
+                        .filter(|(_, value)| *value > 0.0)
+                        .map(|(sample, _)| super::CellKey {
+                            protein: *protein,
+                            sample: *sample,
+                        })
+                })
+                .collect::<HashSet<_>>();
+            assert_eq!(cells.len(), 4, "{method:?}");
+            assert_eq!(
+                precision.keys().copied().collect::<HashSet<_>>(),
+                cells,
+                "{method:?}"
+            );
+            assert!(precision
+                .values()
+                .all(|value| value.is_finite() && *value > 0.0));
+        }
         Ok(())
     }
 

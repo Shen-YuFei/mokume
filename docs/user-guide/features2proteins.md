@@ -436,6 +436,7 @@ enables differential expression without a separate switch.
 | `--de-method` | `auto` | Method: auto, limrots, limma, deqms, proda, rots, ensemble |
 | `--de-covariate` | — | SDRF column added to the limma/DEqMS design; repeat for several columns |
 | `--de-block` | — | SDRF column whose levels are random blocks (e.g. the subject) in the limma/DEqMS design |
+| `--de-precision-weights` | off | Weight DEqMS by each cell's MaxLFQ/DirectLFQ quantification precision |
 | `--de-ensemble-method` | `limrots`, `deqms`, `proda` | Ensemble member; repeat to override the defaults |
 | `--de-ensemble-min-k` | 2 | Minimum ensemble members that must agree on direction (ensemble only) |
 | `--de-log2fc` | 0.5 | Minimum absolute log2 fold change, or `auto` for the data-driven mixture gate |

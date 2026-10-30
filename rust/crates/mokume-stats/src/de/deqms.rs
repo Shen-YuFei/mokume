@@ -8,6 +8,8 @@
 
 #[path = "deqms_loess.rs"]
 mod loess;
+#[path = "deqms_weighted.rs"]
+mod weighted;
 
 use mokume_core::Result;
 
@@ -17,6 +19,8 @@ use super::limma_design::{reportable, run_design_moderation, DesignContrast};
 use super::special::{digamma, trigamma};
 use super::student_t::{student_t_sf, student_t_two_sided_log_pvalue};
 use super::{classify, DeResult};
+
+pub use weighted::{deqms_two_group_weighted, PrecisionRows};
 
 /// Minimum number of valid (finite `log_var`, `x`, `df`) proteins required for
 /// the quadratic count path (floor(.75*n) must contain at least three points).

@@ -119,6 +119,33 @@ mokume quantify features2proteins -p features.parquet -o proteins.csv -s experim
 
 Peptide counts are supplied automatically by the pipeline.
 
+### Precision weights
+
+`--de-precision-weights` gives DEqMS an observation weight for every protein
+value of a MaxLFQ or DirectLFQ matrix. For each protein, the quantification
+step compares its ions with the protein profile: each ion's log2 differences
+from the profile are centred on their median, which removes the ion's response
+factor, and the remaining residual variance is shrunk towards the median of all
+proteins with four prior degrees of freedom. A cell's precision is its number of
+observed ions divided by that variance, so a value supported by more and more
+consistent ions counts more. Imputed cells take the 5th percentile of the
+observed precisions, and every weight is bounded by the median observed
+variance, so one well-measured sample cannot dominate a group. The weighted
+group means and residuals then enter the same count-aware moderation.
+
+The option is off by default. On Mokume's LFQ spike-in benchmark it ranked
+true changes slightly better than unweighted DEqMS for both MaxLFQ and
+DirectLFQ.
+
+```bash
+mokume quantify features2proteins -p features.parquet -o proteins.csv -s experiment.sdrf.tsv \
+    --quant-method maxlfq \
+    --de-contrast "A" "B" \
+    --de-method deqms \
+    --de-precision-weights \
+    --de-output de_results.csv
+```
+
 ## proDA
 
 **proDA** (Ahlmann-Eltze & Anders, 2020) uses a probabilistic dropout model that treats missing values as informative — proteins below the detection limit are more likely to be missing. This is modeled as a sigmoid dropout curve per sample.

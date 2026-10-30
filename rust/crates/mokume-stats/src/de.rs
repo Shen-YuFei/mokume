@@ -25,7 +25,7 @@ mod student_t;
 
 use correct::bh_adjust;
 pub use correct::{adaptive_adjust, AdaptiveFdrMethod, AppliedFdrMethod};
-pub use deqms::{deqms_design, deqms_two_group};
+pub use deqms::{deqms_design, deqms_two_group, deqms_two_group_weighted, PrecisionRows};
 pub use duplicate_correlation::{duplicate_correlation, BlockCorrelationEstimate};
 pub use effect_size::{estimate_effect_size_gate, EffectSizeGateMethod};
 pub use ensemble::{combine_de_results, EnsembleResult};

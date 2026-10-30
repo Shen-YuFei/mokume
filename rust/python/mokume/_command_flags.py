@@ -33,8 +33,8 @@ _ALLOWED = {
         "ratio_fraction_merge impute_method impute_quantile "
         "impute_seed impute_tune_sigma impute_shift "
         "impute_scale impute_n_neighbors de_contrast "
-        "de_contrast_file de_method de_covariate de_block de_ensemble_method de_ensemble_min_k "
-        "de_log2fc de_effect_size_gate de_fdr "
+        "de_contrast_file de_method de_covariate de_block de_precision_weights "
+        "de_ensemble_method de_ensemble_min_k de_log2fc de_effect_size_gate de_fdr "
         "de_fdr_method de_output memory threads".split()
     ),
     "peptides2protein": set(
@@ -72,7 +72,7 @@ _BOOLEAN = {
     ),
     "features2proteins": set(
         "keep_contaminants batch_correction batch_nonparametric "
-        "batch_mean_only irs irs_remove_reference".split()
+        "batch_mean_only irs irs_remove_reference de_precision_weights".split()
     ),
     "peptides2protein": {"normalize", "tpa", "ruler"},
     "correct-batches": {"export_anndata"},

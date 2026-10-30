@@ -332,6 +332,7 @@ fn run_contrast(
         proteins: &proteins,
         rows: &row_refs,
         peptide_counts: &peptide_counts,
+        precision: None,
         n_a: group_a.len(),
         n_b: group_b.len(),
     };
