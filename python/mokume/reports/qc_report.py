@@ -169,7 +169,7 @@ def _compute_pca(log2_matrix, samples, sample_to_condition, sample_to_plex):
     data = data.fillna(data.median())
 
     n_components = min(3, data.shape[0], data.shape[1])
-    pca = PCA(n_components=n_components)
+    pca = PCA(n_components=n_components, random_state=0)
     coords = pca.fit_transform(data)
 
     result = {
@@ -340,7 +340,7 @@ def _compute_variance_decomposition(
 
     # PCA first (reduce to top components explaining 90% variance)
     n_components = min(10, data.shape[0] - 1, data.shape[1])
-    pca = PCA(n_components=n_components)
+    pca = PCA(n_components=n_components, random_state=0)
     pc_data = pca.fit_transform(data)
 
     # For each PC, compute R² for condition and plex using simple 1-way ANOVA

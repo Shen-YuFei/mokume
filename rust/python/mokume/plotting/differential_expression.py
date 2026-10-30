@@ -442,7 +442,7 @@ def plot_pca_conditions(
 
     # Compute PCA
     n_components = min(2, data.shape[0], data.shape[1])
-    pca = PCA(n_components=n_components)
+    pca = PCA(n_components=n_components, random_state=0)
     pca_result = pca.fit_transform(data)
 
     pca_df = pd.DataFrame(

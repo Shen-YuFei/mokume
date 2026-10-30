@@ -119,7 +119,7 @@ def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFra
     pd.DataFrame
         DataFrame with principal component values, indexed by the input index.
     """
-    pca = PCA(n_components=n_components)
+    pca = PCA(n_components=n_components, random_state=0)
     pca.fit(df)
     df_pca = pca.transform(df)
     df_pca = pd.DataFrame(
