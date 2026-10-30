@@ -60,7 +60,10 @@ COMMAND_PRESENTATION: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {
         {
             "id": "input-output",
             "title": "Input & output",
-            "flags": "parquet msstats psm output sdrf export_peptides export_ions".split(),
+            "flags": (
+                "parquet msstats psm output sdrf export_peptides "
+                "export_unnormalized_peptides export_ions export_unimputed export_precision"
+            ).split(),
             "common": ("parquet", "msstats", "psm", "output", "sdrf"),
         },
         {
@@ -100,7 +103,8 @@ COMMAND_PRESENTATION: dict[tuple[str, ...], tuple[dict[str, Any], ...]] = {
             "flags": (
                 "impute_method impute_quantile impute_seed impute_tune_sigma "
                 "impute_n_neighbors de_contrast de_contrast_file de_method "
-                "de_covariate de_ensemble_method de_ensemble_min_k de_log2fc_threshold "
+                "de_covariate de_block de_precision_weights de_ensemble_method "
+                "de_ensemble_min_k de_log2fc_threshold "
                 "de_effect_size_gate de_fdr_threshold de_fdr_method de_output"
             ).split(),
             "common": (

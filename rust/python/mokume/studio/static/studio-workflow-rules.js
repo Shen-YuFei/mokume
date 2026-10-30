@@ -114,6 +114,7 @@ export function updateFeatures2ProteinsQuantification(form, quantMethod) {
   setConditionalFields(form, ["ratio-fraction-merge"], ratio);
   setConditionalFields(form, ["directlfq-min-nonan"], quantMethod === "directlfq");
   setConditionalFields(form, ["export-ions"], quantMethod === "directlfq");
+  setConditionalFields(form, ["export-precision"], ["directlfq", "maxlfq"].includes(quantMethod));
   setConditionalFields(
     form,
     ["export-peptides"],
@@ -178,6 +179,16 @@ export function updateFeatures2ProteinsDownstream(form, quantMethod) {
     form,
     ["de-ensemble-method", "de-ensemble-min-k"],
     differentialExpression && deMethod === "ensemble",
+  );
+  // The command accepts precision weights only for two-group DEqMS on MaxLFQ/DirectLFQ.
+  setConditionalFields(
+    form,
+    ["de-precision-weights"],
+    differentialExpression
+      && ["directlfq", "maxlfq"].includes(quantMethod)
+      && effectiveDeMethod === "deqms"
+      && !argumentControlValue(form, "de-covariate")
+      && !argumentControlValue(form, "de-block"),
   );
 }
 
