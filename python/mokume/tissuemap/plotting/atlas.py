@@ -363,7 +363,7 @@ def plot_slide_atlas_dendrogram(
     styles = _group_styles(groups)
     adata.uns["proteomic_groups"] = groups
     adata.uns["tissue_colors"] = {
-        tissue: styles[group][0] for tissue, group in tissue_to_group.items()
+        tissue: styles[group] for tissue, group in tissue_to_group.items()
     }
     fig, axes = plt.subplots(
         1,

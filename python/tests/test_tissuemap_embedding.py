@@ -119,6 +119,26 @@ def test_atlas_dendrogram_skips_single_tissue(tmp_path, caplog):
     assert not any(tmp_path.iterdir())
 
 
+def test_atlas_stores_each_tissues_group_color(tmp_path, monkeypatch):
+    """Marker plots color tissue labels with the group colors the atlas stores."""
+    rng = np.random.default_rng(0)
+    tissues = ["brain", "brain", "lung", "lung", "skin", "skin"]
+    adata = ad.AnnData(
+        rng.normal(size=(6, 4)),
+        obs=pd.DataFrame({"tissue": tissues}, index=[f"s{i}" for i in range(6)]),
+    )
+    adata.obsm["X_tsne"] = rng.normal(size=(6, 2))
+    monkeypatch.setattr(Figure, "savefig", lambda *_args, **_kwargs: None)
+
+    plot_slide_atlas_dendrogram(adata, tmp_path)
+
+    colors = adata.uns["tissue_colors"]
+    assert set(colors) == set(tissues)
+    assert set(colors.values()) <= set(
+        _group_styles(adata.uns["proteomic_groups"]).values()
+    )
+
+
 @pytest.mark.parametrize(
     ("members", "used", "expected"),
     [
