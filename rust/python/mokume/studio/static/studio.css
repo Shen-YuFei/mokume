@@ -26,6 +26,8 @@
   --qc-condition-4: #d55e00;
   --qc-condition-5: #3c9cd0;
   --qc-condition-6: #c673a1;
+  /* Colors past the six seeds come from this OKLCH lightness band, each clearing 3:1 on --surface. */
+  --qc-extension-lightness: 0.48 0.67;
   /* Single-hue sequential ramp, low to high; low values recede into the surface. */
   --qc-seq-0: #0d366b;
   --qc-seq-1: #184f95;
@@ -123,6 +125,7 @@
   --accent-soft: rgba(31, 157, 91, 0.1);
   --accent-border: rgba(31, 157, 91, 0.45);
   --accent-contrast: #ffffff;
+  --qc-extension-lightness: 0.43 0.77;
   --qc-seq-0: #cde2fb;
   --qc-seq-1: #9ec5f4;
   --qc-seq-2: #6da7ec;

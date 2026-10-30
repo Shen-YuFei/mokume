@@ -34,6 +34,7 @@ export function applyAppearance(appearance, persist = true) {
     ? (SYSTEM_DARK_QUERY.matches ? "dark" : "light")
     : state.appearance;
   document.documentElement.dataset.theme = theme;
+  document.dispatchEvent(new Event("studio:theme"));
   document.querySelectorAll("[data-appearance]").forEach((button) => {
     button.setAttribute("aria-checked", String(button.dataset.appearance === state.appearance));
   });

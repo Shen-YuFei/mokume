@@ -1,4 +1,6 @@
 // Deterministic OKLab maximin extension of the six theme-compatible seeds.
+// Each theme extends from its own lightness band and surface, so dark-theme
+// colors are not limited to the lightness range that also suits the light theme.
 function multiply(vector, matrix) {
   return matrix.map((row) => row.reduce((sum, value, index) => sum + value * vector[index], 0));
 }
@@ -31,23 +33,40 @@ function oklab(color) {
   ]);
 }
 
-// Lightness clears both themes; chroma stays within the seeds' range.
-function candidates() {
+function luminance(color) {
+  return [1, 3, 5].map((offset) => parseInt(color.slice(offset, offset + 2), 16) / 255)
+    .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+}
+
+function contrast(a, b) {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+// The theme's lightness band, kept to colors with 3:1 contrast on its surface;
+// chroma stays within the seeds' range.
+const POOLS = new Map();
+function candidates(band, surface) {
+  const key = `${band} ${surface}`;
+  if (POOLS.has(key)) return POOLS.get(key);
+  const [low, high] = band.split(/\s+/).map(Number);
   const colors = [];
-  for (let light = 0; light < 20; light += 1) {
+  for (let light = 0; low + light * 0.01 <= high + 1e-9; light += 1) {
     for (let chroma = 0; chroma < 8; chroma += 1) {
       for (let hue = 0; hue < 72; hue += 1) {
         const angle = hue * Math.PI / 36, c = 0.10 + chroma * 0.01;
-        const lab = [0.48 + light * 0.01, c * Math.cos(angle), c * Math.sin(angle)];
+        const lab = [low + light * 0.01, c * Math.cos(angle), c * Math.sin(angle)];
         const rgb = linearRgb(lab);
         if (rgb.some((value) => value < 0 || value > 1)) continue;
         const color = "#" + rgb.map((value) => value <= 0.0031308
           ? 12.92 * value : 1.055 * value ** (1 / 2.4) - 0.055)
           .map((value) => Math.round(value * 255).toString(16).padStart(2, "0")).join("");
-        colors.push({ lab, color });
+        if (contrast(color, surface) >= 3) colors.push({ lab, color });
       }
     }
   }
+  POOLS.set(key, colors);
   return colors;
 }
 
@@ -55,11 +74,19 @@ function distance(a, b) {
   return a.reduce((sum, value, index) => sum + (value - b[index]) ** 2, 0);
 }
 
+// Case-insensitive category order, as the reports assign their colors.
+export function categoryOrder(a, b) {
+  const x = String(a).toLowerCase(), y = String(b).toLowerCase();
+  return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
+}
+
 export function categoryColors(count) {
   const css = getComputedStyle(document.documentElement);
   const colors = Array.from({ length: 6 }, (_, index) =>
     css.getPropertyValue(`--qc-condition-${index + 1}`).trim());
-  const seeds = colors.map(oklab), pool = candidates();
+  const seeds = colors.map(oklab);
+  const pool = candidates(css.getPropertyValue("--qc-extension-lightness").trim(),
+    css.getPropertyValue("--surface").trim());
   const distances = pool.map(({ lab }) => Math.min(...seeds.map((seed) => distance(lab, seed))));
   for (let next = colors.length; next < count; next += 1) {
     const index = distances.reduce((best, value, i) => value > distances[best] ? i : best, 0);
