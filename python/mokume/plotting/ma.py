@@ -7,6 +7,7 @@ from mokume.plotting._common import log2_matrix, static_style, style_axes
 from mokume.plotting.style import (
     CONDITION_COLORS,
     category_colors,
+    category_order,
     MISSING_COLOR,
     SAMPLE_POINT_COLOR,
     SIGNIFICANCE_COLORS,
@@ -51,12 +52,13 @@ def plot_ma(de, protein_df, sample_to_condition, output_file, options):
         if groups is None
         else pd.Series(groups.loc[de["ProteinName"]].to_numpy(), index=de.index)
     )
-    names = sorted(labels.unique())
+    # Significance classes keep their fixed order; user groups sort like other categories.
+    names = sorted(labels.unique()) if groups is None else category_order(labels)
     if groups is not None and len(names) > 3:
         _plot_facets(de, abundance, labels, output_file, options)
         return
     fig, ax = plt.subplots(figsize=(3.5, 2.8))
-    _plot_groups(ax, de, abundance, labels, options)
+    _plot_groups(ax, de, abundance, labels, names, options)
     for value in (-options["log2fc"], options["log2fc"]):
         ax.axhline(value, color="grey", linestyle="--", linewidth=0.8)
     ax.axhline(0, color=SAMPLE_POINT_COLOR, linewidth=0.6)
@@ -83,10 +85,9 @@ def plot_ma(de, protein_df, sample_to_condition, output_file, options):
     plt.close(fig)
 
 
-def _plot_groups(ax, de, abundance, labels, options):
+def _plot_groups(ax, de, abundance, labels, names, options):
     """Draw each composition/significance group and its expected-ratio line."""
     groups = options.get("groups")
-    names = sorted(labels.unique())
     for index, name in enumerate(names):
         color = SIGNIFICANCE_COLORS[name] if groups is None else CONDITION_COLORS[index]
         subset = labels == name
@@ -114,7 +115,7 @@ def _group_points(ax, abundance, fold_changes, color, name=None):
 
 def _plot_facets(de, abundance, labels, output_file, options):
     """Emphasize one composition group per panel against the other proteins."""
-    names = sorted(labels.unique())
+    names = category_order(labels)
     rows = (len(names) + 2) // 3
     fig, axes = plt.subplots(
         rows, 3, figsize=(7.2, rows * 2.4), sharex=True, sharey=True, squeeze=False

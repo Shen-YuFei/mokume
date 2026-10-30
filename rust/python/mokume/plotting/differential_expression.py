@@ -15,14 +15,18 @@ from sklearn.decomposition import PCA
 
 from mokume.plotting._common import (
     bottom_legend,
+    draw_group_ellipses,
     expand_category_axes,
     label_categories,
     place_labels,
+    short_protein_name,
     static_style,
     style_axes as _style_axes,
+    volcano_label_rows,
 )
 from mokume.plotting.style import (
     category_colors,
+    category_order,
     MISSING_COLOR,
     SIGNIFICANCE_COLORS,
     TEXT_COLOR,
@@ -38,12 +42,15 @@ def plot_volcano(
     title: str = "Volcano Plot",
     output_file: Optional[str] = None,
     figsize: tuple = (3.5, 3.2),
+    conditions: Optional[tuple[str, str]] = None,
 ) -> plt.Figure:
     """
     Create a volcano plot from differential expression results.
 
     Heights use raw p-values; colors follow the ``significance`` column, i.e. the
-    adjusted p-value and |log2FC| cutoffs.
+    adjusted p-value and |log2FC| cutoffs. Besides the highlighted proteins, the
+    ten significant proteins with the lowest p-values are named where their
+    labels fit.
 
     Parameters
     ----------
@@ -61,6 +68,8 @@ def plot_volcano(
         Path to save the figure.
     figsize : tuple
         Figure dimensions.
+    conditions : tuple[str, str], optional
+        The contrast's two conditions (log2FC = first - second), named on the x axis.
 
     Returns
     -------
@@ -73,8 +82,7 @@ def plot_volcano(
     df["neg_log10_p"] = -np.log10(df["pvalue"].clip(lower=1e-300))
 
     # Color mapping
-    color_map = SIGNIFICANCE_COLORS
-    colors = df["significance"].map(color_map)
+    colors = df["significance"].map(SIGNIFICANCE_COLORS)
 
     # One mark per protein: small, translucent and unringed so overlaps read as density.
     ax.scatter(
@@ -100,6 +108,10 @@ def plot_volcano(
     ax.axvline(x=-log2fc_threshold, color="grey", linestyle="--", linewidth=0.8)
 
     anchors = _highlight_volcano(ax, df, highlight_genes or [])
+    optional = {
+        short_protein_name(row["ProteinName"]): (row["log2FC"], row["neg_log10_p"])
+        for _, row in volcano_label_rows(df, list(anchors)).iterrows()
+    }
 
     # Legend
     from matplotlib.patches import Patch
@@ -107,7 +119,7 @@ def plot_volcano(
     counts = df["significance"].value_counts()
     legend_elements = [
         Patch(facecolor=color, label=f"{label} ({counts[label]})")
-        for label, color in color_map.items()
+        for label, color in SIGNIFICANCE_COLORS.items()
         if counts.get(label, 0)
     ]
     if len(legend_elements) > 1:
@@ -125,12 +137,23 @@ def plot_volcano(
     elif legend_elements:
         title += f" ({legend_elements[0].get_label()})"
 
-    ax.set_xlabel("log2 Fold Change")
+    ax.set_xlabel(
+        f"log2 fold change ({conditions[0]} vs {conditions[1]})"
+        if conditions
+        else "log2 Fold Change"
+    )
     ax.set_ylabel("-log10(p-value)")
     ax.set_title(title)
     _style_axes(ax)
     plt.tight_layout()
-    place_labels(ax, anchors, points=list(anchors.values()), fontsize=8)
+    place_labels(
+        ax,
+        anchors,
+        points=[*anchors.values(), *optional.values()],
+        fontsize=8,
+        optional=optional,
+        fit="near",
+    )
 
     if output_file:
         plt.savefig(output_file, bbox_inches="tight")
@@ -318,8 +341,8 @@ def _add_heatmap_legend(ax, condition_colors, has_missing):
 
 
 def _condition_palette(conditions):
-    """Assign colors in sorted condition order from the expanding palette."""
-    names = sorted(set(conditions))
+    """Assign colors in legend order from the expanding palette."""
+    names = category_order(conditions)
     return dict(zip(names, category_colors(len(names))))
 
 
@@ -430,12 +453,16 @@ def plot_pca_conditions(
     pca_df["Condition"] = [sample_to_condition[s] for s in pca_df.index]
 
     fig, ax = plt.subplots(figsize=figsize)
+    palette = _condition_palette(pca_df["Condition"])
+    if n_components >= 2:
+        draw_group_ellipses(ax, pca_df, ("PC1", "PC2"), "Condition", palette)
     sns.scatterplot(
         data=pca_df,
         x="PC1",
         y="PC2" if "PC2" in pca_df.columns else "PC1",
         hue="Condition",
-        palette=_condition_palette(pca_df["Condition"]),
+        hue_order=list(palette),
+        palette=palette,
         s=20,
         alpha=0.85,
         marker="o",

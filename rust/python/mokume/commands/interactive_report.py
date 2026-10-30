@@ -172,6 +172,7 @@ def main(argv=None):
             log2fc_threshold=args.log2fc,
             fdr_threshold=args.fdr,
             peptides=args.peptides,
+            conditions=(cond_a, cond_b),
         )
         print("Interactive report saved to {0}".format(output_html))
 

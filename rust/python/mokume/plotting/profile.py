@@ -104,5 +104,28 @@ def plot_profile(protein_df, peptides, sample_to_condition, protein, output_file
         )
     style_axes(ax)
     fig.tight_layout()
+    _hide_crowded_labels(fig, ax, conditions, boundaries, len(samples))
     fig.savefig(output_file, bbox_inches="tight")
     plt.close(fig)
+
+
+def _hide_crowded_labels(fig, ax, conditions, boundaries, count):
+    """Drop sample names that would overlap and condition names wider than their block."""
+
+    def step():
+        return np.diff(ax.transData.transform([(0, 0), (1, 0)])[:, 0])[0]
+
+    size = ax.xaxis.get_ticklabels()[0].get_fontsize() * fig.dpi / 72
+    if step() < 1.2 * size / np.sin(np.radians(60)):
+        ax.tick_params(axis="x", bottom=False, labelbottom=False)
+        fig.tight_layout()
+    fig.canvas.draw()
+    widths = np.diff([-0.5, *boundaries, count - 0.5]) * step()
+    names = conditions.get_xticklabels()
+    conditions.set_xticks(
+        conditions.get_xticks(),
+        [
+            name.get_text() if name.get_window_extent().width <= width else ""
+            for name, width in zip(names, widths)
+        ],
+    )

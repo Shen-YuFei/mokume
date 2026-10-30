@@ -9,7 +9,12 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from mokume.plotting._common import ordered_samples, static_style, style_axes
-from mokume.plotting.style import category_colors, SAMPLE_POINT_COLOR, TEXT_COLOR
+from mokume.plotting.style import (
+    category_colors,
+    category_order,
+    SAMPLE_POINT_COLOR,
+    TEXT_COLOR,
+)
 
 
 def distribution_groups(dataset, class_field):
@@ -22,7 +27,7 @@ def distribution_groups(dataset, class_field):
         else {}
     )
     order = ordered_samples(dataset[class_field].unique(), conditions)
-    names = sorted(set(conditions.values()))
+    names = category_order(conditions.values())
     palette = dict(zip(names, category_colors(len(names))))
     colors = {
         sample: palette.get(conditions.get(sample), SAMPLE_POINT_COLOR)

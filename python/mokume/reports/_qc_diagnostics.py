@@ -16,6 +16,7 @@ from mokume.plotting.profile import peptide_matrix
 from mokume.plotting.style import (
     CONDITION_COLORS,
     category_colors,
+    category_order,
     MISSING_COLOR,
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
@@ -202,7 +203,7 @@ def _density_plot(groups, identifier, title):
 def _normalization_plot(before, after, conditions):
     """Compare peptide distributions on a shared intensity axis."""
     samples = ordered_samples(after.columns, conditions)
-    names = sorted({conditions[sample] for sample in samples})
+    names = category_order(conditions[sample] for sample in samples)
     traces = []
     for panel, values in enumerate((before, after)):
         traces.extend(_peptide_boxes(values, samples, conditions, panel))
@@ -350,7 +351,7 @@ def diagnostic_plots(protein_df, conditions, is_log2, **options):
 
 def _peptide_boxes(values, samples, conditions, panel):
     """Summarize sample quartiles for one normalization panel."""
-    names = sorted({conditions[sample] for sample in samples})
+    names = category_order(conditions[sample] for sample in samples)
     traces = []
     for condition, color in zip(names, category_colors(len(names))):
         group = [sample for sample in samples if conditions[sample] == condition]

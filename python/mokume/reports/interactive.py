@@ -12,7 +12,11 @@ from plotly.offline import get_plotlyjs
 
 from mokume.reports._plots import VOLCANO_LABEL_JS, compact_json as dump
 from mokume.core.logger import get_logger
-from mokume.plotting._common import ordered_samples
+from mokume.plotting._common import (
+    ordered_samples,
+    short_protein_name,
+    volcano_label_rows,
+)
 from mokume.reports._de_diagnostics import PROFILE_CARD, ma_payload, profile_script
 from mokume.plotting.style import (
     PLOTLY_TEMPLATE,
@@ -150,7 +154,29 @@ def _highlight_annotations(de: pd.DataFrame, highlight_genes: list) -> list[dict
     ]
 
 
-def _volcano_layout(de, highlight_genes, log2fc_threshold, fdr_threshold):
+def _top_annotations(de, highlight_genes):
+    """Name the ten lowest-p changed proteins; the page hides labels that do not fit."""
+    return [
+        {
+            "x": float(row["log2FC"]),
+            "y": float(row["neg_log10_p"]),
+            "text": short_protein_name(row["ProteinName"]),
+            "name": "optional",
+            "showarrow": True,
+            "arrowhead": 0,
+            "xanchor": "center",
+            "yanchor": "middle",
+            "arrowwidth": 0.7,
+            "arrowcolor": SAMPLE_POINT_COLOR,
+            "ax": 0,
+            "ay": -14,
+            "font": {"size": 9, "color": TEXT_COLOR},
+        }
+        for _, row in volcano_label_rows(de, highlight_genes).iterrows()
+    ]
+
+
+def _volcano_layout(de, highlight_genes, log2fc_threshold, fdr_threshold, conditions):
     """Place the horizontal guide at the raw-p cutoff accepted by adjusted p."""
     shapes = [
         {
@@ -180,12 +206,21 @@ def _volcano_layout(de, highlight_genes, log2fc_threshold, fdr_threshold):
         )
     return {
         "template": PLOTLY_TEMPLATE,
-        "xaxis": {"title": {"text": "log2 Fold Change"}},
+        "xaxis": {
+            "title": {
+                "text": (
+                    f"log2 fold change ({conditions[0]} vs {conditions[1]})"
+                    if conditions
+                    else "log2 Fold Change"
+                )
+            }
+        },
         "yaxis": {"title": {"text": "-log10(p-value)"}},
         "hovermode": "closest",
         "showlegend": True,
         "shapes": shapes,
-        "annotations": _highlight_annotations(de, highlight_genes),
+        "annotations": _highlight_annotations(de, highlight_genes)
+        + _top_annotations(de, highlight_genes),
         "margin": {"t": 35, "b": 55, "l": 65, "r": 20},
     }
 
@@ -204,10 +239,11 @@ def generate_de_report(
 
     DE results require ProteinName, log2FC, pvalue, adj_pvalue and significance.
     Intensities are linear and converted to log2 for per-protein expression.
-    Optional keyword inputs are ``highlight_genes`` (proteins to label) and
-    ``peptides`` (four- or six-column exports; SDRF supplies conditions).
+    Optional keyword inputs are ``highlight_genes`` (proteins to label),
+    ``peptides`` (four- or six-column exports; SDRF supplies conditions) and
+    ``conditions`` (the contrast's two conditions, named on the volcano x axis).
     """
-    highlight_genes, peptides = _report_options(**options)
+    highlight_genes, peptides, conditions = _report_options(**options)
     samples = ordered_samples(
         _experimental_samples(protein_df, sample_to_condition), sample_to_condition
     )
@@ -232,7 +268,9 @@ def generate_de_report(
         "text_color": dump(TEXT_COLOR),
         "volcano_traces": dump(traces),
         "volcano_layout": dump(
-            _volcano_layout(de, highlight_genes, log2fc_threshold, fdr_threshold)
+            _volcano_layout(
+                de, highlight_genes, log2fc_threshold, fdr_threshold, conditions
+            )
         ),
     }
     with open(output_html, "w", encoding="utf-8") as stream:
@@ -241,9 +279,9 @@ def generate_de_report(
     return output_html
 
 
-def _report_options(highlight_genes=None, peptides=None):
+def _report_options(highlight_genes=None, peptides=None, conditions=None):
     """Unpack optional report inputs; unknown keywords raise TypeError."""
-    return highlight_genes or [], peptides
+    return highlight_genes or [], peptides, conditions
 
 
 def _build_html(title, payload):
@@ -343,7 +381,7 @@ $diagnostic_script
 }));
 function expressionTraces(data) {
     const samples = expSamples.filter(sample => sample in data);
-    const conditions = [...new Set(samples.map(sample => sampleToCondition[sample]))].sort();
+    const conditions = [...new Set(samples.map(sample => sampleToCondition[sample]))].sort(categoryOrder);
     const x = [], y = [], names = [], shapes = [];
     conditions.forEach((condition, index) => {
         const group = samples.filter(sample => sampleToCondition[sample] === condition);

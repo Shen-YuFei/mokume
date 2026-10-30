@@ -18,6 +18,11 @@ def compact_json(value):
 
 
 LABEL_LAYOUT_JS = """
+// Case-insensitive category order, as style.category_order assigns colors.
+const categoryOrder = (a, b) => {
+    const x = String(a).toLowerCase(), y = String(b).toLowerCase();
+    return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
+};
 const labelOverlap = (a, b) => a.left < b.right && b.left < a.right
     && a.top < b.bottom && b.top < a.bottom;
 function labelCandidates(center, size, bounds, radii) {
@@ -37,7 +42,7 @@ function labelCandidates(center, size, bounds, radii) {
     });
     return candidates;
 }
-function nearbyLabel(center, size, placed, dots, bounds) {
+function nearbyLabel(center, size, placed, dots, bounds, nearOnly = false) {
     const candidates = labelCandidates(center, size, bounds, [4, 8, 12, 16, 20, 24].map(r => r * 4 / 3));
     const available = candidates.filter(box => !placed.some(other => labelOverlap(box, other)));
     const clear = available.find(box => !dots.some(dot => labelOverlap(box, dot)));
@@ -46,6 +51,8 @@ function nearbyLabel(center, size, placed, dots, bounds) {
             center.y - Math.max(clear.top, Math.min(clear.bottom, center.y)));
         return {...clear, leader: gap > 8 * 4 / 3};
     }
+    // Labels that may be left out need a clear spot beside their point.
+    if (nearOnly) return null;
     if (available.length) {
         const hits = box => dots.filter(dot => labelOverlap(box, dot)).length;
         available.sort((a, b) => hits(a) - hits(b));
@@ -54,8 +61,10 @@ function nearbyLabel(center, size, placed, dots, bounds) {
     const radii = [];
     for (let radius = 38; radius < Math.hypot(bounds.right - bounds.left,
             bounds.bottom - bounds.top); radius += 6) radii.push(radius);
-    return {...labelCandidates(center, size, bounds, radii)
-        .find(box => !placed.some(other => labelOverlap(box, other))), leader: true};
+    // Null when every spot covers a placed label: optional labels are then left out.
+    const far = labelCandidates(center, size, bounds, radii)
+        .find(box => !placed.some(other => labelOverlap(box, other)));
+    return far ? {...far, leader: true} : null;
 }
 function plotBounds(gd) {
     const rect = gd.getBoundingClientRect(), size = gd._fullLayout._size;
@@ -125,10 +134,19 @@ function placeCategoryLabels(gd) {
         const rect = node.getBoundingClientRect();
         const center = {x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2};
         const box = nearbyLabel(center, {width: rect.width + 4, height: rect.height + 4}, placed, dots, bounds);
+        node.style.visibility = box ? '' : 'hidden';
+        if (!box) return;
         node.setAttribute('transform', `translate(${box.x - center.x},${box.y - center.y})`);
         placed.push(box);
         labelLeader(gd, center, box);
     });
+}
+// Each group's 95% ellipse, drawn beneath the points and toggled with its legend entry.
+function ellipseTraces(ellipses, colors) {
+    return Object.entries(ellipses).map(([condition, outline]) => ({
+        type: 'scatter', mode: 'lines', x: outline.x, y: outline.y, hoverinfo: 'skip',
+        line: {color: colors[condition], width: 1}, opacity: 0.8,
+        legendgroup: condition, showlegend: false}));
 }
 function labelTraces(traces) {
     if (new Set(traces.map(trace => trace.meta.condition)).size > 12) return categoryTraces(traces);
@@ -147,7 +165,8 @@ function labelEmbedding(gd) {
     const thin = () => {
         if (gd.data.some(trace => trace.meta?.categoryLabel)) return placeCategoryLabels(gd);
         const traces = [...gd.querySelectorAll('.scatterlayer .trace')];
-        const markers = traces.filter(trace => !trace.querySelector('.textpoint'));
+        const markers = traces.filter(trace => trace.querySelector('.point')
+            && !trace.querySelector('.textpoint'));
         const dots = markers.flatMap(trace => [...trace.querySelectorAll('.point')])
             .map(node => ({node, box: node.getBoundingClientRect()}));
         // Text twins follow their marker traces in order, point for point.
@@ -189,14 +208,28 @@ function volcanoLabelChanges(gd) {
         y: rect.top + layout.yaxis._offset + layout.yaxis.l2p(annotation.y)}));
     const dots = centers.map(point => ({left: point.x - 8, right: point.x + 8,
         top: point.y - 8, bottom: point.y + 8}));
+    // Automatic labels must also stay off every protein point.
+    const crowd = dots.concat(gd._fullData.filter(trace => trace.visible === true)
+        .flatMap(trace => trace.x.map((x, i) => {
+            const px = rect.left + layout.xaxis._offset + layout.xaxis.l2p(x);
+            const py = rect.top + layout.yaxis._offset + layout.yaxis.l2p(trace.y[i]);
+            return {left: px - 4, right: px + 4, top: py - 4, bottom: py + 4};
+        })));
     const placed = [], changes = {};
     layout.annotations.forEach((annotation, i) => {
         const text = nodes.find(node => Number(node.getAttribute('data-index')) === i)
             ?.querySelector('.annotation-text');
         if (!text) return;
         const size = text.getBoundingClientRect(), center = centers[i];
-        const box = nearbyLabel(center, {width: size.width + 6, height: size.height + 6},
-            placed, dots, plotBounds(gd));
+        const label = {width: size.width + 6, height: size.height + 6};
+        const optional = annotation.name === 'optional';
+        // Highlighted proteins keep a label; the automatic ones show only beside their point.
+        const box = optional ? nearbyLabel(center, label, placed, crowd, plotBounds(gd), true)
+            : nearbyLabel(center, label, placed, dots, plotBounds(gd))
+                || labelCandidates(center, label, plotBounds(gd), [6])[0];
+        // Opacity, not visibility, keeps a hidden label measurable after a zoom.
+        if (optional && annotation.opacity !== (box ? 1 : 0)) changes[`annotations[${i}].opacity`] = box ? 1 : 0;
+        if (!box) return;
         placed.push(box);
         const ax = box.x - center.x, ay = box.y - center.y;
         if (Math.abs(annotation.ax - ax) > 0.5 || Math.abs(annotation.ay - ay) > 0.5) {

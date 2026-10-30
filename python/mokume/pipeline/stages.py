@@ -1936,6 +1936,7 @@ class PostprocessingStage:
                 highlight_genes=self.config.output.highlight_genes,
                 title=f"Volcano Plot: {contrast_name}",
                 output_file=output_file,
+                conditions=tuple(de_entry["conditions"]),
             )
             logger.info("Volcano plot saved to %s", output_file)
 
@@ -2110,6 +2111,7 @@ class PostprocessingStage:
                 highlight_genes=self.config.output.highlight_genes,
                 log2fc_threshold=self.config.de.log2fc_threshold,
                 fdr_threshold=self.config.de.fdr_threshold,
+                conditions=contrast_conditions[contrast_name],
             )
             logger.info("Interactive report saved to %s", output_html)
 

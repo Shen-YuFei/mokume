@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from mokume.plotting.style import (
+    category_order,
     MATPLOTLIB_FONTS,
     MATPLOTLIB_STYLE,
     SAMPLE_POINT_COLOR,
@@ -57,6 +58,23 @@ def style_axes(ax):
         ax.spines[side].set_linewidth(0.8)
 
 
+def short_protein_name(name):
+    """A protein group's first member, as its entry name when written db|accession|entry."""
+    return str(name).split(";", maxsplit=1)[0].split("|")[-1]
+
+
+def volcano_label_rows(frame, labelled, count=10):
+    """The ``count`` changed proteins with the lowest p-values, besides labelled ones."""
+    changed = frame[
+        frame["significance"].isin(("UP", "DOWN"))
+        & ~frame["ProteinName"].isin(labelled)
+    ]
+    order = changed.assign(size=-changed["log2FC"].abs()).sort_values(
+        ["pvalue", "size"], kind="stable"
+    )
+    return changed.loc[order.index[:count]]
+
+
 def nearest_anchor(points):
     """Choose the observed point nearest the coordinate-wise group median."""
     points = np.asarray(points)
@@ -85,8 +103,13 @@ def _label_candidates(size, center, bounds, radii):
             yield point, np.r_[point - half, point + half]
 
 
-def _label_position(size, center, placed, layout):
-    """Prefer nearby clear positions; far or compromised labels get a leader."""
+def _label_position(size, center, placed, layout, fit="required"):
+    """Prefer nearby clear positions; far or compromised labels get a leader.
+
+    With ``fit="optional"`` a label is dropped (None) when every position would
+    cover another label; with ``fit="near"`` when no position beside its anchor
+    is clear of labels and points.
+    """
     bounds, points, scale = layout["bounds"], layout["points"], layout["scale"]
     candidates = list(
         _label_candidates(size, center, bounds, np.arange(4, 25, 4) * scale)
@@ -102,23 +125,30 @@ def _label_position(size, center, placed, layout):
         # As in ggrepel, a label pushed past the nearest rings keeps a leader.
         gap = np.linalg.norm(center - np.clip(center, box[:2], box[2:]))
         return point, box, gap > 8 * scale
+    if fit == "near":
+        return None
     if available:
         point, box = min(available, key=lambda item: _overlap_count(item[1], points))
         return point, box, True
     # Prefer a longer leader to overlap, keeping a nearby fallback for dense plots.
     radii = np.arange(28 * scale, np.linalg.norm(bounds[2:] - bounds[:2]), 4 * scale)
-    point, box = next(
+    far = next(
         (
             (point, box)
             for point, box in _label_candidates(size, center, bounds, radii)
             if not _overlap_count(box, placed)
         ),
-        min(candidates, key=lambda item: np.linalg.norm(item[0] - center)),
+        None,
+    )
+    if far is None and fit != "required":
+        return None
+    point, box = far or min(
+        candidates, key=lambda item: np.linalg.norm(item[0] - center)
     )
     return point, box, True
 
 
-def _place_one_label(ax, label, anchor, placed, layout):
+def _place_one_label(ax, label, anchor, placed, layout, fit="required"):
     """Measure and position one label in the already settled figure layout."""
     text = ax.annotate(
         label,
@@ -134,32 +164,47 @@ def _place_one_label(ax, label, anchor, placed, layout):
     )
     extent = text.get_window_extent(ax.figure.canvas.get_renderer())
     center = ax.transData.transform(anchor)
-    point, box, leader = _label_position(
+    position = _label_position(
         (extent.width + 2 * layout["scale"], extent.height + 2 * layout["scale"]),
         center,
         placed,
         layout,
+        fit,
     )
+    if position is None:
+        text.remove()
+        return
+    point, box, leader = position
     text.xyann = (point - center) / layout["scale"]
     text.arrow_patch.set_visible(leader)
     placed.append(box)
 
 
-def place_labels(ax, anchors, points=None, fontsize=7):
-    """Keep neutral labels inside their axes, avoiding overlaps when space allows."""
-    ax.figure.canvas.draw()
-    scale = ax.figure.dpi / 72
+def _point_boxes(ax, points, scale):
+    """Display-space squares around data points that labels should not cover."""
     if points is None:
         points = [
             xy for collection in ax.collections for xy in collection.get_offsets()
         ]
     centers = ax.transData.transform(np.asarray(points).reshape(-1, 2))
+    return [np.r_[center - 4 * scale, center + 4 * scale] for center in centers]
+
+
+def place_labels(ax, anchors, points=None, fontsize=7, optional=None, fit="optional"):
+    """Keep neutral labels inside their axes, avoiding overlaps when space allows.
+
+    ``optional`` labels follow in their given order and are left out where they
+    would cover another label; with ``fit="near"`` they also need a spot beside
+    their anchor clear of every drawn point.
+    """
+    ax.figure.canvas.draw()
+    scale = ax.figure.dpi / 72
     bounds = ax.get_window_extent().extents + np.array([2, 2, -2, -2]) * scale
     layout = {
         "bounds": bounds,
         "scale": scale,
         "fontsize": fontsize,
-        "points": [np.r_[center - 4 * scale, center + 4 * scale] for center in centers],
+        "points": _point_boxes(ax, points, scale),
     }
     placed = [
         text.get_window_extent().extents
@@ -172,15 +217,57 @@ def place_labels(ax, anchors, points=None, fontsize=7):
     ]
     for label in sorted(anchors, key=lambda name: -len(str(name))):
         _place_one_label(ax, label, anchors[label], placed, layout)
+    if fit == "near":
+        layout = {**layout, "points": _point_boxes(ax, None, scale)}
+    for label, anchor in (optional or {}).items():
+        _place_one_label(ax, label, anchor, placed, layout, fit)
 
 
 def label_categories(ax, frame, coordinates, group_column):
-    """Label each category at its median-nearest sample."""
+    """Label each category at its median-nearest sample, in legend order."""
+    groups = frame.groupby(group_column)
     anchors = {
-        fill(str(group), 28): nearest_anchor(part[list(coordinates)].to_numpy())
-        for group, part in frame.groupby(group_column, sort=True)
+        fill(str(group), 28): nearest_anchor(
+            groups.get_group(group)[list(coordinates)].to_numpy()
+        )
+        for group in category_order(frame[group_column])
     }
-    place_labels(ax, anchors)
+    place_labels(ax, {}, optional=anchors)
+
+
+def confidence_ellipse(points, level=0.95, segments=72):
+    """Outline of a group's normal data ellipse, as ggplot2 stat_ellipse(type="norm").
+
+    The covariance is scaled by 2 F(level; 2, n - 1), whose quantile has a
+    closed form for two numerator degrees of freedom.
+    """
+    points = np.asarray(points, dtype=float)
+    dof = len(points) - 1
+    radius = np.sqrt(dof * ((1 - level) ** (-2 / dof) - 1))
+    values, vectors = np.linalg.eigh(np.cov(points.T))
+    angle = np.linspace(0, 2 * np.pi, segments + 1)
+    circle = np.column_stack((np.cos(angle), np.sin(angle)))
+    return (
+        points.mean(axis=0)
+        + radius * circle * np.sqrt(np.clip(values, 0, None)) @ vectors.T
+    )
+
+
+def group_ellipses(frame, coordinates, group_column):
+    """95% ellipses of the groups with three or more samples, for twelve groups or fewer."""
+    if frame[group_column].nunique() > 12:
+        return {}
+    return {
+        group: confidence_ellipse(part[list(coordinates)].to_numpy())
+        for group, part in frame.groupby(group_column)
+        if len(part) >= 3
+    }
+
+
+def draw_group_ellipses(ax, frame, coordinates, group_column, palette):
+    """Outline each group's ellipse in its color, beneath the sample points."""
+    for group, outline in group_ellipses(frame, coordinates, group_column).items():
+        ax.plot(*outline.T, color=palette[group], linewidth=0.8, alpha=0.8, zorder=0.5)
 
 
 def expand_category_axes(ax):
@@ -265,8 +352,14 @@ def log2_matrix(frame, is_log2=False):
 
 
 def ordered_samples(samples, conditions):
-    """Order samples by condition and then by sample name."""
-    return sorted(samples, key=lambda sample: (conditions.get(sample, ""), sample))
+    """Order samples by condition, as in the legend, and then by sample name."""
+    order = {
+        condition: index
+        for index, condition in enumerate(category_order(conditions.values()))
+    }
+    return sorted(
+        samples, key=lambda sample: (order.get(conditions.get(sample), -1), sample)
+    )
 
 
 def finite_list(values):

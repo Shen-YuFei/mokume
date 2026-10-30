@@ -125,6 +125,7 @@ def _generate_volcano_plots(pd, contrasts, plot_dir, args):
             highlight_genes=highlight,
             title=f"Volcano Plot: {key} ({cond_a} vs {cond_b})",
             output_file=output_file,
+            conditions=(cond_a, cond_b),
         )
         print("Volcano plot saved to {0}".format(output_file))
 

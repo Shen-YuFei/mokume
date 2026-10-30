@@ -7,6 +7,7 @@ from sklearn.decomposition import PCA
 
 from mokume.plotting._common import (
     bottom_legend,
+    draw_group_ellipses,
     expand_category_axes,
     label_categories,
     static_style,
@@ -14,6 +15,7 @@ from mokume.plotting._common import (
 )
 from mokume.plotting.style import (
     category_colors,
+    category_order,
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
     WHITE,
@@ -23,8 +25,11 @@ from mokume.plotting.style import (
 def _embedding_plot(frame, axes, group_column, options):
     """Plot existing coordinates without modifying their calculation."""
     fig, ax = plt.subplots(figsize=options.get("figsize", (3.5, 3)))
-    groups = sorted(frame[group_column].unique())
-    for group, color in zip(groups, category_colors(len(groups))):
+    groups = category_order(frame[group_column])
+    palette = dict(zip(groups, category_colors(len(groups))))
+    if options.get("ellipses"):
+        draw_group_ellipses(ax, frame, axes, group_column, palette)
+    for group, color in palette.items():
         subset = frame[frame[group_column] == group]
         ax.scatter(
             subset[axes[0]],
@@ -90,7 +95,7 @@ def plot_pca(
         df_pca,
         (x_col, y_col),
         hue_col,
-        {"output": output_file, "title": title, "figsize": figsize},
+        {"output": output_file, "title": title, "figsize": figsize, "ellipses": True},
     )
 
 

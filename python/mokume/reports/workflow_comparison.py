@@ -20,6 +20,7 @@ from plotly.offline import get_plotlyjs
 from mokume.reports.qc_report import compute_qc_metrics, _safe_json
 from mokume.plotting.style import (
     category_colors,
+    category_order,
     PLOTLY_TEMPLATE,
     REPORT_CSS,
     SINGLE_SERIES_COLOR,
@@ -342,8 +343,8 @@ def _build_comparison_html(title, workflow_metrics, concordance, marker_html, pr
 
     plex = _plex_display(workflow_metrics)
 
-    condition_names = sorted(
-        {condition for pca in pca_data.values() for condition in pca["conditions"]}
+    condition_names = category_order(
+        condition for pca in pca_data.values() for condition in pca["conditions"]
     )
 
     return f"""<!DOCTYPE html>
@@ -549,7 +550,7 @@ const condColors = {
     };
 {EMBEDDING_LABEL_JS}
 function pcaTraces(pca) {{
-    const conditions = [...new Set(pca.conditions)].sort();
+    const conditions = [...new Set(pca.conditions)].sort(categoryOrder);
     const plexes = [...new Set(pca.plexes)].sort();
     const multiPlex = plexes.length > 1;
     const traces = [];
@@ -583,14 +584,16 @@ function paddedRange(values) {{
 function drawPca(wfName, index) {{
     const pca = pcaData[wfName];
     const traces = pcaTraces(pca);
-    Plotly.newPlot(`pca-${{index}}`, [...traces, ...labelTraces(traces)], {{
+    const outlines = Object.values(pca.ellipses);
+    Plotly.newPlot(`pca-${{index}}`, [...ellipseTraces(pca.ellipses, condColors), ...traces,
+            ...labelTraces(traces)], {{
         template: plotTemplate,
         title: {{text: wfName + (traces.length === 1 ? ' (' + traces[0].name + ')' : ''),
                  x: 0, xanchor: 'left', font: {{size: 14}}}},
         xaxis: {{title: {{text: 'PC1 (' + pca.var_explained[0].toFixed(1) + '%)'}},
-                 range: paddedRange(pca.pc1)}},
+                 range: paddedRange(pca.pc1.concat(...outlines.map(outline => outline.x)))}},
         yaxis: {{title: {{text: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)'}},
-                 range: paddedRange(pca.pc2)}},
+                 range: paddedRange(pca.pc2.concat(...outlines.map(outline => outline.y)))}},
         showlegend: traces.length > 1,
         legend: {{font: {{size: 9}}, orientation: 'h', y: -0.2}},
         margin: {{t: 55, b: 95, l: 60, r: 45}},

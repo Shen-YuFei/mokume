@@ -85,6 +85,11 @@ def _palette_candidates():
     return lab[valid], colors
 
 
+def category_order(names):
+    """Unique category names in case-insensitive order, the palette's assignment order."""
+    return sorted(set(names), key=lambda name: (str(name).casefold(), str(name)))
+
+
 def category_colors(n):
     """Extend six seeds greedily in OKLab, with deterministic stable prefixes."""
     colors = list(CONDITION_COLORS)

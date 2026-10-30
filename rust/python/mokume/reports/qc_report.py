@@ -25,6 +25,7 @@ from sklearn.metrics import silhouette_score as sklearn_silhouette_score
 from mokume.plotting.style import (
     CONDITION_COLORS,
     category_colors,
+    category_order,
     MISSING_COLOR,
     PLOTLY_TEMPLATE,
     REPORT_CSS,
@@ -34,7 +35,11 @@ from mokume.plotting.style import (
     TEXT_COLOR,
 )
 from mokume.core.logger import get_logger
-from mokume.plotting._common import log2_matrix as prepare_log2, read_frame
+from mokume.plotting._common import (
+    group_ellipses,
+    log2_matrix as prepare_log2,
+    read_frame,
+)
 from mokume.reports._plots import EMBEDDING_LABEL_JS, plot_cards
 from mokume.reports._qc_diagnostics import diagnostic_plots
 
@@ -177,6 +182,19 @@ def _compute_pca(log2_matrix, samples, sample_to_condition, sample_to_plex):
     }
     if n_components >= 3:
         result["pc3"] = coords[:, 2].tolist()
+    groups = pd.DataFrame(
+        {"pc1": result["pc1"], "pc2": result["pc2"], "condition": result["conditions"]}
+    )
+    result["ellipses"] = (
+        {
+            condition: {"x": outline[:, 0].tolist(), "y": outline[:, 1].tolist()}
+            for condition, outline in group_ellipses(
+                groups, ("pc1", "pc2"), "condition"
+            ).items()
+        }
+        if n_components >= 2
+        else {}
+    )
 
     return result
 
@@ -671,7 +689,7 @@ def _build_qc_html(title, metrics, highlight_genes, de_results):
         </div>
         """
 
-    condition_names = sorted(set(pca["conditions"]))
+    condition_names = category_order(pca["conditions"])
 
     return f"""<!DOCTYPE html>
 <html>
@@ -853,7 +871,7 @@ function paddedRange(values) {{
     return [low - padding, high + padding];
 }}
 function sampleOrder(a, b) {{
-    return sampleConditions[a].localeCompare(sampleConditions[b]) || a.localeCompare(b);
+    return categoryOrder(sampleConditions[a], sampleConditions[b]) || a.localeCompare(b);
 }}
 
 // Shared colors are computed in Python for every condition panel.
@@ -867,7 +885,7 @@ const plotTemplate = {_safe_json(PLOTLY_TEMPLATE)};
 const pca = {_safe_json(pca)};
 {EMBEDDING_LABEL_JS}
 function embeddingTraces(data, xKey, yKey) {{
-    const conditions = [...new Set(data.conditions)].sort();
+    const conditions = [...new Set(data.conditions)].sort(categoryOrder);
     const plexes = [...new Set(data.plexes)].sort();
     const traces = [];
     conditions.forEach(condition => {{
@@ -895,12 +913,16 @@ function embeddingTraces(data, xKey, yKey) {{
 }}
 function drawEmbedding(target, data, axes, title) {{
     const traces = embeddingTraces(data, axes[0][0], axes[1][0]);
-    Plotly.newPlot(target, [...traces, ...labelTraces(traces)], {{
+    const outlines = Object.values(data.ellipses);
+    Plotly.newPlot(target, [...ellipseTraces(data.ellipses, condColors), ...traces,
+            ...labelTraces(traces)], {{
         template: plotTemplate,
         title: {{x: 0, xanchor: 'left', font: {{size: 14}},
             text: title + (traces.length === 1 ? ' (' + traces[0].name + ')' : '')}},
-        xaxis: {{title: {{text: axes[0][1]}}, range: paddedRange(data[axes[0][0]])}},
-        yaxis: {{title: {{text: axes[1][1]}}, range: paddedRange(data[axes[1][0]])}},
+        xaxis: {{title: {{text: axes[0][1]}},
+            range: paddedRange(data[axes[0][0]].concat(...outlines.map(outline => outline.x)))}},
+        yaxis: {{title: {{text: axes[1][1]}},
+            range: paddedRange(data[axes[1][0]].concat(...outlines.map(outline => outline.y)))}},
         showlegend: traces.length > 1, legend: {{font: {{size: 10}}}},
         margin: {{t: 50, b: 50, l: 60, r: 35}},
         ...categoryLayout(target, traces, 450),
@@ -965,7 +987,7 @@ Plotly.newPlot('pvca-plot', [{{
     const dist = {json.dumps(distributions)};
     const samples = Object.keys(dist).sort(sampleOrder);
     const boxTraces = [];
-    const conds = [...new Set(samples.map(sample => dist[sample].condition))].sort();
+    const conds = [...new Set(samples.map(sample => dist[sample].condition))].sort(categoryOrder);
     conds.forEach(cond => {{
         const group = samples.filter(sample => dist[sample].condition === cond);
         boxTraces.push({{
@@ -996,7 +1018,7 @@ Plotly.newPlot('pvca-plot', [{{
 (function() {{
     const cvData = {json.dumps({k: v["cv_values"] for k, v in condition_cv.items()})};
     const traces = [];
-    Object.keys(cvData).sort().forEach(cond => {{
+    Object.keys(cvData).sort(categoryOrder).forEach(cond => {{
         traces.push({{
             type: 'violin', points: false,
             name: cond,
