@@ -1,7 +1,7 @@
 // Small SVG diagnostics drawn from the bounded post-run QC summary.
 import { setTranslatedText, translate, translatedElement } from "./studio-i18n.js";
 
-import { categoryColors } from "./studio-qc-colors.js";
+import { categoryColors, categoryOrder } from "./studio-qc-colors.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const AREA = { left: 70, top: 26, width: 240, height: 174 };
@@ -103,15 +103,61 @@ function scatterTicks(svg, xRange, yRange) {
   });
 }
 
-function pcaPoint(svg, point, sample, ranges, color) {
-  const [xRange, yRange] = ranges;
-  const x = AREA.left + (point[0] - xRange[0]) / (xRange[1] - xRange[0]) * AREA.width;
-  const y = 200 - (point[1] - yRange[0]) / (yRange[1] - yRange[0]) * AREA.height;
-  const marker = svgNode("circle", { cx: x, cy: y, r: 3.3, fill: color,
-    "fill-opacity": 0.85, stroke: "none" });
+function project(point, [xRange, yRange]) {
+  return [AREA.left + (point[0] - xRange[0]) / (xRange[1] - xRange[0]) * AREA.width,
+    200 - (point[1] - yRange[0]) / (yRange[1] - yRange[0]) * AREA.height];
+}
+
+// Category marks carry their slot so a theme change can repaint them.
+function categoryPaint(node, group, paint) {
+  node.dataset.category = group;
+  node.dataset.paint = paint;
+  return node;
+}
+
+function pcaPoint(svg, point, sample, ranges, [color, group]) {
+  const [x, y] = project(point, ranges);
+  const marker = categoryPaint(svgNode("circle", { cx: x, cy: y, r: 3.3, fill: color,
+    "fill-opacity": 0.85, stroke: "none" }), group, "fill");
   marker.append(svgNode("title", {}, `${sample}: ${point[0].toFixed(2)}, ${point[1].toFixed(2)}`));
   svg.append(marker);
   return [x, y];
+}
+
+// 95% normal data ellipse, as ggplot2 stat_ellipse(type = "norm") and the
+// reports: the covariance scaled by 2 F(0.95; 2, n - 1), in closed form.
+function confidenceEllipse(points) {
+  const dof = points.length - 1;
+  const mean = [0, 1].map((axis) =>
+    points.reduce((sum, point) => sum + point[axis], 0) / points.length);
+  const [xx, yy, xy] = [[0, 0], [1, 1], [0, 1]].map(([a, b]) => points.reduce((sum, point) =>
+    sum + (point[a] - mean[a]) * (point[b] - mean[b]), 0) / dof);
+  const radius = Math.sqrt(dof * (0.05 ** (-2 / dof) - 1));
+  const centre = (xx + yy) / 2, spread = Math.hypot((xx - yy) / 2, xy);
+  const angle = Math.atan2(2 * xy, xx - yy) / 2;
+  const major = radius * Math.sqrt(centre + spread);
+  const minor = radius * Math.sqrt(Math.max(centre - spread, 0));
+  return Array.from({ length: 73 }, (_, step) => {
+    const u = major * Math.cos(step * Math.PI / 36), v = minor * Math.sin(step * Math.PI / 36);
+    return [mean[0] + u * Math.cos(angle) - v * Math.sin(angle),
+      mean[1] + u * Math.sin(angle) + v * Math.cos(angle)];
+  });
+}
+
+// Groups of three or more samples, for twelve conditions or fewer.
+function groupEllipses(points, groups, count) {
+  if (count > 12) return [];
+  return [...Array(count).keys()].map((group) => [group,
+    points.filter((_, index) => groups[index] === group)])
+    .filter(([, own]) => own.length >= 3)
+    .map(([group, own]) => [group, confidenceEllipse(own)]);
+}
+
+function ellipsePath(svg, outline, ranges, [color, group]) {
+  const path = outline.map((point, index) =>
+    `${index ? "L" : "M"}${project(point, ranges).map((value) => value.toFixed(1)).join(" ")}`);
+  svg.append(categoryPaint(svgNode("path", { d: path.join(""), fill: "none", stroke: color,
+    "stroke-opacity": 0.8, "stroke-width": 1 }), group, "stroke"));
 }
 
 function overlaps(a, b) {
@@ -142,10 +188,11 @@ function median(values) {
 
 // Nearest clear spot in eight directions, then farther out; as in ggrepel,
 // a label more than 8 px from its anchor keeps a leader.
-// Like sample labels, a condition label with no free spot is left to the
-// legend rather than stacked on another label.
+// As in the reports, a condition label with no spot free of other labels is
+// left to the legend rather than stacked on another label.
 function labelBox(anchor, size, placed, dots) {
-  const radii = [4, 8, 12, 16, 20, 24, 32, 40, 48, 56, 64];
+  const radii = [4, 8, 12, 16, 20, 24];
+  for (let radius = 28; radius < Math.hypot(AREA.width, AREA.height); radius += 4) radii.push(radius);
   const candidates = radii.flatMap((radius) => [...Array(8).keys()].map((step) => {
     const angle = step * Math.PI / 4;
     const x = Math.max(AREA.left + size[0] / 2, Math.min(AREA.left + AREA.width - size[0] / 2,
@@ -162,10 +209,11 @@ function labelBox(anchor, size, placed, dots) {
       anchor[1] - Math.max(clear.box[1], Math.min(clear.box[3], anchor[1])));
     return { box: clear.box, leader: gap > 8 };
   }
-  const pool = near.length ? near : candidates;
-  if (!pool.length) return null;
-  return { box: pool.reduce((best, item) => (hits(item.box) < hits(best.box) ? item : best)).box,
-    leader: true };
+  if (near.length) {
+    return { box: near.reduce((best, item) => (hits(item.box) < hits(best.box) ? item : best)).box,
+      leader: true };
+  }
+  return candidates.length ? { box: candidates[0].box, leader: true } : null;
 }
 
 // Above twelve conditions colours repeat, so each condition is named once
@@ -197,8 +245,8 @@ function conditionLegend(figure, conditions, colors) {
   conditions.forEach((condition, index) => {
     const entry = document.createElement("span");
     const swatch = svgNode("svg", { viewBox: "0 0 10 10", "aria-hidden": "true" });
-    swatch.append(svgNode("circle", { cx: 5, cy: 5, r: 3.3, fill: colors[index],
-      "fill-opacity": 0.85, stroke: "none" }));
+    swatch.append(categoryPaint(svgNode("circle", { cx: 5, cy: 5, r: 3.3, fill: colors[index],
+      "fill-opacity": 0.85, stroke: "none" }), index, "fill"));
     entry.append(swatch, document.createTextNode(condition || translate("Unknown condition")));
     legend.append(entry);
   });
@@ -210,14 +258,19 @@ export function pcaPlot(qc) {
   const plot = plotFrame("PCA by sample", "PC1", "PC2", { xLabelY: 232, height: 262 });
   const points = qc.pca?.scores || [];
   if (!points.length) return unavailable(plot);
-  const xRange = coordinateRange(points.map((point) => point[0]));
-  const yRange = coordinateRange(points.map((point) => point[1]));
-  scatterTicks(plot.svg, xRange, yRange);
-  const conditions = [...new Set(qc.samples.map((sample) => qc.conditions?.[sample] || ""))];
+  const conditions = [...new Set(qc.samples.map((sample) => qc.conditions?.[sample] || ""))]
+    .sort(categoryOrder);
   const colors = categoryColors(conditions.length);
   const groups = qc.samples.map((sample) => conditions.indexOf(qc.conditions?.[sample] || ""));
+  const ellipses = groupEllipses(points, groups, conditions.length);
+  const extent = [...points, ...ellipses.flatMap(([, outline]) => outline)];
+  const ranges = [0, 1].map((axis) => coordinateRange(extent.map((point) => point[axis])));
+  scatterTicks(plot.svg, ...ranges);
+  plot.figure.dataset.categoryCount = conditions.length;
+  ellipses.forEach(([group, outline]) => ellipsePath(plot.svg, outline, ranges,
+    [colors[group], group]));
   const positions = points.map((point, index) => pcaPoint(plot.svg, point, qc.samples[index],
-    [xRange, yRange], colors[groups[index]]));
+    ranges, [colors[groups[index]], groups[index]]));
   if (conditions.length > 12) conditionLabels(plot.svg, positions, groups, conditions);
   else pcaLabels(plot.svg, positions, qc.samples);
   if (conditions.length > 1) conditionLegend(plot.figure, conditions, colors);
@@ -276,6 +329,17 @@ export function correlationPlot(qc) {
   heatmapLegend(plot.svg, minimum);
   return plot.figure;
 }
+
+// Repaint category marks with the palette of the theme now in use.
+function repaintCategories() {
+  document.querySelectorAll(".qc-plot[data-category-count]").forEach((figure) => {
+    const colors = categoryColors(Number(figure.dataset.categoryCount));
+    figure.querySelectorAll("[data-category]").forEach((node) => {
+      node.setAttribute(node.dataset.paint, colors[Number(node.dataset.category)]);
+    });
+  });
+}
+document.addEventListener("studio:theme", repaintCategories);
 
 export function qcPlots(qc) {
   const container = document.createElement("div");
