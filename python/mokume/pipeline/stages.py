@@ -90,7 +90,7 @@ _SQLFIRST_LOAD_QUERY_PREFIX = """
                         """
 
 _SQLFIRST_LOAD_QUERY_AFTER_MEMBERS = """,
-                        x -> CASE
+                        lambda x: CASE
                             WHEN length(string_split(x, '|')) = 3
                                 THEN string_split(x, '|')[2]
                             ELSE x
@@ -187,7 +187,7 @@ _RUN_SCALE_QUERY_PREFIX = """
                         """
 
 _RUN_SCALE_QUERY_AFTER_MEMBERS = """,
-                        x -> CASE
+                        lambda x: CASE
                             WHEN length(string_split(x, '|')) = 3
                                 THEN string_split(x, '|')[2]
                             ELSE x

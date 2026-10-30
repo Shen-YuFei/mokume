@@ -265,7 +265,7 @@ class SQLFilterBuilder:
         if not (self.remove_contaminants and self.contaminant_patterns):
             return "pg_accessions", []
         tests = " OR ".join("strpos(a::text, ?) > 0" for _ in self.contaminant_patterns)
-        return f"list_filter(pg_accessions, a -> NOT ({tests}))", list(
+        return f"list_filter(pg_accessions, lambda a: NOT ({tests}))", list(
             self.contaminant_patterns
         )
 
@@ -278,7 +278,7 @@ class SQLFilterBuilder:
         def any_member(patterns: list[str]) -> str:
             params.extend(patterns)
             tests = " OR ".join("strpos(a::text, ?) > 0" for _ in patterns)
-            return f"list_transform(pg_accessions, a -> {tests})"
+            return f"list_transform(pg_accessions, lambda a: {tests})"
 
         decoys = [p for p in self.contaminant_patterns if p.upper() == "DECOY"]
         contams = [p for p in self.contaminant_patterns if p.upper() != "DECOY"]
@@ -612,7 +612,7 @@ class Feature:
         charge_col, run_col = self._charge_col, self._run_col
         # Normalize pg_accessions: extract accession strings from struct if needed
         pg_expr = (
-            "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
+            "list_transform(pg_accessions, lambda x: x.accession) as pg_accessions"
             if self._pg_accessions_is_struct
             else "pg_accessions"
         )
@@ -759,7 +759,7 @@ class Feature:
 
         # Normalize pg_accessions: extract accession strings from struct if needed
         pg_expr = (
-            "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
+            "list_transform(pg_accessions, lambda x: x.accession) as pg_accessions"
             if self._pg_accessions_is_struct
             else "pg_accessions"
         )
@@ -1027,14 +1027,14 @@ class Feature:
 
     def get_unique_samples(self) -> list[str]:
         """Retrieves a list of unique sample accessions from the Parquet database."""
-        unique = self.parquet_db.sql(
+        unique = self.parquet_db.execute(
             "SELECT DISTINCT sample_accession FROM parquet_db"
         ).df()
         return unique["sample_accession"].tolist()
 
     def get_unique_labels(self) -> list[str]:
         """Retrieves a list of unique channel labels from the Parquet database."""
-        unique = self.parquet_db.sql("SELECT DISTINCT channel FROM parquet_db").df()
+        unique = self.parquet_db.execute("SELECT DISTINCT channel FROM parquet_db").df()
         return unique["channel"].tolist()
 
     def get_unique_tec_reps(self) -> list[int]:
@@ -1045,7 +1045,7 @@ class Feature:
         2. If run name is numeric, use it directly
         3. Fall back to sequential integers (1, 2, 3, ...) based on unique runs
         """
-        unique = self.parquet_db.sql("SELECT DISTINCT run FROM parquet_db").df()
+        unique = self.parquet_db.execute("SELECT DISTINCT run FROM parquet_db").df()
 
         try:
             # Try to extract last part after underscore as tech rep
@@ -1140,7 +1140,9 @@ class Feature:
 
     def get_unique_conditions(self) -> list[str]:
         """Retrieves a list of unique experimental conditions from the Parquet database."""
-        unique = self.parquet_db.sql("SELECT DISTINCT condition FROM parquet_db").df()
+        unique = self.parquet_db.execute(
+            "SELECT DISTINCT condition FROM parquet_db"
+        ).df()
         return unique["condition"].tolist()
 
     def get_median_map_to_condition(self) -> dict[str, dict[str, float]]:

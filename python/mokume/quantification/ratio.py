@@ -351,7 +351,7 @@ def _pg_accessions_projection(
         return "pg_accessions"
 
     if "struct" in type_str:
-        return "list_transform(pg_accessions, x -> x.accession) as pg_accessions"
+        return "list_transform(pg_accessions, lambda x: x.accession) as pg_accessions"
     return "pg_accessions"
 
 
