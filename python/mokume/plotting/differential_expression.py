@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.patches import Patch
 from matplotlib.transforms import Bbox
 from sklearn.decomposition import PCA
 
@@ -113,10 +114,34 @@ def plot_volcano(
         for _, row in volcano_label_rows(df, list(anchors)).iterrows()
     }
 
-    # Legend
-    from matplotlib.patches import Patch
+    ax.set_xlabel(
+        f"log2 fold change ({conditions[0]} vs {conditions[1]})"
+        if conditions
+        else "log2 Fold Change"
+    )
+    ax.set_ylabel("-log10(p-value)")
+    ax.set_title(_volcano_legend(ax, df, title))
+    _style_axes(ax)
+    plt.tight_layout()
+    place_labels(
+        ax,
+        anchors,
+        points=[*anchors.values(), *optional.values()],
+        fontsize=8,
+        optional=optional,
+        fit="near",
+    )
 
-    counts = df["significance"].value_counts()
+    if output_file:
+        plt.savefig(output_file, bbox_inches="tight")
+        plt.close(fig)
+
+    return fig
+
+
+def _volcano_legend(ax, frame, title):
+    """Show significance counts as a legend, or in the title for a single class."""
+    counts = frame["significance"].value_counts()
     legend_elements = [
         Patch(facecolor=color, label=f"{label} ({counts[label]})")
         for label, color in SIGNIFICANCE_COLORS.items()
@@ -136,30 +161,7 @@ def plot_volcano(
         )
     elif legend_elements:
         title += f" ({legend_elements[0].get_label()})"
-
-    ax.set_xlabel(
-        f"log2 fold change ({conditions[0]} vs {conditions[1]})"
-        if conditions
-        else "log2 Fold Change"
-    )
-    ax.set_ylabel("-log10(p-value)")
-    ax.set_title(title)
-    _style_axes(ax)
-    plt.tight_layout()
-    place_labels(
-        ax,
-        anchors,
-        points=[*anchors.values(), *optional.values()],
-        fontsize=8,
-        optional=optional,
-        fit="near",
-    )
-
-    if output_file:
-        plt.savefig(output_file, bbox_inches="tight")
-        plt.close(fig)
-
-    return fig
+    return title
 
 
 def _highlight_volcano(ax, frame, genes):
@@ -251,12 +253,7 @@ def plot_heatmap(
         intensity = intensity.loc[top_proteins]
 
     if intensity.empty:
-        fig, ax = plt.subplots(figsize=figsize)
-        ax.text(0.5, 0.5, "No proteins to display", ha="center", va="center")
-        if output_file:
-            plt.savefig(output_file, bbox_inches="tight")
-            plt.close(fig)
-        return fig
+        return _message_figure("No proteins to display", figsize, output_file)
 
     # Row-scale (z-score per protein)
     # Drop proteins with zero std (constant) or all-NaN before z-scoring
@@ -433,12 +430,7 @@ def plot_pca_conditions(
     data = intensity.T.dropna(axis=1)
 
     if data.shape[1] < 2:
-        fig, ax = plt.subplots(figsize=figsize)
-        ax.text(0.5, 0.5, "Not enough features for PCA", ha="center", va="center")
-        if output_file:
-            plt.savefig(output_file, bbox_inches="tight")
-            plt.close(fig)
-        return fig
+        return _message_figure("Not enough features for PCA", figsize, output_file)
 
     # Compute PCA
     n_components = min(2, data.shape[0], data.shape[1])
@@ -482,6 +474,16 @@ def plot_pca_conditions(
         plt.savefig(output_file, bbox_inches="tight")
         plt.close(fig)
 
+    return fig
+
+
+def _message_figure(message, figsize, output_file):
+    """A figure that only states why there is nothing to plot."""
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.text(0.5, 0.5, message, ha="center", va="center")
+    if output_file:
+        plt.savefig(output_file, bbox_inches="tight")
+        plt.close(fig)
     return fig
 
 

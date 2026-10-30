@@ -190,8 +190,12 @@ def estimate_protein_intensities_streamed(
     LOGGER.info("%d lfq-groups total", normed_df.index.get_level_values(0).nunique())
 
     with _ion_export_file(export_ions, normed_df.columns) as ion_output:
-        include_ions = ion_output is not None
-        include_residuals = residuals is not None
+        options = (
+            num_samples_quadratic,
+            min_nonan,
+            ion_output is not None,
+            residuals is not None,
+        )
         if num_cores is not None and num_cores > 1:
             LOGGER.info(
                 "Estimating DirectLFQ proteins in parallel (%d cores)", num_cores
@@ -200,16 +204,7 @@ def estimate_protein_intensities_streamed(
             with mp.Pool(processes=num_cores) as pool:
                 batch: list[tuple] = []
                 for group_idx, protein_df in iter_protein_groups(normed_df):
-                    batch.append(
-                        (
-                            group_idx,
-                            protein_df,
-                            num_samples_quadratic,
-                            min_nonan,
-                            include_ions,
-                            include_residuals,
-                        )
-                    )
+                    batch.append((group_idx, protein_df, *options))
                     if len(batch) >= batch_size:
                         results = pool.map(_estimate_protein_group, batch)
                         _append_results(results, protein_ids, profile_rows, residuals)
@@ -221,18 +216,7 @@ def estimate_protein_intensities_streamed(
                     _write_ion_results(results, ion_output)
         else:
             for group_idx, protein_df in iter_protein_groups(normed_df):
-                results = [
-                    _estimate_protein_group(
-                        (
-                            group_idx,
-                            protein_df,
-                            num_samples_quadratic,
-                            min_nonan,
-                            include_ions,
-                            include_residuals,
-                        )
-                    )
-                ]
+                results = [_estimate_protein_group((group_idx, protein_df, *options))]
                 _append_results(results, protein_ids, profile_rows, residuals)
                 _write_ion_results(results, ion_output)
 

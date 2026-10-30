@@ -98,6 +98,21 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
 
     # Run DirectLFQ protein estimation (streaming; returns linear intensities).
     logger.info("Running DirectLFQ protein estimation...")
+    protein_df = _estimate_proteins(normed_df, config, dataset)
+
+    dataset.proteins = protein_df
+    dataset.record_step(
+        "quantification",
+        method="directlfq",
+        rows_out=len(protein_df),
+    )
+
+    logger.info(f"DirectLFQ complete: {len(protein_df)} proteins")
+    return dataset
+
+
+def _estimate_proteins(normed_df, config: PipelineConfig, dataset: QpxDataset):
+    """Estimate protein intensities, keeping cell precisions for weighted DEqMS."""
     residuals = [] if config.de.precision_weights else None
     protein_df = estimate_protein_intensities_streamed(
         normed_df,
@@ -111,13 +126,4 @@ def run(method: QuantificationMethod, config: PipelineConfig) -> QpxDataset:
         dataset.layers["cell_precision"] = precision_matrix(
             residuals, normed_df.columns, protein_df.columns[0]
         )
-
-    dataset.proteins = protein_df
-    dataset.record_step(
-        "quantification",
-        method="directlfq",
-        rows_out=len(protein_df),
-    )
-
-    logger.info(f"DirectLFQ complete: {len(protein_df)} proteins")
-    return dataset
+    return protein_df

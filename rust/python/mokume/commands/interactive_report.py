@@ -151,7 +151,6 @@ def main(argv=None):
     protein_df = pd.read_csv(args.protein_matrix)
     sample_to_condition = detect_condition_from_sdrf(args.sdrf)
     _require_sample_conditions(sample_to_condition)
-    highlight = args.highlight_protein or None
 
     n_contrasts = len(args.contrast)
     for key, cond_a, cond_b, de_csv in args.contrast:
@@ -168,7 +167,7 @@ def main(argv=None):
             },
             output_html=output_html,
             title=f"DE Report: {key} ({cond_a} vs {cond_b})",
-            highlight_genes=highlight,
+            highlight_genes=args.highlight_protein or None,
             log2fc_threshold=args.log2fc,
             fdr_threshold=args.fdr,
             peptides=args.peptides,
