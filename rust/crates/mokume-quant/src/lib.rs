@@ -5,9 +5,9 @@ mod maxlfq;
 mod precision;
 
 pub use directlfq_aligned::{
-    direct_lfq_aligned, direct_lfq_aligned_with_ions, sample_shifts as direct_lfq_sample_shifts,
+    direct_lfq_aligned, direct_lfq_aligned_with, sample_shifts as direct_lfq_sample_shifts,
     sparse_sample_shifts as direct_lfq_sparse_sample_shifts, DirectLfqIon, DirectLfqNormalizedIon,
-    DirectLfqResult,
+    DirectLfqResult, DirectLfqRetain,
 };
 pub use maxlfq::{
     max_lfq, max_lfq_with_samples, solve_max_lfq, solve_max_lfq_with_stabilization, MaxLfqResult,

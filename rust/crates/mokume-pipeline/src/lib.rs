@@ -27,9 +27,9 @@ use mokume_normalization::{
     SampleNormalizationMethod,
 };
 use mokume_quant::{
-    cell_precisions, direct_lfq_aligned, direct_lfq_aligned_with_ions, profile_residuals,
+    cell_precisions, direct_lfq_aligned, direct_lfq_aligned_with, profile_residuals,
     solve_max_lfq_with_stabilization, DirectLfqIon, DirectLfqNormalizedIon, DirectLfqResult,
-    PeptideMeasurement, ProfileResiduals,
+    DirectLfqRetain, PeptideMeasurement, ProfileResiduals,
 };
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
@@ -1587,11 +1587,12 @@ impl FeatureAggregation {
             canonical_peptides,
             samples,
         );
-        let result = direct_lfq_aligned_with_ions(
+        let result = direct_lfq_aligned_with(
             std::mem::take(&mut prepared.ions),
             *directlfq_min_nonan,
             *directlfq_num_samples_quadratic,
             *directlfq_normalize_samples,
+            DirectLfqRetain::ions(*cell_precision),
         );
         write_directlfq_ions(
             path,
@@ -1601,7 +1602,7 @@ impl FeatureAggregation {
             canonical_peptides,
             samples,
         )?;
-        *cached_directlfq = Some(directlfq_cells(result, &prepared, *cell_precision));
+        *cached_directlfq = Some(directlfq_cells(result, &prepared));
         Ok(())
     }
 
@@ -8363,8 +8364,8 @@ type DirectLfqCells = (
     HashMap<CellKey, f64>,
 );
 
-/// Solve DirectLFQ on the prepared ions; the aligned ions are kept only for
-/// the cell precisions.
+/// Solve DirectLFQ on the prepared ions, with each protein's ion residuals
+/// when the cell precisions are requested.
 fn solve_directlfq(
     mut prepared: PreparedDirectLfq,
     min_nonan: usize,
@@ -8372,56 +8373,33 @@ fn solve_directlfq(
     normalize_samples: bool,
     cell_precision: bool,
 ) -> DirectLfqCells {
-    let ions = std::mem::take(&mut prepared.ions);
-    if !cell_precision {
-        let values = direct_lfq_aligned(ions, min_nonan, num_samples_quadratic, normalize_samples);
-        return (remap_directlfq_values(values, &prepared), HashMap::new());
-    }
-    let result =
-        direct_lfq_aligned_with_ions(ions, min_nonan, num_samples_quadratic, normalize_samples);
-    directlfq_cells(result, &prepared, true)
+    let result = direct_lfq_aligned_with(
+        std::mem::take(&mut prepared.ions),
+        min_nonan,
+        num_samples_quadratic,
+        normalize_samples,
+        DirectLfqRetain {
+            ions: false,
+            residuals: cell_precision,
+        },
+    );
+    directlfq_cells(result, &prepared)
 }
 
-fn directlfq_cells(
-    result: DirectLfqResult,
-    prepared: &PreparedDirectLfq,
-    cell_precision: bool,
-) -> DirectLfqCells {
-    let precision = if cell_precision {
-        directlfq_precision(&result, prepared)
-    } else {
-        HashMap::new()
-    };
+fn directlfq_cells(result: DirectLfqResult, prepared: &PreparedDirectLfq) -> DirectLfqCells {
+    let precision = directlfq_precision(&result.residuals, prepared);
     (
         remap_directlfq_values(result.protein_quantities, prepared),
         precision,
     )
 }
 
-/// Cell precisions of a DirectLFQ run, from its aligned ions around each
-/// protein's profile, keyed by the matrix ids.
+/// Cell precisions of a DirectLFQ run, keyed by the matrix ids.
 fn directlfq_precision(
-    result: &DirectLfqResult,
+    residuals: &[(ProteinId, ProfileResiduals)],
     prepared: &PreparedDirectLfq,
 ) -> HashMap<CellKey, f64> {
-    let mut ions = HashMap::<ProteinId, Vec<Vec<(SampleId, f64)>>>::new();
-    for ion in &result.normalized_ions {
-        ions.entry(ion.protein)
-            .or_default()
-            .push(log2_present(ion.quantities.iter().copied()));
-    }
-    let residuals = result
-        .protein_quantities
-        .par_iter()
-        .map(|(protein, values)| {
-            let protein_ions = ions.get(protein).map_or(&[][..], Vec::as_slice);
-            (
-                *protein,
-                profile_residuals(protein_ions, &log2_present(values.iter().copied())),
-            )
-        })
-        .collect::<Vec<_>>();
-    cell_precisions(&residuals)
+    cell_precisions(residuals)
         .into_iter()
         .map(|((protein, sample), value)| {
             let protein = prepared

@@ -22,6 +22,8 @@ use std::collections::HashMap;
 use mokume_core::{PeptideId, ProteinId, SampleId};
 use rayon::prelude::*;
 
+use crate::precision::{profile_residuals, ProfileResiduals};
+
 /// `num_samples_quadratic` for the per-protein ion-normalization stage
 /// (hard-coded to 10 by mokume's streaming caller).
 const PROTEIN_QUADRATIC_LIMIT: usize = 10;
@@ -64,12 +66,34 @@ pub struct DirectLfqNormalizedIon {
     pub quantities: Vec<(SampleId, f64)>,
 }
 
-/// Protein quantities and, when requested, the aligned ion rows produced by the
-/// same DirectLFQ calculation.
+/// Protein quantities and, when requested, the aligned ion rows and each
+/// protein's ion residuals produced by the same DirectLFQ calculation.
 #[derive(Debug, Default, PartialEq)]
 pub struct DirectLfqResult {
     pub protein_quantities: Vec<(ProteinId, Vec<(SampleId, f64)>)>,
     pub normalized_ions: Vec<DirectLfqNormalizedIon>,
+    pub residuals: Vec<(ProteinId, ProfileResiduals)>,
+}
+
+/// What [`direct_lfq_aligned_with`] keeps besides the protein quantities.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DirectLfqRetain {
+    /// The aligned ion rows, for `--export-ions`.
+    pub ions: bool,
+    /// Each quantified protein's aligned ions around its profile, for cell
+    /// precision; computed per protein, so no ion rows are kept for it.
+    pub residuals: bool,
+}
+
+impl DirectLfqRetain {
+    /// Keep the aligned ion rows, and the residuals when `residuals` is set.
+    #[must_use]
+    pub const fn ions(residuals: bool) -> Self {
+        Self {
+            ions: true,
+            residuals,
+        }
+    }
 }
 
 /// Estimate DirectLFQ protein intensities for every protein.
@@ -88,42 +112,28 @@ pub fn direct_lfq_aligned(
     sample_quadratic_limit: usize,
     normalize_samples: bool,
 ) -> Vec<(ProteinId, Vec<(SampleId, f64)>)> {
-    direct_lfq_aligned_impl(
+    direct_lfq_aligned_with(
         ions,
         min_nonan,
         sample_quadratic_limit,
         normalize_samples,
-        false,
+        DirectLfqRetain::default(),
     )
     .protein_quantities
 }
 
-/// Estimate proteins and retain DirectLFQ's normalized, within-protein-aligned
-/// ion rows in linear intensity space.
+/// Estimate proteins and retain what `retain` asks for: DirectLFQ's
+/// normalized, within-protein-aligned ion rows in linear intensity space,
+/// and each quantified protein's ion residuals.
 ///
 /// Ion rows survive even when `min_nonan` prevents a protein profile from being
 /// reported, matching Python's streamed `shifted_peptides` export.
-pub fn direct_lfq_aligned_with_ions(
+pub fn direct_lfq_aligned_with(
     ions: Vec<DirectLfqIon>,
     min_nonan: usize,
     sample_quadratic_limit: usize,
     normalize_samples: bool,
-) -> DirectLfqResult {
-    direct_lfq_aligned_impl(
-        ions,
-        min_nonan,
-        sample_quadratic_limit,
-        normalize_samples,
-        true,
-    )
-}
-
-fn direct_lfq_aligned_impl(
-    ions: Vec<DirectLfqIon>,
-    min_nonan: usize,
-    sample_quadratic_limit: usize,
-    normalize_samples: bool,
-    retain_ions: bool,
+    retain: DirectLfqRetain,
 ) -> DirectLfqResult {
     // The matrix holds every value, so the ions are released before the
     // normalization and estimation stages.
@@ -136,7 +146,7 @@ fn direct_lfq_aligned_impl(
     if normalize_samples {
         matrix.normalize_samples(sample_quadratic_limit);
     }
-    matrix.estimate(min_nonan, retain_ions)
+    matrix.estimate(min_nonan, retain)
 }
 
 /// The log2 ion x sample matrix: `rows[r][c]` is the log2 intensity of ion `r`
@@ -262,7 +272,7 @@ impl IonMatrix {
     /// Stage 2: per-protein intensity estimation over contiguous protein blocks.
     /// Each protein is independent after the global sample normalization, so the
     /// blocks are estimated in parallel.
-    fn estimate(&self, min_nonan: usize, retain_ions: bool) -> DirectLfqResult {
+    fn estimate(&self, min_nonan: usize, retain: DirectLfqRetain) -> DirectLfqResult {
         let mut ranges = Vec::new();
         let mut start = 0;
         while start < self.proteins.len() {
@@ -277,7 +287,7 @@ impl IonMatrix {
         let blocks = ranges
             .into_par_iter()
             .map(|(protein, start, end)| {
-                self.estimate_block(protein, start, end, min_nonan, retain_ions)
+                self.estimate_block(protein, start, end, min_nonan, retain)
             })
             .collect::<Vec<_>>();
 
@@ -287,6 +297,7 @@ impl IonMatrix {
                 result.protein_quantities.push(quantities);
             }
             result.normalized_ions.extend(block.normalized_ions);
+            result.residuals.extend(block.residuals);
         }
         result
     }
@@ -297,7 +308,7 @@ impl IonMatrix {
         start: usize,
         end: usize,
         min_nonan: usize,
-        retain_ions: bool,
+        retain: DirectLfqRetain,
     ) -> ProteinBlockResult {
         let alignment = align_protein(&self.rows[start..end], self.samples.len(), min_nonan);
         let protein_quantities = alignment.quantities.as_ref().map(|profile| {
@@ -309,15 +320,44 @@ impl IonMatrix {
                 .collect();
             (protein, quantities)
         });
-        let normalized_ions = if retain_ions {
+        let normalized_ions = if retain.ions {
             self.normalized_ion_rows(protein, start, &alignment)
         } else {
             Vec::new()
         };
+        let residuals = match &alignment.quantities {
+            Some(profile) if retain.residuals => {
+                Some((protein, self.ion_residuals(&alignment, profile)))
+            }
+            _ => None,
+        };
         ProteinBlockResult {
             protein_quantities,
             normalized_ions,
+            residuals,
         }
+    }
+
+    /// The protein's aligned (log2) ions around its linear profile.
+    fn ion_residuals(&self, alignment: &ProteinAlignment, profile: &[f64]) -> ProfileResiduals {
+        let ions = alignment
+            .shifted
+            .iter()
+            .map(|row| {
+                self.samples
+                    .iter()
+                    .copied()
+                    .zip(row.iter().copied())
+                    .collect()
+            })
+            .collect::<Vec<Vec<_>>>();
+        let profile = self
+            .samples
+            .iter()
+            .copied()
+            .zip(profile.iter().map(|value| linear_to_log2(*value)))
+            .collect::<Vec<_>>();
+        profile_residuals(&ions, &profile)
     }
 
     fn normalized_ion_rows(
@@ -381,6 +421,7 @@ fn collect_matrix_rows(
 struct ProteinBlockResult {
     protein_quantities: Option<(ProteinId, Vec<(SampleId, f64)>)>,
     normalized_ions: Vec<DirectLfqNormalizedIon>,
+    residuals: Option<(ProteinId, ProfileResiduals)>,
 }
 
 struct ProteinAlignment {
@@ -1007,8 +1048,8 @@ fn nanvar(values: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        direct_lfq_aligned, direct_lfq_aligned_with_ions, get_normfacts, sample_shifts,
-        sparse_sample_shifts, trim_ions, DirectLfqIon,
+        direct_lfq_aligned, direct_lfq_aligned_with, get_normfacts, sample_shifts,
+        sparse_sample_shifts, trim_ions, DirectLfqIon, DirectLfqRetain,
     };
     use mokume_core::{PeptideId, ProteinId, SampleId};
 
@@ -1164,7 +1205,7 @@ mod tests {
             ion(0, 1, 1, 200.0),
         ];
 
-        let result = direct_lfq_aligned_with_ions(ions, 3, 50, true);
+        let result = direct_lfq_aligned_with(ions, 3, 50, true, DirectLfqRetain::ions(false));
         assert!(result.protein_quantities.is_empty());
         assert_eq!(result.normalized_ions.len(), 2);
 
@@ -1204,7 +1245,7 @@ mod tests {
 
     #[test]
     fn single_observation_ion_is_masked_like_directlfq() {
-        let result = direct_lfq_aligned_with_ions(
+        let result = direct_lfq_aligned_with(
             vec![
                 ion(0, 0, 0, 100.0),
                 ion(1, 1, 0, 200.0),
@@ -1215,6 +1256,7 @@ mod tests {
             1,
             50,
             true,
+            DirectLfqRetain::ions(false),
         );
 
         assert!(result
@@ -1280,7 +1322,7 @@ mod tests {
             }
         }
 
-        let result = direct_lfq_aligned_with_ions(ions, 1, 50, true);
+        let result = direct_lfq_aligned_with(ions, 1, 50, true, DirectLfqRetain::ions(false));
         let Some((_, profile)) = result
             .protein_quantities
             .iter()
