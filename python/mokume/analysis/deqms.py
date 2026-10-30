@@ -20,6 +20,7 @@ import pandas as pd
 from scipy.special import digamma, polygamma
 from scipy.stats import t as t_dist
 
+from mokume.analysis._deqms_loess import loess_predict
 from mokume.analysis._helpers import (
     bh_adjust,
     filter_testable,
@@ -34,6 +35,9 @@ from mokume.analysis.limma import (
 from mokume.core.logger import get_logger
 
 logger = get_logger("mokume.analysis.deqms")
+
+# The quadratic count fit needs floor(.75*n) >= 3 valid proteins.
+MIN_VALID_POINTS = 4
 
 
 def _beta_continued_fraction(a: float, b: float, x: float) -> float:
@@ -137,7 +141,9 @@ def _spectra_count_ebayes(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     """Apply spectra-count-aware Bayes moderation (R DEqMS::spectraCounteBayes).
 
-    Returns (sca_t, sca_pvalue, log_pvalue, sca_var_post, d0).
+    The log variance follows R's Gaussian quadratic LOESS on log2 counts, as
+    the Rust ``spectra_count_ebayes``. Returns (sca_t, sca_pvalue, log_pvalue,
+    sca_var_post, d0).
     """
     sigma2 = fit.sigma**2
     log_var = np.log(sigma2)
@@ -154,7 +160,7 @@ def _spectra_count_ebayes(
     x = np.log2(counts_f)
 
     valid = np.isfinite(log_var) & np.isfinite(x) & np.isfinite(df_valid)
-    if valid.sum() < 10:
+    if valid.sum() < MIN_VALID_POINTS:
         logger.warning(
             "spectraCounteBayes: too few valid points (%d), "
             "falling back to standard eBayes",
@@ -162,50 +168,18 @@ def _spectra_count_ebayes(
         )
         return _standard_ebayes_statistics(fit)
 
-    x_valid = x[valid]
-    x_range = float(np.ptp(x_valid))
-    if x_range < 1e-10:
+    if np.ptp(x[valid]) < 1e-10:
         logger.warning(
             "spectraCounteBayes: all counts identical, falling back to standard eBayes",
         )
         return _standard_ebayes_statistics(fit)
 
-    try:
-        from statsmodels.nonparametric.smoothers_lowess import lowess
-    except ImportError as exc:
-        raise ImportError(
-            "statsmodels is required for the DEqMS method. "
-            "Install it with: pip install mokume-py[analysis]"
-        ) from exc
-
-    try:
-        fitted = lowess(
-            log_var[valid],
-            x_valid,
-            frac=0.75,
-            return_sorted=False,
-        )
-    except Exception:
-        logger.warning("LOESS failed, falling back to standard eBayes")
-        return _standard_ebayes_statistics(fit)
-
-    y_pred = np.full(n_genes, np.nan)
-    y_pred[valid] = fitted
-
-    non_valid = ~valid & np.isfinite(x)
-    if non_valid.any():
-        # statsmodels.lowess does not predict at new points, so linearly
-        # interpolate the fitted curve at the unseen x values.
-        order = np.argsort(x_valid)
-        y_pred[non_valid] = np.interp(x[non_valid], x_valid[order], fitted[order])
-
+    y_pred = loess_predict(log_var, x, valid)
     eg = log_var - digamma(df_valid / 2) + np.log(df_valid / 2)
     egpred = y_pred - digamma(df_valid / 2) + np.log(df_valid / 2)
 
     myfct = (eg - egpred) ** 2 - polygamma(1, df_valid / 2)
-    mean_myfct = float(np.nanmean(myfct))
-
-    d0 = _grid_search_d0(mean_myfct, n_genes)
+    d0 = _grid_search_d0(float(np.mean(myfct[np.isfinite(myfct)])), n_genes)
 
     s02 = np.exp(egpred + digamma(d0 / 2) - np.log(d0 / 2))
 
@@ -399,6 +373,11 @@ def run_deqms(
     if weights is not None:
         merged[f"mean_{cond_a}"] = fit.coefficients[:, 0]
         merged[f"mean_{cond_b}"] = fit.coefficients[:, 1]
+    return _ordered_result(merged, cond_a, cond_b)
+
+
+def _ordered_result(merged, cond_a, cond_b):
+    """Add the BH-adjusted p-values and order the DEqMS columns and rows."""
     merged["pvalue"] = merged["sca_pvalue"]
     merged["adj_pvalue"] = bh_adjust(merged["sca_pvalue"].values)
     merged["sca_adj_pvalue"] = merged["adj_pvalue"]
