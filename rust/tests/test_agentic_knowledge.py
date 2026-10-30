@@ -36,7 +36,7 @@ def test_knowledge_resolution_prefers_explicit_then_environment_then_bundle(
     override = copied / "knowledge.yaml"
     override.write_text(
         override.read_text(encoding="utf-8").replace(
-            "title: Evaluating differential expression methods for proteomics data",
+            "title: Optimizing differential expression analysis for proteomics data via high-performing rules and ensemble inference",
             "title: Environment-selected knowledge snapshot",
             1,
         ),

@@ -1,7 +1,7 @@
 sources:
   - id: opdea-2024
     kind: peer_reviewed_benchmark
-    title: Evaluating differential expression methods for proteomics data
+    title: Optimizing differential expression analysis for proteomics data via high-performing rules and ensemble inference
     locator: https://www.nature.com/articles/s41467-024-47899-w
     captured_at: '2026-08-18'
     trust: peer_reviewed
