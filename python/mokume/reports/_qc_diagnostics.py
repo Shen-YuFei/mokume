@@ -20,7 +20,6 @@ from mokume.plotting.style import (
     MISSING_COLOR,
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
-    WHITE,
 )
 
 
@@ -136,7 +135,7 @@ def _missing_heatmap(values, sampled):
             "y": [None],
             "mode": "markers",
             "name": name,
-            "marker": {"color": color, "size": 8, "line": {"width": 2, "color": WHITE}},
+            "marker": {"color": color, "size": 7},
         }
         for name, color in colors.items()
     )

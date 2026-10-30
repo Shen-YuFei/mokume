@@ -32,12 +32,12 @@ rasterized; PCA and atlas sample markers, labels and axes remain vector graphics
 Default canvases match journal columns: about 3.5 in for single panels and at
 most 7.2 in for multi-panel figures, while heatmaps and marker grids grow with
 their rows and columns. Protein points are small, translucent and unringed so
-overlaps read as density; sample points have no outline, and highlighted
-proteins are larger with a thin dark outline. Protein profile and
-variance-curve markers and UpSet dots keep their white rings. These settings
-apply only while Mokume creates and exports a figure; matplotlib defaults are
-restored. Interactive HTML reports follow the same point rules but keep their
-own fonts and layout.
+overlaps read as density. No marker has a white ring: sample points, profile
+and variance-curve markers and UpSet dots have no outline, and highlighted
+proteins are larger with a thin dark outline. These settings apply only while
+Mokume creates and exports a figure; matplotlib defaults are restored.
+Interactive HTML reports follow the same point rules but keep their own fonts
+and layout.
 
 ## DE Plots from features2proteins Output
 

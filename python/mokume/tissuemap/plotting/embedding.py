@@ -14,7 +14,6 @@ from mokume.plotting.style import (
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
-    WHITE,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,8 +56,7 @@ def _plot_cumulative_panel(ax, cumvar: np.ndarray, n_pcs: int) -> None:
         "o-",
         color=SINGLE_SERIES_COLOR,
         markersize=4,
-        markeredgecolor=WHITE,
-        markeredgewidth=0.6,
+        markeredgewidth=0,
         linewidth=2,
     )
     for threshold in (50, 70):

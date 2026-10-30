@@ -18,7 +18,6 @@ from mokume.plotting.style import (
     category_order,
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
-    WHITE,
 )
 
 
@@ -133,9 +132,8 @@ def compute_pca_with_plot(df: pd.DataFrame, n_components: int = 5) -> pd.DataFra
         marker="o",
         linewidth=2,
         color=SINGLE_SERIES_COLOR,
-        markersize=8,
-        markeredgecolor=WHITE,
-        markeredgewidth=2,
+        markersize=6,
+        markeredgewidth=0,
     )
     ax.set(
         ylim=(0, 1.1),

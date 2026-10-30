@@ -16,7 +16,6 @@ from mokume.plotting.style import (
     PEPTIDE_COLOR,
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
-    WHITE,
 )
 
 
@@ -82,9 +81,8 @@ def plot_profile(protein_df, peptides, sample_to_condition, protein, output_file
         color=SINGLE_SERIES_COLOR,
         linewidth=2,
         marker="o",
-        markersize=8,
-        markeredgecolor=WHITE,
-        markeredgewidth=2,
+        markersize=6,
+        markeredgewidth=0,
     )
     boundaries, labels = condition_groups(samples, sample_to_condition)
     for boundary in boundaries:

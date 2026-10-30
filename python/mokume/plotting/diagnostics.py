@@ -13,7 +13,6 @@ from mokume.plotting.style import (
     SAMPLE_POINT_COLOR,
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
-    WHITE,
 )
 
 
@@ -112,8 +111,7 @@ def _intersection_matrix(ax, names, intersections):
             range(len(names)),
             s=64,
             color=INACTIVE_COLOR,
-            edgecolors=WHITE,
-            linewidths=2,
+            linewidths=0,
         )
         ax.plot([x] * len(enabled), enabled, color=SAMPLE_POINT_COLOR, linewidth=2)
         ax.scatter(
@@ -121,8 +119,7 @@ def _intersection_matrix(ax, names, intersections):
             enabled,
             s=64,
             color=SAMPLE_POINT_COLOR,
-            edgecolors=WHITE,
-            linewidths=2,
+            linewidths=0,
             zorder=3,
         )
 

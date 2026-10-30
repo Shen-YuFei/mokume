@@ -10,7 +10,6 @@ from mokume.plotting.style import (
     PEPTIDE_COLOR,
     PLOTLY_TEMPLATE,
     SINGLE_SERIES_COLOR,
-    WHITE,
 )
 from mokume.reports._plots import compact_json, condition_guides
 
@@ -69,7 +68,6 @@ def profile_script(peptides, mapping):
         guides=compact_json(condition_guides(samples, mapping)),
         peptide_color=compact_json(PEPTIDE_COLOR),
         protein_color=compact_json(SINGLE_SERIES_COLOR),
-        white=compact_json(WHITE),
     )
 
 
@@ -78,7 +76,6 @@ const peptideProfiles = $profiles;
 const profileSamples = $samples;
 const peptideColor = $peptide_color;
 const proteinColor = $protein_color;
-const markerOutline = $white;
 function showProfile(protein) {
     const target = document.getElementById('profile-plot');
     if (!target) return;
@@ -93,13 +90,28 @@ function showProfile(protein) {
     traces.push({type: 'scatter', mode: 'lines+markers', x: profileSamples,
         y: profileSamples.map(sample => data[sample] ?? null), name: 'Protein',
         line: {color: proteinColor, width: 2},
-        marker: {color: proteinColor, size: 8, line: {width: 2, color: markerOutline}},
+        marker: {color: proteinColor, size: 7},
         hovertemplate: '%{x}<br>Protein: %{y:.2f}<extra></extra>'});
+    // Like the static profile, hide sample names (hover keeps them) when
+    // 12 px labels at 60 degrees would overlap, and otherwise grow the plot
+    // below for the longest name so the data area keeps its height. The plot
+    // width excludes the margins and the legend.
+    const step = (target.clientWidth - 85 - (traces.length > 1 ? 100 : 0))
+        / profileSamples.length;
+    const labels = step >= 1.2 * 12 / Math.sin(Math.PI / 3);
+    const context = document.createElement('canvas').getContext('2d');
+    context.font = '12px "Open Sans", verdana, arial, sans-serif';
+    const longest = labels
+        ? Math.max(...profileSamples.map(name => context.measureText(name).width))
+        : 0;
+    const bottom = 55 + longest * Math.sin(Math.PI / 3);
+    target.style.height = `$${345 + bottom}px`;
     Plotly.newPlot(target, traces, {template: plotTemplate, ...$guides,
         showlegend: traces.length > 1,
-        xaxis: {title: {text: 'Sample'}, tickangle: 60,
+        xaxis: {title: {text: 'Sample'}, tickangle: 60, automargin: true,
+            showticklabels: labels,
             categoryorder: 'array', categoryarray: profileSamples},
         yaxis: {title: {text: 'log2 intensity'}},
-        margin: {t: 60, b: 120, l: 65, r: 20}}, plotConfig);
+        margin: {t: 60, b: bottom, l: 65, r: 20}}, plotConfig);
 }
 """

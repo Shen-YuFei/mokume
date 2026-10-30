@@ -24,7 +24,6 @@ from mokume.plotting.style import (
     MISSING_COLOR,
     SEQUENTIAL_COLORS,
     TEXT_COLOR,
-    WHITE,
 )
 
 logger = logging.getLogger(__name__)
@@ -465,7 +464,7 @@ def _render_dotplot(adata, genes, out_dir, dpi) -> None:
         return_fig=True,
         figsize=(7.2, 3.6),
     )
-    dp.style(dot_edge_color=WHITE, dot_edge_lw=0.6, smallest_dot=8, largest_dot=60)
+    dp.style(dot_edge_lw=0, smallest_dot=8, largest_dot=60)
     dp.legend(
         size_title="Fraction of samples\nin tissue (%)",
         colorbar_title="Mean relative abundance\nwithin each protein",
@@ -482,8 +481,7 @@ def _render_dotplot(adata, genes, out_dir, dpi) -> None:
         dots.set_rasterized(True)
     for dots in axes["size_legend_ax"].collections:
         dots.set_facecolor(MISSING_COLOR)
-        dots.set_edgecolor(WHITE)
-        dots.set_linewidth(0.6)
+        dots.set_linewidth(0)
     dp.fig.savefig(out_dir / "marker_dotplot.png", dpi=dpi, bbox_inches="tight")
     plt.close(dp.fig)
 
