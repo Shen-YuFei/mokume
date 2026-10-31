@@ -97,16 +97,7 @@ def plot_volcano(
     )
 
     # Significance thresholds
-    cutoff = df.loc[df["adj_pvalue"] < fdr_threshold, "pvalue"].max()
-    if pd.notna(cutoff):
-        ax.axhline(
-            y=-np.log10(max(cutoff, 1e-300)),
-            color="grey",
-            linestyle="--",
-            linewidth=0.8,
-        )
-    ax.axvline(x=log2fc_threshold, color="grey", linestyle="--", linewidth=0.8)
-    ax.axvline(x=-log2fc_threshold, color="grey", linestyle="--", linewidth=0.8)
+    cutoff_y = _draw_volcano_thresholds(ax, df, log2fc_threshold, fdr_threshold)
 
     anchors = _highlight_volcano(ax, df, highlight_genes or [])
     optional = {
@@ -126,10 +117,10 @@ def plot_volcano(
     place_labels(
         ax,
         anchors,
-        points=[*anchors.values(), *optional.values()],
         fontsize=8,
         optional=optional,
         fit="near",
+        avoid=_threshold_points(ax, log2fc_threshold, cutoff_y),
     )
 
     if output_file:
@@ -137,6 +128,27 @@ def plot_volcano(
         plt.close(fig)
 
     return fig
+
+
+def _draw_volcano_thresholds(ax, frame, log2fc, fdr):
+    """Draw the dashed cutoffs; return the p-value line's height, if there is one."""
+    cutoff = frame.loc[frame["adj_pvalue"] < fdr, "pvalue"].max()
+    cutoff_y = -np.log10(max(cutoff, 1e-300)) if pd.notna(cutoff) else None
+    if cutoff_y is not None:
+        ax.axhline(y=cutoff_y, color="grey", linestyle="--", linewidth=0.8)
+    ax.axvline(x=log2fc, color="grey", linestyle="--", linewidth=0.8)
+    ax.axvline(x=-log2fc, color="grey", linestyle="--", linewidth=0.8)
+    return cutoff_y
+
+
+def _threshold_points(ax, log2fc, cutoff_y):
+    """Sample the dashed thresholds so labels keep clear of them."""
+    xs = np.linspace(*ax.get_xlim(), 200)
+    ys = np.linspace(*ax.get_ylim(), 200)
+    lines = [(np.full(200, x), ys) for x in (log2fc, -log2fc)]
+    if cutoff_y is not None:
+        lines.append((xs, np.full(200, cutoff_y)))
+    return np.column_stack([np.concatenate(axis) for axis in zip(*lines)])
 
 
 def _volcano_legend(ax, frame, title):
@@ -305,7 +317,8 @@ def plot_heatmap(
     g.ax_heatmap.set_facecolor(MISSING_COLOR)
     g.ax_heatmap.tick_params(colors=TEXT_COLOR)
     # Protein rows are dense; 7 pt keeps one label per row legible.
-    g.ax_heatmap.tick_params(axis="y", labelsize=7)
+    g.ax_heatmap.tick_params(labelsize=7)
+    _fit_heatmap_margins(g)
     g.fig.suptitle(title, y=1.02, color=TEXT_COLOR)
 
     # Beside the column dendrogram the legend clears the row labels.
@@ -316,6 +329,17 @@ def plot_heatmap(
         plt.close(g.fig)
 
     return g.fig
+
+
+def _fit_heatmap_margins(grid):
+    """Keep the color bar off the row dendrogram and sample names apart."""
+    band = grid.ax_col_dendrogram.get_position()
+    grid.ax_cbar.set_position((0.02, band.y0, 0.03, band.height))
+    ax = grid.ax_heatmap
+    columns = len(ax.get_xticks())
+    if ax.get_window_extent().width / columns * 72 / grid.fig.dpi < 1.2 * 7:
+        ax.tick_params(axis="x", bottom=False, labelbottom=False)
+        ax.set_xlabel(f"{columns} samples")
 
 
 def _add_heatmap_legend(ax, condition_colors, has_missing):

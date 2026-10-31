@@ -40,7 +40,7 @@ from mokume.plotting._common import (
     log2_matrix as prepare_log2,
     read_frame,
 )
-from mokume.reports._plots import EMBEDDING_LABEL_JS, plot_cards
+from mokume.reports._plots import EMBEDDING_LABEL_JS, plot_cards, sample_axis
 from mokume.reports._qc_diagnostics import diagnostic_plots
 
 logger = get_logger("mokume.reports.qc")
@@ -881,6 +881,7 @@ const condColors = {
 const singleColor = {_safe_json(SINGLE_SERIES_COLOR)};
 const sequentialColors = {_safe_json(SEQUENTIAL_COLORS)};
 const plotConfig = {{responsive: true, displaylogo: false, displayModeBar: 'hover'}};
+const sampleAxis = {_safe_json(sample_axis(len(distributions)))};
 const plotTemplate = {_safe_json(PLOTLY_TEMPLATE)};
 const pca = {_safe_json(pca)};
 {EMBEDDING_LABEL_JS}
@@ -975,9 +976,10 @@ Plotly.newPlot('pvca-plot', [{{
         title: {{ x: 0, xanchor: 'left', text: 'Sample Correlation (Pearson)',
                   font: {{ size: 14 }} }},
         plot_bgcolor: missingColor, showlegend: false,
-        xaxis: {{ tickangle: 45, tickfont: {{ size: 9 }},
+        xaxis: {{ ...sampleAxis, tickangle: 45, tickfont: {{ size: 9 }},
                   categoryorder: 'array', categoryarray: samples }},
-        yaxis: {{ tickfont: {{ size: 9 }}, categoryorder: 'array', categoryarray: samples }},
+        yaxis: {{ ...sampleAxis, tickfont: {{ size: 9 }},
+                  categoryorder: 'array', categoryarray: samples }},
         margin: {{ t: 50, b: 100, l: 100, r: 20 }},
     }}, plotConfig);
 }})();
@@ -1008,7 +1010,7 @@ Plotly.newPlot('pvca-plot', [{{
         yaxis: {{ title: {{ text: '{
         "log2 ratio" if summary["is_log2"] else "log2 intensity"
     }' }} }},
-        xaxis: {{tickangle: 45, tickfont: {{size: 9}},
+        xaxis: {{...sampleAxis, tickangle: 45, tickfont: {{size: 9}},
                  categoryorder: 'array', categoryarray: samples}},
         margin: {{ t: 50, b: 100, l: 60, r: 20 }},
     }}, plotConfig);
@@ -1033,6 +1035,8 @@ Plotly.newPlot('pvca-plot', [{{
         template: plotTemplate, showlegend: traces.length > 1,
         title: {{ x: 0, xanchor: 'left', text: 'Per-Protein CV Distribution by Condition',
                   font: {{ size: 14 }} }},
+        // Beyond 12 conditions names no longer fit; the legend and hover carry them.
+        xaxis: {{ showticklabels: traces.length <= 12 }},
         yaxis: {{ title: {{ text: 'Coefficient of Variation' }}, range: {
         _safe_json(_cv_axis_range(condition_cv))
     } }},
@@ -1086,7 +1090,7 @@ def _build_de_quality_js(de_quality):
             line: {{ color: '#777777', width: 1, dash: 'dash' }}
         }}],
         annotations: [{{
-            x: 0.75, y: {max(hist["counts"]) * 0.9},
+            x: 0.75, y: {sum(hist["counts"]) / 20}, yanchor: 'bottom',
             text: 'Expected under null',
             showarrow: false, font: {{ size: 10 }}
         }}],

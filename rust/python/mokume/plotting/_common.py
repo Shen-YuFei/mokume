@@ -108,7 +108,7 @@ def _label_position(size, center, placed, layout, fit="required"):
 
     With ``fit="optional"`` a label is dropped (None) when every position would
     cover another label; with ``fit="near"`` when no position beside its anchor
-    is clear of labels and points.
+    is clear of labels, points and leaders, and whose own leader misses every label.
     """
     bounds, points, scale = layout["bounds"], layout["points"], layout["scale"]
     candidates = list(
@@ -120,6 +120,8 @@ def _label_position(size, center, placed, layout, fit="required"):
     clear = [
         (point, box) for point, box in available if not _overlap_count(box, points)
     ]
+    if fit == "near":
+        clear = _clear_of_leaders(clear, center, placed, layout)
     if clear:
         point, box = clear[0]
         # As in ggrepel, a label pushed past the nearest rings keeps a leader.
@@ -152,6 +154,18 @@ def _leader_boxes(start, end, scale):
     """Small squares along a leader, so later labels and leaders can avoid it."""
     samples = np.linspace(start, end, max(2, int(np.linalg.norm(end - start) / scale)))
     return np.hstack((samples - scale, samples + scale))
+
+
+def _clear_of_leaders(spots, center, placed, layout):
+    """Keep spots clear of earlier leaders whose own leader misses every label."""
+    return [
+        (point, box)
+        for point, box in spots
+        if not _overlap_count(box, layout["leaders"])
+        and not _overlap_count(
+            _leader_boxes(center, point, layout["scale"])[4:, None], placed
+        )
+    ]
 
 
 def _clear_label_position(size, center, placed, layout):
@@ -209,7 +223,7 @@ def _place_one_label(ax, label, anchor, placed, layout, fit="required"):
     text.xyann = (point - center) / layout["scale"]
     text.arrow_patch.set_visible(leader)
     placed.append(box)
-    if leader and fit == "clear":
+    if leader and fit in ("clear", "near"):
         layout["leaders"].extend(_leader_boxes(center, point, layout["scale"]))
 
 
@@ -254,18 +268,28 @@ def place_clear_labels(ax, anchors):
         _place_one_label(ax, label, anchors[label], placed, layout, "clear")
 
 
-def place_labels(ax, anchors, points=None, fontsize=7, optional=None, fit="optional"):
+def place_labels(
+    ax, anchors, points=None, fontsize=7, optional=None, fit="optional", avoid=None
+):
     """Keep neutral labels inside their axes, avoiding overlaps when space allows.
 
     ``optional`` labels follow in their given order and are left out where they
     would cover another label; with ``fit="near"`` they also need a spot beside
-    their anchor clear of every drawn point.
+    their anchor clear of every drawn point, and required labels look further
+    for such a spot. ``avoid`` adds data-space points that are not drawn as
+    markers, such as samples along a reference line.
     """
     layout, placed = _label_layout(ax, points, fontsize)
+    guides = [] if avoid is None else _point_boxes(ax, avoid, layout["scale"])
+    layout["points"] = [*layout["points"], *guides]
+    required = "clear" if fit == "near" else "required"
     for label in sorted(anchors, key=lambda name: -len(str(name))):
-        _place_one_label(ax, label, anchors[label], placed, layout)
+        _place_one_label(ax, label, anchors[label], placed, layout, required)
     if fit == "near":
-        layout = {**layout, "points": _point_boxes(ax, None, layout["scale"])}
+        layout = {
+            **layout,
+            "points": [*_point_boxes(ax, None, layout["scale"]), *guides],
+        }
     for label, anchor in (optional or {}).items():
         _place_one_label(ax, label, anchor, placed, layout, fit)
 
@@ -279,7 +303,7 @@ def label_categories(ax, frame, coordinates, group_column):
         )
         for group in category_order(frame[group_column])
     }
-    place_labels(ax, {}, optional=anchors)
+    place_labels(ax, {}, optional=anchors, fit="near")
 
 
 def confidence_ellipse(points, level=0.95, segments=72):

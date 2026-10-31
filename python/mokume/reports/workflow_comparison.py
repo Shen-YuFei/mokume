@@ -595,7 +595,7 @@ function drawPca(wfName, index) {{
         yaxis: {{title: {{text: 'PC2 (' + pca.var_explained[1].toFixed(1) + '%)'}},
                  range: paddedRange(pca.pc2.concat(...outlines.map(outline => outline.y)))}},
         showlegend: traces.length > 1,
-        legend: {{font: {{size: 9}}, orientation: 'h', y: -0.2}},
+        legend: {{font: {{size: 9}}, orientation: 'h', y: -70 / 230}},
         margin: {{t: 55, b: 95, l: 60, r: 45}},
         ...categoryLayout(`pca-${{index}}`, traces, 380),
     }}, plotConfig).then(labelEmbedding);

@@ -98,7 +98,11 @@ def plot_profile(protein_df, peptides, sample_to_condition, protein, output_file
             handles=[
                 Line2D([], [], color=PEPTIDE_COLOR, label="Peptides", lw=1),
                 Line2D([], [], color=SINGLE_SERIES_COLOR, label="Protein", lw=2),
-            ]
+            ],
+            # Dense profiles leave no free corner inside the axes.
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1),
+            borderaxespad=0,
         )
     style_axes(ax)
     fig.tight_layout()

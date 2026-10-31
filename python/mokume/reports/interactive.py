@@ -413,8 +413,10 @@ function showExpression(protein) {
     // The protein is named in the caption below, so no plot title meets the modebar.
     Plotly.newPlot('expression-plot', traces, {
         template: plotTemplate, shapes,
-        xaxis: {title: {text: 'Condition'},
-                tickvals: conditions.map((condition, i) => i), ticktext: conditions},
+        // Plotly drops a name that runs past the plot edge, so long names wrap.
+        xaxis: {title: {text: 'Condition'}, automargin: true, tickangle: 0,
+                tickvals: conditions.map((condition, i) => i),
+                ticktext: conditions.map(name => name.replace(/(.{1,18})( |$$)/g, '$$1<br>'))},
         yaxis: {title: {text: 'log2 Intensity'}, autorange: true},
         margin: {t: 30, b: 65, l: 55, r: 20}, showlegend: false,
     }, plotConfig);

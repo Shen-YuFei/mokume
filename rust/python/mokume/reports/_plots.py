@@ -25,6 +25,22 @@ const categoryOrder = (a, b) => {
 };
 const labelOverlap = (a, b) => a.left < b.right && b.left < a.right
     && a.top < b.bottom && b.top < a.bottom;
+function leaderEnd(center, box) {
+    const x = Math.max(box.left, Math.min(box.right, center.x));
+    const y = Math.max(box.top, Math.min(box.bottom, center.y));
+    const edges = [{x: box.left, y}, {x: box.right, y},
+        {x, y: box.top}, {x, y: box.bottom}];
+    const distance = point => Math.hypot(point.x - center.x, point.y - center.y);
+    return edges.reduce((a, b) => distance(a) <= distance(b) ? a : b);
+}
+// Small boxes along a leader, for testing it against labels and later labels against it.
+function leaderBoxes(center, box) {
+    const end = leaderEnd(center, box);
+    return Array.from({length: 17}, (_, i) => {
+        const x = center.x + (end.x - center.x) * i / 16, y = center.y + (end.y - center.y) * i / 16;
+        return {left: x - 1, right: x + 1, top: y - 1, bottom: y + 1};
+    });
+}
 function labelCandidates(center, size, bounds, radii) {
     const candidates = [];
     radii.forEach(radius => {
@@ -44,7 +60,8 @@ function labelCandidates(center, size, bounds, radii) {
 }
 function nearbyLabel(center, size, placed, dots, bounds, nearOnly = false) {
     const candidates = labelCandidates(center, size, bounds, [4, 8, 12, 16, 20, 24].map(r => r * 4 / 3));
-    const available = candidates.filter(box => !placed.some(other => labelOverlap(box, other)));
+    const available = candidates.filter(box => !placed.some(other => labelOverlap(box, other)
+        || leaderBoxes(center, box).some(point => labelOverlap(point, other))));
     const clear = available.find(box => !dots.some(dot => labelOverlap(box, dot)));
     if (clear) {
         const gap = Math.hypot(center.x - Math.max(clear.left, Math.min(clear.right, center.x)),
@@ -74,12 +91,7 @@ function plotBounds(gd) {
 function labelLeader(gd, center, box) {
     if (!box.leader) return;
     const svg = gd.querySelector('svg.main-svg'), rect = svg.getBoundingClientRect();
-    const x = Math.max(box.left, Math.min(box.right, center.x));
-    const y = Math.max(box.top, Math.min(box.bottom, center.y));
-    const edges = [{x: box.left, y}, {x: box.right, y},
-        {x, y: box.top}, {x, y: box.bottom}];
-    const distance = point => Math.hypot(point.x - center.x, point.y - center.y);
-    const end = edges.reduce((a, b) => distance(a) <= distance(b) ? a : b);
+    const end = leaderEnd(center, box);
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     Object.entries({x1: center.x - rect.left, y1: center.y - rect.top,
         x2: end.x - rect.left, y2: end.y - rect.top, stroke: '__LEADER_COLOR__',
@@ -92,7 +104,8 @@ function categoryLayout(target, traces, height) {
     const extra = Math.ceil(count / 3) * 20;
     document.getElementById(target).style.height = (height + extra) + 'px';
     return {height: height + extra,
-        legend: {orientation: 'h', y: -0.2, x: 0.5, xanchor: 'center', font: {size: 10}},
+        // 70 px under the plot area clears the x-axis title at any card height.
+        legend: {orientation: 'h', y: -70 / (height - 150), x: 0.5, xanchor: 'center', font: {size: 10}},
         margin: {t: 55, b: 95 + extra, l: 60, r: 45}};
 }
 """.replace("__LEADER_COLOR__", SAMPLE_POINT_COLOR)
@@ -133,11 +146,13 @@ function placeCategoryLabels(gd) {
         node.setAttribute('transform', 'translate(0,0)');
         const rect = node.getBoundingClientRect();
         const center = {x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2};
-        const box = nearbyLabel(center, {width: rect.width + 4, height: rect.height + 4}, placed, dots, bounds);
+        // The legend names every group, so a label that would cover points is left out.
+        const box = nearbyLabel(center, {width: rect.width + 4, height: rect.height + 4}, placed, dots, bounds, true);
         node.style.visibility = box ? '' : 'hidden';
         if (!box) return;
         node.setAttribute('transform', `translate(${box.x - center.x},${box.y - center.y})`);
         placed.push(box);
+        if (box.leader) dots.push(...leaderBoxes(center, box));
         labelLeader(gd, center, box);
     });
 }
@@ -206,8 +221,17 @@ function volcanoLabelChanges(gd) {
     const centers = layout.annotations.map(annotation => ({
         x: rect.left + layout.xaxis._offset + layout.xaxis.l2p(annotation.x),
         y: rect.top + layout.yaxis._offset + layout.yaxis.l2p(annotation.y)}));
+    // Threshold lines stay readable: labels keep off them like off a point.
+    const guides = layout.shapes.map(shape => {
+        if (shape.xref === 'paper') {
+            const y = rect.top + layout.yaxis._offset + layout.yaxis.l2p(shape.y0);
+            return {left: rect.left, right: rect.right, top: y - 1, bottom: y + 1};
+        }
+        const x = rect.left + layout.xaxis._offset + layout.xaxis.l2p(shape.x0);
+        return {left: x - 1, right: x + 1, top: rect.top, bottom: rect.bottom};
+    });
     const dots = centers.map(point => ({left: point.x - 8, right: point.x + 8,
-        top: point.y - 8, bottom: point.y + 8}));
+        top: point.y - 8, bottom: point.y + 8})).concat(guides);
     // Automatic labels must also stay off every protein point.
     const crowd = dots.concat(gd._fullData.filter(trace => trace.visible === true)
         .flatMap(trace => trace.x.map((x, i) => {
@@ -223,14 +247,20 @@ function volcanoLabelChanges(gd) {
         const size = text.getBoundingClientRect(), center = centers[i];
         const label = {width: size.width + 6, height: size.height + 6};
         const optional = annotation.name === 'optional';
-        // Highlighted proteins keep a label; the automatic ones show only beside their point.
-        const box = optional ? nearbyLabel(center, label, placed, crowd, plotBounds(gd), true)
-            : nearbyLabel(center, label, placed, dots, plotBounds(gd))
+        // Highlighted proteins keep a label, off the cloud where a nearby spot allows;
+        // the automatic ones show only beside their point.
+        const near = nearbyLabel(center, label, placed, crowd, plotBounds(gd), true);
+        const box = optional ? near : near || nearbyLabel(center, label, placed, dots, plotBounds(gd))
                 || labelCandidates(center, label, plotBounds(gd), [6])[0];
         // Opacity, not visibility, keeps a hidden label measurable after a zoom.
         if (optional && annotation.opacity !== (box ? 1 : 0)) changes[`annotations[${i}].opacity`] = box ? 1 : 0;
         if (!box) return;
         placed.push(box);
+        if (box.leader) {
+            const path = leaderBoxes(center, box);
+            dots.push(...path);
+            crowd.push(...path);
+        }
         const ax = box.x - center.x, ay = box.y - center.y;
         if (Math.abs(annotation.ax - ax) > 0.5 || Math.abs(annotation.ay - ay) > 0.5) {
             changes[`annotations[${i}].ax`] = ax;
@@ -253,6 +283,12 @@ function labelVolcano(gd) {
 }
 """
 )
+
+
+def sample_axis(count, **axis):
+    """Reserve room for sample names; past 40 samples they stay in the hover text."""
+    hidden = {} if count <= 40 else {"showticklabels": False, "ticks": ""}
+    return {"automargin": True, **hidden, **axis}
 
 
 def condition_guides(samples, conditions):

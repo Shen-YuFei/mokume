@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 from mokume.tissuemap.embedding import _impute_for_pca
+from mokume.plotting._common import place_labels
 from mokume.plotting.style import CONDITION_COLORS, category_colors
 from mokume.plotting.differential_expression import plot_pca_conditions, plot_volcano
 from mokume.reports.qc_report import generate_qc_report
@@ -252,6 +253,32 @@ def test_atlas_leaders_stay_off_other_labels():
     plt.close(fig)
 
 
+def test_category_label_leaders_stay_off_other_labels():
+    """Omittable labels must not send a leader through another label."""
+    rng = np.random.default_rng(0)
+    centers = rng.uniform(-6, 6, (40, 2))
+    cloud = np.vstack(
+        [center + rng.normal(scale=0.2, size=(5, 2)) for center in centers]
+    )
+    fig, ax = plt.subplots(figsize=(6.4, 4.5))
+    ax.scatter(*cloud.T, s=12)
+    ax.set(xlim=(-8, 8), ylim=(-8, 8))
+    anchors = {f"Category name {i}": xy for i, xy in enumerate(centers)}
+    place_labels(ax, {}, optional=anchors, fit="near")
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    boxes = [Text.get_window_extent(text, renderer) for text in ax.texts]
+    assert any(text.arrow_patch.get_visible() for text in ax.texts)
+    for text, box in zip(ax.texts, boxes):
+        if not text.arrow_patch.get_visible():
+            continue
+        start = ax.transData.transform(text.xy)
+        path = np.linspace(start, (box.min + box.max) / 2, 200)
+        others = [other for other in boxes if other is not box]
+        assert not any(other.count_contains(path) for other in others)
+    plt.close(fig)
+
+
 def test_dendrogram_group_markers_do_not_cover_leaf_labels():
     """Marker spacing in points must not depend on the dendrogram width."""
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -273,7 +300,7 @@ def test_dendrogram_group_markers_do_not_cover_leaf_labels():
 
 @pytest.mark.parametrize("condition_count", [40, 120])
 def test_pca_supports_many_conditions_and_category_labels(tmp_path, condition_count):
-    """More categories than style combinations must still produce a labelled plot."""
+    """Category labels that do not fit are omitted; the legend keeps every category."""
     rng = np.random.default_rng(42)
     samples = [f"S{i}" for i in range(condition_count * 2)]
     frame = pd.DataFrame(
@@ -286,9 +313,13 @@ def test_pca_supports_many_conditions_and_category_labels(tmp_path, condition_co
     fig = plot_pca_conditions(frame, conditions, output_file=output)
 
     assert output.is_file()
-    assert len(fig.axes[0].texts) == condition_count
-    assert len(fig.legends) == 1
-    assert {text.get_text() for text in fig.axes[0].texts} == set(conditions.values())
+    assert len(fig.legends[0].get_texts()) == condition_count
+    assert {text.get_text() for text in fig.axes[0].texts} <= set(conditions.values())
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    boxes = [Text.get_window_extent(text, renderer) for text in fig.axes[0].texts]
+    assert boxes
+    assert not any(a.overlaps(b) for i, a in enumerate(boxes) for b in boxes[i + 1 :])
     axes_size = fig.axes[0].get_window_extent().size / fig.dpi
     np.testing.assert_allclose(axes_size, [6.4, 4.5])
     plt.close(fig)

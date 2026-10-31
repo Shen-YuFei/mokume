@@ -96,7 +96,10 @@ def plot_upset(sets, output_file):
     for ax in (top, left, matrix):
         style_axes(ax)
     matrix.set_ylim(left.get_ylim())
-    top.set_xlim(matrix.get_xlim())
+    # The first count is wider than its bar; a half-step keeps it off the y axis.
+    low, high = matrix.get_xlim()
+    top.set_xlim(low - 0.5, high)
+    matrix.set_xlim(low - 0.5, high)
     fig.tight_layout()
     fig.savefig(output_file, bbox_inches="tight")
     plt.close(fig)

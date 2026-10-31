@@ -21,6 +21,7 @@ from mokume.plotting.style import (
     SINGLE_SERIES_COLOR,
     TEXT_COLOR,
 )
+from mokume.reports._plots import sample_axis
 
 
 def imputation_values(before, after):
@@ -84,7 +85,7 @@ def _overview_plots(values, conditions):
             ],
             "layout": {
                 "showlegend": False,
-                "xaxis": {"title": {"text": "Sample"}},
+                "xaxis": sample_axis(len(samples), title={"text": "Sample"}),
                 "yaxis": {"title": {"text": "Quantified proteins"}},
             },
         },
@@ -149,7 +150,7 @@ def _missing_heatmap(values, sampled):
         + "Incomplete proteins ordered by missing count; samples by condition.",
         "layout": {
             "showlegend": True,
-            "xaxis": {"title": {"text": "Sample"}},
+            "xaxis": sample_axis(values.shape[1], title={"text": "Sample"}),
             "yaxis": {
                 "title": {"text": "Protein"},
                 "showticklabels": False,
@@ -218,18 +219,20 @@ def _normalization_plot(before, after, conditions):
         "caption": "Quartiles; whiskers show min/max. Shared log2 scale.",
         "layout": {
             "showlegend": len(names) > 1,
-            "xaxis": {
-                "domain": [0, 0.46],
-                "categoryorder": "array",
-                "categoryarray": samples,
-                "title": {"text": "Before"},
-            },
-            "xaxis2": {
-                "domain": [0.54, 1],
-                "categoryorder": "array",
-                "categoryarray": samples,
-                "title": {"text": "After"},
-            },
+            "xaxis": sample_axis(
+                len(samples),
+                domain=[0, 0.46],
+                categoryorder="array",
+                categoryarray=samples,
+                title={"text": "Before"},
+            ),
+            "xaxis2": sample_axis(
+                len(samples),
+                domain=[0.54, 1],
+                categoryorder="array",
+                categoryarray=samples,
+                title={"text": "After"},
+            ),
             "yaxis": {
                 "title": {"text": "log2 peptide intensity"},
                 "range": [limits[0] - 0.5, limits[1] + 0.5],
