@@ -375,17 +375,19 @@ def plot_ts_distribution(ax: plt.Axes, ts_scores: pd.DataFrame) -> None:
     values = ts_scores["max_ts"].dropna()
     ax.hist(values, bins=50, density=True, color=SINGLE_SERIES_COLOR, linewidth=0)
     thresholds = (
-        ("Enriched", ts_scores.attrs["ts_enriched_threshold"], 0.96),
-        ("Specific", ts_scores.attrs["ts_specific_threshold"], 0.87),
+        ("Enriched", ts_scores.attrs["ts_enriched_threshold"]),
+        ("Specific", ts_scores.attrs["ts_specific_threshold"]),
     )
-    for label, value, height in thresholds:
+    for label, value in thresholds:
         ax.axvline(value, linestyle="--", linewidth=0.8, color=TEXT_COLOR)
+        # Upright along its own line, the label never crosses the next threshold.
         ax.annotate(
             f"{label} \u2265 {value:.2f}",
-            (value, height),
+            (value, 0.97),
             xycoords=ax.get_xaxis_transform(),
             xytext=(3, 0),
             textcoords="offset points",
+            rotation=90,
             va="top",
             fontsize=8,
             color=TEXT_COLOR,
