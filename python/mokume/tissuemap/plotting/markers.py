@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
+from textwrap import fill
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -162,7 +163,12 @@ def _draw_heatmap(ax, prepared, tissue_colors, title) -> None:
     ax.set_yticks(range(len(proteins)))
     ax.set_yticklabels([_protein_label(p) for p in proteins], fontsize=7)
     ax.set_xticks(range(len(tissues)))
-    ax.set_xticklabels(tissues, rotation=60, ha="right", fontsize=8)
+    ax.set_xticklabels(
+        tissues,
+        rotation=90 if len(tissues) > 30 else 60,
+        ha="center" if len(tissues) > 30 else "right",
+        fontsize=8,
+    )
     for i, tissue in enumerate(tissues):
         ax.add_patch(
             plt.Rectangle(
@@ -256,7 +262,9 @@ def plot_marker_heatmap(
         return
     available_tissues, available_proteins = prepared[2:4]
     fig_height = max(6, len(available_proteins) * 0.13)
-    fig, ax = plt.subplots(figsize=(4.5, fig_height))
+    fig, ax = plt.subplots(
+        figsize=(max(4.5, len(available_tissues) * 0.14 + 1.5), fig_height)
+    )
     heatmap_title = (
         f"Top {n_top} marker proteins per tissue (Wilcoxon, "
         f"{len(available_tissues)} tissues)\n"
@@ -341,12 +349,12 @@ def _render_marker_subplot(ax, tsne, adata, prot, tissue, var_index_map):
     nan_mask = np.isnan(expr_all)
     _draw_nan_points(ax, tsne, nan_mask)
     _draw_detected_points(ax, tsne, expr_all, nan_mask)
-    ts_val = ""
+    detected = f"{int((~nan_mask).sum())}/{len(expr_all)} samples"
     if "max_ts" in adata.var.columns:
-        ts_val = f" (TS={adata.var.loc[prot, 'max_ts']:.2f})"
+        detected = f"TS={adata.var.loc[prot, 'max_ts']:.2f}, {detected}"
+    # Panels sit side by side, so long tissue names wrap instead of meeting their neighbors.
     ax.set_title(
-        f"{_protein_label(prot)}\n{tissue} marker{ts_val}\n"
-        f"{int((~nan_mask).sum())}/{len(expr_all)} samples detected",
+        f"{_protein_label(prot)}\n{fill(f'{tissue} marker', 26)}\n{detected}",
         pad=4,
         fontsize=7,
     )
@@ -462,7 +470,10 @@ def _render_dotplot(adata, genes, out_dir, dpi) -> None:
         cmap=_EXPR_CMAP,
         show=False,
         return_fig=True,
-        figsize=(7.2, 3.6),
+        figsize=(
+            max(7.2, len(genes) * 0.16 + 2.4),
+            max(3.6, adata.obs["tissue"].nunique() * 0.16 + 1.5),
+        ),
     )
     dp.style(dot_edge_lw=0, smallest_dot=8, largest_dot=60)
     dp.legend(

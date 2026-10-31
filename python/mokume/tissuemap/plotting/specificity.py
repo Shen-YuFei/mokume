@@ -174,11 +174,14 @@ def _compute_specific_counts(
     return pd.Series(0, index=unique_tissues)
 
 
+_BAR_PANEL_TOP_N = 25
+
+
 def _plot_bar_panel(
     ax,
     specific_per_tissue: pd.Series,
     ts_specific: float,
-    top_n: int = 25,
+    top_n: int = _BAR_PANEL_TOP_N,
 ) -> None:
     """Panel B: horizontal bar chart of tissue-specific protein counts.
 
@@ -248,7 +251,12 @@ def plot_ts_distribution(
     gmm: GMMThresholds | None = ts_df.attrs.get("gmm")
 
     fig, axes = plt.subplots(
-        1, 2, figsize=(7.2, max(3.2, len(unique_tissues) * 0.14 + 1.4))
+        1,
+        2,
+        figsize=(
+            7.2,
+            max(3.2, min(len(unique_tissues), _BAR_PANEL_TOP_N) * 0.14 + 1.4),
+        ),
     )
     _plot_histogram_panel(
         axes[0],

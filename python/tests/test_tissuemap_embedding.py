@@ -31,6 +31,7 @@ from mokume.tissuemap.plotting.atlas import (
 from mokume.tissuemap.plotting import markers as marker_plots
 from mokume.tissuemap.plotting.markers import _protein_label
 from mokume.tissuemap.plotting.markers import _significant_markers
+from mokume.tissuemap.plotting.specificity import plot_ts_distribution
 from mokume.tissuemap.tissue_specificity import _compute_ts_vectorized_mad
 
 
@@ -230,6 +231,27 @@ def test_atlas_group_labels_stay_inside_axes_without_overlapping(group_count):
     plt.close(fig)
 
 
+def test_atlas_leaders_stay_off_other_labels():
+    """A leader into a dense cloud must not run through another group's label."""
+    cloud = np.random.default_rng(0).normal(size=(900, 2))
+    central = cloud[np.linalg.norm(cloud, axis=1) < 1.5][:10]
+    fig, ax = plt.subplots(figsize=(4.5, 3.6))
+    ax.scatter(*cloud.T, s=12)
+    ax.set(xlim=(-8, 8), ylim=(-8, 8))
+    _label_groups(ax, {f"Group {i}": xy for i, xy in enumerate(central)})
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    boxes = [Text.get_window_extent(text, renderer) for text in ax.texts]
+    for text, box in zip(ax.texts, boxes):
+        if not text.arrow_patch.get_visible():
+            continue
+        start = ax.transData.transform(text.xy)
+        path = np.linspace(start, (box.min + box.max) / 2, 200)
+        others = [other for other in boxes if other is not box]
+        assert not any(other.count_contains(path) for other in others)
+    plt.close(fig)
+
+
 def test_dendrogram_group_markers_do_not_cover_leaf_labels():
     """Marker spacing in points must not depend on the dendrogram width."""
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -336,3 +358,53 @@ def test_category_palette_extends_with_unique_stable_prefixes():
     assert len(colors) == len(set(colors)) == 40
     assert colors[:6] == CONDITION_COLORS
     assert colors[:20] == category_colors(20)
+
+
+def _saved_sizes(monkeypatch):
+    """Record each saved figure's size by output file name."""
+    sizes = {}
+
+    def savefig(figure, path, **_kwargs):
+        sizes[Path(path).name] = tuple(figure.get_size_inches())
+
+    monkeypatch.setattr(Figure, "savefig", savefig)
+    return sizes
+
+
+def test_ts_distribution_height_follows_the_bars_it_draws(tmp_path, monkeypatch):
+    """The panel shows the top 25 tissues, so more tissues must not stretch it."""
+    sizes = _saved_sizes(monkeypatch)
+    tissues = [f"tissue {i}" for i in range(114)]
+    ts_df = pd.DataFrame(
+        {
+            "max_ts": np.linspace(1, 8, 228),
+            "max_tissue": tissues * 2,
+            "enrichment_category": "tissue-specific",
+        }
+    )
+    plot_ts_distribution(ts_df, tissues, tmp_path, save_pdf=False)
+    assert sizes["ts_distribution.png"][1] == pytest.approx(25 * 0.14 + 1.4)
+
+
+def test_marker_charts_grow_with_many_tissues(tmp_path, monkeypatch):
+    """Heatmap columns and dot plot rows keep room for every tissue name."""
+    rng = np.random.default_rng(0)
+    tissue_count = 60
+    tissues = [f"tissue {i:02d}" for i in range(tissue_count) for _ in range(6)]
+    values = rng.normal(size=(len(tissues), 120)) + 10
+    for index in range(tissue_count):
+        values[index * 6 : index * 6 + 6, index] += 8
+    adata = ad.AnnData(
+        values.astype(np.float32),
+        obs=pd.DataFrame(
+            {"tissue": tissues}, index=[f"s{i}" for i in range(len(tissues))]
+        ),
+        var=pd.DataFrame(index=[f"P{i:03d}" for i in range(120)]),
+    )
+    marker_plots.compute_markers(adata)
+    sizes = _saved_sizes(monkeypatch)
+    order = sorted(set(tissues))
+    marker_plots.plot_marker_heatmap(adata, order, tmp_path, save_pdf=False)
+    marker_plots.plot_dotplot(adata, order, tmp_path)
+    assert sizes["marker_heatmap.png"][0] == pytest.approx(tissue_count * 0.14 + 1.5)
+    assert sizes["marker_dotplot.png"][1] == pytest.approx(tissue_count * 0.16 + 1.5)

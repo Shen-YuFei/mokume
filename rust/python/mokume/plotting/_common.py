@@ -85,18 +85,18 @@ def _overlap_count(box, boxes):
     """Count overlapping display-space rectangles."""
     rectangles = np.asarray(boxes).reshape(-1, 4)
     return np.count_nonzero(
-        (box[0] < rectangles[:, 2])
-        & (box[2] > rectangles[:, 0])
-        & (box[1] < rectangles[:, 3])
-        & (box[3] > rectangles[:, 1])
+        (box[..., 0] < rectangles[:, 2])
+        & (box[..., 2] > rectangles[:, 0])
+        & (box[..., 1] < rectangles[:, 3])
+        & (box[..., 3] > rectangles[:, 1])
     )
 
 
-def _label_candidates(size, center, bounds, radii):
-    """Try eight directions at increasing distances within the label bounds."""
+def _label_candidates(size, center, bounds, radii, directions=8):
+    """Try evenly spaced directions at increasing distances within the label bounds."""
     half = np.asarray(size) / 2
     for radius in radii:
-        for angle in np.arange(8) * np.pi / 4:
+        for angle in np.arange(directions) * 2 * np.pi / directions:
             direction = np.array([np.cos(angle), np.sin(angle)])
             point = center + direction * (radius + half)
             point = np.clip(point, bounds[:2] + half, bounds[2:] - half)
@@ -148,6 +148,38 @@ def _label_position(size, center, placed, layout, fit="required"):
     return point, box, True
 
 
+def _leader_boxes(start, end, scale):
+    """Small squares along a leader, so later labels and leaders can avoid it."""
+    samples = np.linspace(start, end, max(2, int(np.linalg.norm(end - start) / scale)))
+    return np.hstack((samples - scale, samples + scale))
+
+
+def _clear_label_position(size, center, placed, layout):
+    """Prefer the nearest spot clear of points whose leader misses other labels.
+
+    Leaders block whole directions in a dense plot, so the search fans out wider.
+    Crossing another leader is the lesser fault; running through text is not. A
+    leader's first points are skipped: an anchor lying on an earlier leader would
+    otherwise block every direction.
+    """
+    bounds, scale = layout["bounds"], layout["scale"]
+    occupied = [*placed, *layout["leaders"]]
+    radii = np.arange(4 * scale, np.linalg.norm(bounds[2:] - bounds[:2]), 4 * scale)
+    spots = [
+        (point, box)
+        for point, box in _label_candidates(size, center, bounds, radii, 32)
+        if not _overlap_count(box, occupied)
+        and not _overlap_count(box, layout["points"])
+    ]
+    for blocked in (occupied, placed):
+        for point, box in spots:
+            leader = _leader_boxes(center, point, scale)
+            if not _overlap_count(leader[4:, None], blocked):
+                gap = np.linalg.norm(center - np.clip(center, box[:2], box[2:]))
+                return point, box, gap > 8 * scale
+    return _label_position(size, center, occupied, layout)
+
+
 def _place_one_label(ax, label, anchor, placed, layout, fit="required"):
     """Measure and position one label in the already settled figure layout."""
     text = ax.annotate(
@@ -164,12 +196,11 @@ def _place_one_label(ax, label, anchor, placed, layout, fit="required"):
     )
     extent = text.get_window_extent(ax.figure.canvas.get_renderer())
     center = ax.transData.transform(anchor)
-    position = _label_position(
-        (extent.width + 2 * layout["scale"], extent.height + 2 * layout["scale"]),
-        center,
-        placed,
-        layout,
-        fit,
+    size = (extent.width + 2 * layout["scale"], extent.height + 2 * layout["scale"])
+    position = (
+        _clear_label_position(size, center, placed, layout)
+        if fit == "clear"
+        else _label_position(size, center, placed, layout, fit)
     )
     if position is None:
         text.remove()
@@ -178,6 +209,8 @@ def _place_one_label(ax, label, anchor, placed, layout, fit="required"):
     text.xyann = (point - center) / layout["scale"]
     text.arrow_patch.set_visible(leader)
     placed.append(box)
+    if leader and fit == "clear":
+        layout["leaders"].extend(_leader_boxes(center, point, layout["scale"]))
 
 
 def _point_boxes(ax, points, scale):
@@ -190,13 +223,8 @@ def _point_boxes(ax, points, scale):
     return [np.r_[center - 4 * scale, center + 4 * scale] for center in centers]
 
 
-def place_labels(ax, anchors, points=None, fontsize=7, optional=None, fit="optional"):
-    """Keep neutral labels inside their axes, avoiding overlaps when space allows.
-
-    ``optional`` labels follow in their given order and are left out where they
-    would cover another label; with ``fit="near"`` they also need a spot beside
-    their anchor clear of every drawn point.
-    """
+def _label_layout(ax, points, fontsize):
+    """Settle the layout, then collect what labels must stay inside and avoid."""
     ax.figure.canvas.draw()
     scale = ax.figure.dpi / 72
     bounds = ax.get_window_extent().extents + np.array([2, 2, -2, -2]) * scale
@@ -205,6 +233,7 @@ def place_labels(ax, anchors, points=None, fontsize=7, optional=None, fit="optio
         "scale": scale,
         "fontsize": fontsize,
         "points": _point_boxes(ax, points, scale),
+        "leaders": [],
     }
     placed = [
         text.get_window_extent().extents
@@ -215,10 +244,28 @@ def place_labels(ax, anchors, points=None, fontsize=7, optional=None, fit="optio
             *ax.get_yticklabels(),
         ]
     ]
+    return layout, placed
+
+
+def place_clear_labels(ax, anchors):
+    """Label anchors inside dense point clouds from clear spots beside the points."""
+    layout, placed = _label_layout(ax, None, 7)
+    for label in sorted(anchors, key=lambda name: -len(str(name))):
+        _place_one_label(ax, label, anchors[label], placed, layout, "clear")
+
+
+def place_labels(ax, anchors, points=None, fontsize=7, optional=None, fit="optional"):
+    """Keep neutral labels inside their axes, avoiding overlaps when space allows.
+
+    ``optional`` labels follow in their given order and are left out where they
+    would cover another label; with ``fit="near"`` they also need a spot beside
+    their anchor clear of every drawn point.
+    """
+    layout, placed = _label_layout(ax, points, fontsize)
     for label in sorted(anchors, key=lambda name: -len(str(name))):
         _place_one_label(ax, label, anchors[label], placed, layout)
     if fit == "near":
-        layout = {**layout, "points": _point_boxes(ax, None, scale)}
+        layout = {**layout, "points": _point_boxes(ax, None, layout["scale"])}
     for label, anchor in (optional or {}).items():
         _place_one_label(ax, label, anchor, placed, layout, fit)
 
@@ -327,14 +374,17 @@ def bottom_legend(ax, handles=None, title=None):
 
 
 def panel_label(ax, letter):
-    """Keep a lowercase bold panel letter separate from the regular title."""
-    ax.text(
-        -0.025,
-        1.025,
+    """Keep a lowercase bold panel letter on the title line, left of the axes."""
+    from matplotlib import rcParams
+
+    ax.annotate(
         letter.lower(),
-        transform=ax.transAxes,
+        xy=(0, 1),
+        xycoords="axes fraction",
+        xytext=(-5, rcParams["axes.titlepad"]),
+        textcoords="offset points",
         ha="right",
-        va="bottom",
+        va="baseline",
         fontweight="bold",
         color=TEXT_COLOR,
     )

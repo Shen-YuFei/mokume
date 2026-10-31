@@ -61,7 +61,15 @@ def _plot_cumulative_panel(ax, cumvar: np.ndarray, n_pcs: int) -> None:
     )
     for threshold in (50, 70):
         ax.axhline(threshold, color=SAMPLE_POINT_COLOR, linestyle="--", linewidth=1)
-        ax.text(n_pcs, threshold + 1.5, f"{threshold}%", ha="right", color=TEXT_COLOR)
+        # Label each threshold at the end the curve stays farther from.
+        at_start = abs(cumvar[0] * 100 - threshold) > abs(cumvar[-1] * 100 - threshold)
+        ax.text(
+            1 if at_start else n_pcs,
+            threshold + 1.5,
+            f"{threshold}%",
+            ha="left" if at_start else "right",
+            color=TEXT_COLOR,
+        )
     # The rising curve leaves the lower right empty; callouts there crossed the thresholds.
     ax.text(
         0.97,
@@ -80,7 +88,7 @@ def _plot_cumulative_panel(ax, cumvar: np.ndarray, n_pcs: int) -> None:
     ax.set_ylabel("Cumulative variance (%)")
     ax.set_title("Cumulative variance", loc="left")
     ax.set_xlim(0.5, n_pcs + 0.5)
-    ax.set_ylim(0, min(cumvar[-1] * 100 + 15, 105))
+    ax.set_ylim(0, min(max(cumvar[-1] * 100 + 15, 78), 105))
     style_axes(ax)
 
 

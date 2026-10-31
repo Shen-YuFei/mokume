@@ -20,7 +20,7 @@ from mokume.plotting._common import (
     bottom_legend,
     nearest_anchor,
     panel_label,
-    place_labels as _label_groups,
+    place_clear_labels as _label_groups,
     static_style,
     style_axes,
 )
@@ -216,7 +216,7 @@ def _draw_tsne_panel(ax, adata, proteomic_groups, group_styles) -> dict:
         )
         # Anchor on a real member: a split group's mean can sit in empty space.
         anchors[group] = nearest_anchor(points)
-    ax.set_title("Tissue atlas", loc="left", pad=12)
+    ax.set_title("Tissue atlas", loc="left")
     ax.set(xlabel="t-SNE 1", ylabel="t-SNE 2")
     ax.margins(0.18)
     style_axes(ax)
@@ -285,7 +285,7 @@ def _draw_dendrogram_panel(
             zorder=4,
         )
     ax.tick_params(axis="y", length=0, pad=25)
-    ax.set_title("Tissue dendrogram", loc="left", pad=12)
+    ax.set_title("Tissue dendrogram", loc="left")
     ax.set_xlabel("Ward distance (correlation)")
 
 
@@ -329,8 +329,10 @@ def _save_individual_atlas(out_dir, adata, proteomic_groups, group_styles, opts)
 def _save_individual_dendrogram(out_dir, tree, group_styles, opts):
     """Render a standalone dendrogram with a group legend."""
     z_linkage, tissues, tissue_to_group = tree
+    longest = max(map(len, tissues))
     fig, ax = plt.subplots(
-        figsize=(3.5, max(3, len(tissues) * 0.16)), layout="constrained"
+        figsize=(max(3.5, 3.2 + longest * 0.06), max(3, len(tissues) * 0.16)),
+        layout="constrained",
     )
     _group_legend(ax, group_styles, loc="upper left", bbox_to_anchor=(1.02, 1))
     _draw_dendrogram_panel(ax, z_linkage, tissues, tissue_to_group, group_styles)
@@ -368,8 +370,13 @@ def plot_slide_atlas_dendrogram(
     fig, axes = plt.subplots(
         1,
         2,
-        figsize=(7.2, max(3.6, len(unique_tissues) * 0.16)),
-        gridspec_kw={"width_ratios": [1.3, 1]},
+        figsize=(
+            9.6 if len(unique_tissues) > _TALL_TISSUES else 7.2,
+            max(3.6, len(unique_tissues) * 0.16),
+        ),
+        gridspec_kw={
+            "width_ratios": [1.6 if len(unique_tissues) > _TALL_TISSUES else 1.3, 1]
+        },
         layout="constrained",
     )
     _draw_slide_panels(
@@ -383,6 +390,9 @@ def plot_slide_atlas_dendrogram(
     )
 
 
+_TALL_TISSUES = 36
+
+
 def _draw_slide_panels(axes, adata, groups, styles, tree):
     """Lay out the atlas and tree before positioning their labels."""
     if len(styles) <= 12:
@@ -391,6 +401,10 @@ def _draw_slide_panels(axes, adata, groups, styles, tree):
         )
     _draw_dendrogram_panel(axes[1], *tree, styles)
     anchors = _draw_tsne_panel(axes[0], adata, groups, styles)
+    if len(tree[1]) > _TALL_TISSUES:
+        # The tree needs the height; a square atlas stays on top instead of stretching.
+        axes[0].set_box_aspect(1)
+        axes[0].set_anchor("N")
     _fit_dendrogram(axes[1])
     if len(styles) > 12:
         _group_legend(axes[0], styles)
