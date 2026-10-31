@@ -154,19 +154,19 @@ palette with a legend. `specific_per_tissue.png` is also available through
 
 ## Example Outputs
 
-Figures below are real `tissuemap` output on **PXD030304** (a 949-cell-line
-proteomic panel). These example images predate the shared plotting style above.
+Figures below are real `tissuemap` output on the full **PXD030304** panel: 948 of
+its 949 cell lines across 114 annotated tissues (the remaining cell line has no
+tissue annotation).
 
-![Tissue atlas: cell-line proteomes embedded and grouped by tissue of origin](../assets/pxd030304_tissue_atlas.png){ width="100%" }
+![Tissue atlas: cell-line proteomes embedded and coloured by proteomic group](../assets/pxd030304_tissue_atlas.png){ width="100%" }
 
 *`tissue_atlas.png` — the cell-line proteomes embedded by t-SNE and coloured by
-organ of origin in the earlier rendering. Current plots use proteomic groups.*
+proteomic group.*
 
 ![t-SNE panels coloured by top tissue-marker expression](../assets/pxd030304_marker_tsne.png){ width="100%" }
 
 *`marker_tsne.png` — the same embedding, each panel coloured by a top
-tissue-marker's expression in the earlier rendering. Current panels share the
-within-protein relative-abundance scale.*
+tissue-marker's relative abundance on the shared within-protein scale.*
 
 ![AdaTiSS tissue-specificity score distribution and tissue-specific protein counts](../assets/pxd030304_ts_distribution.png){ width="100%" }
 
