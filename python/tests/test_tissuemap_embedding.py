@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import anndata as ad
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.text import Text
 import numpy as np
@@ -315,8 +316,10 @@ def test_pca_supports_many_conditions_and_category_labels(tmp_path, condition_co
     assert output.is_file()
     assert len(fig.legends[0].get_texts()) == condition_count
     assert {text.get_text() for text in fig.axes[0].texts} <= set(conditions.values())
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
+    # Saving closes the figure, and closing can detach its Agg canvas.
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
     boxes = [Text.get_window_extent(text, renderer) for text in fig.axes[0].texts]
     assert boxes
     assert not any(a.overlaps(b) for i, a in enumerate(boxes) for b in boxes[i + 1 :])
