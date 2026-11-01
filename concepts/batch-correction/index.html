@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -33,10 +33,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
   
@@ -371,7 +371,7 @@
   
     
   
-  User Guide (CLI)
+  User Guide
 
         </a>
       </li>
@@ -1456,7 +1456,7 @@
   <span class="md-ellipsis">
     
   
-    User Guide (CLI)
+    User Guide
   
 
     
@@ -1478,7 +1478,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    User Guide (CLI)
+    User Guide
   
 
           </label>
@@ -2125,8 +2125,14 @@ Repeat <code>--batch-covariate</code> for each SDRF column whose biological sign
 <p>The covariate columns are extracted from the SDRF with a sample-substring
 fallback. Finite numeric columns keep their numeric values; nominal columns
 use k-1 one-hot indicators, so categories are not treated as ordered numbers.
-Constant columns are rejected. Integrated ComBat corrects proteins observed in
-every matrix sample and leaves incomplete protein rows unchanged.</p>
+A column with any non-numeric value is nominal, even if some labels look like
+numbers (for example the cell line 5637). Constant columns are rejected.</p>
+<p>Integrated ComBat corrects proteins observed in every matrix sample and leaves
+incomplete protein rows unchanged. Linear intensities are corrected on the
+log2 scale and returned to the linear scale, so a zero or negative intensity
+counts as missing; log2-scale quantifications (<code>abd</code>, <code>ratio</code>) are corrected as
+they are. A protein row that ComBat cannot correct (for example when only one
+protein is complete, so its priors are undefined) keeps its measured values.</p>
 <h3 id="standalone-pibaq-correction">Standalone piBAQ correction<a class="headerlink" href="#standalone-pibaq-correction" title="Anchor link to this section">&para;</a></h3>
 <p>To correct already-written piBAQ tables (e.g. when merging datasets), use the
 dedicated <code>correct-batches</code> command, which runs the sample-prefix ComBat flow
@@ -2334,10 +2340,10 @@ instead of returning the uncorrected matrix as a successful result.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "navigation.instant", "navigation.tracking", "search.suggest", "search.highlight", "search.share", "toc.follow", "toc.integrate", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "navigation.instant", "navigation.tracking", "search.suggest", "search.highlight", "search.share", "toc.follow", "toc.integrate", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
