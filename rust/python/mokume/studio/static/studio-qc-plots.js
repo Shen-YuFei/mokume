@@ -186,34 +186,42 @@ function median(values) {
   return (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2;
 }
 
-// Nearest clear spot in eight directions, then farther out; as in ggrepel,
-// a label more than 8 px from its anchor keeps a leader.
-// As in the reports, a condition label with no spot free of other labels is
-// left to the legend rather than stacked on another label.
-function labelBox(anchor, size, placed, dots) {
-  const radii = [4, 8, 12, 16, 20, 24];
-  for (let radius = 28; radius < Math.hypot(AREA.width, AREA.height); radius += 4) radii.push(radius);
-  const candidates = radii.flatMap((radius) => [...Array(8).keys()].map((step) => {
-    const angle = step * Math.PI / 4;
-    const x = Math.max(AREA.left + size[0] / 2, Math.min(AREA.left + AREA.width - size[0] / 2,
-      anchor[0] + Math.cos(angle) * (radius + size[0] / 2)));
-    const y = Math.max(AREA.top + size[1] / 2, Math.min(200 - size[1] / 2,
-      anchor[1] + Math.sin(angle) * (radius + size[1] / 2)));
-    return { radius, box: [x - size[0] / 2, y - size[1] / 2, x + size[0] / 2, y + size[1] / 2] };
-  })).filter(({ box }) => !placed.some((other) => overlaps(box, other)));
-  const hits = (box) => dots.filter((dot) => overlaps(box, dot)).length;
-  const near = candidates.filter(({ radius }) => radius <= 24);
-  const clear = near.find(({ box }) => !hits(box));
-  if (clear) {
-    const gap = Math.hypot(anchor[0] - Math.max(clear.box[0], Math.min(clear.box[2], anchor[0])),
-      anchor[1] - Math.max(clear.box[1], Math.min(clear.box[3], anchor[1])));
-    return { box: clear.box, leader: gap > 8 };
+function inBox(box, [x, y]) {
+  return box[0] <= x && x <= box[2] && box[1] <= y && y <= box[3];
+}
+
+// Sample points along a leader, past the first few px so that an anchor lying
+// on an earlier leader does not block every direction.
+function leaderTrack(start, end) {
+  const steps = Math.ceil(Math.hypot(end[0] - start[0], end[1] - start[1]) / 3);
+  return [...Array(steps).keys()].slice(2).map((step) => [
+    start[0] + (end[0] - start[0]) * step / steps,
+    start[1] + (end[1] - start[1]) * step / steps,
+  ]);
+}
+
+// Nearest spot beside the anchor, as in the reports: clear of every point, label
+// and leader, with a leader that misses other labels. A label more than 8 px from
+// its anchor keeps a leader; a condition with no such spot stays in the legend.
+function labelBox(anchor, size, placed, dots, leaders) {
+  for (const radius of [4, 8, 12, 16, 20, 24]) {
+    for (let step = 0; step < 8; step += 1) {
+      const angle = step * Math.PI / 4;
+      const x = Math.max(AREA.left + size[0] / 2, Math.min(AREA.left + AREA.width - size[0] / 2,
+        anchor[0] + Math.cos(angle) * (radius + size[0] / 2)));
+      const y = Math.max(AREA.top + size[1] / 2, Math.min(200 - size[1] / 2,
+        anchor[1] + Math.sin(angle) * (radius + size[1] / 2)));
+      const box = [x - size[0] / 2, y - size[1] / 2, x + size[0] / 2, y + size[1] / 2];
+      const end = [Math.max(box[0], Math.min(box[2], anchor[0])), Math.max(box[1], Math.min(box[3], anchor[1]))];
+      const track = Math.hypot(anchor[0] - end[0], anchor[1] - end[1]) > 8 ? leaderTrack(anchor, end) : null;
+      if (![...placed, ...dots].some((other) => overlaps(box, other))
+        && !leaders.some((point) => inBox(box, point))
+        && !(track || []).some((point) => placed.some((other) => inBox(other, point)))) {
+        return { box, end, track };
+      }
+    }
   }
-  if (near.length) {
-    return { box: near.reduce((best, item) => (hits(item.box) < hits(best.box) ? item : best)).box,
-      leader: true };
-  }
-  return candidates.length ? { box: candidates[0].box, leader: true } : null;
+  return null;
 }
 
 // Above twelve conditions colours repeat, so each condition is named once
@@ -221,18 +229,19 @@ function labelBox(anchor, size, placed, dots) {
 function conditionLabels(svg, positions, groups, conditions) {
   const dots = positions.map(([x, y]) => [x - 4, y - 4, x + 4, y + 4]);
   const placed = [];
+  const leaders = [];
   conditions.forEach((condition, group) => {
     const own = positions.filter((_, index) => groups[index] === group);
     const centre = [0, 1].map((axis) => median(own.map((position) => position[axis])));
     const anchor = own.reduce((best, position) => (Math.hypot(position[0] - centre[0],
       position[1] - centre[1]) < Math.hypot(best[0] - centre[0], best[1] - centre[1]) ? position : best));
     const name = condition || translate("Unknown condition");
-    const spot = labelBox(anchor, [Math.min(name.length, 14) * 5 + 2, 12], placed, dots);
+    const spot = labelBox(anchor, [Math.min(name.length, 14) * 5 + 2, 12], placed, dots, leaders);
     if (!spot) return;
-    const { box, leader } = spot;
+    const { box, end, track } = spot;
     placed.push(box);
-    if (leader) {
-      const end = [Math.max(box[0], Math.min(box[2], anchor[0])), Math.max(box[1], Math.min(box[3], anchor[1]))];
+    if (track) {
+      leaders.push(...track);
       svg.append(svgNode("path", { d: `M${anchor[0]} ${anchor[1]}L${end[0]} ${end[1]}`, class: "qc-plot-leader" }));
     }
     sampleLabel(svg, name, (box[0] + box[2]) / 2, box[3] - 3, { "text-anchor": "middle" });
