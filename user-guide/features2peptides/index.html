@@ -2389,11 +2389,11 @@ the SDRF, see
 </tr>
 <tr>
 <td><code>--filter-score</code></td>
-<td>Named QPX <code>additional_scores</code> threshold (<code>NAME=THRESHOLD</code>)</td>
+<td>Named QPX score threshold (<code>NAME=THRESHOLD</code>)</td>
 </tr>
 <tr>
 <td><code>--filter-exclude-modification</code></td>
-<td>Modification to exclude; repeat for multiple names</td>
+<td>Modification name or accession to exclude; repeat for multiple values</td>
 </tr>
 <tr>
 <td><code>--filter-protein-fdr</code></td>
@@ -2421,6 +2421,18 @@ unpopulated q-value field is an error rather than a no-op.
 <code>higher_better</code> flag, so higher-better scores use <code>&gt;=</code> and lower-better
 scores use <code>&lt;=</code>. Missing, invalid, or direction-inconsistent scores fail
 before output is written.
+In the struct form that <code>qpxc transform relayout</code> writes, the score field
+and its direction come from the <code>qpx.struct_lists</code> parquet footer; a struct
+column without that footer, or a name the footer does not list, is an
+error. <code>precursor_qvalue</code> and <code>global_qvalue</code> are read from the top-level
+QPX 1.3 columns when the parquet statistics show no nulls in any row
+group, and from the score entry otherwise.
+<code>--filter-exclude-modification</code> compares each value with the <code>name</code> and
+<code>accession</code> of the QPX <code>modifications</code> list, ignoring case, so
+<code>Carbamidomethyl</code> and <code>UNIMOD:4</code> remove the same rows. Inputs without that
+column match the peptidoform instead: an accession such as <code>UNIMOD:35</code>
+matches only the complete bracketed token, and other values match as
+substrings.
 Among the group-level filters, CV threshold (<code>--filter-cv-threshold</code>),
 quantile outlier removal, and the run-QC checks <code>--filter-min-features</code> /
 min-total-intensity / min-proteins / <code>--filter-max-missing-rate</code> are

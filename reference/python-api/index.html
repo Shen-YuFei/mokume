@@ -2220,7 +2220,10 @@ table. Because matrix-level DE has no quantification context, it requires a
 concrete method and rejects <code>auto</code>. Protein identifiers must be non-empty and
 unique. <code>deqms</code> and ensembles containing <code>deqms</code> also require
 <code>peptide_counts=[...]</code>, aligned one-to-one with the protein rows and containing
-finite positive integers.</p>
+finite positive integers. For two-group <code>deqms</code>, <code>precision=[...]</code> adds the
+<a href="../../concepts/differential-expression/#precision-weights">precision weights</a>:
+a matrix shaped like the values with a positive precision for every quantified
+cell and <code>None</code> elsewhere, as written by <code>--export-precision</code>.</p>
 <hr />
 <h2 id="periphery">Periphery<a class="headerlink" href="#periphery" title="Anchor link to this section">&para;</a></h2>
 <p>The plotting and reporting periphery reads the tables the kernel wrote without
@@ -2275,7 +2278,9 @@ top-level package.</p>
 </span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    <span class="n">output</span><span class="o">=</span><span class="s2">"comparison.html"</span><span class="p">,</span>
 </span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="p">)</span>
 </span></code></pre></div>
-<p>Both need the <code>analysis</code> extra. For volcano gene-highlighting, call <code>mokume.reports.qc_report.generate_qc_report</code> directly.</p>
+<p>Both need the <code>analysis</code> extra. <code>qc_report</code> also accepts <code>highlight_genes</code> and the
+optional <code>peptides</code>, <code>unnormalized_peptides</code> and <code>unimputed_matrix</code> exports
+(see <a href="../../periphery/visualization/#single-matrix-qc-report">Visualization</a>).</p>
 <h3 id="pure-python-method-fallback">Pure-Python method fallback<a class="headerlink" href="#pure-python-method-fallback" title="Anchor link to this section">&para;</a></h3>
 <p>A method not reproducible bit-for-bit in the Rust kernel: the kernel's <code>features2proteins</code> errors point here (needs the <code>analysis</code> extra):</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># missforest — wraps scikit-learn's IterativeImputer</span>
